@@ -14,6 +14,7 @@ C++ client SDK for LiveKit in C++17.
 
 - [livekit-protocol](https://github.com/livekit/protocol)(as submodule by default)
 - [plog](https://github.com/SergiusTheBest/plog) (as submodule by default)
+- [websocket-client](https://github.com/zesun96/websocket-client) (as submodule by default)
 
 ## Examples
 
@@ -24,4 +25,4 @@ See [examples](./examples/)
 - [livekit](https://livekit.io/)
 - [livekit-protocol](https://github.com/livekit/protocol)
 - [plog](https://github.com/SergiusTheBest/plog)
-- 
+- [websocket-client](https://github.com/zesun96/websocket-client)

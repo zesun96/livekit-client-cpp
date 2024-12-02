@@ -1,3 +1,11 @@
 [submodule "protocol"]
 	path = protocol
 	url = https://github.com/livekit/protocol
+[submodule "deps/plog"]
+	path = deps/plog
+	url = https://github.com/SergiusTheBest/plog.git
+	shallow = true
+[submodule "deps/websocket-client"]
+	path = deps/websocket-client
+	url = https://github.com/zesun96/websocket-client.git
+	shallow = true
