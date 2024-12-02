@@ -26,3 +26,7 @@ See [examples](./examples/)
 - [livekit-protocol](https://github.com/livekit/protocol)
 - [plog](https://github.com/SergiusTheBest/plog)
 - [websocket-client](https://github.com/zesun96/websocket-client)
+
+## License
+
+livekit-client-cpp is licensed under Apache License v2.0.
