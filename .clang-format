@@ -7,7 +7,12 @@ UseTab: ForIndentation
 Language: Cpp
 Standard: Cpp11
 AccessModifierOffset: -4
+MaxEmptyLinesToKeep: 1
 ColumnLimit: 100
+PointerAlignment: Left
+ReferenceAlignment: Left
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AlignTrailingComments: true
 ---
 Language: JavaScript
 IndentWidth: 2
