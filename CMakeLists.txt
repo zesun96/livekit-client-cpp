@@ -33,7 +33,27 @@ message(STATUS "websocket-client source dir: ${websocket-client_SOURCE_DIR}")
 set(
 	LKC_CORE_SOURCE_FILES
 
+  src/core/e2ee/e2ee_manager.cpp
+  src/core/e2ee/key_provider.cpp
+
+  src/core/track/audio_track.cpp
+  src/core/track/local_audio_track.cpp
+  src/core/track/local_publication.cpp
+  src/core/track/local_track.cpp
+  src/core/track/local_video_track.cpp
+  src/core/track/publication.cpp
+  src/core/track/remote_audio_track.cpp
+  src/core/track/remote_publication.cpp
+  src/core/track/remote_track.cpp
+  src/core/track/remote_video_track.cpp
+  src/core/track/video_track.cpp
+
 	src/core/livekit_client.cpp
+  src/core/local_participant.cpp
+  src/core/peer_transport.cpp
+  src/core/remote_participant.cpp
+  src/core/room.cpp
+  src/core/rtc_engine.cpp
 
   src/core/detail/signal_client.h
 	src/core/detail/signal_client.cpp
