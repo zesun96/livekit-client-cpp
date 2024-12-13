@@ -15,23 +15,31 @@
  *limitations under the License.
  */
 
-#include "livekit/core/rtc_engine.h"
-#include "detail/internals.h"
-#include "detail/signal_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_OPTION_RTC_ENGINE_OPTION_H_
+#define _LKC_CORE_OPTION_RTC_ENGINE_OPTION_H_
+
+#include "signal_option.h"
+
+#include <stdint.h>
 
 namespace livekit {
 namespace core {
 
-RtcEngine::RtcEngine() {}
+enum class IceTransportsType { Relay, NoHost, All };
 
-RtcEngine::~RtcEngine() {}
+struct RtcConfiguration {
+	IceTransportsType ice_transport_type;
+};
 
-bool RtcEngine::connect(std::string url, std::string token, EngineOptions options) {
-	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	bool ret = signal_client_->connect();
-	PLOG_DEBUG << "received JoinResponse: " << ret;
-	return true;
-}
+struct EngineOptions {
+	RtcConfiguration rtc_config;
+	SignalOptions signal_options;
+	uint32_t join_retries;
+};
 
 } // namespace core
 } // namespace livekit
+
+#endif //

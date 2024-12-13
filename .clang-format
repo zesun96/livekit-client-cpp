@@ -13,6 +13,7 @@ PointerAlignment: Left
 ReferenceAlignment: Left
 AlignConsecutiveMacros: AcrossEmptyLinesAndComments
 AlignTrailingComments: true
+SortIncludes: CaseSensitive
 ---
 Language: JavaScript
 IndentWidth: 2

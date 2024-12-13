@@ -15,23 +15,28 @@
  *limitations under the License.
  */
 
-#include "livekit/core/rtc_engine.h"
-#include "detail/internals.h"
-#include "detail/signal_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_OPTION_SIGNAL_OPTION_H_
+#define _LKC_CORE_OPTION_SIGNAL_OPTION_H_
+
+#include <string>
 
 namespace livekit {
 namespace core {
 
-RtcEngine::RtcEngine() {}
+struct SignalSdkOptions {
+	std::string sdk;
+	std::string sdk_version;
+};
 
-RtcEngine::~RtcEngine() {}
-
-bool RtcEngine::connect(std::string url, std::string token, EngineOptions options) {
-	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	bool ret = signal_client_->connect();
-	PLOG_DEBUG << "received JoinResponse: " << ret;
-	return true;
-}
+struct SignalOptions {
+	bool auto_subscribe;
+	bool adaptive_stream;
+	SignalSdkOptions sdk_options;
+};
 
 } // namespace core
 } // namespace livekit
+
+#endif //

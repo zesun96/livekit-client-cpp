@@ -31,7 +31,7 @@ void TestWebrtc() {
 }
 
 bool Test() {
-	auto option = SignalClientOption();
+	auto option = SignalOptions();
 	auto signal_client = SignalClient::Create("ws://localhost:8080/ws", "aaa", option);
 	return true;
 }

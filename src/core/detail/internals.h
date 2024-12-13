@@ -15,23 +15,17 @@
  *limitations under the License.
  */
 
-#include "livekit/core/rtc_engine.h"
-#include "detail/internals.h"
-#include "detail/signal_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_DETAIL_INTERNALS_H_
+#define _LKC_CORE_DETAIL_INTERNALS_H_
+
+#include "plog/Log.h"
 
 namespace livekit {
 namespace core {
-
-RtcEngine::RtcEngine() {}
-
-RtcEngine::~RtcEngine() {}
-
-bool RtcEngine::connect(std::string url, std::string token, EngineOptions options) {
-	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	bool ret = signal_client_->connect();
-	PLOG_DEBUG << "received JoinResponse: " << ret;
-	return true;
-}
-
+const size_t DEFAULT_SIGNAL_CONNECTION_TIMEOUT = 15; // s
 } // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_DETAIL_INTERNALS_H_

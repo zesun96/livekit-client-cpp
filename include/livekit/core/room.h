@@ -20,8 +20,17 @@
 #ifndef _LKC_CORE_ROOM_H_
 #define _LKC_CORE_ROOM_H_
 
+#include "rtc_engine.h"
+
+#include <memory>
+
 namespace livekit {
-namespace core {}
+namespace core {
+class Room {
+private:
+	std::unique_ptr<RtcEngine> rtc_engine_;
+};
+} // namespace core
 } // namespace livekit
 
 #endif //
