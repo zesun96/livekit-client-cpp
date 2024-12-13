@@ -20,7 +20,7 @@
 namespace livekit {
 namespace core {
 
-SignalClient::SignalClient(std::string url, std::string token, SignalClientOption option)
+SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
     : url_(url), token_(token), option_(option) {
 	wsc_ = std::make_unique<wsc::WebSocket>();
 }
@@ -33,8 +33,13 @@ bool SignalClient::Init() {
 	return true;
 }
 
+bool SignalClient::connect() {
+	wsc_->open(url_);
+	return wsc_->isOpen();
+}
+
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,
-                                                   SignalClientOption option) {
+                                                   SignalOptions option) {
 	auto signal_client = std::make_unique<SignalClient>(url, token, option);
 	signal_client->Init();
 	return signal_client;

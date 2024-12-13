@@ -15,25 +15,17 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
-#include "detail/signal_client.h"
+#pragma once
 
-#include <api/peer_connection_interface.h>
-#include <functional>
-#include <iostream>
-#include <memory>
+#ifndef _LKC_CORE_DETAIL_INTERNALS_H_
+#define _LKC_CORE_DETAIL_INTERNALS_H_
+
+#include "plog/Log.h"
 
 namespace livekit {
 namespace core {
-void TestWebrtc() {
-	webrtc::PeerConnectionInterface::IceTransportsType aa;
-	return;
-}
-
-bool Test() {
-	auto option = SignalOptions();
-	auto signal_client = SignalClient::Create("ws://localhost:8080/ws", "aaa", option);
-	return true;
-}
+const size_t DEFAULT_SIGNAL_CONNECTION_TIMEOUT = 15; // s
 } // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_DETAIL_INTERNALS_H_

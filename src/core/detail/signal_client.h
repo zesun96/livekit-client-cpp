@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_DETAIL_SIGNAL_CLIENT_H_
 #define _LKC_CORE_DETAIL_SIGNAL_CLIENT_H_
 
+#include "livekit/core/option/signal_option.h"
+
 #include <memory>
 #include <string>
 #include <websocketclient.hpp>
@@ -27,25 +29,16 @@
 namespace livekit {
 namespace core {
 
-struct SignalSdkOptions {
-	std::string sdk;
-	std::string sdk_version;
-};
-
-struct SignalClientOption {
-	bool auto_subscribe;
-	bool adaptive_stream;
-	SignalSdkOptions sdk_options;
-};
-
 class SignalClient {
 private:
 public:
 	static std::unique_ptr<SignalClient> Create(std::string url, std::string token,
-	                                            SignalClientOption option);
+	                                            SignalOptions option);
 
-	SignalClient(std::string url, std::string token, SignalClientOption option);
+	SignalClient(std::string url, std::string token, SignalOptions option);
 	~SignalClient();
+
+	bool connect();
 
 private:
 	bool Init();
@@ -53,7 +46,7 @@ private:
 private:
 	std::string url_;
 	std::string token_;
-	SignalClientOption option_;
+	SignalOptions option_;
 	std::unique_ptr<wsc::WebSocket> wsc_;
 };
 

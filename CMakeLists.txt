@@ -55,8 +55,8 @@ set(
   src/core/room.cpp
   src/core/rtc_engine.cpp
 
-  src/core/detail/signal_client.h
 	src/core/detail/signal_client.cpp
+  src/core/detail/internals.cpp
 )
 
 add_library (livekitclient STATIC

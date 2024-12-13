@@ -15,25 +15,13 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
-#include "detail/signal_client.h"
+#pragma once
 
-#include <api/peer_connection_interface.h>
-#include <functional>
-#include <iostream>
-#include <memory>
+#ifndef _LKC_CORE_OPTION_ROOM_OPTION_H_
+#define _LKC_CORE_OPTION_ROOM_OPTION_H_
 
 namespace livekit {
-namespace core {
-void TestWebrtc() {
-	webrtc::PeerConnectionInterface::IceTransportsType aa;
-	return;
-}
-
-bool Test() {
-	auto option = SignalOptions();
-	auto signal_client = SignalClient::Create("ws://localhost:8080/ws", "aaa", option);
-	return true;
-}
-} // namespace core
+namespace core {}
 } // namespace livekit
+
+#endif //
