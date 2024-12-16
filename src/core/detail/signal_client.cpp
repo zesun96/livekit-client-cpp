@@ -16,6 +16,7 @@
  */
 
 #include "signal_client.h"
+#include "livekit_models.pb.h"
 
 namespace livekit {
 namespace core {
