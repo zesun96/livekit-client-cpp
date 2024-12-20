@@ -18,6 +18,8 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 
+#include <functional>
+
 namespace livekit {
 namespace core {
 
@@ -29,14 +31,48 @@ SignalClient::SignalClient(std::string url, std::string token, SignalOptions opt
 SignalClient::~SignalClient() {}
 
 bool SignalClient::Init() {
+	auto on_open = std::bind(&SignalClient::on_open, this);
+	wsc_->onOpen(on_open);
 
-	wsc_->open(url_);
+	auto on_message = std::bind(&SignalClient::on_message, this, std::placeholders::_1);
+	wsc_->onMessage(on_message);
+
+	auto on_closed = std::bind(&SignalClient::on_closed, this);
+	wsc_->onClosed(on_closed);
+
+	auto on_error = std::bind(&SignalClient::on_error, this, std::placeholders::_1);
+	wsc_->onError(on_error);
 	return true;
 }
 
 bool SignalClient::connect() {
-	wsc_->open(url_);
+	std::string request = url_ + "?token=" + token_ +
+	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
+	wsc_->open(request);
 	return wsc_->isOpen();
+}
+
+void SignalClient::on_open() {
+	std::cout << "WebSocket open" << std::endl;
+	return;
+}
+
+void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
+	std::cout << "WebSocket recived message" << std::endl;
+	if (std::holds_alternative<wsc::binary>(message)) {
+		auto& msg = std::get<wsc::binary>(message);
+		std::cout << "WebSocket received: " << msg.size() << std::endl;
+	}
+	return;
+}
+void SignalClient::on_closed() {
+	std::cout << "WebSocket closed" << std::endl;
+	return;
+}
+
+void SignalClient::on_error(std::string error) {
+	std::cout << "WebSocket error: " << error << std::endl;
+	return;
 }
 
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,

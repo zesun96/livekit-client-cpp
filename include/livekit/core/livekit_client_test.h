@@ -15,8 +15,20 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_LIVEKIT_CLIENT_TEST_H_
+#define _LKC_CORE_LIVEKIT_CLIENT_TEST_H_
+
+#include "livekit_client.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+
+void TestWebrtc();
+
+bool Test();
+} // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_LIVEKIT_CLIENT_TEST_H_

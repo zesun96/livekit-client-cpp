@@ -16,3 +16,17 @@
  */
 
 #include "livekit/core/room.h"
+
+namespace livekit {
+namespace core {
+Room::Room() { rtc_engine_ = std::make_unique<RtcEngine>(); }
+
+Room::~Room() {}
+
+bool Room::connect(std::string url, std::string token, RoomOptions options) {
+	EngineOptions engine_options;
+	rtc_engine_->connect(url, token, engine_options);
+	return true;
+}
+} // namespace core
+} // namespace livekit

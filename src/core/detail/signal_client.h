@@ -42,6 +42,10 @@ public:
 
 private:
 	bool Init();
+	void on_open();
+	void on_message(std::variant<wsc::binary, wsc::string> message);
+	void on_closed();
+	void on_error(std::string error);
 
 private:
 	std::string url_;

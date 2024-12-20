@@ -68,6 +68,7 @@ set(
   src/core/track/video_track.cpp
 
 	src/core/livekit_client.cpp
+  src/core/livekit_client_test.cpp
   src/core/local_participant.cpp
   src/core/peer_transport.cpp
   src/core/remote_participant.cpp
@@ -105,7 +106,7 @@ target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
 	$<BUILD_INTERFACE:plog::plog>)
 target_link_libraries(livekitclient PRIVATE
-	websocketclient)
+	websocketclient-static)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 
 
@@ -124,4 +125,12 @@ endif()
 # examples
 if(BUILD_EXAMPLES)
 	add_subdirectory(examples)
+endif()
+
+if(NOT BUILD_TEST)
+	set(BUILD_TEST true)
+endif()
+# test
+if(BUILD_TEST)
+	add_subdirectory(test)
 endif()

@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_LIVEKIT_CLIENT_H_
 #define _LKC_CORE_LIVEKIT_CLIENT_H_
 
+#include "room.h"
+
 namespace livekit {
 namespace core {
 

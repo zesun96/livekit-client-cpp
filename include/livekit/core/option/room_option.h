@@ -20,8 +20,25 @@
 #ifndef _LKC_CORE_OPTION_ROOM_OPTION_H_
 #define _LKC_CORE_OPTION_ROOM_OPTION_H_
 
+#include "rtc_engine_option.h"
+
 namespace livekit {
-namespace core {}
+namespace core {
+
+struct RoomSdkOptions {
+	std::string sdk;
+	std::string sdk_version;
+};
+
+struct RoomOptions {
+	bool auto_subscribe;
+	bool adaptive_stream;
+	bool dynacast;
+	RtcConfiguration rtc_config;
+	uint32_t join_retries;
+	RoomSdkOptions sdk_options;
+};
+} // namespace core
 } // namespace livekit
 
 #endif //
