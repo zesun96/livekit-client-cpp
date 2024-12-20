@@ -15,8 +15,4 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
-
-namespace livekit {
-namespace core {} // namespace core
-} // namespace livekit
+#include "internals.h"

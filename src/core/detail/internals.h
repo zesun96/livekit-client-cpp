@@ -15,8 +15,17 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_DETAIL_INTERNALS_H_
+#define _LKC_CORE_DETAIL_INTERNALS_H_
+
+#include "plog/Log.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+const size_t DEFAULT_SIGNAL_CONNECTION_TIMEOUT = 15; // s
+} // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_DETAIL_INTERNALS_H_

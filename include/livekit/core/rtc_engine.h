@@ -20,8 +20,26 @@
 #ifndef _LKC_CORE_RTC_ENGINE_H_
 #define _LKC_CORE_RTC_ENGINE_H_
 
+#include "livekit/core/option/rtc_engine_option.h"
+
+#include <memory>
+#include <string>
+
 namespace livekit {
-namespace core {}
+namespace core {
+class SignalClient;
+class RtcEngine {
+public:
+	RtcEngine();
+	~RtcEngine();
+
+	bool connect(std::string url, std::string token, EngineOptions options);
+
+private:
+	std::unique_ptr<SignalClient> signal_client_;
+};
+
+} // namespace core
 } // namespace livekit
 
 #endif //

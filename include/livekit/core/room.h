@@ -20,8 +20,24 @@
 #ifndef _LKC_CORE_ROOM_H_
 #define _LKC_CORE_ROOM_H_
 
+#include "option/room_option.h"
+#include "rtc_engine.h"
+
+#include <memory>
+
 namespace livekit {
-namespace core {}
+namespace core {
+class Room {
+public:
+	Room();
+	~Room();
+
+	bool connect(std::string url, std::string token, RoomOptions options);
+
+private:
+	std::unique_ptr<RtcEngine> rtc_engine_;
+};
+} // namespace core
 } // namespace livekit
 
 #endif //

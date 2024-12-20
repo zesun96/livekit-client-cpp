@@ -15,8 +15,16 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_OPTION_OPTION_H_
+#define _LKC_CORE_OPTION_OPTION_H_
+
+#include "room_option.h"
+#include "signal_option.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {}
 } // namespace livekit
+
+#endif //

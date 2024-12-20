@@ -14,6 +14,8 @@ include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
+
 include(FetchContent)
 include(cmake/FindWebRTC.cmake)
 
@@ -25,10 +27,27 @@ if (NOT TARGET websocket-client)
     add_subdirectory(deps/websocket-client EXCLUDE_FROM_ALL)
 endif()
 
+if(USE_SYSTEM_PROTOBUF)
+	find_package(protobuf CONFIG REQUIRED)
+else()
+  if (NOT TARGET probobuf)
+    add_subdirectory(deps/probobuf EXCLUDE_FROM_ALL)
+  endif()
+endif()
+
 message(STATUS "libwebrtc source dir: ${libwebrtc_SOURCE_DIR}")
 message(STATUS "plog source dir: ${plog_SOURCE_DIR}")
 message(STATUS "websocket-client source dir: ${websocket-client_SOURCE_DIR}")
+message(STATUS "protobuf include dir: ${PROTOBUF_INCLUDE_DIRS}")
+message(STATUS "protobuf libraries: ${PROTOBUF_LIBRARIES}")
 
+set(LK_PROTO_PATH protocol/protobufs)
+set(LK_PROTO_FILES
+    ${LK_PROTO_PATH}/livekit_models.proto
+    ${LK_PROTO_PATH}/livekit_metrics.proto
+)
+set(PROTO_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${PROTO_BINARY_DIR})
 
 set(
 	LKC_CORE_SOURCE_FILES
@@ -49,33 +68,47 @@ set(
   src/core/track/video_track.cpp
 
 	src/core/livekit_client.cpp
+  src/core/livekit_client_test.cpp
   src/core/local_participant.cpp
   src/core/peer_transport.cpp
   src/core/remote_participant.cpp
   src/core/room.cpp
   src/core/rtc_engine.cpp
 
-  src/core/detail/signal_client.h
 	src/core/detail/signal_client.cpp
+  src/core/detail/internals.cpp
 )
 
 add_library (livekitclient STATIC
 
   ${LKC_CORE_SOURCE_FILES}
+
+  ${LK_PROTO_FILES}
+)
+
+protobuf_generate(
+    TARGET livekitclient
+    PROTOS ${LK_PROTO_FILES} 
+    APPEND_PATH ${LK_PROTO_PATH}
+    IMPORT_DIRS ${LK_PROTO_PATH}
+    PROTOC_OUT_DIR ${PROTO_BINARY_DIR}
 )
 
 link_directories(${libwebrtc_SOURCE_DIR}/lib)
 
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
-target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_include_directories(livekitclient PRIVATE ${websocket-client_SOURCE_DIR}/include)
+target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
+target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
 	$<BUILD_INTERFACE:plog::plog>)
 target_link_libraries(livekitclient PRIVATE
-	websocketclient)
+	websocketclient-static)
+target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
+
 
 if (WIN32)
   # webrtc
@@ -92,4 +125,12 @@ endif()
 # examples
 if(BUILD_EXAMPLES)
 	add_subdirectory(examples)
+endif()
+
+if(NOT BUILD_TEST)
+	set(BUILD_TEST true)
+endif()
+# test
+if(BUILD_TEST)
+	add_subdirectory(test)
 endif()

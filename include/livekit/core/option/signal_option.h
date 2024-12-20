@@ -15,8 +15,28 @@
  *limitations under the License.
  */
 
-#include "livekit/core/livekit_client.h"
+#pragma once
+
+#ifndef _LKC_CORE_OPTION_SIGNAL_OPTION_H_
+#define _LKC_CORE_OPTION_SIGNAL_OPTION_H_
+
+#include <string>
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+
+struct SignalSdkOptions {
+	std::string sdk;
+	std::string sdk_version;
+};
+
+struct SignalOptions {
+	bool auto_subscribe;
+	bool adaptive_stream;
+	SignalSdkOptions sdk_options;
+};
+
+} // namespace core
 } // namespace livekit
+
+#endif //
