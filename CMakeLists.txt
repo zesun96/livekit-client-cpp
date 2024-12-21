@@ -15,6 +15,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
+option(USE_SYSTEM_JSON "Use system nlohmann/json" OFF)
 
 include(FetchContent)
 include(cmake/FindWebRTC.cmake)
@@ -35,6 +36,17 @@ else()
   endif()
 endif()
 
+if(USE_SYSTEM_JSON)
+  find_package(nlohmann_json 3.2.0 REQUIRED)
+else()
+  # Typically you don't care so much for a third party library's tests to be
+  # run from your own project's code.
+  set(JSON_BuildTests OFF CACHE INTERNAL "")
+  if (NOT TARGET nlohmann_json)
+    add_subdirectory(deps/nlohmann_json)
+  endif()
+endif()
+
 message(STATUS "libwebrtc source dir: ${libwebrtc_SOURCE_DIR}")
 message(STATUS "plog source dir: ${plog_SOURCE_DIR}")
 message(STATUS "websocket-client source dir: ${websocket-client_SOURCE_DIR}")
@@ -45,6 +57,7 @@ set(LK_PROTO_PATH protocol/protobufs)
 set(LK_PROTO_FILES
     ${LK_PROTO_PATH}/livekit_models.proto
     ${LK_PROTO_PATH}/livekit_metrics.proto
+    ${LK_PROTO_PATH}/livekit_rtc.proto
 )
 set(PROTO_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${PROTO_BINARY_DIR})
@@ -108,6 +121,7 @@ target_link_libraries(livekitclient PRIVATE
 target_link_libraries(livekitclient PRIVATE
 	websocketclient-static)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
+target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 
 
 if (WIN32)

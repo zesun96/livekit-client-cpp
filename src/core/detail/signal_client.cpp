@@ -17,6 +17,7 @@
 
 #include "signal_client.h"
 #include "livekit_models.pb.h"
+#include "livekit_rtc.pb.h"
 
 #include <functional>
 
@@ -24,11 +25,11 @@ namespace livekit {
 namespace core {
 
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
-    : url_(url), token_(token), option_(option) {
+    : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED) {
 	wsc_ = std::make_unique<wsc::WebSocket>();
 }
 
-SignalClient::~SignalClient() {}
+SignalClient::~SignalClient() { wsc_->close(); }
 
 bool SignalClient::Init() {
 	auto on_open = std::bind(&SignalClient::on_open, this);
@@ -46,9 +47,16 @@ bool SignalClient::Init() {
 }
 
 bool SignalClient::connect() {
-	std::string request = url_ + "?token=" + token_ +
+	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	wsc_->open(request);
+	std::future<std::string> future = promise_.get_future();
+	try {
+		std::string response = future.get();
+		std::cout << "Received response: " << response << std::endl;
+	} catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+	}
 	return wsc_->isOpen();
 }
 
@@ -59,12 +67,22 @@ void SignalClient::on_open() {
 
 void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 	std::cout << "WebSocket recived message" << std::endl;
-	if (std::holds_alternative<wsc::binary>(message)) {
+	livekit::SignalRequest resp;
+	if (std::holds_alternative<wsc::string>(message)) {
+		auto& msg = std::get<wsc::string>(message);
+		std::cout << "WebSocket received: " << msg.size() << std::endl;
+	} else if (std::holds_alternative<wsc::binary>(message)) {
 		auto& msg = std::get<wsc::binary>(message);
 		std::cout << "WebSocket received: " << msg.size() << std::endl;
+	} else {
+		std::cout << "could not decode websocket message" << std::endl;
+	}
+	if (state_ != SignalConnectionState::CONNECTED) {
+
 	}
 	return;
 }
+
 void SignalClient::on_closed() {
 	std::cout << "WebSocket closed" << std::endl;
 	return;
