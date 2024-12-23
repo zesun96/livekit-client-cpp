@@ -13,8 +13,6 @@ if(MSVC)
   cmake_policy(SET CMP0091 NEW)
 
   # Configure MSVC runtime library settings for Debug and Release builds using MTd
-  set(CMAKE_BUILD_TYPE MTd_StaticDebug)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
 endif()
