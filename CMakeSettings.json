@@ -1,15 +1,15 @@
 {
   "configurations": [
     {
-      "name": "x64-Debug",
-      "generator": "Ninja",
-      "configurationType": "Debug",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "buildRoot": "${projectDir}\\out\\build\\${name}",
-      "installRoot": "${projectDir}\\out\\install\\${name}",
-      "ctestCommandArgs": "",
-      "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake",
-      "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-static"
+        "name": "x64-Debug",
+        "generator": "Ninja",
+        "configurationType": "Debug",
+        "inheritEnvironments": [ "msvc_x64_x64" ],
+        "buildRoot": "${projectDir}\\out\\build\\${name}",
+        "installRoot": "${projectDir}\\out\\install\\${name}",
+        "ctestCommandArgs": "",
+        "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake",
+        "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v142"
     }
   ]
 }

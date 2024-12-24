@@ -67,7 +67,7 @@ void SignalClient::on_open() {
 
 void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 	std::cout << "WebSocket recived message" << std::endl;
-	//livekit::SignalRequest resp;
+	livekit::SignalRequest resp;
 	if (std::holds_alternative<wsc::string>(message)) {
 		auto& msg = std::get<wsc::string>(message);
 		std::cout << "WebSocket str received: " << msg.size() << std::endl;

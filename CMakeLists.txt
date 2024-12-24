@@ -15,6 +15,8 @@ if(MSVC)
   # Configure MSVC runtime library settings for Debug and Release builds using MTd
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+
+  message("VCPKG_PLATFORM_TOOLSET=${VCPKG_PLATFORM_TOOLSET}")
 endif()
 
 include(GNUInstallDirs)
