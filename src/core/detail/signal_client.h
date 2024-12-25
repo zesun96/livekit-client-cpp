@@ -24,14 +24,25 @@
 
 #include <memory>
 #include <string>
+#include <future>
 #include <websocketclient.hpp>
 
 namespace livekit {
 namespace core {
 
+class JoinRespone;
+
 class SignalClient {
 private:
 public:
+	enum class SignalConnectionState {
+		CONNECTING,
+		CONNECTED,
+		RECONNECTING,
+		DISCONNECTING,
+		DISCONNECTED,
+	};
+
 	static std::unique_ptr<SignalClient> Create(std::string url, std::string token,
 	                                            SignalOptions option);
 
@@ -52,6 +63,8 @@ private:
 	std::string token_;
 	SignalOptions option_;
 	std::unique_ptr<wsc::WebSocket> wsc_;
+	std::atomic<SignalConnectionState> state_;
+	std::promise<std::string> promise_;
 };
 
 } // namespace core
