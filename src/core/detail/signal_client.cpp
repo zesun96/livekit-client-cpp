@@ -67,13 +67,24 @@ void SignalClient::on_open() {
 
 void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 	std::cout << "WebSocket recived message" << std::endl;
-	livekit::SignalRequest resp;
+	livekit::SignalResponse resp;
 	if (std::holds_alternative<wsc::string>(message)) {
 		auto& msg = std::get<wsc::string>(message);
 		std::cout << "WebSocket str received: " << msg.size() << std::endl;
 	} else if (std::holds_alternative<wsc::binary>(message)) {
 		auto& msg = std::get<wsc::binary>(message);
 		std::cout << "WebSocket binary received: " << msg.size() << std::endl;
+        if (resp.ParseFromArray(msg.data(), msg.size())) {
+			switch (resp.message_case()) {
+			case livekit::SignalResponse::
+				MessageCase::kJoin:
+				promise_.set_value(resp.join().server_version());
+			default:
+				break;
+			}
+        }
+        
+		
 	} else {
 		std::cout << "could not decode websocket message" << std::endl;
 	}

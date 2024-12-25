@@ -30,10 +30,12 @@
 namespace livekit {
 namespace core {
 
+class JoinRespone;
+
 class SignalClient {
 private:
 public:
-	enum SignalConnectionState {
+	enum class SignalConnectionState {
 		CONNECTING,
 		CONNECTED,
 		RECONNECTING,
@@ -62,7 +64,7 @@ private:
 	SignalOptions option_;
 	std::unique_ptr<wsc::WebSocket> wsc_;
 	std::atomic<SignalConnectionState> state_;
-    std::promise<std::string> promise_;
+	std::promise<std::string> promise_;
 };
 
 } // namespace core
