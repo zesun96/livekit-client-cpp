@@ -18,6 +18,7 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "converted_proto.h"
 
 #include <functional>
 
@@ -46,18 +47,19 @@ bool SignalClient::Init() {
 	return true;
 }
 
-bool SignalClient::connect() {
+ProtoJoinResponse SignalClient::connect() {
 	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	wsc_->open(request);
-	std::future<std::string> future = promise_.get_future();
+	std::future<ProtoJoinResponse> future = promise_.get_future();
 	try {
-		std::string response = future.get();
-		std::cout << "Received response: " << response << std::endl;
+		ProtoJoinResponse response = future.get();
+		std::cout << "Received response: " << response.room.name << std::endl;
+		return response;
 	} catch (const std::exception& e) {
 		std::cerr << "Error: " << e.what() << std::endl;
 	}
-	return wsc_->isOpen();
+	return ProtoJoinResponse();
 }
 
 void SignalClient::on_open() {
@@ -78,7 +80,7 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 			switch (resp.message_case()) {
 			case livekit::SignalResponse::
 				MessageCase::kJoin:
-				promise_.set_value(resp.join().server_version());
+				promise_.set_value(from_proto(resp.join()));
 			default:
 				break;
 			}

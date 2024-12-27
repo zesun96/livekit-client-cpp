@@ -21,6 +21,7 @@
 #define _LKC_CORE_ROOM_H_
 
 #include "option/room_option.h"
+#include "protostruct/livekit_rtc_struct.h"
 #include "rtc_engine.h"
 
 #include <memory>
@@ -32,7 +33,7 @@ public:
 	Room();
 	~Room();
 
-	bool connect(std::string url, std::string token, RoomOptions options);
+	ProtoJoinResponse connect(std::string url, std::string token, RoomOptions options);
 
 private:
 	std::unique_ptr<RtcEngine> rtc_engine_;

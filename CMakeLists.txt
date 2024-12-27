@@ -105,6 +105,7 @@ set(
   src/core/room.cpp
   src/core/rtc_engine.cpp
 
+  src/core/detail/converted_proto.cpp
 	src/core/detail/signal_client.cpp
   src/core/detail/internals.cpp
 )

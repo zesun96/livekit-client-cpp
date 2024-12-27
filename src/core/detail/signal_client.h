@@ -21,10 +21,11 @@
 #define _LKC_CORE_DETAIL_SIGNAL_CLIENT_H_
 
 #include "livekit/core/option/signal_option.h"
+#include "livekit/core/protostruct/livekit_rtc_struct.h"
 
+#include <future>
 #include <memory>
 #include <string>
-#include <future>
 #include <websocketclient.hpp>
 
 namespace livekit {
@@ -49,7 +50,7 @@ public:
 	SignalClient(std::string url, std::string token, SignalOptions option);
 	~SignalClient();
 
-	bool connect();
+	ProtoJoinResponse connect();
 
 private:
 	bool Init();
@@ -64,7 +65,7 @@ private:
 	SignalOptions option_;
 	std::unique_ptr<wsc::WebSocket> wsc_;
 	std::atomic<SignalConnectionState> state_;
-	std::promise<std::string> promise_;
+	std::promise<ProtoJoinResponse> promise_;
 };
 
 } // namespace core

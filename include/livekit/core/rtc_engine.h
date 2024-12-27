@@ -21,6 +21,7 @@
 #define _LKC_CORE_RTC_ENGINE_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
+#include "protostruct/livekit_rtc_struct.h"
 
 #include <memory>
 #include <string>
@@ -33,7 +34,7 @@ public:
 	RtcEngine();
 	~RtcEngine();
 
-	bool connect(std::string url, std::string token, EngineOptions options);
+	ProtoJoinResponse connect(std::string url, std::string token, EngineOptions options);
 
 private:
 	std::unique_ptr<SignalClient> signal_client_;
