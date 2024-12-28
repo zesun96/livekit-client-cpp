@@ -17,11 +17,11 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_RTC_ENGINE_H_
-#define _LKC_CORE_RTC_ENGINE_H_
+#ifndef _LKC_CORE_DETAIL_RTC_ENGINE_H_
+#define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
-#include "protostruct/livekit_rtc_struct.h"
+#include "livekit_rtc.pb.h"
 
 #include <memory>
 #include <string>
@@ -34,7 +34,7 @@ public:
 	RtcEngine();
 	~RtcEngine();
 
-	ProtoJoinResponse connect(std::string url, std::string token, EngineOptions options);
+	livekit::JoinResponse connect(std::string url, std::string token, EngineOptions options);
 
 private:
 	std::unique_ptr<SignalClient> signal_client_;

@@ -22,18 +22,20 @@
 
 #include "option/room_option.h"
 #include "protostruct/livekit_rtc_struct.h"
-#include "rtc_engine.h"
 
 #include <memory>
 
 namespace livekit {
 namespace core {
+
+class RtcEngine;
+
 class Room {
 public:
 	Room();
 	~Room();
 
-	ProtoJoinResponse connect(std::string url, std::string token, RoomOptions options);
+	bool connect(std::string url, std::string token, RoomOptions options);
 
 private:
 	std::unique_ptr<RtcEngine> rtc_engine_;
