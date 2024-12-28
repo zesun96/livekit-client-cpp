@@ -15,34 +15,28 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
-#define _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
-
-#include <string>
+#include "peer_transport.h"
 
 namespace livekit {
 namespace core {
-struct ProtoRoom {
-	std::string sid;
-	std::string name;
-};
 
-enum Edition { Standard, Cloud };
+PeerTransport::PeerTransport(livekit::JoinResponse join_response) : join_response_(join_response) {}
 
-struct ServerInfo {
-	Edition edition;
-	std::string version;
-	int32_t protocol;
-	std::string region;
-	std::string node_id;
-	// additional debugging information. sent only if server is in development mode
-	std::string debug_info;
-	std::int32_t agent_protocol;
-};
+PeerTransport::~PeerTransport() {}
 
+bool PeerTransport::Init() {
+	auto& ice_servers = join_response_.ice_servers();
+	for (auto& ice_server : ice_servers) {
+	}
+	return true;
+}
+
+std::unique_ptr<PeerTransport> PeerTransport::Create(livekit::JoinResponse join_response) {
+	auto peer_transport = std::make_unique<PeerTransport>(join_response);
+    if (!peer_transport->Init()) {
+		return nullptr;
+    }
+	return peer_transport;
+}
 } // namespace core
 } // namespace livekit
-
-#endif //

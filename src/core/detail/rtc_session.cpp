@@ -15,34 +15,28 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
-#define _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
-
-#include <string>
+#include "rtc_session.h"
 
 namespace livekit {
 namespace core {
-struct ProtoRoom {
-	std::string sid;
-	std::string name;
-};
 
-enum Edition { Standard, Cloud };
+RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options)
+    : join_response_(join_response), options_(options) {}
 
-struct ServerInfo {
-	Edition edition;
-	std::string version;
-	int32_t protocol;
-	std::string region;
-	std::string node_id;
-	// additional debugging information. sent only if server is in development mode
-	std::string debug_info;
-	std::int32_t agent_protocol;
-};
+RtcSession::~RtcSession() {}
 
-} // namespace core
+bool RtcSession::Init() {
+	return true;
+}
+
+std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
+                                               EngineOptions options) {
+	auto rtc_session = std::make_unique<RtcSession>(join_response, options);
+	if (!rtc_session->Init()) {
+		return nullptr;
+	}
+	return rtc_session;
+}
+
+}
 } // namespace livekit
-
-#endif //

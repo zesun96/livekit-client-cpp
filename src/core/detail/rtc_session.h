@@ -17,11 +17,33 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_PEER_TRANSPORT_H_
-#define _LKC_CORE_PEER_TRANSPORT_H_
+#ifndef _LKC_CORE_DETAIL_RTC_SESSION_H_
+#define _LKC_CORE_DETAIL_RTC_SESSION_H_
+
+#include "livekit/core/option/rtc_engine_option.h"
+#include "peer_transport.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+class RtcSession {
+public:
+	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
+	~RtcSession();
+
+	static std::unique_ptr<RtcSession>
+	Create(livekit::JoinResponse join_response, EngineOptions options);
+
+    bool Init();
+
+private:
+	livekit::JoinResponse join_response_;
+
+    std::unique_ptr<PeerTransport> publisher_pc_;
+	std::unique_ptr<PeerTransport> subscriber_pc_;
+	EngineOptions options_;
+};
+
+}
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_DETAIL_RTC_SESSION_H_

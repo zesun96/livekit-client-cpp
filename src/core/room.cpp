@@ -17,6 +17,7 @@
 
 #include "livekit/core/room.h"
 #include "detail/rtc_engine.h"
+#include "detail/converted_proto.h"
 
 namespace livekit {
 namespace core {
@@ -30,6 +31,10 @@ bool Room::connect(std::string url, std::string token, RoomOptions options) {
     if (join_response.room().name().empty()) {
 		return false;
     }
+    if (join_response.has_server_info()) {
+		server_info_ = from_proto(join_response.server_info());
+    }
+	
 	return true;
 }
 } // namespace core

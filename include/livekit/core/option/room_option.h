@@ -38,6 +38,7 @@ struct RoomOptions {
 	uint32_t join_retries;
 	RoomSdkOptions sdk_options;
 };
+
 } // namespace core
 } // namespace livekit
 

@@ -100,14 +100,17 @@ set(
   src/core/livekit_client.cpp
   src/core/livekit_client_test.cpp
   src/core/local_participant.cpp
-  src/core/peer_transport.cpp
+  
   src/core/remote_participant.cpp
   src/core/room.cpp
 
   src/core/detail/converted_proto.cpp
-  src/core/detail/signal_client.cpp
   src/core/detail/internals.cpp
+  src/core/detail/peer_transport.cpp
   src/core/detail/rtc_engine.cpp
+  src/core/detail/rtc_session.cpp
+  src/core/detail/signal_client.cpp
+
 )
 
 add_library (livekitclient STATIC

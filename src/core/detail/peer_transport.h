@@ -14,3 +14,28 @@
  *See the License for the specific language governing permissions and
  *limitations under the License.
  */
+
+#pragma once
+
+#ifndef _LKC_CORE_DETAIL_PEER_TRANSPORT_H_
+#define _LKC_CORE_DETAIL_PEER_TRANSPORT_H_
+
+#include "livekit_rtc.pb.h"
+
+namespace livekit {
+namespace core {
+class PeerTransport {
+public:
+	PeerTransport(livekit::JoinResponse);
+	~PeerTransport();
+
+	static std::unique_ptr<PeerTransport> Create(livekit::JoinResponse join_response);
+    bool Init();
+
+private:
+	livekit::JoinResponse join_response_;
+};
+}
+} // namespace livekit
+
+#endif //

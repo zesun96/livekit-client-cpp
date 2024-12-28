@@ -29,6 +29,9 @@ namespace core {
 ProtoJoinResponse from_proto(livekit::JoinResponse proto);
 livekit::JoinResponse to_proto(ProtoJoinResponse src);
 
+ServerInfo from_proto(livekit::ServerInfo proto);
+livekit::ServerInfo to_proto(ServerInfo src);
+
 } // namespace core
 } // namespace livekit
 

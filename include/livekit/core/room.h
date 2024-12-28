@@ -39,6 +39,7 @@ public:
 
 private:
 	std::unique_ptr<RtcEngine> rtc_engine_;
+	ServerInfo server_info_;
 };
 } // namespace core
 } // namespace livekit
