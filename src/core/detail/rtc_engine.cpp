@@ -15,31 +15,24 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_RTC_ENGINE_H_
-#define _LKC_CORE_RTC_ENGINE_H_
-
-#include "livekit/core/option/rtc_engine_option.h"
-
-#include <memory>
-#include <string>
+#include "rtc_engine.h"
+#include "internals.h"
+#include "signal_client.h"
 
 namespace livekit {
 namespace core {
-class SignalClient;
-class RtcEngine {
-public:
-	RtcEngine();
-	~RtcEngine();
 
-	bool connect(std::string url, std::string token, EngineOptions options);
+RtcEngine::RtcEngine() {}
 
-private:
-	std::unique_ptr<SignalClient> signal_client_;
-};
+RtcEngine::~RtcEngine() {}
+
+livekit::JoinResponse RtcEngine::connect(std::string url, std::string token,
+                                         EngineOptions options) {
+	signal_client_ = SignalClient::Create(url, token, options.signal_options);
+	livekit::JoinResponse response = signal_client_->connect();
+	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
+	return response;
+}
 
 } // namespace core
 } // namespace livekit
-
-#endif //

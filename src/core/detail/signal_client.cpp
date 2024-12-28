@@ -46,18 +46,18 @@ bool SignalClient::Init() {
 	return true;
 }
 
-bool SignalClient::connect() {
+livekit::JoinResponse SignalClient::connect() {
 	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	wsc_->open(request);
-	std::future<std::string> future = promise_.get_future();
+	std::future<livekit::JoinResponse> future = promise_.get_future();
 	try {
-		std::string response = future.get();
-		std::cout << "Received response: " << response << std::endl;
+		livekit::JoinResponse response = future.get();
+		return response;
 	} catch (const std::exception& e) {
 		std::cerr << "Error: " << e.what() << std::endl;
 	}
-	return wsc_->isOpen();
+	return livekit::JoinResponse();
 }
 
 void SignalClient::on_open() {
@@ -78,7 +78,7 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 			switch (resp.message_case()) {
 			case livekit::SignalResponse::
 				MessageCase::kJoin:
-				promise_.set_value(resp.join().server_version());
+				promise_.set_value(resp.join());
 			default:
 				break;
 			}
@@ -96,6 +96,8 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 
 void SignalClient::on_closed() {
 	std::cout << "WebSocket closed" << std::endl;
+
+    promise_.set_value(livekit::JoinResponse());
 	return;
 }
 

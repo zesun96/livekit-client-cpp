@@ -17,29 +17,18 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_ROOM_H_
-#define _LKC_CORE_ROOM_H_
+#ifndef _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
+#define _LKC_CORE_PROTOSTRUCT_LIVEKIT_MODELS_STRUCT_H_
 
-#include "option/room_option.h"
-#include "protostruct/livekit_rtc_struct.h"
-
-#include <memory>
+#include <string>
 
 namespace livekit {
 namespace core {
-
-class RtcEngine;
-
-class Room {
-public:
-	Room();
-	~Room();
-
-	bool connect(std::string url, std::string token, RoomOptions options);
-
-private:
-	std::unique_ptr<RtcEngine> rtc_engine_;
+struct ProtoRoom {
+	std::string sid;
+	std::string name;
 };
+
 } // namespace core
 } // namespace livekit
 

@@ -16,6 +16,7 @@
  */
 
 #include "livekit/core/room.h"
+#include "detail/rtc_engine.h"
 
 namespace livekit {
 namespace core {
@@ -25,7 +26,10 @@ Room::~Room() {}
 
 bool Room::connect(std::string url, std::string token, RoomOptions options) {
 	EngineOptions engine_options;
-	rtc_engine_->connect(url, token, engine_options);
+	livekit::JoinResponse join_response = rtc_engine_->connect(url, token, engine_options);
+    if (join_response.room().name().empty()) {
+		return false;
+    }
 	return true;
 }
 } // namespace core

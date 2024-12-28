@@ -15,23 +15,16 @@
  *limitations under the License.
  */
 
-#include "livekit/core/rtc_engine.h"
-#include "detail/internals.h"
-#include "detail/signal_client.h"
+#include "converted_proto.h"
 
 namespace livekit {
 namespace core {
-
-RtcEngine::RtcEngine() {}
-
-RtcEngine::~RtcEngine() {}
-
-bool RtcEngine::connect(std::string url, std::string token, EngineOptions options) {
-	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	bool ret = signal_client_->connect();
-	PLOG_DEBUG << "received JoinResponse: " << ret;
-	return true;
+ProtoJoinResponse from_proto(livekit::JoinResponse proto) {
+	ProtoJoinResponse join_response;
+	join_response.room.name = proto.room().name();
+	return join_response;
 }
 
+livekit::JoinResponse to_proto(ProtoJoinResponse src) { return livekit::JoinResponse(); }
 } // namespace core
 } // namespace livekit

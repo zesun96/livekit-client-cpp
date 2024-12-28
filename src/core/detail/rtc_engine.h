@@ -17,29 +17,29 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_ROOM_H_
-#define _LKC_CORE_ROOM_H_
+#ifndef _LKC_CORE_DETAIL_RTC_ENGINE_H_
+#define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
-#include "option/room_option.h"
-#include "protostruct/livekit_rtc_struct.h"
+#include "livekit/core/option/rtc_engine_option.h"
+#include "livekit_rtc.pb.h"
 
 #include <memory>
+#include <string>
 
 namespace livekit {
 namespace core {
-
-class RtcEngine;
-
-class Room {
+class SignalClient;
+class RtcEngine {
 public:
-	Room();
-	~Room();
+	RtcEngine();
+	~RtcEngine();
 
-	bool connect(std::string url, std::string token, RoomOptions options);
+	livekit::JoinResponse connect(std::string url, std::string token, EngineOptions options);
 
 private:
-	std::unique_ptr<RtcEngine> rtc_engine_;
+	std::unique_ptr<SignalClient> signal_client_;
 };
+
 } // namespace core
 } // namespace livekit
 
