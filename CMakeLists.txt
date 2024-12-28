@@ -40,7 +40,7 @@ if (NOT TARGET websocket-client)
 endif()
 
 if(USE_SYSTEM_PROTOBUF)
-	find_package(protobuf CONFIG REQUIRED)
+  find_package(protobuf CONFIG REQUIRED)
 else()
   if (NOT TARGET probobuf)
     add_subdirectory(deps/probobuf EXCLUDE_FROM_ALL)
@@ -80,7 +80,7 @@ target_include_directories(livekit_proto PUBLIC "$<BUILD_INTERFACE:${PROTO_BINAR
 target_include_directories(livekit_proto PUBLIC ${Protobuf_INCLUDE_DIRS})
 
 set(
-	LKC_CORE_SOURCE_FILES
+  LKC_CORE_SOURCE_FILES
 
   src/core/e2ee/e2ee_manager.cpp
   src/core/e2ee/key_provider.cpp
@@ -97,7 +97,7 @@ set(
   src/core/track/remote_video_track.cpp
   src/core/track/video_track.cpp
 
-	src/core/livekit_client.cpp
+  src/core/livekit_client.cpp
   src/core/livekit_client_test.cpp
   src/core/local_participant.cpp
   src/core/peer_transport.cpp
@@ -135,9 +135,9 @@ target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINAR
 
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
-	$<BUILD_INTERFACE:plog::plog>)
+  $<BUILD_INTERFACE:plog::plog>)
 target_link_libraries(livekitclient PRIVATE
-	websocketclient-static)
+  websocketclient-static)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
@@ -147,23 +147,23 @@ if (WIN32)
   # webrtc
   add_definitions(-DWEBRTC_WIN)
   if(MSVC)
-	  add_definitions(-DNOMINMAX)
+    add_definitions(-DNOMINMAX)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-	endif()
+  endif()
 endif()
 
 if(NOT BUILD_EXAMPLES)
-	set(BUILD_EXAMPLES true)
+  set(BUILD_EXAMPLES true)
 endif()
 # examples
 if(BUILD_EXAMPLES)
-	add_subdirectory(examples)
+  add_subdirectory(examples)
 endif()
 
 if(NOT BUILD_TEST)
-	set(BUILD_TEST true)
+  set(BUILD_TEST true)
 endif()
 # test
 if(BUILD_TEST)
-	add_subdirectory(test)
+  add_subdirectory(test)
 endif()
