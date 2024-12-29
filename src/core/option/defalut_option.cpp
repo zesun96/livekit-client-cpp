@@ -15,17 +15,22 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_OPTION_OPTION_H_
-#define _LKC_CORE_OPTION_OPTION_H_
-
-#include "room_option.h"
-#include "rtc_engine_option.h"
-#include "signal_option.h"
+#include "livekit/core/option/option.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+RoomOptions default_room_options() {
+	RoomOptions option;
+	option.adaptive_stream = false;
+	option.auto_subscribe = true;
+	option.dynacast = false;
+	option.join_retries = 3;
+	option.rtc_config.continual_gathering_policy = ContinualGatheringPolicy::GatherContinually;
+	option.rtc_config.ice_transport_type = IceTransportsType::All;
+	option.sdk_options.sdk = "cpp";
+	option.sdk_options.sdk_version = "0.0.1";
+	return option;
+}
+}
 } // namespace livekit
 
-#endif //

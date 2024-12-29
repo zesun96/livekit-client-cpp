@@ -41,6 +41,7 @@ private:
     std::unique_ptr<PeerTransport> publisher_pc_;
 	std::unique_ptr<PeerTransport> subscriber_pc_;
 	EngineOptions options_;
+	std::unique_ptr <PeerTransport::PrivateListener> private_listener_;
 };
 
 }

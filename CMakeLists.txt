@@ -97,10 +97,11 @@ set(
   src/core/track/remote_video_track.cpp
   src/core/track/video_track.cpp
 
+  src/core/option/defalut_option.cpp
+
   src/core/livekit_client.cpp
   src/core/livekit_client_test.cpp
   src/core/local_participant.cpp
-  
   src/core/remote_participant.cpp
   src/core/room.cpp
 
@@ -145,6 +146,9 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 
+if (WIN32)
+  target_link_libraries(livekitclient PRIVATE winmm.lib)
+endif()
 
 if (WIN32)
   # webrtc

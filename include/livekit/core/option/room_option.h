@@ -39,6 +39,8 @@ struct RoomOptions {
 	RoomSdkOptions sdk_options;
 };
 
+RoomOptions default_room_options();
+
 } // namespace core
 } // namespace livekit
 

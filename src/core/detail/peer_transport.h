@@ -22,18 +22,59 @@
 
 #include "livekit_rtc.pb.h"
 
+#include "api/peer_connection_interface.h"
+#include "api/create_peerconnection_factory.h"
+
+
 namespace livekit {
 namespace core {
 class PeerTransport {
 public:
-	PeerTransport(livekit::JoinResponse);
+	class PrivateListener : public webrtc::PeerConnectionObserver {
+		/* Virtual methods inherited from PeerConnectionObserver. */
+	public:
+		void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
+		void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+		void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+		void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+		void OnRenegotiationNeeded() override;
+		void OnIceConnectionChange(
+		    webrtc::PeerConnectionInterface::IceConnectionState newState) override;
+		void
+		OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState newState) override;
+		void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
+		void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override;
+		void OnIceConnectionReceivingChange(bool receiving) override;
+		void OnAddTrack(
+		    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+		    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
+		void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+		void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
+		void OnInterestingUsage(int usagePattern) override;
+	};
+
+public:
+	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config);
 	~PeerTransport();
 
-	static std::unique_ptr<PeerTransport> Create(livekit::JoinResponse join_response);
-    bool Init();
+    bool Init(PrivateListener* privateListener);
 
 private:
-	livekit::JoinResponse join_response_;
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface>
+	create_peer_connection(PrivateListener* privateListener);
+
+private:
+	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config_;
+	// Signaling and worker threads.
+	std::unique_ptr<rtc::Thread> networkThread_;
+	std::unique_ptr<rtc::Thread> signalingThread_;
+	std::unique_ptr<rtc::Thread> workerThread_;
+
+	// PeerConnection factory.
+	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peerConnectionFactory_;
+
+	// PeerConnection instance.
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;
 };
 }
 } // namespace livekit

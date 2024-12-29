@@ -28,6 +28,7 @@
 namespace livekit {
 namespace core {
 
+
 class RtcEngine;
 
 class Room {
@@ -35,12 +36,13 @@ public:
 	Room();
 	~Room();
 
-	bool connect(std::string url, std::string token, RoomOptions options);
+	bool connect(std::string url, std::string token, RoomOptions options = default_room_options());
 
 private:
 	std::unique_ptr<RtcEngine> rtc_engine_;
 	ServerInfo server_info_;
 };
+
 } // namespace core
 } // namespace livekit
 

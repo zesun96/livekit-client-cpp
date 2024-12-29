@@ -23,13 +23,26 @@
 #include "signal_option.h"
 
 #include <stdint.h>
+#include <vector>
 
 namespace livekit {
 namespace core {
+struct IceServer {
+	std::vector<std::string> urls;
+	std::string username;
+	std::string password;
+};
+
+enum class ContinualGatheringPolicy {
+	GatherOnce,
+	GatherContinually,
+};
 
 enum class IceTransportsType { Relay, NoHost, All };
 
 struct RtcConfiguration {
+	std::vector<IceServer> ice_servers;
+	ContinualGatheringPolicy continual_gathering_policy;
 	IceTransportsType ice_transport_type;
 };
 
