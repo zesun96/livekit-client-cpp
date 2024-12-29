@@ -60,6 +60,8 @@ private:
 	void on_closed();
 	void on_error(std::string error);
 
+    bool is_establishing_connection();
+
 private:
 	std::string url_;
 	std::string token_;

@@ -17,32 +17,34 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_DETAIL_RTC_ENGINE_H_
-#define _LKC_CORE_DETAIL_RTC_ENGINE_H_
+#ifndef _LKC_CORE_DETAIL_RTC_SESSION_H_
+#define _LKC_CORE_DETAIL_RTC_SESSION_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
-#include "rtc_session.h"
-#include "livekit_rtc.pb.h"
-
-#include <memory>
-#include <string>
+#include "peer_transport.h"
 
 namespace livekit {
 namespace core {
-class SignalClient;
-class RtcEngine {
+class RtcSession {
 public:
-	RtcEngine();
-	~RtcEngine();
+	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
+	~RtcSession();
 
-	livekit::JoinResponse connect(std::string url, std::string token, EngineOptions options);
+	static std::unique_ptr<RtcSession>
+	Create(livekit::JoinResponse join_response, EngineOptions options);
+
+    bool Init();
 
 private:
-	std::unique_ptr<SignalClient> signal_client_;
-	std::unique_ptr<RtcSession> rtc_session_;
+	livekit::JoinResponse join_response_;
+
+    std::unique_ptr<PeerTransport> publisher_pc_;
+	std::unique_ptr<PeerTransport> subscriber_pc_;
+	EngineOptions options_;
+	std::unique_ptr <PeerTransport::PrivateListener> private_listener_;
 };
 
-} // namespace core
+}
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_DETAIL_RTC_SESSION_H_

@@ -47,6 +47,7 @@ bool SignalClient::Init() {
 }
 
 livekit::JoinResponse SignalClient::connect() {
+	state_ = SignalConnectionState::CONNECTING;
 	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	wsc_->open(request);
@@ -75,13 +76,22 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 		auto& msg = std::get<wsc::binary>(message);
 		std::cout << "WebSocket binary received: " << msg.size() << std::endl;
         if (resp.ParseFromArray(msg.data(), msg.size())) {
-			switch (resp.message_case()) {
-			case livekit::SignalResponse::
-				MessageCase::kJoin:
-				promise_.set_value(resp.join());
-			default:
-				break;
-			}
+            if (state_ != SignalConnectionState::CONNECTED) {
+				switch (resp.message_case()) {
+				case livekit::SignalResponse::MessageCase::kJoin:
+					state_ = SignalConnectionState::CONNECTED;
+					promise_.set_value(resp.join());
+					break;
+				case livekit::SignalResponse::MessageCase::kLeave:
+					if (is_establishing_connection()) {
+						promise_.set_value(livekit::JoinResponse());
+                    }
+					break;
+				default:
+					break;
+				}
+            }
+
         }
         
 		
@@ -96,20 +106,28 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 
 void SignalClient::on_closed() {
 	std::cout << "WebSocket closed" << std::endl;
-
-    promise_.set_value(livekit::JoinResponse());
 	return;
 }
 
 void SignalClient::on_error(std::string error) {
 	std::cout << "WebSocket error: " << error << std::endl;
+	if (state_ != SignalConnectionState::CONNECTED) {
+		state_ = SignalConnectionState::DISCONNECTED;
+		promise_.set_value(livekit::JoinResponse());
+	}
 	return;
+}
+
+bool SignalClient::is_establishing_connection() {
+	return (state_ == SignalConnectionState::CONNECTING || state_ == SignalConnectionState::RECONNECTING);
 }
 
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,
                                                    SignalOptions option) {
 	auto signal_client = std::make_unique<SignalClient>(url, token, option);
-	signal_client->Init();
+	if (!signal_client->Init()) {
+		return nullptr;
+	}
 	return signal_client;
 }
 

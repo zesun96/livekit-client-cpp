@@ -29,6 +29,19 @@ struct ProtoRoom {
 	std::string name;
 };
 
+enum Edition { Standard, Cloud };
+
+struct ServerInfo {
+	Edition edition;
+	std::string version;
+	int32_t protocol;
+	std::string region;
+	std::string node_id;
+	// additional debugging information. sent only if server is in development mode
+	std::string debug_info;
+	std::int32_t agent_protocol;
+};
+
 } // namespace core
 } // namespace livekit
 
