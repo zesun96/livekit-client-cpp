@@ -1,6 +1,8 @@
 # livekit-client-cpp-sdk
 
-C++ client SDK for LiveKit in C++17.
+C++ client SDK for LiveKit in C++20.
+
+Because webrtc requires C++20.
 
 ## Support Platforms
 
