@@ -28,10 +28,11 @@ endif()
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(WEBRTC_BUILD_TYPE "debug")
 else()
-  set(WEBRTC_BUILD_TYP "release")
+  set(WEBRTC_BUILD_TYPE "release")
 endif()
 
 set(WEBRTC_DOWNLOAD_URL "${WEBRTC_HOST_URL}/webrtc-${WEBRTC_PLATFORM}-${WEBRTC_ARCH}-${WEBRTC_BUILD_TYPE}.zip")
+set(WEBRTC_DIR "${CMAKE_SOURCE_DIR}/deps/libwebrtc/${WEBRTC_PLATFORM}_${WEBRTC_ARCH}_${WEBRTC_BUILD_TYPE}")
 message(STATUS "WEBRTC_DOWNLOAD_URL: ${WEBRTC_DOWNLOAD_URL}")
 
 # download libwebrtc
