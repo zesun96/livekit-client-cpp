@@ -25,7 +25,6 @@
 #include "api/peer_connection_interface.h"
 #include "api/create_peerconnection_factory.h"
 
-
 namespace livekit {
 namespace core {
 class PeerTransport {
@@ -54,7 +53,7 @@ public:
 	};
 
 public:
-	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config);
+	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config, webrtc::PeerConnectionFactoryInterface* factory);
 	~PeerTransport();
 
     bool Init(PrivateListener* privateListener);
@@ -66,12 +65,13 @@ private:
 private:
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config_;
 	// Signaling and worker threads.
-	std::unique_ptr<rtc::Thread> networkThread_;
-	std::unique_ptr<rtc::Thread> signalingThread_;
-	std::unique_ptr<rtc::Thread> workerThread_;
-
+	std::unique_ptr<rtc::Thread> network_thread_;
+	std::unique_ptr<rtc::Thread> signaling_thread_;
+	std::unique_ptr<rtc::Thread> worker_thread_;
+	rtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
+	webrtc::TaskQueueFactory* task_queue_factory_;
 	// PeerConnection factory.
-	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peerConnectionFactory_;
+	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
 
 	// PeerConnection instance.
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;

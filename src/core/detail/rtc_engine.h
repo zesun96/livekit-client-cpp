@@ -21,7 +21,7 @@
 #define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
-#include "rtc_session.h"
+//#include "rtc_session.h"
 #include "livekit_rtc.pb.h"
 
 #include <memory>
@@ -29,6 +29,9 @@
 
 namespace livekit {
 namespace core {
+
+class RtcSession;
+
 class SignalClient;
 class RtcEngine {
 public:

@@ -20,11 +20,12 @@
 #include "api/peer_connection_interface.h"
 
 namespace {
-webrtc::PeerConnectionInterface::RTCConfiguration
-make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineOptions options) {
-	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config{};
 
-    for (auto& ice_server : options.rtc_config.ice_servers) {
+static webrtc::PeerConnectionInterface::RTCConfiguration
+make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineOptions options) {
+	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
+
+	   for (auto& ice_server : options.rtc_config.ice_servers) {
 		webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
 		rtc_ice_server.username = ice_server.username.c_str();
 		rtc_ice_server.password = ice_server.password.c_str();
@@ -34,25 +35,26 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 		rtc_config.servers.push_back(rtc_ice_server);
 	}
 
-	for (auto& ice_server : join_response.ice_servers()) {
+	 for (auto& ice_server : join_response.ice_servers()) {
 		webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
 		rtc_ice_server.username = ice_server.username().c_str();
 		rtc_ice_server.password = ice_server.credential().c_str();
 		for (auto url : ice_server.urls()) {
 			rtc_ice_server.urls.emplace_back(url.c_str());
-        }	
+	       }
 		rtc_config.servers.push_back(rtc_ice_server);
-    }
+	   }
 
-     rtc_config.continual_gathering_policy =
+	 rtc_config.continual_gathering_policy =
 	    static_cast<webrtc::PeerConnectionInterface::ContinualGatheringPolicy>(
 	        options.rtc_config.continual_gathering_policy);
 
-	rtc_config.type = static_cast<webrtc::PeerConnectionInterface::IceTransportsType>(
-	     options.rtc_config.ice_transport_type);
+	 rtc_config.type = static_cast<webrtc::PeerConnectionInterface::IceTransportsType>(
+	      options.rtc_config.ice_transport_type);
 
 	return rtc_config;
 }
+
 }
 
 namespace livekit {
@@ -66,12 +68,13 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 RtcSession::~RtcSession() {}
 
 bool RtcSession::Init() {
-	auto rtc_config = make_rtc_config_join(join_response_, options_);
-	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config);
+	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config =
+	    make_rtc_config_join(join_response_, options_);
+	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
 	if (publisher_pc_->Init(private_listener_.get())) {
 		return false;
     }
-	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config);
+	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
 	if (subscriber_pc_->Init(private_listener_.get())) {
         return false;
 	}
