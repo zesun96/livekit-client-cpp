@@ -16,6 +16,7 @@
  */
 
 #include "rtc_engine.h"
+#include "rtc_session.h"
 #include "internals.h"
 #include "signal_client.h"
 

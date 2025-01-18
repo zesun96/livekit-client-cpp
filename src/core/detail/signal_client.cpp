@@ -26,7 +26,11 @@ namespace core {
 
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
     : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED) {
-	wsc_ = std::make_unique<wsc::WebSocket>();
+	wsc::WebSocketConfiguration ws_cfg;
+	ws_cfg.connectionTimeout = std::chrono::milliseconds(1000);
+	wsc_ = std::make_unique<wsc::WebSocket>(ws_cfg);
+
+	return;
 }
 
 SignalClient::~SignalClient() { wsc_->close(); }
@@ -92,9 +96,7 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 				}
             }
 
-        }
-        
-		
+        }	
 	} else {
 		std::cout << "could not decode websocket message" << std::endl;
 	}

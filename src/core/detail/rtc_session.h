@@ -22,6 +22,7 @@
 
 #include "livekit/core/option/rtc_engine_option.h"
 #include "peer_transport.h"
+#include "livekit_rtc.pb.h"
 
 namespace livekit {
 namespace core {

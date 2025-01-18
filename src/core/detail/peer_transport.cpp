@@ -14,7 +14,6 @@
  *See the License for the specific language governing permissions and
  *limitations under the License.
  */
-
 #include "peer_transport.h"
 
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
@@ -23,7 +22,8 @@
 #include <api/video_codecs/builtin_video_decoder_factory.h>
 #include <api/video_codecs/builtin_video_encoder_factory.h>
 #include <rtc_base/ssl_adapter.h>
-
+#include "api/rtc_event_log/rtc_event_log_factory.h"
+#include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_decoder_factory_template.h"
 #include "api/video_codecs/video_decoder_factory_template_dav1d_adapter.h"
@@ -40,8 +40,50 @@
 namespace livekit {
 namespace core {
 
-PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config)
-    : rtc_config_(rtc_config) {}
+PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config,
+                             webrtc::PeerConnectionFactoryInterface* factory)
+    : rtc_config_(rtc_config) {
+	if (factory == nullptr) {
+		this->network_thread_ = rtc::Thread::CreateWithSocketServer();
+		this->signaling_thread_ = rtc::Thread::Create();
+		this->worker_thread_ = rtc::Thread::Create();
+
+		this->network_thread_->SetName("network_thread", &network_thread_);
+		this->signaling_thread_->SetName("signaling_thread", &signaling_thread_);
+		this->worker_thread_->SetName("worker_thread", &worker_thread_);
+
+		if (!this->network_thread_->Start() || !this->signaling_thread_->Start() ||
+		    !this->worker_thread_->Start()) {
+			throw("thread start errored");
+		}
+
+        webrtc::PeerConnectionFactoryDependencies dependencies;
+		dependencies.network_thread = this->network_thread_.get();
+		dependencies.worker_thread = this->worker_thread_.get();
+		dependencies.signaling_thread = this->signaling_thread_.get();
+		dependencies.socket_factory = this->network_thread_->socketserver();
+		dependencies.task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
+		//dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
+		//dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
+
+        this->audio_device_ = this->worker_thread_->BlockingCall([&] {
+			return webrtc::AudioDeviceModule::Create(
+			    webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio, dependencies.task_queue_factory.get());
+		});
+
+        //dependencies.adm = audio_device_;
+
+		this->pc_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
+
+		task_queue_factory_ = dependencies.task_queue_factory.get();
+	} else {
+		this->pc_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(factory);
+    }
+
+    if (this->pc_factory_.get() == nullptr) {
+		throw("peerconnect factory errored");
+	}
+}
 
 PeerTransport::~PeerTransport() {}
 
@@ -52,7 +94,7 @@ bool PeerTransport::Init(PrivateListener* privateListener) {
 
 rtc::scoped_refptr<webrtc::PeerConnectionInterface>
 PeerTransport::create_peer_connection(PrivateListener* privateListener) {
-	return this->peerConnectionFactory_->CreatePeerConnection(rtc_config_, nullptr, nullptr,
+	return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr,
 	                                                         privateListener);
 }
 
