@@ -21,7 +21,7 @@
 
 
 namespace {
-livekit::core::EngineOptions make_engine_config(livekit::core::RoomOptions room_options) {
+static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOptions room_options) {
 	livekit::core::EngineOptions engine_options;
 
     engine_options.join_retries = room_options.join_retries;
