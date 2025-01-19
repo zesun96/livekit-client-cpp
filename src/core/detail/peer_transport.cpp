@@ -178,12 +178,6 @@ void PeerTransport::PrivateListener::OnIceConnectionReceivingChange(bool /*recei
  * Triggered when the ICE connection receiving error.
  */
 void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& address, int port,
-                                                         const std::string& url,
-                         int error_code, const std::string& error_text) {}
-/**
- * Triggered when the ICE connection receiving error.
- */
-void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& address, int port,
                                                          const std::string& url, int error_code,
                                                          const std::string& error_text) {}
 /**

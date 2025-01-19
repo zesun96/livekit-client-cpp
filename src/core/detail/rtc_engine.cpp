@@ -16,10 +16,9 @@
  */
 
 #include "rtc_engine.h"
-#include "rtc_session.h"
 #include "internals.h"
+#include "rtc_session.h"
 #include "signal_client.h"
-
 
 namespace livekit {
 namespace core {
@@ -34,9 +33,9 @@ livekit::JoinResponse RtcEngine::connect(std::string url, std::string token,
 	livekit::JoinResponse response = signal_client_->connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
 	if (response.has_room()) {
-		rtc_session_ = RtcSession::Create(response, options);	
-    }
-	
+		rtc_session_ = RtcSession::Create(response, options);
+	}
+
 	return response;
 }
 

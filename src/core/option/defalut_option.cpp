@@ -31,6 +31,5 @@ RoomOptions default_room_options() {
 	option.sdk_options.sdk_version = "0.0.1";
 	return option;
 }
-}
+} // namespace core
 } // namespace livekit
-

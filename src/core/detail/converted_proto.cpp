@@ -27,7 +27,6 @@ ProtoJoinResponse from_proto(livekit::JoinResponse proto) {
 
 livekit::JoinResponse to_proto(ProtoJoinResponse src) { return livekit::JoinResponse(); }
 
-
 ServerInfo from_proto(livekit::ServerInfo proto) {
 	ServerInfo server_info;
 	server_info.node_id = proto.node_id();
