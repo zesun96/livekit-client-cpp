@@ -22,8 +22,8 @@
 
 #include "livekit_rtc.pb.h"
 
-#include "api/peer_connection_interface.h"
 #include "api/create_peerconnection_factory.h"
+#include "api/peer_connection_interface.h"
 
 namespace livekit {
 namespace core {
@@ -33,7 +33,8 @@ public:
 		/* Virtual methods inherited from PeerConnectionObserver. */
 	public:
 		void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
-		void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
+		void
+		OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
 		void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 		void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 		void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
@@ -56,10 +57,11 @@ public:
 	};
 
 public:
-	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config, webrtc::PeerConnectionFactoryInterface* factory);
+	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config,
+	              webrtc::PeerConnectionFactoryInterface* factory);
 	~PeerTransport();
 
-    bool Init(PrivateListener* privateListener);
+	bool Init(PrivateListener* privateListener);
 
 private:
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface>
@@ -79,7 +81,7 @@ private:
 	// PeerConnection instance.
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;
 };
-}
+} // namespace core
 } // namespace livekit
 
 #endif //
