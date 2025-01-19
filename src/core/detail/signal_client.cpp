@@ -79,8 +79,8 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 	} else if (std::holds_alternative<wsc::binary>(message)) {
 		auto& msg = std::get<wsc::binary>(message);
 		std::cout << "WebSocket binary received: " << msg.size() << std::endl;
-        if (resp.ParseFromArray(msg.data(), msg.size())) {
-            if (state_ != SignalConnectionState::CONNECTED) {
+		if (resp.ParseFromArray(msg.data(), msg.size())) {
+			if (state_ != SignalConnectionState::CONNECTED) {
 				switch (resp.message_case()) {
 				case livekit::SignalResponse::MessageCase::kJoin:
 					state_ = SignalConnectionState::CONNECTED;
@@ -89,19 +89,17 @@ void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 				case livekit::SignalResponse::MessageCase::kLeave:
 					if (is_establishing_connection()) {
 						promise_.set_value(livekit::JoinResponse());
-                    }
+					}
 					break;
 				default:
 					break;
 				}
-            }
-
-        }	
+			}
+		}
 	} else {
 		std::cout << "could not decode websocket message" << std::endl;
 	}
 	if (state_ != SignalConnectionState::CONNECTED) {
-
 	}
 	return;
 }
@@ -121,7 +119,8 @@ void SignalClient::on_error(std::string error) {
 }
 
 bool SignalClient::is_establishing_connection() {
-	return (state_ == SignalConnectionState::CONNECTING || state_ == SignalConnectionState::RECONNECTING);
+	return (state_ == SignalConnectionState::CONNECTING ||
+	        state_ == SignalConnectionState::RECONNECTING);
 }
 
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,

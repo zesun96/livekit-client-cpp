@@ -21,8 +21,8 @@
 #define _LKC_CORE_DETAIL_RTC_SESSION_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
-#include "peer_transport.h"
 #include "livekit_rtc.pb.h"
+#include "peer_transport.h"
 
 namespace livekit {
 namespace core {
@@ -31,30 +31,19 @@ public:
 	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
 	~RtcSession();
 
-	static std::unique_ptr<RtcSession>
-	Create(livekit::JoinResponse join_response, EngineOptions options);
+	static std::unique_ptr<RtcSession> Create(livekit::JoinResponse join_response,
+	                                          EngineOptions options);
 
-    bool Init();
-
-private:
-	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
-
-   void OnIceCandidateError(const std::string& address, int port, const std::string& url,
-	                         int error_code, const std::string& error_text) override;
-
-	void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
-
-	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
-
-	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+	bool Init();
 
 private:
 	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
 
-   void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+	void OnIceCandidateError(const std::string& address, int port, const std::string& url,
 	                         int error_code, const std::string& error_text) override;
 
-	void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
+	void
+	OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
 
 	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
 
@@ -63,12 +52,12 @@ private:
 private:
 	livekit::JoinResponse join_response_;
 
-    std::unique_ptr<PeerTransport> publisher_pc_;
+	std::unique_ptr<PeerTransport> publisher_pc_;
 	std::unique_ptr<PeerTransport> subscriber_pc_;
 	EngineOptions options_;
 };
 
-}
+} // namespace core
 } // namespace livekit
 
 #endif // _LKC_CORE_DETAIL_RTC_SESSION_H_
