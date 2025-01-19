@@ -146,7 +146,7 @@ target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
   $<BUILD_INTERFACE:plog::plog>)
 #target_link_libraries(livekitclient PRIVATE
-#  websocketclient-static)
+#  $<BUILD_INTERFACE:websocketclient-static>)
 target_link_libraries(livekitclient PRIVATE
   $<BUILD_INTERFACE:websocketclient>)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)

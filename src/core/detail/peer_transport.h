@@ -33,6 +33,7 @@ public:
 		/* Virtual methods inherited from PeerConnectionObserver. */
 	public:
 		void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
+		void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
 		void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 		void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 		void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
@@ -44,6 +45,8 @@ public:
 		void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
 		void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override;
 		void OnIceConnectionReceivingChange(bool receiving) override;
+		void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+		                         int error_code, const std::string& error_text) override;
 		void OnAddTrack(
 		    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
 		    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;

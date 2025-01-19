@@ -108,6 +108,14 @@ void PeerTransport::PrivateListener::OnSignalingChange(
 }
 
 /**
+ * Triggered when the ConnectionState changed.
+ */
+void PeerTransport::PrivateListener
+    ::OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
+
+}
+
+/**
  * Triggered when media is received on a new stream from remote peer.
  */
 void PeerTransport::PrivateListener::OnAddStream(
@@ -175,6 +183,12 @@ void PeerTransport::PrivateListener::OnIceCandidatesRemoved(
  */
 void PeerTransport::PrivateListener::OnIceConnectionReceivingChange(bool /*receiving*/) {}
 
+/**
+ * Triggered when the ICE connection receiving error.
+ */
+void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& address, int port,
+                                                         const std::string& url,
+                         int error_code, const std::string& error_text) {}
 /**
  * Triggered when a receiver and its track are created.
  *
