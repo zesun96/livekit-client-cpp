@@ -49,6 +49,18 @@ private:
 	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
 
 private:
+	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
+
+   void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+	                         int error_code, const std::string& error_text) override;
+
+	void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
+
+	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+
+	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+
+private:
 	livekit::JoinResponse join_response_;
 
     std::unique_ptr<PeerTransport> publisher_pc_;
