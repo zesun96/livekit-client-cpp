@@ -16,12 +16,6 @@
  */
 #include "peer_transport.h"
 
-#include <api/audio_codecs/builtin_audio_decoder_factory.h>
-#include <api/audio_codecs/builtin_audio_encoder_factory.h>
-#include <api/create_peerconnection_factory.h>
-#include <api/video_codecs/builtin_video_decoder_factory.h>
-#include <api/video_codecs/builtin_video_encoder_factory.h>
-#include <rtc_base/ssl_adapter.h>
 #include "api/rtc_event_log/rtc_event_log_factory.h"
 #include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
@@ -36,6 +30,12 @@
 #include "api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h"
 #include "api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h"
 #include "api/video_codecs/video_encoder_factory_template_open_h264_adapter.h"
+#include <api/audio_codecs/builtin_audio_decoder_factory.h>
+#include <api/audio_codecs/builtin_audio_encoder_factory.h>
+#include <api/create_peerconnection_factory.h>
+#include <api/video_codecs/builtin_video_decoder_factory.h>
+#include <api/video_codecs/builtin_video_encoder_factory.h>
+#include <rtc_base/ssl_adapter.h>
 
 namespace livekit {
 namespace core {
@@ -57,30 +57,31 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration r
 			throw("thread start errored");
 		}
 
-        webrtc::PeerConnectionFactoryDependencies dependencies;
+		webrtc::PeerConnectionFactoryDependencies dependencies;
 		dependencies.network_thread = this->network_thread_.get();
 		dependencies.worker_thread = this->worker_thread_.get();
 		dependencies.signaling_thread = this->signaling_thread_.get();
 		dependencies.socket_factory = this->network_thread_->socketserver();
 		dependencies.task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
-		//dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
-		//dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
+		// dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
+		// dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
 
-        this->audio_device_ = this->worker_thread_->BlockingCall([&] {
+		this->audio_device_ = this->worker_thread_->BlockingCall([&] {
 			return webrtc::AudioDeviceModule::Create(
-			    webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio, dependencies.task_queue_factory.get());
+			    webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio,
+			    dependencies.task_queue_factory.get());
 		});
 
-        //dependencies.adm = audio_device_;
+		// dependencies.adm = audio_device_;
 
 		this->pc_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
 
 		task_queue_factory_ = dependencies.task_queue_factory.get();
 	} else {
 		this->pc_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(factory);
-    }
+	}
 
-    if (this->pc_factory_.get() == nullptr) {
+	if (this->pc_factory_.get() == nullptr) {
 		throw("peerconnect factory errored");
 	}
 }
@@ -94,8 +95,7 @@ bool PeerTransport::Init(PrivateListener* privateListener) {
 
 rtc::scoped_refptr<webrtc::PeerConnectionInterface>
 PeerTransport::create_peer_connection(PrivateListener* privateListener) {
-	return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr,
-	                                                         privateListener);
+	return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr, privateListener);
 }
 
 /* PeerConnection::PrivateListener */
@@ -104,42 +104,36 @@ PeerTransport::create_peer_connection(PrivateListener* privateListener) {
  * Triggered when the SignalingState changed.
  */
 void PeerTransport::PrivateListener::OnSignalingChange(
-    webrtc::PeerConnectionInterface::SignalingState newState) {
-}
+    webrtc::PeerConnectionInterface::SignalingState newState) {}
 
 /**
  * Triggered when the ConnectionState changed.
  */
-void PeerTransport::PrivateListener
-    ::OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
-
-}
+void PeerTransport::PrivateListener ::OnConnectionChange(
+    webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
 
 /**
  * Triggered when media is received on a new stream from remote peer.
  */
 void PeerTransport::PrivateListener::OnAddStream(
-    rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {
-}
+    rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {}
 
 /**
  * Triggered when a remote peer closes a stream.
  */
 void PeerTransport::PrivateListener::OnRemoveStream(
-    rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {
-}
+    rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {}
 
 /**
  * Triggered when a remote peer opens a data channel.
  */
 void PeerTransport::PrivateListener::OnDataChannel(
-    rtc::scoped_refptr<webrtc::DataChannelInterface> /*dataChannel*/) {
-}
+    rtc::scoped_refptr<webrtc::DataChannelInterface> /*dataChannel*/) {}
 
 /**
  * Triggered when renegotiation is needed. For example, an ICE restart has begun.
  */
-void PeerTransport::PrivateListener::OnRenegotiationNeeded() { }
+void PeerTransport::PrivateListener::OnRenegotiationNeeded() {}
 
 /**
  * Triggered any time the IceConnectionState changes.
@@ -150,15 +144,13 @@ void PeerTransport::PrivateListener::OnRenegotiationNeeded() { }
  * state, so it may be "failed" if DTLS fails while ICE succeeds.
  */
 void PeerTransport::PrivateListener::OnIceConnectionChange(
-    webrtc::PeerConnectionInterface::IceConnectionState newState) {
-}
+    webrtc::PeerConnectionInterface::IceConnectionState newState) {}
 
 /**
  * Triggered any time the IceGatheringState changes.
  */
 void PeerTransport::PrivateListener::OnIceGatheringChange(
-    webrtc::PeerConnectionInterface::IceGatheringState newState) {
-}
+    webrtc::PeerConnectionInterface::IceGatheringState newState) {}
 
 /**
  * Triggered when a new ICE candidate has been gathered.
@@ -175,8 +167,7 @@ void PeerTransport::PrivateListener::OnIceCandidate(
  * Triggered when the ICE candidates have been removed.
  */
 void PeerTransport::PrivateListener::OnIceCandidatesRemoved(
-    const std::vector<cricket::Candidate>& /*candidates*/) {
-}
+    const std::vector<cricket::Candidate>& /*candidates*/) {}
 
 /**
  * Triggered when the ICE connection receiving status changes.
@@ -190,6 +181,12 @@ void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& addr
                                                          const std::string& url,
                          int error_code, const std::string& error_text) {}
 /**
+ * Triggered when the ICE connection receiving error.
+ */
+void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& address, int port,
+                                                         const std::string& url, int error_code,
+                                                         const std::string& error_text) {}
+/**
  * Triggered when a receiver and its track are created.
  *
  * Note: This is called with both Plan B and Unified Plan semantics. Unified
@@ -198,8 +195,7 @@ void PeerTransport::PrivateListener::OnIceCandidateError(const std::string& addr
  */
 void PeerTransport::PrivateListener::OnAddTrack(
     rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& /*streams*/) {
-}
+    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& /*streams*/) {}
 
 /**
  * Triggered when signaling indicates a transceiver will be receiving
@@ -215,8 +211,7 @@ void PeerTransport::PrivateListener::OnAddTrack(
  *   https://w3c.github.io/webrtc-pc/#set-description
  */
 void PeerTransport::PrivateListener::OnTrack(
-    rtc::scoped_refptr<webrtc::RtpTransceiverInterface> /*transceiver*/) {
-}
+    rtc::scoped_refptr<webrtc::RtpTransceiverInterface> /*transceiver*/) {}
 
 /**
  * Triggered when signaling indicates that media will no longer be received on a
@@ -229,8 +224,7 @@ void PeerTransport::PrivateListener::OnTrack(
  *   https://w3c.github.io/webrtc-pc/#process-remote-track-removal
  */
 void PeerTransport::PrivateListener::OnRemoveTrack(
-    rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/) {
-}
+    rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/) {}
 
 /**
  * Triggered when an interesting usage is detected by WebRTC.
