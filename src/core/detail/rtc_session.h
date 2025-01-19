@@ -26,7 +26,7 @@
 
 namespace livekit {
 namespace core {
-class RtcSession {
+class RtcSession : public PeerTransport::PrivateListener {
 public:
 	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
 	~RtcSession();
@@ -37,12 +37,23 @@ public:
     bool Init();
 
 private:
+	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
+
+   void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+	                         int error_code, const std::string& error_text) override;
+
+	void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
+
+	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+
+	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+
+private:
 	livekit::JoinResponse join_response_;
 
     std::unique_ptr<PeerTransport> publisher_pc_;
 	std::unique_ptr<PeerTransport> subscriber_pc_;
 	EngineOptions options_;
-	std::unique_ptr <PeerTransport::PrivateListener> private_listener_;
 };
 
 }

@@ -62,7 +62,6 @@ namespace core {
 
 RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options)
     : join_response_(join_response), options_(options) {
-	private_listener_ = std::make_unique<PeerTransport::PrivateListener>();
 }
 
 RtcSession::~RtcSession() {}
@@ -71,11 +70,11 @@ bool RtcSession::Init() {
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config =
 	    make_rtc_config_join(join_response_, options_);
 	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (publisher_pc_->Init(private_listener_.get())) {
+	if (publisher_pc_->Init(this)) {
 		return false;
     }
 	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (subscriber_pc_->Init(private_listener_.get())) {
+	if (subscriber_pc_->Init(this)) {
         return false;
 	}
 	return true;
@@ -89,6 +88,18 @@ std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_respon
 	}
 	return rtc_session;
 }
+
+void RtcSession::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {}
+
+void RtcSession::OnIceCandidateError(const std::string& address, int port, const std::string& url,
+                                     int error_code, const std::string& error_text) {}
+
+void RtcSession::OnConnectionChange(
+    webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
+
+void RtcSession::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+
+void RtcSession::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
 
 }
 } // namespace livekit
