@@ -5,10 +5,6 @@
 	path = deps/plog
 	url = https://github.com/SergiusTheBest/plog.git
 	shallow = true
-[submodule "deps/websocket-client"]
-	path = deps/websocket-client
-	url = https://github.com/zesun96/websocket-client.git
-	shallow = true
 [submodule "deps/nlohmann_json"]
 	path = deps/nlohmann_json
 	url = https://github.com/nlohmann/json.git

@@ -39,8 +39,22 @@ endif()
 if (NOT TARGET plog)
     add_subdirectory(deps/plog EXCLUDE_FROM_ALL)
 endif()
-if (NOT TARGET websocket-client)
-    add_subdirectory(deps/websocket-client EXCLUDE_FROM_ALL)
+
+find_package(libwebsockets CONFIG REQUIRED)
+
+if (WIN32)
+  if (DEFINED VCPKG_CMAKE_FIND_ROOT_PATH)
+    list(GET VCPKG_CMAKE_FIND_ROOT_PATH 0 FIRST_VCPKG_DEBUG_ROOT)
+    list(GET VCPKG_CMAKE_FIND_ROOT_PATH 1 FIRST_VCPKG_ROOT)
+    set(LIBWEBSOCKETS_LIBRARIES
+      optimized ${FIRST_VCPKG_ROOT}/lib/websockets.lib
+      debug ${FIRST_VCPKG_DEBUG_ROOT}/lib/websockets.lib
+    )
+  else()
+    SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
+  endif()
+else()
+  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 endif()
 
 if(USE_SYSTEM_PROTOBUF)
@@ -63,9 +77,11 @@ else()
   endif()
 endif()
 
+
 message(STATUS "libwebrtc source dir: ${libwebrtc_SOURCE_DIR}")
 message(STATUS "plog source dir: ${plog_SOURCE_DIR}")
-message(STATUS "websocket-client source dir: ${websocket-client_SOURCE_DIR}")
+message(STATUS "libwebsockets include dir: ${LIBWEBSOCKETS_INCLUDE_DIRS}")
+message(STATUS "libwebsockets lib: ${LIBWEBSOCKETS_LIBRARIES}")
 message(STATUS "protobuf include dir: ${PROTOBUF_INCLUDE_DIRS}")
 message(STATUS "protobuf libraries: ${PROTOBUF_LIBRARIES}")
 
@@ -138,21 +154,18 @@ link_directories(${libwebrtc_SOURCE_DIR}/lib)
 
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
 target_include_directories(livekitclient PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_include_directories(livekitclient PRIVATE ${websocket-client_SOURCE_DIR}/include)
+target_include_directories(livekitclient PRIVATE ${LIBWEBSOCKETS_INCLUDE_DIRS}/include)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
   $<BUILD_INTERFACE:plog::plog>)
-#target_link_libraries(livekitclient PRIVATE
-#  $<BUILD_INTERFACE:websocketclient-static>)
-target_link_libraries(livekitclient PRIVATE
-  $<BUILD_INTERFACE:websocketclient>)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
+target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
 
 if (WIN32)
   target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib)
