@@ -27,7 +27,9 @@
 #include <future>
 #include <memory>
 #include <string>
-#include <websocketclient.hpp>
+#include <memory>
+#include <mutex>
+//#include <websocketclient.hpp>
 
 namespace livekit {
 namespace core {
@@ -56,7 +58,7 @@ public:
 private:
 	bool Init();
 	void on_open();
-	void on_message(std::variant<wsc::binary, wsc::string> message);
+	//void on_message(std::variant<wsc::binary, wsc::string> message);
 	void on_closed();
 	void on_error(std::string error);
 
@@ -66,7 +68,8 @@ private:
 	std::string url_;
 	std::string token_;
 	SignalOptions option_;
-	std::unique_ptr<wsc::WebSocket> wsc_;
+	mutable std::mutex lock_;
+	//std::unique_ptr<wsc::WebSocket> wsc_;
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
 };
