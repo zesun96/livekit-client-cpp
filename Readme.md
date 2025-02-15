@@ -24,7 +24,7 @@ Because webrtc requires C++20.
 
 - [livekit-protocol](https://github.com/livekit/protocol)(as submodule by default)
 - [plog](https://github.com/SergiusTheBest/plog) (as submodule by default)
-- [websocket-client](https://github.com/zesun96/websocket-client) (as submodule by default)
+- [libwebsockets](https://github.com/warmcat/libwebsockets)
 - [libwebrtc](https://github.com/livekit/rust-sdks/releases) (cmake FetchContent by default)
 - [protobuf](https://github.com/protocolbuffers/protobuf) (cmake find_package by default)
 - [nlohmann_json](https://github.com/nlohmann/json) (as submodule by default)
@@ -40,7 +40,7 @@ See [examples](./examples/)
 - [protobuf](https://github.com/protocolbuffers/protobuf)
 - [nlohmann_json](https://github.com/nlohmann/json)
 - [plog](https://github.com/SergiusTheBest/plog)
-- [websocket-client](https://github.com/zesun96/websocket-client)
+- [libwebsockets](https://github.com/warmcat/libwebsockets)
 - [vcpkg](https://github.com/livekit/protocol)
 
 ## License
