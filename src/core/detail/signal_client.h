@@ -23,13 +23,12 @@
 #include "livekit/core/option/signal_option.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "websocket_client.h"
 
 #include <future>
 #include <memory>
-#include <string>
-#include <memory>
 #include <mutex>
-//#include <websocketclient.hpp>
+#include <string>
 
 namespace livekit {
 namespace core {
@@ -58,7 +57,7 @@ public:
 private:
 	bool Init();
 	void on_open();
-	//void on_message(std::variant<wsc::binary, wsc::string> message);
+	// void on_message(std::variant<wsc::binary, wsc::string> message);
 	void on_closed();
 	void on_error(std::string error);
 
@@ -69,7 +68,7 @@ private:
 	std::string token_;
 	SignalOptions option_;
 	mutable std::mutex lock_;
-	//std::unique_ptr<wsc::WebSocket> wsc_;
+	std::unique_ptr<WebsocketClient> wsc_;
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
 };
