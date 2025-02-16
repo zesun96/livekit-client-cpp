@@ -18,6 +18,7 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "websocket_uri.h"
 
 #include <functional>
 #include <iostream>
@@ -27,30 +28,31 @@ namespace core {
 
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
     : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED) {
-	/*wsc::WebSocketConfiguration ws_cfg;
-	ws_cfg.connectionTimeout = std::chrono::milliseconds(1000);
-	wsc_ = std::make_unique<wsc::WebSocket>(ws_cfg);*/
+
+	WebsocketConnectionOptions ws_option;
+	WebsocketUri ws_uri(url, 7890);
+	wsc_ = std::make_unique<WebsocketClient>(ws_option, ws_uri);
 
 	return;
 }
 
 SignalClient::~SignalClient() {
 	std::cout << "SignalClient::~SignalClient()" << std::endl;
-    //wsc_->close();
+	wsc_->disconnect();
 }
 
 bool SignalClient::Init() {
 	auto on_open = std::bind(&SignalClient::on_open, this);
-	//wsc_->onOpen(on_open);
+	// wsc_->onOpen(on_open);
 
-	//auto on_message = std::bind(&SignalClient::on_message, this, std::placeholders::_1);
-	//wsc_->onMessage(on_message);
+	// auto on_message = std::bind(&SignalClient::on_message, this, std::placeholders::_1);
+	// wsc_->onMessage(on_message);
 
 	auto on_closed = std::bind(&SignalClient::on_closed, this);
-	//wsc_->onClosed(on_closed);
+	// wsc_->onClosed(on_closed);
 
 	auto on_error = std::bind(&SignalClient::on_error, this, std::placeholders::_1);
-	//wsc_->onError(on_error);
+	// wsc_->onError(on_error);
 	return true;
 }
 
@@ -58,7 +60,8 @@ livekit::JoinResponse SignalClient::connect() {
 	state_ = SignalConnectionState::CONNECTING;
 	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
-	//wsc_->open(request);
+	wsc_->connect();
+	wsc_->service();
 	std::future<livekit::JoinResponse> future = promise_.get_future();
 	try {
 		livekit::JoinResponse response = future.get();
@@ -75,7 +78,7 @@ void SignalClient::on_open() {
 	return;
 }
 
-//void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
+// void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
 //	std::cout << "WebSocket recived message" << std::endl;
 //	std::lock_guard<std::mutex> guard(lock_);
 //	livekit::SignalResponse resp{};
@@ -112,7 +115,7 @@ void SignalClient::on_open() {
 //	if (state_ != SignalConnectionState::CONNECTED) {
 //	}
 //	return;
-//}
+// }
 
 void SignalClient::on_closed() {
 	std::cout << "WebSocket closed" << std::endl;
