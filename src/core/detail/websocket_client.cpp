@@ -22,7 +22,7 @@ namespace livekit {
 namespace core {
 
 WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_options,
-                                 WebsocketUri uri)
+                                 std::string uri)
     : uri_(uri) {
 
 	struct lws_context_creation_info info;
@@ -61,14 +61,16 @@ void WebsocketClient::connect() {
 	    .jitter_percent = 20,
 	};
 
+	WebsocketUri ws_uri = WebsocketUri::parse_and_validate(uri_);
+	std::string ws_relative_url = ws_uri.get_relative_url();
 	struct lws_client_connect_info connect_info = {
 	    .context = context_,
-	    .address = uri_.get_hostname().c_str(), //"127.0.0.1"
-	    .port = uri_.get_port(),                // 7880,
+	    .address = ws_uri.get_hostname().c_str(), //"127.0.0.1"
+	    .port = ws_uri.get_port(),                // 7880,
 	    .ssl_connection = false,
-	    .path = "/",
-	    .host = uri_.get_hostname().c_str(), // lws_canonical_hostname(context),
-	    .origin = uri_.get_hostname().c_str(),
+	    .path = ws_relative_url.c_str(),
+	    .host = ws_uri.get_hostname().c_str(), // lws_canonical_hostname(context),
+	    .origin = ws_uri.get_hostname().c_str(),
 	    .protocol = protocols[0].name,
 	    .retry_and_idle_policy = &retry,
 	};

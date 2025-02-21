@@ -28,10 +28,10 @@ namespace core {
 
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
     : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED) {
-
+	std::string request = url_ + "?access_token=" + token_ +
+	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	WebsocketConnectionOptions ws_option;
-	WebsocketUri ws_uri(url, 7890);
-	wsc_ = std::make_unique<WebsocketClient>(ws_option, ws_uri);
+	wsc_ = std::make_unique<WebsocketClient>(ws_option, request);
 
 	return;
 }
@@ -58,8 +58,7 @@ bool SignalClient::Init() {
 
 livekit::JoinResponse SignalClient::connect() {
 	state_ = SignalConnectionState::CONNECTING;
-	std::string request = url_ + "?access_token=" + token_ +
-	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
+
 	wsc_->connect();
 	wsc_->service();
 	std::future<livekit::JoinResponse> future = promise_.get_future();

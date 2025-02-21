@@ -138,6 +138,7 @@ set(
   src/core/detail/rtc_engine.cpp
   src/core/detail/rtc_session.cpp
   src/core/detail/signal_client.cpp
+  src/core/detail/uri.cpp
   src/core/detail/websocket_client.cpp
   src/core/detail/websocket_uri.cpp
 

@@ -17,12 +17,26 @@
 
 #include "websocket_uri.h"
 
+#include <stdexcept>
+
 namespace livekit {
 namespace core {
 
-WebsocketUri::WebsocketUri(std::string url, uint16_t port) {}
+WebsocketUri::WebsocketUri(Url url) : url_(url) {}
 
 WebsocketUri::~WebsocketUri() {}
+
+WebsocketUri WebsocketUri::parse_and_validate(std::string uri, std::string chargepoint_id,
+                                              int security_profile) {
+	if (uri.empty()) {
+		throw std::invalid_argument("`uri`-parameter must not be empty");
+	}
+	// if (chargepoint_id.empty()) {
+	// 	throw std::invalid_argument("`chargepoint_id`-parameter must not be empty");
+	// }
+	auto tmp = WebsocketUri(Url(uri));
+	return tmp;
+}
 
 } // namespace core
 } // namespace livekit

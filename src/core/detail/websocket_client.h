@@ -45,7 +45,7 @@ struct WebsocketConnectionOptions {
 
 class WebsocketClient {
 public:
-	WebsocketClient(const WebsocketConnectionOptions& connection_options, WebsocketUri uri);
+	WebsocketClient(const WebsocketConnectionOptions& connection_options, std::string uri);
 	~WebsocketClient();
 
 	void connect();
@@ -61,11 +61,11 @@ private:
 
 	struct lws_protocols protocols[2] = {
 	    {
-	        .name = "rtc",
+	        .name = "livekit-client-cpp-sdk",
 	        .callback = WebsocketClient::callback_wrapper, // make sure to set
 	                                                       // lws_protocols.user to `this`
 	        .per_session_data_size = 0,
-	        .rx_buffer_size = 4096,
+	        .rx_buffer_size = 4096 * 10,
 	        // .id = 0, // ignored by lws, i dont use it
 	        // .user = this // idk where this even comes out
 	    },
@@ -73,7 +73,7 @@ private:
 	};
 
 	WebsocketConnectionOptions connection_options_;
-	WebsocketUri uri_;
+	std::string uri_;
 	size_t reconnect_attempts_ = 0;
 	std::optional<std::chrono::time_point<std::chrono::steady_clock>> restart_after_ = std::nullopt;
 	std::queue<std::string> msg_tx_queue_;
