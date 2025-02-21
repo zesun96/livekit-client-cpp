@@ -41,6 +41,8 @@ if (NOT TARGET plog)
 endif()
 
 find_package(libwebsockets CONFIG REQUIRED)
+find_package(libuv CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 if (WIN32)
   if (DEFINED VCPKG_CMAKE_FIND_ROOT_PATH)
@@ -49,6 +51,10 @@ if (WIN32)
     set(LIBWEBSOCKETS_LIBRARIES
       optimized ${FIRST_VCPKG_ROOT}/lib/websockets.lib
       debug ${FIRST_VCPKG_DEBUG_ROOT}/lib/websockets.lib
+    )
+    set(LK_VCPKG_LIBRARIES_DIR
+      optimized ${FIRST_VCPKG_ROOT}/lib
+      debug ${FIRST_VCPKG_DEBUG_ROOT}/lib
     )
   else()
     SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
@@ -132,6 +138,9 @@ set(
   src/core/detail/rtc_engine.cpp
   src/core/detail/rtc_session.cpp
   src/core/detail/signal_client.cpp
+  src/core/detail/uri.cpp
+  src/core/detail/websocket_client.cpp
+  src/core/detail/websocket_uri.cpp
 
 )
 
@@ -151,6 +160,7 @@ protobuf_generate(
 )
 
 link_directories(${libwebrtc_SOURCE_DIR}/lib)
+link_directories(${LK_VCPKG_LIBRARIES_DIR})
 
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
 target_include_directories(livekitclient PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -166,9 +176,10 @@ target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
+target_link_libraries(livekitclient PRIVATE libuv libssl zlib OpenSSL::SSL)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib)
+  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv)
 endif()
 
 if (WIN32)

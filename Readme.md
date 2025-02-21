@@ -42,6 +42,7 @@ See [examples](./examples/)
 - [plog](https://github.com/SergiusTheBest/plog)
 - [libwebsockets](https://github.com/warmcat/libwebsockets)
 - [vcpkg](https://github.com/livekit/protocol)
+- [Azure](https://github.com/Azure)
 
 ## License
 
