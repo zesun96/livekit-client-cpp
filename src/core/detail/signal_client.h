@@ -56,10 +56,8 @@ public:
 
 private:
 	bool Init();
-	void on_open();
-	// void on_message(std::variant<wsc::binary, wsc::string> message);
-	void on_closed();
-	void on_error(std::string error);
+	void on_ws_message(std::shared_ptr<WebsocketData>& data);
+	void on_ws_event(enum EventCode code, EventReason reason);
 
 	bool is_establishing_connection();
 

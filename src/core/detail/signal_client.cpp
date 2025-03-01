@@ -22,6 +22,8 @@
 
 #include <functional>
 #include <iostream>
+#include <string>
+#include <string_view>
 
 namespace livekit {
 namespace core {
@@ -42,17 +44,11 @@ SignalClient::~SignalClient() {
 }
 
 bool SignalClient::Init() {
-	auto on_open = std::bind(&SignalClient::on_open, this);
-	// wsc_->onOpen(on_open);
 
-	// auto on_message = std::bind(&SignalClient::on_message, this, std::placeholders::_1);
-	// wsc_->onMessage(on_message);
+	wsc_->set_recv_cb(std::bind(&SignalClient::on_ws_message, this, std::placeholders::_1));
+	wsc_->set_event_cb(
+	    std::bind(&SignalClient::on_ws_event, this, std::placeholders::_1, std::placeholders::_2));
 
-	auto on_closed = std::bind(&SignalClient::on_closed, this);
-	// wsc_->onClosed(on_closed);
-
-	auto on_error = std::bind(&SignalClient::on_error, this, std::placeholders::_1);
-	// wsc_->onError(on_error);
 	return true;
 }
 
@@ -71,9 +67,32 @@ livekit::JoinResponse SignalClient::connect() {
 	return livekit::JoinResponse();
 }
 
-void SignalClient::on_open() {
-	std::cout << "WebSocket open" << std::endl;
-	std::lock_guard<std::mutex> guard(lock_);
+void SignalClient::on_ws_message(std::shared_ptr<WebsocketData>& data) {
+	if (data->type == WebsocketDataType::Binany) {
+		std::cout << "WebSocket message, len:" << data->length << ", data:" << data->data
+		          << std::endl;
+	} else {
+		std::cout << "WebSocket message, len:" << data->length
+		          << ", data:" << std::string_view((char*)data->data, data->length) << std::endl;
+	}
+
+	return;
+}
+
+void SignalClient::on_ws_event(enum EventCode code, EventReason reason) {
+	std::cout << "WebSocket event:" << int(code) << ", reason" << reason << std::endl;
+	if (int(code) == 1) {
+		std::lock_guard<std::mutex> guard(lock_);
+		std::thread t1([this]() {
+			Sleep(1000 * 5);
+			std::string test_msg("{\"sender\":\"event a\",\"recipient\":\"\"}");
+			std::unique_ptr<WebsocketData> data = std::make_unique<WebsocketData>(
+			    (const void*)test_msg.c_str(), test_msg.length() * 5, WebsocketDataType::Text);
+			this->wsc_->send(std::move(data));
+		});
+		t1.detach();
+	}
+
 	return;
 }
 
@@ -116,21 +135,15 @@ void SignalClient::on_open() {
 //	return;
 // }
 
-void SignalClient::on_closed() {
-	std::cout << "WebSocket closed" << std::endl;
-	std::lock_guard<std::mutex> guard(lock_);
-	return;
-}
-
-void SignalClient::on_error(std::string error) {
-	std::cout << "WebSocket error: " << error << std::endl;
-	std::lock_guard<std::mutex> guard(lock_);
-	if (state_ != SignalConnectionState::CONNECTED) {
-		state_ = SignalConnectionState::DISCONNECTED;
-		promise_.set_value(livekit::JoinResponse());
-	}
-	return;
-}
+// void SignalClient::on_error(std::string error) {
+// 	std::cout << "WebSocket error: " << error << std::endl;
+// 	std::lock_guard<std::mutex> guard(lock_);
+// 	if (state_ != SignalConnectionState::CONNECTED) {
+// 		state_ = SignalConnectionState::DISCONNECTED;
+// 		promise_.set_value(livekit::JoinResponse());
+// 	}
+// 	return;
+// }
 
 bool SignalClient::is_establishing_connection() {
 	return (state_ == SignalConnectionState::CONNECTING ||

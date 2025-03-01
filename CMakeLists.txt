@@ -140,6 +140,7 @@ set(
   src/core/detail/signal_client.cpp
   src/core/detail/uri.cpp
   src/core/detail/websocket_client.cpp
+  src/core/detail/websocket_data.cpp
   src/core/detail/websocket_uri.cpp
 
 )

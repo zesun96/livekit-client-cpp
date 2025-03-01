@@ -20,14 +20,20 @@
 #ifndef _LKC_CORE_DETAIL_WEBSOCKET_CLIENT_H_
 #define _LKC_CORE_DETAIL_WEBSOCKET_CLIENT_H_
 
+#include "websocket_data.h"
 #include "websocket_uri.h"
 
-#include "libwebsockets.h"
+#include <libwebsockets.h>
 
+#include <atomic>
 #include <chrono>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <queue>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace livekit {
@@ -50,24 +56,29 @@ public:
 
 	void connect();
 	void disconnect();
-	void send(std::string message);
+	void send(std::unique_ptr<WebsocketData> message);
 	void service();
+	void set_recv_cb(const std::function<void(std::shared_ptr<WebsocketData>&)>& cb);
+	void set_event_cb(const std::function<void(enum EventCode, EventReason)>& cb);
 
+private:
 	static int callback_wrapper(struct lws* wsi, enum lws_callback_reasons reason, void* user,
 	                            void* in, size_t len);
 
-private:
+	static void lws_thread(WebsocketClient* client);
+
 	int happlay_cb(struct lws* wsi, enum lws_callback_reasons reason, void* in, size_t len);
 
 	struct lws_protocols protocols[2] = {
 	    {
-	        .name = "livekit-client-cpp-sdk",
+	        .name = "",
 	        .callback = WebsocketClient::callback_wrapper, // make sure to set
 	                                                       // lws_protocols.user to `this`
-	        .per_session_data_size = 0,
-	        .rx_buffer_size = 4096 * 10,
-	        // .id = 0, // ignored by lws, i dont use it
-	        // .user = this // idk where this even comes out
+	                                                       //.callback = callback_websocket_1,
+	                                                       //.per_session_data_size = 0,
+	                                                       //.rx_buffer_size = 4096 * 10,
+	        .id = 0,                                       // ignored by lws, i dont use it
+	        .user = this                                   // idk where this even comes out
 	    },
 	    {NULL, NULL, 0, 0} // terminator
 	};
@@ -76,11 +87,18 @@ private:
 	std::string uri_;
 	size_t reconnect_attempts_ = 0;
 	std::optional<std::chrono::time_point<std::chrono::steady_clock>> restart_after_ = std::nullopt;
-	std::queue<std::string> msg_tx_queue_;
+	std::queue<std::unique_ptr<WebsocketData>> msg_tx_queue_;
 	std::vector<uint8_t> send_buffer_;
 	bool conn_established_ = false;
 	struct lws_context* context_ = nullptr;
 	struct lws* wsi_ = nullptr;
+	std::atomic<bool> stop_ = false;
+	mutable std::mutex lock_;
+	std::function<void(std::shared_ptr<WebsocketData>&)> func_recv_cb_ = nullptr;
+	std::function<void(enum EventCode, EventReason)> func_event_cb_ = nullptr;
+	// websocket sending and receiving thread
+	std::thread* lws_thread_ = nullptr;
+	WebsocketUri ws_uri_;
 };
 
 } // namespace core
