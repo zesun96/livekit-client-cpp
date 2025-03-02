@@ -69,8 +69,8 @@ livekit::JoinResponse SignalClient::connect() {
 
 void SignalClient::on_ws_message(std::shared_ptr<WebsocketData>& data) {
 	if (data->type == WebsocketDataType::Binany) {
-		std::cout << "WebSocket message, len:" << data->length << ", data:" << data->data
-		          << std::endl;
+		std::cout << "WebSocket binany message, len:" << data->length << std::endl;
+		handle_ws_binany_message(data);
 	} else {
 		std::cout << "WebSocket message, len:" << data->length
 		          << ", data:" << std::string_view((char*)data->data, data->length) << std::endl;
@@ -81,69 +81,43 @@ void SignalClient::on_ws_message(std::shared_ptr<WebsocketData>& data) {
 
 void SignalClient::on_ws_event(enum EventCode code, EventReason reason) {
 	std::cout << "WebSocket event:" << int(code) << ", reason" << reason << std::endl;
-	if (int(code) == 1) {
-		std::lock_guard<std::mutex> guard(lock_);
-		std::thread t1([this]() {
-			Sleep(1000 * 5);
-			std::string test_msg("{\"sender\":\"event a\",\"recipient\":\"\"}");
-			std::unique_ptr<WebsocketData> data = std::make_unique<WebsocketData>(
-			    (const void*)test_msg.c_str(), test_msg.length() * 5, WebsocketDataType::Text);
-			this->wsc_->send(std::move(data));
-		});
-		t1.detach();
+	std::lock_guard<std::mutex> guard(lock_);
+	if (code == EventCode::Connected) {
+
+	} else if (code == EventCode::DisConnected) {
+		if (state_ != SignalConnectionState::CONNECTED) {
+			state_ = SignalConnectionState::DISCONNECTED;
+			promise_.set_value(livekit::JoinResponse());
+		}
+	}
+	return;
+}
+
+void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data) {
+	std::lock_guard<std::mutex> guard(lock_);
+	livekit::SignalResponse resp{};
+	bool ret = resp.ParseFromArray(data->data, data->length);
+	if (ret) {
+		std::cout << "SignalResponsecase(: " << resp.message_case() << std::endl;
+		if (state_ != SignalConnectionState::CONNECTED) {
+			switch (resp.message_case()) {
+			case livekit::SignalResponse::MessageCase::kJoin:
+				state_ = SignalConnectionState::CONNECTED;
+				promise_.set_value(resp.join());
+				break;
+			case livekit::SignalResponse::MessageCase::kLeave:
+				if (is_establishing_connection()) {
+					promise_.set_value(livekit::JoinResponse());
+				}
+				break;
+			default:
+				break;
+			}
+		}
 	}
 
 	return;
 }
-
-// void SignalClient::on_message(std::variant<wsc::binary, wsc::string> message) {
-//	std::cout << "WebSocket recived message" << std::endl;
-//	std::lock_guard<std::mutex> guard(lock_);
-//	livekit::SignalResponse resp{};
-//	if (std::holds_alternative<wsc::string>(message)) {
-//		auto& msg = std::get<wsc::string>(message);
-//		std::cout << "WebSocket str received size: " << msg.size() << std::endl;
-//	} else if (std::holds_alternative<wsc::binary>(message)) {
-//		auto& msg = std::get<wsc::binary>(message);
-//		std::cout << "WebSocket binary received size: " << msg.size() << std::endl;
-//		std::cout << "WebSocket binary received: " << msg.data() << std::endl;
-//		size_t len = msg.size() * sizeof(std::byte);
-//		bool ret = resp.ParseFromArray(msg.data(), len);
-//		if (ret) {
-//			std::cout << "SignalResponsecase(: " << resp.message_case() << std::endl;
-//			if (state_ != SignalConnectionState::CONNECTED) {
-//				switch (resp.message_case()) {
-//				case livekit::SignalResponse::MessageCase::kJoin:
-//					state_ = SignalConnectionState::CONNECTED;
-//					promise_.set_value(resp.join());
-//					break;
-//				case livekit::SignalResponse::MessageCase::kLeave:
-//					if (is_establishing_connection()) {
-//						promise_.set_value(livekit::JoinResponse());
-//					}
-//					break;
-//				default:
-//					break;
-//				}
-//			}
-//		}
-//	} else {
-//		std::cout << "could not decode websocket message" << std::endl;
-//	}
-//	if (state_ != SignalConnectionState::CONNECTED) {
-//	}
-//	return;
-// }
-
-// void SignalClient::on_error(std::string error) {
-// 	std::cout << "WebSocket error: " << error << std::endl;
-// 	std::lock_guard<std::mutex> guard(lock_);
-// 	if (state_ != SignalConnectionState::CONNECTED) {
-// 		state_ = SignalConnectionState::DISCONNECTED;
-// 		promise_.set_value(livekit::JoinResponse());
-// 	}
-// 	return;
-// }
 
 bool SignalClient::is_establishing_connection() {
 	return (state_ == SignalConnectionState::CONNECTING ||

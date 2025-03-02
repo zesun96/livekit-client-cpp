@@ -58,7 +58,7 @@ private:
 	bool Init();
 	void on_ws_message(std::shared_ptr<WebsocketData>& data);
 	void on_ws_event(enum EventCode code, EventReason reason);
-
+	void handle_ws_binany_message(std::shared_ptr<WebsocketData>& data);
 	bool is_establishing_connection();
 
 private:

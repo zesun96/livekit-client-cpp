@@ -57,7 +57,7 @@ public:
 	};
 
 public:
-	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config,
+	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
 	              webrtc::PeerConnectionFactoryInterface* factory);
 	~PeerTransport();
 

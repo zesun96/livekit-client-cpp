@@ -40,7 +40,7 @@
 namespace livekit {
 namespace core {
 
-PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration rtc_config,
+PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
                              webrtc::PeerConnectionFactoryInterface* factory)
     : rtc_config_(rtc_config) {
 	if (factory == nullptr) {
@@ -57,26 +57,17 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration r
 			throw("thread start errored");
 		}
 
-		webrtc::PeerConnectionFactoryDependencies dependencies;
-		dependencies.network_thread = this->network_thread_.get();
-		dependencies.worker_thread = this->worker_thread_.get();
-		dependencies.signaling_thread = this->signaling_thread_.get();
-		dependencies.socket_factory = this->network_thread_->socketserver();
-		dependencies.task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
-		// dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
-		// dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
-
-		this->audio_device_ = this->worker_thread_->BlockingCall([&] {
-			return webrtc::AudioDeviceModule::Create(
-			    webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio,
-			    dependencies.task_queue_factory.get());
-		});
-
-		// dependencies.adm = audio_device_;
-
-		this->pc_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
-
-		task_queue_factory_ = dependencies.task_queue_factory.get();
+		this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
+		    this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
+		    nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
+		    webrtc::CreateBuiltinAudioDecoderFactory(),
+		    std::make_unique<webrtc::VideoEncoderFactoryTemplate<
+		        webrtc::LibvpxVp8EncoderTemplateAdapter, webrtc::LibvpxVp9EncoderTemplateAdapter,
+		        webrtc::OpenH264EncoderTemplateAdapter, webrtc::LibaomAv1EncoderTemplateAdapter>>(),
+		    std::make_unique<webrtc::VideoDecoderFactoryTemplate<
+		        webrtc::LibvpxVp8DecoderTemplateAdapter, webrtc::LibvpxVp9DecoderTemplateAdapter,
+		        webrtc::OpenH264DecoderTemplateAdapter, webrtc::Dav1dDecoderTemplateAdapter>>(),
+		    nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
 	} else {
 		this->pc_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(factory);
 	}
@@ -86,7 +77,7 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration r
 	}
 }
 
-PeerTransport::~PeerTransport() {}
+PeerTransport::~PeerTransport() { std::cout << "PeerTransport::~PeerTransport()" << std::endl; }
 
 bool PeerTransport::Init(PrivateListener* privateListener) {
 	pc_ = create_peer_connection(privateListener);

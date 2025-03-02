@@ -63,11 +63,10 @@ namespace core {
 RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options)
     : join_response_(join_response), options_(options) {}
 
-RtcSession::~RtcSession() {}
+RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
 
 bool RtcSession::Init() {
-	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config =
-	    make_rtc_config_join(join_response_, options_);
+	auto rtc_config = make_rtc_config_join(join_response_, options_);
 	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
 	if (publisher_pc_->Init(this)) {
 		return false;
@@ -85,7 +84,7 @@ std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_respon
 	if (!rtc_session->Init()) {
 		return nullptr;
 	}
-	return rtc_session;
+	return std::move(rtc_session);
 }
 
 void RtcSession::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {}

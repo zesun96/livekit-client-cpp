@@ -25,7 +25,7 @@ namespace core {
 
 RtcEngine::RtcEngine() {}
 
-RtcEngine::~RtcEngine() {}
+RtcEngine::~RtcEngine() { std::cout << "RtcEngine::~RtcEngine()" << std::endl; }
 
 livekit::JoinResponse RtcEngine::connect(std::string url, std::string token,
                                          EngineOptions options) {
