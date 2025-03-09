@@ -57,17 +57,34 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& 
 			throw("thread start errored");
 		}
 
-		this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
-		    this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
-		    nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
-		    webrtc::CreateBuiltinAudioDecoderFactory(),
-		    std::make_unique<webrtc::VideoEncoderFactoryTemplate<
-		        webrtc::LibvpxVp8EncoderTemplateAdapter, webrtc::LibvpxVp9EncoderTemplateAdapter,
-		        webrtc::OpenH264EncoderTemplateAdapter, webrtc::LibaomAv1EncoderTemplateAdapter>>(),
-		    std::make_unique<webrtc::VideoDecoderFactoryTemplate<
-		        webrtc::LibvpxVp8DecoderTemplateAdapter, webrtc::LibvpxVp9DecoderTemplateAdapter,
-		        webrtc::OpenH264DecoderTemplateAdapter, webrtc::Dav1dDecoderTemplateAdapter>>(),
-		    nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
+		//this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
+		//    this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
+		//    nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
+		//    webrtc::CreateBuiltinAudioDecoderFactory(),
+		//    std::make_unique<webrtc::VideoEncoderFactoryTemplate<
+		//        webrtc::LibvpxVp8EncoderTemplateAdapter, webrtc::LibvpxVp9EncoderTemplateAdapter,
+		//        webrtc::OpenH264EncoderTemplateAdapter, webrtc::LibaomAv1EncoderTemplateAdapter>>(),
+		//    std::make_unique<webrtc::VideoDecoderFactoryTemplate<
+		//        webrtc::LibvpxVp8DecoderTemplateAdapter, webrtc::LibvpxVp9DecoderTemplateAdapter,
+		//        webrtc::OpenH264DecoderTemplateAdapter, webrtc::Dav1dDecoderTemplateAdapter>>(),
+		//    nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
+
+        //this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
+        //    this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
+        //    nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
+        //    webrtc::CreateBuiltinAudioDecoderFactory(),
+        //    webrtc::CreateBuiltinVideoEncoderFactory(),
+        //    webrtc::CreateBuiltinVideoDecoderFactory(),
+        //    nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
+
+
+        this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
+            this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
+            nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
+            webrtc::CreateBuiltinAudioDecoderFactory(),
+            nullptr,
+            nullptr,
+            nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
 	} else {
 		this->pc_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(factory);
 	}
