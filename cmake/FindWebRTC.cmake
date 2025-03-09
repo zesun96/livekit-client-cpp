@@ -1,6 +1,7 @@
 # Find WebRTC include path
 
-set(WEBRTC_HOST_URL "https://github.com/zesun96/libwebrtc/releases/download/webrtc-dac8015-3")
+set(WEBRTC_HOST_URL "https://github.com/zesun96/libwebrtc/releases/download/webrtc-dac8015-4")
+
 
 if (CMAKE_SYSTEM_NAME MATCHES "Windows")
   set(WEBRTC_PLATFORM "win")

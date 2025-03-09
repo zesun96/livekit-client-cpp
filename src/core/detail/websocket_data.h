@@ -17,38 +17,37 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_DETAIL_WEBSOCKET_URI_H_
-#define _LKC_CORE_DETAIL_WEBSOCKET_URI_H_
-
-#include "uri.h"
+#ifndef _LKC_CORE_DETAIL_WEBSOCKET_DATA_H_
+#define _LKC_CORE_DETAIL_WEBSOCKET_DATA_H_
 
 #include <stdint.h>
 #include <string>
 
 namespace livekit {
 namespace core {
-class WebsocketUri {
-public:
-	static WebsocketUri parse_and_validate(std::string uri, std::string chargepoint_id = "",
-	                                       int security_profile = 0);
 
-public:
-	WebsocketUri(Url url);
-    WebsocketUri() = default;
-	~WebsocketUri();
+enum class EventCode { Unknown, Connected, DisConnected };
 
-	const std::string& get_hostname() { return url_.GetHost(); }
+using EventReason = std::string;
 
-	uint16_t get_port() { return url_.GetPort(); }
+enum class WebsocketDataType { Unknown, Text, Binany };
 
-	const std::string get_relative_url() { return url_.GetRelativeUrl(); }
+struct WebsocketData {
+	WebsocketData() = default;
+	WebsocketData(const void* in, uint32_t length, WebsocketDataType type);
+	virtual ~WebsocketData();
+	WebsocketData(const WebsocketData&) = delete;
+	WebsocketData& operator=(const WebsocketData&) = delete;
 
-private:
-	Url url_;
-	bool secure_;
+	void release();
+	void copy_from(WebsocketData* ws_data);
+
+	int8_t* data = nullptr;
+	WebsocketDataType type = WebsocketDataType::Text;
+	uint32_t length = 0;
 };
 
 } // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_DETAIL_WEBSOCKET_URI_H_
+#endif // _LKC_CORE_DETAIL_WEBSOCKET_DATA_H_
