@@ -28,6 +28,7 @@ static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOption
 	engine_options.rtc_config.continual_gathering_policy =
 	    room_options.rtc_config.continual_gathering_policy;
 	engine_options.rtc_config.ice_transport_type = room_options.rtc_config.ice_transport_type;
+	engine_options.signal_options.reconnect = false;
 	engine_options.signal_options.adaptive_stream = room_options.adaptive_stream;
 	engine_options.signal_options.auto_subscribe = room_options.auto_subscribe;
 	engine_options.signal_options.sdk_options.sdk = room_options.sdk_options.sdk;

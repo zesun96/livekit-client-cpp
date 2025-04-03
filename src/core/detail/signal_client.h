@@ -60,6 +60,11 @@ private:
 	void on_ws_event(enum EventCode code, EventReason reason);
 	void handle_ws_binany_message(std::shared_ptr<WebsocketData>& data);
 	bool is_establishing_connection();
+	void handle_signal_response(livekit::SignalResponse& resp);
+	void reset_ping_timeout();
+	void clear_ping_timeout();
+	void start_ping_interval();
+	void clear_ping_interval();
 
 private:
 	std::string url_;
@@ -69,6 +74,8 @@ private:
 	std::unique_ptr<WebsocketClient> wsc_;
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
+	int ping_timeout_duration_;
+	int ping_interval_duration_;
 };
 
 } // namespace core

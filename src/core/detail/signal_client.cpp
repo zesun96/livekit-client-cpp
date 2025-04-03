@@ -100,9 +100,20 @@ void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data
 	if (ret) {
 		std::cout << "SignalResponsecase(: " << resp.message_case() << std::endl;
 		if (state_ != SignalConnectionState::CONNECTED) {
+			bool should_process_message = false;
 			switch (resp.message_case()) {
 			case livekit::SignalResponse::MessageCase::kJoin:
 				state_ = SignalConnectionState::CONNECTED;
+
+				ping_timeout_duration_ = resp.join().ping_timeout();
+				ping_interval_duration_ = resp.join().ping_interval();
+
+				if (ping_timeout_duration_ > 0) {
+					std::cout << "ping config" << ping_timeout_duration_ << ", "
+					          << ping_interval_duration_ << std::endl;
+					this->start_ping_interval();
+				}
+
 				promise_.set_value(resp.join());
 				break;
 			case livekit::SignalResponse::MessageCase::kLeave:
@@ -111,9 +122,26 @@ void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data
 				}
 				break;
 			default:
-				break;
+				if (state_ == SignalConnectionState::RECONNECTING) {
+					state_ = SignalConnectionState::CONNECTED;
+					this->start_ping_interval();
+					if (resp.message_case() == livekit::SignalResponse::MessageCase::kReconnect) {
+						promise_.set_value(resp.join());
+					} else {
+						promise_.set_value(livekit::JoinResponse());
+						should_process_message = true;
+					}
+				} else if (!option_.reconnect) {
+
+					break;
+				}
+			}
+			if (!should_process_message) {
+				return;
 			}
 		}
+
+		this->handle_signal_response(resp);
 	}
 
 	return;
@@ -123,6 +151,96 @@ bool SignalClient::is_establishing_connection() {
 	return (state_ == SignalConnectionState::CONNECTING ||
 	        state_ == SignalConnectionState::RECONNECTING);
 }
+
+void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
+	bool ping_handled = false;
+	switch (resp.message_case()) {
+	case livekit::SignalResponse::MessageCase::kAnswer: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kOffer: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kTrickle: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kUpdate: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kTrackPublished: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kSpeakersChanged: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kLeave: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kMute: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kRoomUpdate: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kConnectionQuality: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kStreamStateUpdate: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kSubscribedQualityUpdate: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kSubscriptionPermissionUpdate: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kRefreshToken: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kTrackUnpublished: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kSubscriptionResponse: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kPong: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kPongResp: {
+		this->reset_ping_timeout();
+		ping_handled = true;
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kRequestResponse: {
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kTrackSubscribed: {
+		break;
+	}
+	default: {
+		std::cout << "unsupported message(: " << resp.message_case() << std::endl;
+	}
+	}
+
+	if (!ping_handled) {
+		this->reset_ping_timeout();
+	}
+}
+
+void SignalClient::reset_ping_timeout() {
+	this->clear_ping_timeout();
+	return;
+}
+
+void SignalClient::clear_ping_timeout() { return; }
+
+void SignalClient::start_ping_interval() {
+	this->clear_ping_interval();
+	this->reset_ping_timeout();
+	return;
+}
+
+void SignalClient::clear_ping_interval() { return; }
 
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,
                                                    SignalOptions option) {
