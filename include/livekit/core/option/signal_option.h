@@ -33,6 +33,8 @@ struct SignalSdkOptions {
 struct SignalOptions {
 	bool auto_subscribe;
 	bool adaptive_stream;
+	bool reconnect;
+	int reconnect_reason;
 	SignalSdkOptions sdk_options;
 };
 
