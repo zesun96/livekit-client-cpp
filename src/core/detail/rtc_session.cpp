@@ -25,30 +25,40 @@ static webrtc::PeerConnectionInterface::RTCConfiguration
 make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineOptions options) {
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
 
+	// Add ICE servers from options
 	for (auto& ice_server : options.rtc_config.ice_servers) {
+		if (ice_server.urls.empty()) {
+			continue;
+		}
 		webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
-		rtc_ice_server.username = ice_server.username.c_str();
-		rtc_ice_server.password = ice_server.password.c_str();
+		rtc_ice_server.username = ice_server.username;
+		rtc_ice_server.password = ice_server.password;
 		for (auto url : ice_server.urls) {
 			rtc_ice_server.urls.emplace_back(url.c_str());
 		}
 		rtc_config.servers.push_back(rtc_ice_server);
 	}
 
+	// Add ICE servers from join_response
 	for (auto& ice_server : join_response.ice_servers()) {
+		if (ice_server.urls().empty()) {
+			continue;
+		}
 		webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
-		rtc_ice_server.username = ice_server.username().c_str();
-		rtc_ice_server.password = ice_server.credential().c_str();
+		rtc_ice_server.username = ice_server.username();
+		rtc_ice_server.password = ice_server.credential();
 		for (auto url : ice_server.urls()) {
 			rtc_ice_server.urls.emplace_back(url.c_str());
 		}
 		rtc_config.servers.push_back(rtc_ice_server);
 	}
 
+	// Set continual gathering policy
 	rtc_config.continual_gathering_policy =
 	    static_cast<webrtc::PeerConnectionInterface::ContinualGatheringPolicy>(
 	        options.rtc_config.continual_gathering_policy);
 
+	// Set ICE transport type
 	rtc_config.type = static_cast<webrtc::PeerConnectionInterface::IceTransportsType>(
 	    options.rtc_config.ice_transport_type);
 
@@ -68,11 +78,11 @@ RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::end
 bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);
 	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (publisher_pc_->Init(this)) {
+	if (!publisher_pc_->Init(this)) {
 		return false;
 	}
 	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (subscriber_pc_->Init(this)) {
+	if (!subscriber_pc_->Init(this)) {
 		return false;
 	}
 	return true;
