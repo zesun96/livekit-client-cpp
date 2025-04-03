@@ -165,6 +165,7 @@ link_directories(${LK_VCPKG_LIBRARIES_DIR})
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
 target_include_directories(livekitclient PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_include_directories(livekitclient PRIVATE ${LIBWEBSOCKETS_INCLUDE_DIRS}/include)
+target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
@@ -174,7 +175,7 @@ target_link_libraries(livekitclient PRIVATE
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
-target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
+#target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
 target_link_libraries(livekitclient PRIVATE libuv libssl zlib OpenSSL::SSL)
 

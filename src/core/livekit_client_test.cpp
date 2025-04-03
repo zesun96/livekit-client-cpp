@@ -19,14 +19,25 @@
 #include "detail/signal_client.h"
 
 #include <api/peer_connection_interface.h>
+
 #include <functional>
 #include <iostream>
 #include <memory>
 
 namespace livekit {
 namespace core {
+    static bool make_rtc_config_join2() {
+	    //webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
+        webrtc::PeerConnectionInterface::RTCConfiguration rtc_config(webrtc::PeerConnectionInterface::RTCConfigurationType::kSafe);
+        std::string str;
+        rtc_config.turn_logging_id = str;
+
+        return true;
+    }
+
 void TestWebrtc() {
-	webrtc::PeerConnectionInterface::IceTransportsType aa;
+    auto cpu = make_rtc_config_join2();
+	    webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
 	return;
 }
 
