@@ -25,6 +25,9 @@
 #include "livekit_rtc.pb.h"
 #include "websocket_client.h"
 
+#include <api/create_peerconnection_factory.h>
+#include <api/jsep.h>
+
 #include <future>
 #include <memory>
 #include <mutex>
@@ -34,6 +37,22 @@ namespace livekit {
 namespace core {
 
 class JoinRespone;
+
+class SignalClientObserver {
+public:
+	virtual ~SignalClientObserver() = default;
+
+	virtual void OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface>) = 0;
+	virtual void OnLeave() = 0;
+	virtual void OnLocalTrackPublished() = 0;
+	virtual void OnLocalTrackUnpublished() = 0;
+	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface>) = 0;
+	virtual void OnRemoteMuteChanged() = 0;
+	virtual void OnSubscribedQualityUpdate() = 0;
+	virtual void OnTokenRefresh() = 0;
+	virtual void OnTrickle(std::string&) = 0;
+	virtual void OnClose() = 0;
+};
 
 class SignalClient {
 private:
@@ -53,6 +72,9 @@ public:
 	~SignalClient();
 
 	livekit::JoinResponse connect();
+
+	void AddObserver(SignalClientObserver* observer);
+	void RemoveObserver();
 
 private:
 	bool Init();
@@ -76,6 +98,7 @@ private:
 	std::promise<livekit::JoinResponse> promise_;
 	int ping_timeout_duration_;
 	int ping_interval_duration_;
+	SignalClientObserver* observer_ = nullptr;
 };
 
 } // namespace core

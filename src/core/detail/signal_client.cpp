@@ -25,6 +25,40 @@
 #include <string>
 #include <string_view>
 
+namespace {
+
+std::string serialize_sdp_error(webrtc::SdpParseError error) {
+	std::stringstream ss;
+	ss << std::hex << std::setfill('0');
+	ss << std::setw(8) << (uint32_t)error.line.length();
+	ss << std::dec << std::setw(1) << error.line;
+	ss << std::dec << std::setw(1) << error.description;
+	return ss.str();
+}
+
+std::unique_ptr<webrtc::SessionDescriptionInterface>
+fromProtoSessionDescription(const livekit::SessionDescription& desc) {
+	webrtc::SdpType type = webrtc::SdpType::kOffer;
+	std::string proto_type = desc.type();
+	if (proto_type == "offer") {
+		type = webrtc::SdpType::kOffer;
+	} else if (proto_type == "pranswer") {
+		type = webrtc::SdpType::kPrAnswer;
+	} else if (proto_type == "answer") {
+		type = webrtc::SdpType::kAnswer;
+	} else if (proto_type == "rollback") {
+		type = webrtc::SdpType::kRollback;
+	}
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
+	    webrtc::CreateSessionDescription(type, desc.sdp().c_str(), &error);
+	if (!sessionDescription) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+	return sessionDescription;
+}
+} // namespace
+
 namespace livekit {
 namespace core {
 
@@ -51,6 +85,13 @@ bool SignalClient::Init() {
 
 	return true;
 }
+
+void SignalClient::AddObserver(SignalClientObserver* observer) {
+	observer_ = observer;
+	return;
+}
+
+void SignalClient::RemoveObserver() { observer_ = nullptr; }
 
 livekit::JoinResponse SignalClient::connect() {
 	state_ = SignalConnectionState::CONNECTING;
@@ -156,12 +197,25 @@ void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
 	bool ping_handled = false;
 	switch (resp.message_case()) {
 	case livekit::SignalResponse::MessageCase::kAnswer: {
+		auto sd = fromProtoSessionDescription(resp.answer());
+		if (observer_) {
+			observer_->OnAnswer(std::move(sd));
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kOffer: {
+		auto sd = fromProtoSessionDescription(resp.answer());
+		if (observer_) {
+			observer_->OnOffer(std::move(sd));
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kTrickle: {
+
+		std::string candidate = resp.trickle().candidateinit();
+		if (observer_) {
+			observer_->OnTrickle(candidate);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kUpdate: {
