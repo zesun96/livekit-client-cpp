@@ -42,16 +42,44 @@ class SignalClientObserver {
 public:
 	virtual ~SignalClientObserver() = default;
 
-	virtual void OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface>) = 0;
-	virtual void OnLeave() = 0;
-	virtual void OnLocalTrackPublished() = 0;
-	virtual void OnLocalTrackUnpublished() = 0;
-	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface>) = 0;
-	virtual void OnRemoteMuteChanged() = 0;
-	virtual void OnSubscribedQualityUpdate() = 0;
-	virtual void OnTokenRefresh() = 0;
-	virtual void OnTrickle(std::string&) = 0;
+	virtual void OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) = 0;
+
+	virtual void OnLeave(const livekit::LeaveRequest leave) = 0;
+
+	virtual void OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) = 0;
+
+	virtual void OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) = 0;
+
+	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+
+	virtual void OnRemoteMuteChanged(std::string sid, bool muted) = 0;
+
+	virtual void OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) = 0;
+
+	virtual void OnTokenRefresh(const std::string& token) = 0;
+
+	virtual void OnTrickle(std::string& candidate, livekit::SignalTarget target) = 0;
+
 	virtual void OnClose() = 0;
+
+	virtual void OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) = 0;
+
+	virtual void OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) = 0;
+
+	virtual void OnRoomUpdate(const livekit::Room& update) = 0;
+
+	virtual void OnConnectionQuality(const std::vector<livekit::ConnectionQualityInfo>& update) = 0;
+
+	virtual void OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) = 0;
+
+	virtual void
+	OnSubscriptionPermissionUpdate(const livekit::SubscriptionPermissionUpdate& update) = 0;
+
+	virtual void OnSubscriptionError(const livekit::SubscriptionResponse& response) = 0;
+
+	virtual void OnRequestResponse(const livekit::RequestResponse& response) = 0;
+
+	virtual void OnLocalTrackSubscribed(const std::string& track_sid) = 0;
 };
 
 class SignalClient {
@@ -99,6 +127,7 @@ private:
 	int ping_timeout_duration_;
 	int ping_interval_duration_;
 	SignalClientObserver* observer_ = nullptr;
+	int64_t rtt_;
 };
 
 } // namespace core

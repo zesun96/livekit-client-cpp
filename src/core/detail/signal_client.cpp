@@ -20,6 +20,7 @@
 #include "livekit_rtc.pb.h"
 #include "websocket_uri.h"
 
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -63,7 +64,8 @@ namespace livekit {
 namespace core {
 
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
-    : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED) {
+    : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED),
+      rtt_(0) {
 	std::string request = url_ + "?access_token=" + token_ +
 	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
 	WebsocketConnectionOptions ws_option;
@@ -211,64 +213,145 @@ void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kTrickle: {
-
 		std::string candidate = resp.trickle().candidateinit();
+		auto target = resp.trickle().target();
 		if (observer_) {
-			observer_->OnTrickle(candidate);
+			observer_->OnTrickle(candidate, target);
 		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kUpdate: {
+		if (observer_) {
+			std::vector<livekit::ParticipantInfo> vec_participants;
+			auto& proto_participants = resp.update().participants();
+			for (auto& participant : proto_participants) {
+				vec_participants.emplace_back(participant);
+			}
+			observer_->OnParticipantUpdate(vec_participants);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kTrackPublished: {
+		if (observer_) {
+			auto& track_published = resp.track_published();
+			observer_->OnLocalTrackPublished(track_published);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kSpeakersChanged: {
+		if (observer_) {
+			std::vector<livekit::SpeakerInfo> vec_speakers;
+			auto& proto_speakers = resp.speakers_changed().speakers();
+			for (auto& speaker : proto_speakers) {
+				vec_speakers.emplace_back(speaker);
+			}
+			observer_->OnSpeakersChanged(vec_speakers);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kLeave: {
+		if (observer_) {
+			auto& leave_reauest = resp.leave();
+			observer_->OnLeave(leave_reauest);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kMute: {
+		if (observer_) {
+			auto& mute_request = resp.mute();
+			observer_->OnRemoteMuteChanged(mute_request.sid(), mute_request.muted());
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kRoomUpdate: {
+		if (observer_) {
+			auto& room_update = resp.room_update();
+			observer_->OnRoomUpdate(room_update.room());
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kConnectionQuality: {
+		if (observer_) {
+			std::vector<livekit::ConnectionQualityInfo> vec_quality_updates;
+			auto& proto_updates = resp.connection_quality().updates();
+			for (auto& update : proto_updates) {
+				vec_quality_updates.emplace_back(update);
+			}
+			observer_->OnConnectionQuality(vec_quality_updates);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kStreamStateUpdate: {
+		if (observer_) {
+			std::vector<livekit::StreamStateInfo> vec_stream_states;
+			auto& proto_stream_states = resp.stream_state_update().stream_states();
+			for (auto& stream_state : proto_stream_states) {
+				vec_stream_states.emplace_back(stream_state);
+			}
+			observer_->OnStreamStateUpdate(vec_stream_states);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kSubscribedQualityUpdate: {
+		if (observer_) {
+			auto& proto_subscribed_quality_updates = resp.subscribed_quality_update();
+			observer_->OnSubscribedQualityUpdate(proto_subscribed_quality_updates);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kSubscriptionPermissionUpdate: {
+		if (observer_) {
+			auto& proto_subscription_permission_updates = resp.subscription_permission_update();
+			observer_->OnSubscriptionPermissionUpdate(proto_subscription_permission_updates);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kRefreshToken: {
+		if (observer_) {
+			auto& refresh_token = resp.refresh_token();
+			observer_->OnTokenRefresh(refresh_token);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kTrackUnpublished: {
+		if (observer_) {
+			auto& track_unpublished = resp.track_unpublished();
+			observer_->OnLocalTrackUnpublished(track_unpublished);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kSubscriptionResponse: {
+		if (observer_) {
+			auto& subscription_response = resp.subscription_response();
+			observer_->OnSubscriptionError(subscription_response);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kPong: {
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kPongResp: {
+		auto lastPingTimestamp = resp.pong_resp().last_ping_timestamp();
+		int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                  std::chrono::high_resolution_clock::now().time_since_epoch())
+		                  .count();
+		this->rtt_ = now - lastPingTimestamp;
 		this->reset_ping_timeout();
 		ping_handled = true;
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kRequestResponse: {
+		if (observer_) {
+			auto& request_response = resp.request_response();
+			observer_->OnRequestResponse(request_response);
+		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kTrackSubscribed: {
+		if (observer_) {
+			auto& track_sid = resp.track_subscribed().track_sid();
+			observer_->OnLocalTrackSubscribed(track_sid);
+		}
 		break;
 	}
 	default: {
