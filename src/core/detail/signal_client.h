@@ -99,22 +99,62 @@ public:
 	SignalClient(std::string url, std::string token, SignalOptions option);
 	~SignalClient();
 
-	livekit::JoinResponse connect();
+	livekit::JoinResponse Connect();
 
 	void AddObserver(SignalClientObserver* observer);
 	void RemoveObserver();
 
+	void Close(bool update_state = true);
+
+	void SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+
+	void SendAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer);
+
+	void SendIceCandidate(std::string& candidate, livekit::SignalTarget target);
+
+	void SendMuteTrack(std::string& track_sid, bool muted);
+
+	void SendAddTrack(livekit::AddTrackRequest& request);
+
+	void SendUpdateLocalMetadata(const std::string& metadata, const std::string& name,
+	                             const std::map<std::string, std::string> attributes);
+
+	void SendUpdateTrackSettings(const livekit::UpdateTrackSettings& seetings);
+
+	void SendUpdateSubscription(const livekit::UpdateSubscription& sub);
+
+	void SendSyncState(const livekit::SyncState& sync);
+
+	void SendUpdateVideoLayers(const std::string& track_sid,
+	                           const std::vector<livekit::VideoLayer>& layers);
+
+	void SendUpdateSubscriptionPermissions(
+	    bool all_participants, const std::vector<livekit::TrackPermission>& track_permissions);
+
+	void SendSimulateScenario(const livekit::SimulateScenario& scenario);
+
+	void SendPing();
+
+	void SendUpdateLocalAudioTrack(const std::string& track_sid,
+	                               const std::vector<livekit::AudioTrackFeature>& features);
+
+	void SendLeave();
+
 private:
-	bool Init();
-	void on_ws_message(std::shared_ptr<WebsocketData>& data);
-	void on_ws_event(enum EventCode code, EventReason reason);
-	void handle_ws_binany_message(std::shared_ptr<WebsocketData>& data);
-	bool is_establishing_connection();
-	void handle_signal_response(livekit::SignalResponse& resp);
-	void reset_ping_timeout();
-	void clear_ping_timeout();
-	void start_ping_interval();
-	void clear_ping_interval();
+	bool init();
+	void sendRequest(livekit::SignalRequest& request, bool from_queue = false);
+	void onWsMessage(std::shared_ptr<WebsocketData>& data);
+	void onWsEvent(enum EventCode code, EventReason reason);
+	void handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data);
+	bool isEstablishingConnection();
+	void handleSignalResponse(livekit::SignalResponse& resp);
+	void resetPingTimeout();
+	void clearPingTimeout();
+	void startPingInterval();
+	void clearPingInterval();
+	uint64_t getNextRequestId();
+
+	int64_t rtt() const;
 
 private:
 	std::string url_;
@@ -127,7 +167,8 @@ private:
 	int ping_timeout_duration_;
 	int ping_interval_duration_;
 	SignalClientObserver* observer_ = nullptr;
-	int64_t rtt_;
+	std::atomic<int64_t> rtt_;
+	std::atomic<uint64_t> request_id_;
 };
 
 } // namespace core

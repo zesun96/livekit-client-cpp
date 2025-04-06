@@ -43,9 +43,9 @@ Room::Room() { rtc_engine_ = std::make_unique<RtcEngine>(); }
 
 Room::~Room() {}
 
-bool Room::connect(std::string url, std::string token, RoomOptions options) {
+bool Room::Connect(std::string url, std::string token, RoomOptions options) {
 	EngineOptions engine_options = make_engine_config(options);
-	livekit::JoinResponse join_response = rtc_engine_->connect(url, token, engine_options);
+	livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
 	if (join_response.room().name().empty()) {
 		return false;
 	}

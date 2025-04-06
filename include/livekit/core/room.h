@@ -36,7 +36,7 @@ public:
 	Room();
 	~Room();
 
-	bool connect(std::string url, std::string token, RoomOptions options = default_room_options());
+	bool Connect(std::string url, std::string token, RoomOptions options = default_room_options());
 
 private:
 	std::unique_ptr<RtcEngine> rtc_engine_;

@@ -14,3 +14,22 @@
  *See the License for the specific language governing permissions and
  *limitations under the License.
  */
+
+#include "utils.h"
+
+#include <chrono>
+namespace livekit {
+namespace core {
+namespace utils {
+
+// Get current time in milliseconds
+int64_t GetCurrentTimeMs() {
+	auto now = std::chrono::system_clock::now();
+	auto duration = now.time_since_epoch();
+	return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+}
+
+} // namespace utils
+
+} // namespace core
+} // namespace livekit

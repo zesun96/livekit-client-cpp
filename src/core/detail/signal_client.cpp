@@ -18,6 +18,7 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "utils.h"
 #include "websocket_uri.h"
 
 #include <chrono>
@@ -58,6 +59,17 @@ fromProtoSessionDescription(const livekit::SessionDescription& desc) {
 	}
 	return sessionDescription;
 }
+
+livekit::SessionDescription
+toProtoSessionDescription(std::string mode, std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	livekit::SessionDescription proto_desc;
+	auto description = desc->description();
+    std::string str_desc;
+	desc->ToString(&str_desc);
+	proto_desc.set_sdp(str_desc);
+	proto_desc.set_type(mode);
+	return proto_desc;
+}
 } // namespace
 
 namespace livekit {
@@ -79,11 +91,11 @@ SignalClient::~SignalClient() {
 	wsc_->disconnect();
 }
 
-bool SignalClient::Init() {
+bool SignalClient::init() {
 
-	wsc_->set_recv_cb(std::bind(&SignalClient::on_ws_message, this, std::placeholders::_1));
+	wsc_->set_recv_cb(std::bind(&SignalClient::onWsMessage, this, std::placeholders::_1));
 	wsc_->set_event_cb(
-	    std::bind(&SignalClient::on_ws_event, this, std::placeholders::_1, std::placeholders::_2));
+	    std::bind(&SignalClient::onWsEvent, this, std::placeholders::_1, std::placeholders::_2));
 
 	return true;
 }
@@ -95,7 +107,7 @@ void SignalClient::AddObserver(SignalClientObserver* observer) {
 
 void SignalClient::RemoveObserver() { observer_ = nullptr; }
 
-livekit::JoinResponse SignalClient::connect() {
+livekit::JoinResponse SignalClient::Connect() {
 	state_ = SignalConnectionState::CONNECTING;
 
 	wsc_->connect();
@@ -110,10 +122,152 @@ livekit::JoinResponse SignalClient::connect() {
 	return livekit::JoinResponse();
 }
 
-void SignalClient::on_ws_message(std::shared_ptr<WebsocketData>& data) {
+void SignalClient::Close(bool update_state) {}
+
+void SignalClient::SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	livekit::SignalRequest request;
+	auto* offer_msg = request.mutable_offer();
+	auto proto_offer = toProtoSessionDescription("answer", std::move(offer));
+	offer_msg->CopyFrom(proto_offer);
+	sendRequest(request);
+	return;
+}
+
+void SignalClient::SendAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
+	livekit::SignalRequest request;
+	auto* answer_msg = request.mutable_answer();
+	auto proto_answer = toProtoSessionDescription("answer", std::move(answer));
+	answer_msg->CopyFrom(proto_answer);
+	sendRequest(request);
+	return;
+}
+
+void SignalClient::SendIceCandidate(std::string& candidate, livekit::SignalTarget target) {
+	livekit::SignalRequest request;
+	auto* trickle_msg = request.mutable_trickle();
+	trickle_msg->set_candidateinit(candidate);
+	trickle_msg->set_target(target);
+	sendRequest(request);
+	return;
+}
+
+void SignalClient::SendMuteTrack(std::string& track_sid, bool muted) {
+	livekit::SignalRequest request;
+	auto* mute_msg = request.mutable_mute();
+	mute_msg->set_sid(track_sid);
+	mute_msg->set_muted(muted);
+	sendRequest(request);
+	return;
+}
+
+void SignalClient::SendAddTrack(livekit::AddTrackRequest& request) {
+	livekit::SignalRequest req;
+	auto* add_track_msg = req.mutable_add_track();
+	add_track_msg->CopyFrom(request);
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendUpdateLocalMetadata(const std::string& metadata, const std::string& name,
+                                           const std::map<std::string, std::string> attributes) {
+	const uint64_t request_id = getNextRequestId();
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_update_metadata();
+	update_msg->set_request_id(request_id);
+	update_msg->set_metadata(metadata);
+	update_msg->set_name(name);
+	for (const auto& attr : attributes) {
+		update_msg->mutable_attributes()->insert({attr.first, attr.second});
+	}
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendUpdateTrackSettings(const livekit::UpdateTrackSettings& seetings) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_track_setting();
+	update_msg->CopyFrom(seetings);
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendUpdateSubscription(const livekit::UpdateSubscription& subscription) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_subscription();
+	update_msg->CopyFrom(subscription);
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendSyncState(const livekit::SyncState& sync) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_sync_state();
+	update_msg->CopyFrom(sync);
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendUpdateVideoLayers(const std::string& track_sid,
+                                         const std::vector<livekit::VideoLayer>& layers) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_update_layers();
+	update_msg->set_track_sid(track_sid);
+	for (const auto& layer : layers) {
+		update_msg->mutable_layers()->Add()->CopyFrom(layer);
+	}
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendUpdateSubscriptionPermissions(
+    bool all_participants, const std::vector<livekit::TrackPermission>& track_permissions) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_subscription_permission();
+	update_msg->set_all_participants(all_participants);
+	for (const auto& permission : track_permissions) {
+		update_msg->mutable_track_permissions()->Add()->CopyFrom(permission);
+	}
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendSimulateScenario(const livekit::SimulateScenario& scenario) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_simulate();
+	update_msg->CopyFrom(scenario);
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::SendPing() {
+	livekit::SignalRequest req;
+	req.set_ping(utils::GetCurrentTimeMs());
+	sendRequest(req);
+
+	livekit::SignalRequest ping_req;
+	auto* ping_msg = ping_req.mutable_ping_req();
+	ping_msg->set_rtt(this->rtt());
+	ping_msg->set_timestamp(utils::GetCurrentTimeMs());
+	sendRequest(ping_req);
+	return;
+}
+
+void SignalClient::SendUpdateLocalAudioTrack(
+    const std::string& track_sid, const std::vector<livekit::AudioTrackFeature>& features) {
+	livekit::SignalRequest req;
+	auto* update_msg = req.mutable_update_audio_track();
+	update_msg->set_track_sid(track_sid);
+	for (const auto& feature : features) {
+		update_msg->add_features(feature);
+	}
+	sendRequest(req);
+	return;
+}
+
+void SignalClient::onWsMessage(std::shared_ptr<WebsocketData>& data) {
 	if (data->type == WebsocketDataType::Binany) {
 		std::cout << "WebSocket binany message, len:" << data->length << std::endl;
-		handle_ws_binany_message(data);
+		handleWsBinanyMessage(data);
 	} else {
 		std::cout << "WebSocket message, len:" << data->length
 		          << ", data:" << std::string_view((char*)data->data, data->length) << std::endl;
@@ -122,7 +276,7 @@ void SignalClient::on_ws_message(std::shared_ptr<WebsocketData>& data) {
 	return;
 }
 
-void SignalClient::on_ws_event(enum EventCode code, EventReason reason) {
+void SignalClient::onWsEvent(enum EventCode code, EventReason reason) {
 	std::cout << "WebSocket event:" << int(code) << ", reason" << reason << std::endl;
 	std::lock_guard<std::mutex> guard(lock_);
 	if (code == EventCode::Connected) {
@@ -136,7 +290,7 @@ void SignalClient::on_ws_event(enum EventCode code, EventReason reason) {
 	return;
 }
 
-void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data) {
+void SignalClient::handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data) {
 	std::lock_guard<std::mutex> guard(lock_);
 	livekit::SignalResponse resp{};
 	bool ret = resp.ParseFromArray(data->data, data->length);
@@ -154,20 +308,20 @@ void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data
 				if (ping_timeout_duration_ > 0) {
 					std::cout << "ping config" << ping_timeout_duration_ << ", "
 					          << ping_interval_duration_ << std::endl;
-					this->start_ping_interval();
+					this->startPingInterval();
 				}
 
 				promise_.set_value(resp.join());
 				break;
 			case livekit::SignalResponse::MessageCase::kLeave:
-				if (is_establishing_connection()) {
+				if (isEstablishingConnection()) {
 					promise_.set_value(livekit::JoinResponse());
 				}
 				break;
 			default:
 				if (state_ == SignalConnectionState::RECONNECTING) {
 					state_ = SignalConnectionState::CONNECTED;
-					this->start_ping_interval();
+					this->startPingInterval();
 					if (resp.message_case() == livekit::SignalResponse::MessageCase::kReconnect) {
 						promise_.set_value(resp.join());
 					} else {
@@ -184,18 +338,18 @@ void SignalClient::handle_ws_binany_message(std::shared_ptr<WebsocketData>& data
 			}
 		}
 
-		this->handle_signal_response(resp);
+		this->handleSignalResponse(resp);
 	}
 
 	return;
 }
 
-bool SignalClient::is_establishing_connection() {
+bool SignalClient::isEstablishingConnection() {
 	return (state_ == SignalConnectionState::CONNECTING ||
 	        state_ == SignalConnectionState::RECONNECTING);
 }
 
-void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
+void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 	bool ping_handled = false;
 	switch (resp.message_case()) {
 	case livekit::SignalResponse::MessageCase::kAnswer: {
@@ -335,8 +489,8 @@ void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
 		int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                  std::chrono::high_resolution_clock::now().time_since_epoch())
 		                  .count();
-		this->rtt_ = now - lastPingTimestamp;
-		this->reset_ping_timeout();
+		this->rtt_.store(now - lastPingTimestamp);
+		this->resetPingTimeout();
 		ping_handled = true;
 		break;
 	}
@@ -360,29 +514,45 @@ void SignalClient::handle_signal_response(livekit::SignalResponse& resp) {
 	}
 
 	if (!ping_handled) {
-		this->reset_ping_timeout();
+		this->resetPingTimeout();
 	}
 }
 
-void SignalClient::reset_ping_timeout() {
-	this->clear_ping_timeout();
+void SignalClient::resetPingTimeout() {
+	this->clearPingTimeout();
 	return;
 }
 
-void SignalClient::clear_ping_timeout() { return; }
+void SignalClient::clearPingTimeout() { return; }
 
-void SignalClient::start_ping_interval() {
-	this->clear_ping_interval();
-	this->reset_ping_timeout();
+void SignalClient::startPingInterval() {
+	this->clearPingInterval();
+	this->resetPingTimeout();
 	return;
 }
 
-void SignalClient::clear_ping_interval() { return; }
+void SignalClient::clearPingInterval() { return; }
+
+void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue) {
+	std::string serialized_request;
+	request.SerializeToString(&serialized_request);
+	auto ws_data = std::make_unique<WebsocketData>(
+	    serialized_request.c_str(), serialized_request.length(), WebsocketDataType::Binany);
+	wsc_->send(std::move(ws_data));
+	return;
+}
+
+uint64_t SignalClient::getNextRequestId() {
+	request_id_++;
+	return request_id_;
+}
+
+int64_t SignalClient::rtt() const { return rtt_.load(); }
 
 std::unique_ptr<SignalClient> SignalClient::Create(std::string url, std::string token,
                                                    SignalOptions option) {
 	auto signal_client = std::make_unique<SignalClient>(url, token, option);
-	if (!signal_client->Init()) {
+	if (!signal_client->init()) {
 		return nullptr;
 	}
 	return signal_client;
