@@ -8,7 +8,7 @@ void start() {
 	                    "dHJ1ZX19.6ygSXvL4HzXWeSdj-6v2meAoO_y2Eau5QZtDlxcmWXI";
 	auto room_options = livekit::core::RoomOptions();
 	auto room = livekit::core::Room();
-	room.connect("http://localhost:7880/rtc", token, room_options);
+	room.Connect("http://localhost:7880/rtc", token, room_options);
 	while (true) {
 	}
 	return;

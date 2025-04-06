@@ -26,25 +26,26 @@
 
 namespace livekit {
 namespace core {
-    static bool make_rtc_config_join2() {
-	    //webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
-        webrtc::PeerConnectionInterface::RTCConfiguration rtc_config(webrtc::PeerConnectionInterface::RTCConfigurationType::kSafe);
-        std::string str;
-        rtc_config.turn_logging_id = str;
+static bool make_rtc_config_join2() {
+	// webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
+	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config(
+	    webrtc::PeerConnectionInterface::RTCConfigurationType::kSafe);
+	std::string str;
+	rtc_config.turn_logging_id = str;
 
-        return true;
-    }
+	return true;
+}
 
 void TestWebrtc() {
-    auto cpu = make_rtc_config_join2();
-	    webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
+	auto cpu = make_rtc_config_join2();
+	webrtc::PeerConnectionInterface::RTCConfigurationTest111 test11{};
 	return;
 }
 
 bool Test() {
 	auto option = SignalOptions();
 	auto signal_client = SignalClient::Create("ws://localhost:8080/ws", "aaa", option);
-	signal_client->connect();
+	signal_client->Connect();
 	while (true) {
 	}
 	return true;

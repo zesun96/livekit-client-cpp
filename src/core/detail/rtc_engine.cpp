@@ -27,10 +27,10 @@ RtcEngine::RtcEngine() {}
 
 RtcEngine::~RtcEngine() { std::cout << "RtcEngine::~RtcEngine()" << std::endl; }
 
-livekit::JoinResponse RtcEngine::connect(std::string url, std::string token,
+livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
 	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	livekit::JoinResponse response = signal_client_->connect();
+	livekit::JoinResponse response = signal_client_->Connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
 	if (response.has_room()) {
 		rtc_session_ = RtcSession::Create(response, options);

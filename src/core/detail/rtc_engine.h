@@ -38,7 +38,7 @@ public:
 	RtcEngine();
 	~RtcEngine();
 
-	livekit::JoinResponse connect(std::string url, std::string token, EngineOptions options);
+	livekit::JoinResponse Connect(std::string url, std::string token, EngineOptions options);
 
 private:
 	std::unique_ptr<SignalClient> signal_client_;

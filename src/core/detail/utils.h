@@ -16,3 +16,15 @@
  */
 
 #pragma once
+
+#include <stdint.h>
+
+namespace livekit {
+namespace core {
+namespace utils {
+
+int64_t GetCurrentTimeMs();
+
+} // namespace utils
+} // namespace core
+} // namespace livekit
