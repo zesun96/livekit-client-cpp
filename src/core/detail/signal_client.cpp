@@ -61,10 +61,11 @@ fromProtoSessionDescription(const livekit::SessionDescription& desc) {
 }
 
 livekit::SessionDescription
-toProtoSessionDescription(std::string mode, std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+toProtoSessionDescription(std::string mode,
+                          std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
 	livekit::SessionDescription proto_desc;
 	auto description = desc->description();
-    std::string str_desc;
+	std::string str_desc;
 	desc->ToString(&str_desc);
 	proto_desc.set_sdp(str_desc);
 	proto_desc.set_type(mode);
@@ -518,20 +519,61 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 	}
 }
 
-void SignalClient::resetPingTimeout() {
-	this->clearPingTimeout();
+void SignalClient::handleOnClose(std::string reason) {
+	std::cout << "WebSocket closed, reason:" << reason << std::endl;
 	return;
 }
 
-void SignalClient::clearPingTimeout() { return; }
+void SignalClient::resetPingTimeout() {
+	this->clearPingTimeout();
+	if (!this->ping_timeout_duration_) {
+		std::cout << "ping timeout duration is 0, skip reset ping timeout" << std::endl;
+		return;
+	}
+
+	pingTimeoutTimer_ = std::make_shared<Timer>();
+	pingTimeoutTimer_->SetTimeout(
+	    [this]() {
+		    std::cout << "ping timeout" << std::endl;
+		    this->handleOnClose("ping timeout");
+	    },
+	    this->ping_timeout_duration_ * 1000);
+
+	return;
+}
+
+void SignalClient::clearPingTimeout() {
+	if (pingTimeoutTimer_) {
+		pingTimeoutTimer_->Stop();
+	}
+	return;
+}
 
 void SignalClient::startPingInterval() {
 	this->clearPingInterval();
 	this->resetPingTimeout();
+	if (!this->ping_interval_duration_) {
+		std::cout << "ping interval duration is 0, skip start ping interval" << std::endl;
+		return;
+	}
+
+	pingIntervalTimer_ = std::make_shared<Timer>();
+	pingIntervalTimer_->SetInterval(
+	    [this]() {
+		    std::cout << "ping interval" << std::endl;
+		    this->SendPing();
+	    },
+	    this->ping_interval_duration_ * 1000);
+
 	return;
 }
 
-void SignalClient::clearPingInterval() { return; }
+void SignalClient::clearPingInterval() {
+	if (pingIntervalTimer_) {
+		pingIntervalTimer_->Stop();
+	}
+	return;
+}
 
 void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue) {
 	std::string serialized_request;

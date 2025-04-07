@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -14,22 +14,3 @@
  *See the License for the specific language governing permissions and
  *limitations under the License.
  */
-
-#pragma once
-
-#ifndef _LKC_CORE_DETAIL_UTILS_H_
-#define _LKC_CORE_DETAIL_UTILS_H_
-
-#include <stdint.h>
-
-namespace livekit {
-namespace core {
-namespace utils {
-
-int64_t GetCurrentTimeMs();
-
-} // namespace utils
-} // namespace core
-} // namespace livekit
-
-#endif // _LKC_CORE_DETAIL_UTILS_H_

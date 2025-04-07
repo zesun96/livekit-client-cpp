@@ -23,6 +23,7 @@
 #include "livekit/core/option/signal_option.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "timer.h"
 #include "websocket_client.h"
 
 #include <api/create_peerconnection_factory.h>
@@ -152,6 +153,7 @@ private:
 	void clearPingTimeout();
 	void startPingInterval();
 	void clearPingInterval();
+	void handleOnClose(std::string reason);
 	uint64_t getNextRequestId();
 
 	int64_t rtt() const;
@@ -166,6 +168,8 @@ private:
 	std::promise<livekit::JoinResponse> promise_;
 	int ping_timeout_duration_;
 	int ping_interval_duration_;
+	std::shared_ptr<Timer> pingTimeoutTimer_ = nullptr;
+	std::shared_ptr<Timer> pingIntervalTimer_ = nullptr;
 	SignalClientObserver* observer_ = nullptr;
 	std::atomic<int64_t> rtt_;
 	std::atomic<uint64_t> request_id_;
