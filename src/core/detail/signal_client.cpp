@@ -288,6 +288,7 @@ void SignalClient::onWsEvent(enum EventCode code, EventReason reason) {
 	if (code == EventCode::Connected) {
 
 	} else if (code == EventCode::DisConnected) {
+		this->handleOnClose(reason);
 		if (state_ != SignalConnectionState::CONNECTED) {
 			state_ = SignalConnectionState::DISCONNECTED;
 			promise_.set_value(livekit::JoinResponse());
@@ -544,6 +545,7 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 
 void SignalClient::handleOnClose(std::string reason) {
 	std::cout << "WebSocket closed, reason:" << reason << std::endl;
+	clearPingInterval();
 	return;
 }
 
@@ -592,6 +594,7 @@ void SignalClient::startPingInterval() {
 }
 
 void SignalClient::clearPingInterval() {
+	clearPingTimeout();
 	if (pingIntervalTimer_) {
 		pingIntervalTimer_->Stop();
 	}
