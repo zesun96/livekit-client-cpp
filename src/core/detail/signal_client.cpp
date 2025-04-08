@@ -40,6 +40,10 @@ std::string serialize_sdp_error(webrtc::SdpParseError error) {
 
 std::unique_ptr<webrtc::SessionDescriptionInterface>
 fromProtoSessionDescription(const livekit::SessionDescription& desc) {
+	const std::string sdp = desc.sdp();
+	if (sdp.empty()) {
+		return nullptr;
+	}
 	webrtc::SdpType type = webrtc::SdpType::kOffer;
 	std::string proto_type = desc.type();
 	if (proto_type == "offer") {
@@ -51,10 +55,11 @@ fromProtoSessionDescription(const livekit::SessionDescription& desc) {
 	} else if (proto_type == "rollback") {
 		type = webrtc::SdpType::kRollback;
 	}
+
 	webrtc::SdpParseError error;
 	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
-	    webrtc::CreateSessionDescription(type, desc.sdp().c_str(), &error);
-	if (!sessionDescription) {
+	    webrtc::CreateSessionDescription(type, sdp, &error);
+	if (sessionDescription == nullptr) {
 		throw std::runtime_error(serialize_sdp_error(error));
 	}
 	return sessionDescription;
@@ -354,14 +359,32 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 	bool ping_handled = false;
 	switch (resp.message_case()) {
 	case livekit::SignalResponse::MessageCase::kAnswer: {
-		auto sd = fromProtoSessionDescription(resp.answer());
+		std::unique_ptr<webrtc::SessionDescriptionInterface> sd = nullptr;
+		try {
+			sd = fromProtoSessionDescription(resp.answer());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+		if (sd == nullptr) {
+			std::cout << "failed to parse answer" << std::endl;
+			return;
+		}
 		if (observer_) {
 			observer_->OnAnswer(std::move(sd));
 		}
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kOffer: {
-		auto sd = fromProtoSessionDescription(resp.answer());
+		std::unique_ptr<webrtc::SessionDescriptionInterface> sd = nullptr;
+		try {
+			sd = fromProtoSessionDescription(resp.answer());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+		if (sd == nullptr) {
+			std::cout << "failed to parse answer" << std::endl;
+			return;
+		}
 		if (observer_) {
 			observer_->OnOffer(std::move(sd));
 		}
