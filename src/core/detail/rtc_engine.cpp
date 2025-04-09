@@ -25,11 +25,18 @@ namespace core {
 
 RtcEngine::RtcEngine() {}
 
-RtcEngine::~RtcEngine() { std::cout << "RtcEngine::~RtcEngine()" << std::endl; }
+RtcEngine::~RtcEngine() {
+	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
+	if (signal_client_) {
+		signal_client_->RemoveObserver();
+	}
+	return;
+}
 
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
 	signal_client_ = SignalClient::Create(url, token, options.signal_options);
+	signal_client_->AddObserver(this);
 	livekit::JoinResponse response = signal_client_->Connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
 	if (response.has_room()) {
@@ -38,6 +45,47 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 
 	return response;
 }
+
+void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) { return; }
+void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
+void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) { return; }
+void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) {
+	return;
+}
+void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	Sleep(1000);
+	if (rtc_session_) {
+		auto answer = rtc_session_->CreateSubscriberAnswerFromOffer(std::move(offer));
+		Sleep(1000);
+		if (answer) {
+			this->signal_client_->SendAnswer(std::move(answer));
+		}
+	}
+	return;
+}
+void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) { return; }
+void RtcEngine::OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) {
+	return;
+}
+void RtcEngine::OnTokenRefresh(const std::string& token) { return; }
+void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) { return; }
+void RtcEngine::OnClose() { return; }
+void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) {
+	return;
+}
+void RtcEngine::OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) { return; }
+void RtcEngine::OnRoomUpdate(const livekit::Room& update) { return; }
+void RtcEngine::OnConnectionQuality(const std::vector<livekit::ConnectionQualityInfo>& update) {
+	return;
+}
+void RtcEngine::OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) { return; }
+void RtcEngine::OnSubscriptionPermissionUpdate(
+    const livekit::SubscriptionPermissionUpdate& update) {
+	return;
+}
+void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& response) { return; }
+void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
+void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
 
 } // namespace core
 } // namespace livekit

@@ -88,6 +88,18 @@ bool RtcSession::Init() {
 	return true;
 }
 
+std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscriberAnswerFromOffer(
+    std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	std::string str_desc;
+	offer->ToString(&str_desc);
+	std::cout << "recived offer: " << str_desc << std::endl;
+
+	subscriber_pc_->SetRemoteDescription(std::move(offer));
+
+	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+	return subscriber_pc_->CreateAnswer(options);
+}
+
 std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
                                                EngineOptions options) {
 	auto rtc_session = std::make_unique<RtcSession>(join_response, options);

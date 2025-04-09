@@ -36,6 +36,10 @@ public:
 
 	bool Init();
 
+public:
+	std::unique_ptr<webrtc::SessionDescriptionInterface>
+	CreateSubscriberAnswerFromOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+
 private:
 	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
 	void OnIceCandidateError(const std::string& address, int port, const std::string& url,

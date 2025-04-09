@@ -25,10 +25,79 @@
 #include "api/create_peerconnection_factory.h"
 #include "api/peer_connection_interface.h"
 
+#include <future> // std::promise, std::future
+#include <memory> // std::unique_ptr
+
 namespace livekit {
 namespace core {
 class PeerTransport {
 public:
+	class SetLocalDescriptionObserver : public webrtc::SetLocalDescriptionObserverInterface {
+	public:
+		SetLocalDescriptionObserver() = default;
+		~SetLocalDescriptionObserver() override = default;
+
+		std::future<void> GetFuture();
+		void Reject(const std::string& error);
+
+		/* Virtual methods inherited from webrtc::SetLocalDescriptionObserver. */
+	public:
+		void OnSetLocalDescriptionComplete(webrtc::RTCError error) override;
+
+	private:
+		std::promise<void> promise;
+	};
+
+	class SetRemoteDescriptionObserver : public webrtc::SetRemoteDescriptionObserverInterface {
+	public:
+		SetRemoteDescriptionObserver() = default;
+		~SetRemoteDescriptionObserver() override = default;
+
+		std::future<void> GetFuture();
+		void Reject(const std::string& error);
+
+		/* Virtual methods inherited from webrtc::SetRemoteDescriptionObserver. */
+	public:
+		void OnSetRemoteDescriptionComplete(webrtc::RTCError error) override;
+
+	private:
+		std::promise<void> promise;
+	};
+
+	class SetSessionDescriptionObserver : public webrtc::SetSessionDescriptionObserver {
+	public:
+		SetSessionDescriptionObserver() = default;
+		~SetSessionDescriptionObserver() override = default;
+
+		std::future<void> GetFuture();
+		void Reject(const std::string& error);
+
+		/* Virtual methods inherited from webrtc::SetSessionDescriptionObserver. */
+	public:
+		void OnSuccess() override;
+		void OnFailure(webrtc::RTCError error) override;
+
+	private:
+		std::promise<void> promise;
+	};
+
+	class CreateSessionDescriptionObserver : public webrtc::CreateSessionDescriptionObserver {
+	public:
+		CreateSessionDescriptionObserver() = default;
+		~CreateSessionDescriptionObserver() override = default;
+
+		std::future<std::string> GetFuture();
+		void Reject(const std::string& error);
+
+		/* Virtual methods inherited from webrtc::CreateSessionDescriptionObserver. */
+	public:
+		void OnSuccess(webrtc::SessionDescriptionInterface* desc) override;
+		void OnFailure(webrtc::RTCError error) override;
+
+	private:
+		std::promise<std::string> promise;
+	};
+
 	class PrivateListener : public webrtc::PeerConnectionObserver {
 		/* Virtual methods inherited from PeerConnectionObserver. */
 	public:
@@ -62,6 +131,14 @@ public:
 	~PeerTransport();
 
 	bool Init(PrivateListener* privateListener);
+
+public:
+	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+	std::unique_ptr<webrtc::SessionDescriptionInterface>
+	CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
+
+	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
+	std::unique_ptr<webrtc::SessionDescriptionInterface> CreateOffer();
 
 private:
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface>

@@ -33,9 +33,22 @@
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <api/audio_codecs/builtin_audio_encoder_factory.h>
 #include <api/create_peerconnection_factory.h>
+#include <api/jsep.h>
 #include <api/video_codecs/builtin_video_decoder_factory.h>
 #include <api/video_codecs/builtin_video_encoder_factory.h>
 #include <rtc_base/ssl_adapter.h>
+
+namespace {
+std::string serialize_sdp_error(webrtc::SdpParseError error) {
+	std::stringstream ss;
+	ss << std::hex << std::setfill('0');
+	ss << std::setw(8) << (uint32_t)error.line.length();
+	ss << std::dec << std::setw(1) << error.line;
+	ss << std::dec << std::setw(1) << error.description;
+	return ss.str();
+}
+
+} // namespace
 
 namespace livekit {
 namespace core {
@@ -90,6 +103,41 @@ PeerTransport::~PeerTransport() { std::cout << "PeerTransport::~PeerTransport()"
 bool PeerTransport::Init(PrivateListener* privateListener) {
 	pc_ = create_peer_connection(privateListener);
 	return true;
+}
+
+void PeerTransport::SetRemoteDescription(
+    std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
+	    new rtc::RefCountedObject<SetRemoteDescriptionObserver>());
+	auto future = observer->GetFuture();
+
+	this->pc_->SetRemoteDescription(std::move(offer), observer);
+	return future.get();
+}
+
+std::unique_ptr<webrtc::SessionDescriptionInterface>
+PeerTransport::CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
+	CreateSessionDescriptionObserver* sessionDescriptionObserver =
+	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
+	auto future = sessionDescriptionObserver->GetFuture();
+	this->pc_->CreateAnswer(sessionDescriptionObserver, options);
+	std::string answer = future.get();
+
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
+	    webrtc::CreateSessionDescription(webrtc::SdpType::kAnswer, answer, &error);
+	if (sessionDescription == nullptr) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+	return sessionDescription;
+}
+
+void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	return;
+}
+
+std::unique_ptr<webrtc::SessionDescriptionInterface> PeerTransport::CreateOffer() {
+	return std::unique_ptr<webrtc::SessionDescriptionInterface>();
 }
 
 rtc::scoped_refptr<webrtc::PeerConnectionInterface>
@@ -229,6 +277,102 @@ void PeerTransport::PrivateListener::OnRemoveTrack(
  * implementation-defined.
  */
 void PeerTransport::PrivateListener::OnInterestingUsage(int /*usagePattern*/) {}
+
+/* SetLocalDescriptionObserver */
+std::future<void> PeerTransport::SetLocalDescriptionObserver::GetFuture() {
+	return this->promise.get_future();
+}
+
+void PeerTransport::SetLocalDescriptionObserver::Reject(const std::string& error) {
+
+	this->promise.set_exception(std::make_exception_ptr(error.c_str()));
+}
+
+void PeerTransport::SetLocalDescriptionObserver::OnSetLocalDescriptionComplete(
+    webrtc::RTCError error) {
+
+	if (!error.ok()) {
+
+		auto message = std::string(error.message());
+
+		this->Reject(message);
+	} else {
+		this->promise.set_value();
+	}
+};
+
+/* SetRemoteDescriptionObserver */
+
+std::future<void> PeerTransport::SetRemoteDescriptionObserver::GetFuture() {
+
+	return this->promise.get_future();
+}
+
+void PeerTransport::SetRemoteDescriptionObserver::Reject(const std::string& error) {
+
+	this->promise.set_exception(std::make_exception_ptr(error.c_str()));
+}
+
+void PeerTransport::SetRemoteDescriptionObserver::OnSetRemoteDescriptionComplete(
+    webrtc::RTCError error) {
+
+	if (!error.ok()) {
+
+		auto message = std::string(error.message());
+
+		this->Reject(message);
+	} else {
+		this->promise.set_value();
+	}
+};
+
+/* SetSessionDescriptionObserver */
+
+std::future<void> PeerTransport::SetSessionDescriptionObserver::GetFuture() {
+	return this->promise.get_future();
+}
+
+void PeerTransport::SetSessionDescriptionObserver::Reject(const std::string& error) {
+	this->promise.set_exception(std::make_exception_ptr(error.c_str()));
+}
+
+void PeerTransport::SetSessionDescriptionObserver::OnSuccess() { this->promise.set_value(); };
+
+void PeerTransport::SetSessionDescriptionObserver::OnFailure(webrtc::RTCError error) {
+	auto message = std::string(error.message());
+
+	this->Reject(message);
+};
+
+/* CreateSessionDescriptionObserver */
+
+std::future<std::string> PeerTransport::CreateSessionDescriptionObserver::GetFuture() {
+
+	return this->promise.get_future();
+}
+
+void PeerTransport::CreateSessionDescriptionObserver::Reject(const std::string& error) {
+
+	this->promise.set_exception(std::make_exception_ptr(error.c_str()));
+}
+
+void PeerTransport::CreateSessionDescriptionObserver::OnSuccess(
+    webrtc::SessionDescriptionInterface* desc) {
+
+	// This callback should take the ownership of |desc|.
+	std::unique_ptr<webrtc::SessionDescriptionInterface> ownedDesc(desc);
+
+	std::string sdp;
+
+	ownedDesc->ToString(&sdp);
+	this->promise.set_value(sdp);
+};
+
+void PeerTransport::CreateSessionDescriptionObserver::OnFailure(webrtc::RTCError error) {
+	auto message = std::string(error.message());
+
+	this->Reject(message);
+}
 
 } // namespace core
 } // namespace livekit

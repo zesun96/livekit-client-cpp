@@ -23,6 +23,7 @@
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit_rtc.pb.h"
 #include "rtc_session.h"
+#include "signal_client.h"
 
 #include <memory>
 #include <string>
@@ -33,12 +34,37 @@ namespace core {
 class RtcSession;
 
 class SignalClient;
-class RtcEngine {
+class RtcEngine : public SignalClientObserver {
 public:
 	RtcEngine();
 	~RtcEngine();
 
 	livekit::JoinResponse Connect(std::string url, std::string token, EngineOptions options);
+
+	/* Pure virtual methods inherited from SignalClientObserver */
+public:
+	virtual void OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) override;
+	virtual void OnLeave(const livekit::LeaveRequest leave) override;
+	virtual void OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) override;
+	virtual void
+	OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) override;
+	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) override;
+	virtual void OnRemoteMuteChanged(std::string sid, bool muted) override;
+	virtual void OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) override;
+	virtual void OnTokenRefresh(const std::string& token) override;
+	virtual void OnTrickle(std::string& candidate, livekit::SignalTarget target) override;
+	virtual void OnClose() override;
+	virtual void OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) override;
+	virtual void OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) override;
+	virtual void OnRoomUpdate(const livekit::Room& update) override;
+	virtual void
+	OnConnectionQuality(const std::vector<livekit::ConnectionQualityInfo>& update) override;
+	virtual void OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) override;
+	virtual void
+	OnSubscriptionPermissionUpdate(const livekit::SubscriptionPermissionUpdate& update) override;
+	virtual void OnSubscriptionError(const livekit::SubscriptionResponse& response) override;
+	virtual void OnRequestResponse(const livekit::RequestResponse& response) override;
+	virtual void OnLocalTrackSubscribed(const std::string& track_sid) override;
 
 private:
 	std::unique_ptr<SignalClient> signal_client_;
