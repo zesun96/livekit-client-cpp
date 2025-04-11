@@ -16,6 +16,8 @@
  */
 #include "peer_transport.h"
 
+#include <nlohmann/json.hpp>
+
 #include "api/rtc_event_log/rtc_event_log_factory.h"
 #include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
@@ -105,6 +107,12 @@ bool PeerTransport::Init(PrivateListener* privateListener) {
 	return true;
 }
 
+void PeerTransport::AddPeerTransportListener(PeerTransport::PeerTransportListener* listener) {
+	this->listener_ = listener;
+}
+
+void PeerTransport::RemovePeerTransportListener() { this->listener_ = nullptr; }
+
 void PeerTransport::SetRemoteDescription(
     std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
@@ -133,11 +141,63 @@ PeerTransport::CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswe
 }
 
 void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	rtc::scoped_refptr<SetLocalDescriptionObserver> observer(
+	    new rtc::RefCountedObject<SetLocalDescriptionObserver>());
+	auto future = observer->GetFuture();
+	this->pc_->SetLocalDescription(std::move(desc), observer);
+	return future.get();
+}
+
+std::string
+PeerTransport::CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
+
+	CreateSessionDescriptionObserver* sessionDescriptionObserver =
+	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
+	auto future = sessionDescriptionObserver->GetFuture();
+
+	this->pc_->CreateOffer(sessionDescriptionObserver, options);
+
+	return future.get();
+}
+
+void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
+	auto candidate_json = nlohmann::json::parse(candidate_json_str);
+	std::string sdp_mid = candidate_json["sdpMid"];
+	int sdp_mline_index = candidate_json["sdpMLineIndex"];
+	std::string candidate_str = candidate_json["candidate"];
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::IceCandidateInterface> candidate(
+	    webrtc::CreateIceCandidate(sdp_mid, sdp_mline_index, candidate_str, &error));
+	if (!candidate.get()) {
+		return;
+	}
+	this->pc_->AddIceCandidate(candidate.get());
 	return;
 }
 
-std::unique_ptr<webrtc::SessionDescriptionInterface> PeerTransport::CreateOffer() {
-	return std::unique_ptr<webrtc::SessionDescriptionInterface>();
+bool PeerTransport::Negotiate() {
+	// May throw.
+	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+	auto offer = this->CreateOffer(options);
+
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
+	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, offer, &error);
+	if (sessionDescription == nullptr) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+	this->SetLocalDescription(std::move(sessionDescription));
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription2 =
+	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, offer, &error);
+	if (sessionDescription2 == nullptr) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+
+	if (this->listener_) {
+		this->listener_->OnOffer(std::move(sessionDescription2));
+	}
+	return true;
 }
 
 rtc::scoped_refptr<webrtc::PeerConnectionInterface>

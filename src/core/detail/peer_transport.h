@@ -32,6 +32,7 @@ namespace livekit {
 namespace core {
 class PeerTransport {
 public:
+	enum class SdpType : uint8_t { OFFER = 0, PRANSWER, ANSWER };
 	class SetLocalDescriptionObserver : public webrtc::SetLocalDescriptionObserverInterface {
 	public:
 		SetLocalDescriptionObserver() = default;
@@ -125,6 +126,12 @@ public:
 		void OnInterestingUsage(int usagePattern) override;
 	};
 
+	class PeerTransportListener {
+	public:
+		virtual ~PeerTransportListener() = default;
+		virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+	};
+
 public:
 	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
 	              webrtc::PeerConnectionFactoryInterface* factory);
@@ -132,13 +139,22 @@ public:
 
 	bool Init(PrivateListener* privateListener);
 
+	void AddPeerTransportListener(PeerTransport::PeerTransportListener* listener);
+	void RemovePeerTransportListener();
+
 public:
 	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+
 	std::unique_ptr<webrtc::SessionDescriptionInterface>
 	CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
-	std::unique_ptr<webrtc::SessionDescriptionInterface> CreateOffer();
+
+	std::string CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
+
+	void AddIceCandidate(const std::string& candidate_json_str);
+
+	bool Negotiate();
 
 private:
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface>
@@ -157,6 +173,8 @@ private:
 
 	// PeerConnection instance.
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;
+
+	PeerTransport::PeerTransportListener* listener_ = nullptr;
 };
 } // namespace core
 } // namespace livekit

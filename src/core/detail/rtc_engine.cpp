@@ -20,10 +20,12 @@
 #include "rtc_session.h"
 #include "signal_client.h"
 
+#include <future>
+
 namespace livekit {
 namespace core {
 
-RtcEngine::RtcEngine() {}
+RtcEngine::RtcEngine() : is_subscriber_primary_(true) {}
 
 RtcEngine::~RtcEngine() {
 	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
@@ -37,26 +39,42 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
 	signal_client_ = SignalClient::Create(url, token, options.signal_options);
 	signal_client_->AddObserver(this);
+
+	std::lock_guard<std::mutex> guard(session_lock_);
 	livekit::JoinResponse response = signal_client_->Connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
+	is_subscriber_primary_ = response.subscriber_primary();
 	if (response.has_room()) {
 		rtc_session_ = RtcSession::Create(response, options);
+		this->rtc_session_->AddObserver(this);
+		if (!is_subscriber_primary_ || response.fast_publish()) {
+			// std::async(std::launch::async, [this]() { return this->negotiate(); });
+			std::thread t([this]() { return this->negotiate(); });
+			t.detach();
+		}
 	}
 
 	return response;
 }
 
-void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) { return; }
+void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		rtc_session_->SetPublisherAnswer(std::move(answer));
+	}
+	return;
+}
+
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) { return; }
 void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) {
 	return;
 }
+
 void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
-	Sleep(1000);
+	std::lock_guard<std::mutex> guard(session_lock_);
 	if (rtc_session_) {
 		auto answer = rtc_session_->CreateSubscriberAnswerFromOffer(std::move(offer));
-		Sleep(1000);
 		if (answer) {
 			this->signal_client_->SendAnswer(std::move(answer));
 		}
@@ -68,7 +86,14 @@ void RtcEngine::OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate
 	return;
 }
 void RtcEngine::OnTokenRefresh(const std::string& token) { return; }
-void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) { return; }
+
+void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		rtc_session_->AddIceCandidate(candidate, target);
+	}
+	return;
+}
 void RtcEngine::OnClose() { return; }
 void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) {
 	return;
@@ -86,6 +111,15 @@ void RtcEngine::OnSubscriptionPermissionUpdate(
 void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& response) { return; }
 void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
 void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
+
+void RtcEngine::OnLocalOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	this->signal_client_->SendOffer(std::move(offer));
+}
+
+void RtcEngine::negotiate() {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	this->rtc_session_->Negotiate();
+}
 
 } // namespace core
 } // namespace livekit

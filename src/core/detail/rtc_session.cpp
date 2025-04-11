@@ -71,7 +71,12 @@ namespace livekit {
 namespace core {
 
 RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options)
-    : join_response_(join_response), options_(options) {}
+    : join_response_(join_response), options_(options) {
+
+	bool subscriber_primary = join_response.subscriber_primary();
+	bool is_publisher_connection_required_ = !subscriber_primary;
+	bool is_subscriber_connection_required_ = subscriber_primary;
+}
 
 RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
 
@@ -81,11 +86,24 @@ bool RtcSession::Init() {
 	if (!publisher_pc_->Init(this)) {
 		return false;
 	}
+	this->publisher_pc_->AddPeerTransportListener(this);
 	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
 	if (!subscriber_pc_->Init(this)) {
 		return false;
 	}
+	this->subscriber_pc_->AddPeerTransportListener(this);
 	return true;
+}
+
+void RtcSession::AddObserver(RtcSession::RtcSessionListener* observer) {
+	this->observer_ = observer;
+}
+
+void RtcSession::RemoveObserver() { this->observer_ = nullptr; }
+
+void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
+	this->publisher_pc_->SetRemoteDescription(std::move(answer));
+	return;
 }
 
 std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscriberAnswerFromOffer(
@@ -99,6 +117,17 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
 	return subscriber_pc_->CreateAnswer(options);
 }
+
+void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::SignalTarget target) {
+	if (target == livekit::SignalTarget::PUBLISHER) {
+		publisher_pc_->AddIceCandidate(candidate);
+	} else {
+		subscriber_pc_->AddIceCandidate(candidate);
+	}
+	return;
+}
+
+bool RtcSession::Negotiate() { return this->publisher_pc_->Negotiate(); }
 
 std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
                                                EngineOptions options) {
@@ -120,6 +149,13 @@ void RtcSession::OnConnectionChange(
 void RtcSession::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
 
 void RtcSession::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+
+void RtcSession::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	if (this->observer_) {
+		this->observer_->OnLocalOffer(std::move(offer));
+	}
+	return;
+}
 
 } // namespace core
 } // namespace livekit

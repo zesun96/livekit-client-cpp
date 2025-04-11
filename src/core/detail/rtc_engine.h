@@ -26,6 +26,7 @@
 #include "signal_client.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace livekit {
@@ -34,7 +35,7 @@ namespace core {
 class RtcSession;
 
 class SignalClient;
-class RtcEngine : public SignalClientObserver {
+class RtcEngine : public SignalClientObserver, public RtcSession::RtcSessionListener {
 public:
 	RtcEngine();
 	~RtcEngine();
@@ -66,9 +67,18 @@ public:
 	virtual void OnRequestResponse(const livekit::RequestResponse& response) override;
 	virtual void OnLocalTrackSubscribed(const std::string& track_sid) override;
 
+	/* Pure virtual methods inherited from RtcSession::RtcSessionListener */
+public:
+	virtual void OnLocalOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) override;
+
 private:
+	void negotiate();
+
+private:
+	mutable std::mutex session_lock_;
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
+	bool is_subscriber_primary_;
 };
 
 } // namespace core

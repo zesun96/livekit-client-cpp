@@ -26,7 +26,16 @@
 
 namespace livekit {
 namespace core {
-class RtcSession : public PeerTransport::PrivateListener {
+class RtcSession : public PeerTransport::PrivateListener,
+                   public PeerTransport::PeerTransportListener {
+
+public:
+	class RtcSessionListener {
+	public:
+		virtual ~RtcSessionListener() = default;
+		virtual void OnLocalOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+	};
+
 public:
 	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
 	virtual ~RtcSession();
@@ -36,9 +45,15 @@ public:
 
 	bool Init();
 
+	void AddObserver(RtcSession::RtcSessionListener* observer);
+	void RemoveObserver();
+
 public:
+	void SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer);
 	std::unique_ptr<webrtc::SessionDescriptionInterface>
 	CreateSubscriberAnswerFromOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+	void AddIceCandidate(const std::string& candidate, const livekit::SignalTarget target);
+	bool Negotiate();
 
 private:
 	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
@@ -49,12 +64,16 @@ private:
 	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
 	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
 
+	void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+
 private:
 	livekit::JoinResponse join_response_;
-
+	RtcSessionListener* observer_ = nullptr;
 	std::unique_ptr<PeerTransport> publisher_pc_;
 	std::unique_ptr<PeerTransport> subscriber_pc_;
 	EngineOptions options_;
+	bool is_publisher_connection_required_;
+	bool is_subscriber_connection_required_;
 };
 
 } // namespace core
