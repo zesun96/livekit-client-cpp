@@ -118,7 +118,29 @@ void RtcEngine::OnLocalOffer(std::unique_ptr<webrtc::SessionDescriptionInterface
 
 void RtcEngine::negotiate() {
 	std::lock_guard<std::mutex> guard(session_lock_);
+	// don't negotiate without any transceivers or data channel,
+	// it will generate sdp without ice frag then negotiate failed
+	if (this->rtc_session_ && this->rtc_session_->GetPublishTransceiverCount() == 0 &&
+	    !this->lossyDC_ && !this->reliableDC_) {
+		this->createDataChannels();
+	}
 	this->rtc_session_->Negotiate();
+}
+
+void RtcEngine::createDataChannels() {
+	if (!this->rtc_session_) {
+		return;
+	}
+	struct webrtc::DataChannelInit lossy_init;
+	lossy_init.ordered = true;
+	lossy_init.reliable = false;
+	lossy_init.maxRetransmits = 0;
+	this->lossyDC_ = this->rtc_session_->CreateDataChannel("_lossy", &lossy_init);
+
+	struct webrtc::DataChannelInit reliable_init;
+	reliable_init.ordered = true;
+	reliable_init.reliable = true;
+	this->reliableDC_ = this->rtc_session_->CreateDataChannel("_reliable", &reliable_init);
 }
 
 } // namespace core

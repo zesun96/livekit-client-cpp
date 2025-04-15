@@ -143,14 +143,25 @@ public:
 	void RemovePeerTransportListener();
 
 public:
-	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
-
+	std::string CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 	std::unique_ptr<webrtc::SessionDescriptionInterface>
 	CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
+	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
 
-	std::string CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
+	const std::string GetLocalDescription();
+	const std::string GetRemoteDescription();
+
+	std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
+	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	AddTransceiver(cricket::MediaType mediaType);
+	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	AddTransceiver(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+	               webrtc::RtpTransceiverInit rtpTransceiverInit);
+
+	rtc::scoped_refptr<webrtc::DataChannelInterface>
+	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config);
 
 	void AddIceCandidate(const std::string& candidate_json_str);
 

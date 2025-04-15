@@ -136,7 +136,7 @@ void SignalClient::Close(bool update_state) {}
 void SignalClient::SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	livekit::SignalRequest request;
 	auto* offer_msg = request.mutable_offer();
-	auto proto_offer = toProtoSessionDescription("answer", std::move(offer));
+	auto proto_offer = toProtoSessionDescription("offer", std::move(offer));
 	offer_msg->CopyFrom(proto_offer);
 	sendRequest(request);
 	return;

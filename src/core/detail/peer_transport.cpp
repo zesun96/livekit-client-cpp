@@ -72,6 +72,9 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& 
 			throw("thread start errored");
 		}
 
+		// Set SDP semantics to Unified Plan.
+		rtc_config_.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+
 		// this->pc_factory_ = webrtc::CreatePeerConnectionFactory(
 		//     this->network_thread_.get(), this->worker_thread_.get(),
 		//     this->signaling_thread_.get(), nullptr /*default_adm*/,
@@ -100,7 +103,10 @@ PeerTransport::PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& 
 	}
 }
 
-PeerTransport::~PeerTransport() { std::cout << "PeerTransport::~PeerTransport()" << std::endl; }
+PeerTransport::~PeerTransport() {
+	std::cout << "PeerTransport::~PeerTransport()" << std::endl;
+	this->pc_->Close();
+}
 
 bool PeerTransport::Init(PrivateListener* privateListener) {
 	pc_ = create_peer_connection(privateListener);
@@ -113,13 +119,15 @@ void PeerTransport::AddPeerTransportListener(PeerTransport::PeerTransportListene
 
 void PeerTransport::RemovePeerTransportListener() { this->listener_ = nullptr; }
 
-void PeerTransport::SetRemoteDescription(
-    std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
-	rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
-	    new rtc::RefCountedObject<SetRemoteDescriptionObserver>());
-	auto future = observer->GetFuture();
+std::string
+PeerTransport::CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
 
-	this->pc_->SetRemoteDescription(std::move(offer), observer);
+	CreateSessionDescriptionObserver* sessionDescriptionObserver =
+	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
+	auto future = sessionDescriptionObserver->GetFuture();
+
+	this->pc_->CreateOffer(sessionDescriptionObserver, options);
+
 	return future.get();
 }
 
@@ -148,16 +156,87 @@ void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescripti
 	return future.get();
 }
 
-std::string
-PeerTransport::CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
+void PeerTransport::SetRemoteDescription(
+    std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+	rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
+	    new rtc::RefCountedObject<SetRemoteDescriptionObserver>());
+	auto future = observer->GetFuture();
 
-	CreateSessionDescriptionObserver* sessionDescriptionObserver =
-	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
-	auto future = sessionDescriptionObserver->GetFuture();
-
-	this->pc_->CreateOffer(sessionDescriptionObserver, options);
-
+	this->pc_->SetRemoteDescription(std::move(offer), observer);
 	return future.get();
+}
+
+const std::string PeerTransport::GetLocalDescription() {
+	auto desc = this->pc_->local_description();
+	std::string sdp;
+
+	desc->ToString(&sdp);
+
+	return sdp;
+}
+
+const std::string PeerTransport::GetRemoteDescription() {
+	auto desc = this->pc_->remote_description();
+	std::string sdp;
+
+	desc->ToString(&sdp);
+
+	return sdp;
+}
+
+std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
+PeerTransport::GetTransceivers() const {
+	return this->pc_->GetTransceivers();
+}
+
+rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+PeerTransport::AddTransceiver(cricket::MediaType mediaType) {
+	auto result = this->pc_->AddTransceiver(mediaType);
+
+	if (!result.ok()) {
+		rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver = nullptr;
+
+		return transceiver;
+	}
+
+	return result.value();
+}
+
+rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+PeerTransport::AddTransceiver(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+                              webrtc::RtpTransceiverInit rtpTransceiverInit) {
+	/*
+	 * Define a stream id so the generated local description is correct.
+	 * - with a stream id:    "a=ssrc:<ssrc-id> mslabel:<value>"
+	 * - without a stream id: "a=ssrc:<ssrc-id> mslabel:"
+	 *
+	 * The second is incorrect (https://tools.ietf.org/html/rfc5576#section-4.1)
+	 */
+	rtpTransceiverInit.stream_ids.emplace_back("0");
+
+	auto result = this->pc_->AddTransceiver(
+	    track, rtpTransceiverInit); // NOLINT(performance-unnecessary-value-param)
+
+	if (!result.ok()) {
+		rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver = nullptr;
+
+		return transceiver;
+	}
+
+	return result.value();
+}
+
+rtc::scoped_refptr<webrtc::DataChannelInterface>
+PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config) {
+	const auto result = this->pc_->CreateDataChannelOrError(label, config);
+
+	if (result.ok()) {
+		std::cout << "data channel created successfully" << std::endl;
+	} else {
+		throw std::runtime_error("data channel create errored");
+	}
+
+	return result.value();
 }
 
 void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
@@ -178,6 +257,8 @@ void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
 bool PeerTransport::Negotiate() {
 	// May throw.
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+	// options.offer_to_receive_audio = true;
+	options.ice_restart = true;
 	auto offer = this->CreateOffer(options);
 
 	webrtc::SdpParseError error;
@@ -188,14 +269,16 @@ bool PeerTransport::Negotiate() {
 	}
 	this->SetLocalDescription(std::move(sessionDescription));
 
-	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription2 =
-	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, offer, &error);
-	if (sessionDescription2 == nullptr) {
+	auto new_offer = this->GetLocalDescription();
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> new_desc =
+	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, new_offer, &error);
+	if (new_desc == nullptr) {
 		throw std::runtime_error(serialize_sdp_error(error));
 	}
 
 	if (this->listener_) {
-		this->listener_->OnOffer(std::move(sessionDescription2));
+		this->listener_->OnOffer(std::move(new_desc));
 	}
 	return true;
 }

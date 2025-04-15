@@ -73,12 +73,15 @@ public:
 
 private:
 	void negotiate();
+	void createDataChannels();
 
 private:
 	mutable std::mutex session_lock_;
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
 	bool is_subscriber_primary_;
+	rtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
+	rtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
 };
 
 } // namespace core

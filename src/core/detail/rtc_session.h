@@ -54,6 +54,10 @@ public:
 	CreateSubscriberAnswerFromOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
 	void AddIceCandidate(const std::string& candidate, const livekit::SignalTarget target);
 	bool Negotiate();
+	rtc::scoped_refptr<webrtc::DataChannelInterface>
+	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* dataChannelDict);
+
+	const std::size_t GetPublishTransceiverCount() const;
 
 private:
 	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;

@@ -47,7 +47,7 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 		webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
 		rtc_ice_server.username = ice_server.username();
 		rtc_ice_server.password = ice_server.credential();
-		for (auto url : ice_server.urls()) {
+		for (auto& url : ice_server.urls()) {
 			rtc_ice_server.urls.emplace_back(url.c_str());
 		}
 		rtc_config.servers.push_back(rtc_ice_server);
@@ -74,8 +74,8 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
     : join_response_(join_response), options_(options) {
 
 	bool subscriber_primary = join_response.subscriber_primary();
-	bool is_publisher_connection_required_ = !subscriber_primary;
-	bool is_subscriber_connection_required_ = subscriber_primary;
+	is_publisher_connection_required_ = !subscriber_primary;
+	is_subscriber_connection_required_ = subscriber_primary;
 }
 
 RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
@@ -128,6 +128,16 @@ void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::Si
 }
 
 bool RtcSession::Negotiate() { return this->publisher_pc_->Negotiate(); }
+
+rtc::scoped_refptr<webrtc::DataChannelInterface>
+RtcSession::CreateDataChannel(const std::string& label,
+                              const webrtc::DataChannelInit* dataChannelDict) {
+	return this->publisher_pc_->CreateDataChannel(label, dataChannelDict);
+}
+
+const std::size_t RtcSession::GetPublishTransceiverCount() const {
+	return this->publisher_pc_->GetTransceivers().size();
+}
 
 std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
                                                EngineOptions options) {
