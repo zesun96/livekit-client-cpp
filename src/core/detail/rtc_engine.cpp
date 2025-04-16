@@ -112,9 +112,71 @@ void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& respons
 void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
 void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
 
-void RtcEngine::OnLocalOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+void RtcEngine::OnLocalOffer(PeerTransport::Target target,
+                             std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	this->signal_client_->SendOffer(std::move(offer));
 }
+
+void RtcEngine::OnSignalingChange(PeerTransport::Target target,
+                                  webrtc::PeerConnectionInterface::SignalingState newState) {}
+
+void RtcEngine::OnConnectionChange(PeerTransport::Target target,
+                                   webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
+}
+
+void RtcEngine::OnAddStream(PeerTransport::Target target,
+                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+
+void RtcEngine::OnRemoveStream(PeerTransport::Target target,
+                               rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+
+void RtcEngine::OnDataChannel(PeerTransport::Target target,
+                              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+
+void RtcEngine::OnRenegotiationNeeded(PeerTransport::Target target) {}
+
+void RtcEngine::OnIceConnectionChange(
+    PeerTransport::Target target, webrtc::PeerConnectionInterface::IceConnectionState newState) {}
+
+void RtcEngine::OnIceGatheringChange(PeerTransport::Target target,
+                                     webrtc::PeerConnectionInterface::IceGatheringState newState) {}
+
+void RtcEngine::OnIceCandidate(PeerTransport::Target target,
+                               const webrtc::IceCandidateInterface* candidate) {
+
+	std::string candidateStr;
+
+	candidate->ToString(&candidateStr);
+
+	if (target == PeerTransport::Target::PUBLISHER) {
+		signal_client_->SendIceCandidate(candidateStr, livekit::SignalTarget::PUBLISHER);
+	} else if (target == PeerTransport::Target::SUBSCRIBER) {
+		signal_client_->SendIceCandidate(candidateStr, livekit::SignalTarget::SUBSCRIBER);
+	}
+
+	return;
+}
+
+void RtcEngine::OnIceCandidatesRemoved(PeerTransport::Target target,
+                                       const std::vector<cricket::Candidate>& candidates) {}
+
+void RtcEngine::OnIceConnectionReceivingChange(PeerTransport::Target target, bool receiving) {}
+
+void RtcEngine::OnIceCandidateError(PeerTransport::Target target, const std::string& address,
+                                    int port, const std::string& url, int error_code,
+                                    const std::string& error_text) {}
+
+void RtcEngine::OnAddTrack(
+    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
+
+void RtcEngine::OnTrack(PeerTransport::Target target,
+                        rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+
+void RtcEngine::OnRemoveTrack(PeerTransport::Target target,
+                              rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+
+void RtcEngine::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 
 void RtcEngine::negotiate() {
 	std::lock_guard<std::mutex> guard(session_lock_);

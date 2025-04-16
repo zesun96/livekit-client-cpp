@@ -30,8 +30,9 @@
 
 namespace livekit {
 namespace core {
-class PeerTransport {
+class PeerTransport : public webrtc::PeerConnectionObserver {
 public:
+	enum class Target { UNKNOWN = 0, PUBLISHER, SUBSCRIBER };
 	enum class SdpType : uint8_t { OFFER = 0, PRANSWER, ANSWER };
 	class SetLocalDescriptionObserver : public webrtc::SetLocalDescriptionObserverInterface {
 	public:
@@ -99,45 +100,56 @@ public:
 		std::promise<std::string> promise;
 	};
 
-	class PrivateListener : public webrtc::PeerConnectionObserver {
-		/* Virtual methods inherited from PeerConnectionObserver. */
-	public:
-		void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
-		void
-		OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
-		void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
-		void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
-		void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
-		void OnRenegotiationNeeded() override;
-		void OnIceConnectionChange(
-		    webrtc::PeerConnectionInterface::IceConnectionState newState) override;
-		void
-		OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState newState) override;
-		void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
-		void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override;
-		void OnIceConnectionReceivingChange(bool receiving) override;
-		void OnIceCandidateError(const std::string& address, int port, const std::string& url,
-		                         int error_code, const std::string& error_text) override;
-		void OnAddTrack(
-		    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-		    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
-		void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
-		void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
-		void OnInterestingUsage(int usagePattern) override;
-	};
-
 	class PeerTransportListener {
 	public:
 		virtual ~PeerTransportListener() = default;
-		virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+
+		virtual void OnOffer(Target target,
+		                     std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+		virtual void
+		OnSignalingChange(Target target,
+		                  webrtc::PeerConnectionInterface::SignalingState newState) = 0;
+		virtual void
+		OnConnectionChange(Target target,
+		                   webrtc::PeerConnectionInterface::PeerConnectionState new_state) = 0;
+		virtual void OnAddStream(Target target,
+		                         rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+		virtual void OnRemoveStream(Target target,
+		                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+		virtual void
+		OnDataChannel(Target target,
+		              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) = 0;
+		virtual void OnRenegotiationNeeded(Target target) = 0;
+		virtual void
+		OnIceConnectionChange(Target target,
+		                      webrtc::PeerConnectionInterface::IceConnectionState newState) = 0;
+		virtual void
+		OnIceGatheringChange(Target target,
+		                     webrtc::PeerConnectionInterface::IceGatheringState newState) = 0;
+		virtual void OnIceCandidate(Target target,
+		                            const webrtc::IceCandidateInterface* candidate) = 0;
+		virtual void OnIceCandidatesRemoved(Target target,
+		                                    const std::vector<cricket::Candidate>& candidates) = 0;
+		virtual void OnIceConnectionReceivingChange(Target target, bool receiving) = 0;
+		virtual void OnIceCandidateError(Target target, const std::string& address, int port,
+		                                 const std::string& url, int error_code,
+		                                 const std::string& error_text) = 0;
+		virtual void OnAddTrack(
+		    Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+		    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) = 0;
+		virtual void OnTrack(Target target,
+		                     rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) = 0;
+		virtual void OnRemoveTrack(Target target,
+		                           rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) = 0;
+		virtual void OnInterestingUsage(Target target, int usagePattern) = 0;
 	};
 
 public:
-	PeerTransport(webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
+	PeerTransport(Target target, webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
 	              webrtc::PeerConnectionFactoryInterface* factory);
 	~PeerTransport();
 
-	bool Init(PrivateListener* privateListener);
+	bool Init();
 
 	void AddPeerTransportListener(PeerTransport::PeerTransportListener* listener);
 	void RemovePeerTransportListener();
@@ -168,10 +180,34 @@ public:
 	bool Negotiate();
 
 private:
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface>
-	create_peer_connection(PrivateListener* privateListener);
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> create_peer_connection();
+
+	// peer connection observer
+private:
+	void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
+	void
+	OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
+	void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+	void OnRenegotiationNeeded() override;
+	void
+	OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState newState) override;
+	void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState newState) override;
+	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
+	void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override;
+	void OnIceConnectionReceivingChange(bool receiving) override;
+	void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+	                         int error_code, const std::string& error_text) override;
+	void OnAddTrack(
+	    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
+	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+	void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
+	void OnInterestingUsage(int usagePattern) override;
 
 private:
+	Target target_;
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config_;
 	// Signaling and worker threads.
 	std::unique_ptr<rtc::Thread> network_thread_;
@@ -183,7 +219,7 @@ private:
 	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
 
 	// PeerConnection instance.
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
 
 	PeerTransport::PeerTransportListener* listener_ = nullptr;
 };

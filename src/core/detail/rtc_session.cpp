@@ -82,13 +82,15 @@ RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::end
 
 bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);
-	publisher_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (!publisher_pc_->Init(this)) {
+	publisher_pc_ =
+	    std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config, nullptr);
+	if (!publisher_pc_->Init()) {
 		return false;
 	}
 	this->publisher_pc_->AddPeerTransportListener(this);
-	subscriber_pc_ = std::make_unique<PeerTransport>(rtc_config, nullptr);
-	if (!subscriber_pc_->Init(this)) {
+	subscriber_pc_ =
+	    std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config, nullptr);
+	if (!subscriber_pc_->Init()) {
 		return false;
 	}
 	this->subscriber_pc_->AddPeerTransportListener(this);
@@ -148,24 +150,67 @@ std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_respon
 	return std::move(rtc_session);
 }
 
-void RtcSession::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {}
-
-void RtcSession::OnIceCandidateError(const std::string& address, int port, const std::string& url,
-                                     int error_code, const std::string& error_text) {}
-
-void RtcSession::OnConnectionChange(
-    webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
-
-void RtcSession::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
-
-void RtcSession::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
-
-void RtcSession::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+void RtcSession::OnOffer(PeerTransport::Target target,
+                         std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	if (this->observer_) {
-		this->observer_->OnLocalOffer(std::move(offer));
+		this->observer_->OnLocalOffer(target, std::move(offer));
 	}
 	return;
 }
+
+void RtcSession::OnSignalingChange(PeerTransport::Target target,
+                                   webrtc::PeerConnectionInterface::SignalingState newState) {}
+
+void RtcSession::OnConnectionChange(
+    PeerTransport::Target target, webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
+
+void RtcSession::OnAddStream(PeerTransport::Target target,
+                             rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+
+void RtcSession::OnRemoveStream(PeerTransport::Target target,
+                                rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+
+void RtcSession::OnDataChannel(PeerTransport::Target target,
+                               rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+
+void RtcSession::OnRenegotiationNeeded(PeerTransport::Target target) {}
+
+void RtcSession::OnIceConnectionChange(
+    PeerTransport::Target target, webrtc::PeerConnectionInterface::IceConnectionState newState) {}
+
+void RtcSession::OnIceGatheringChange(PeerTransport::Target target,
+                                      webrtc::PeerConnectionInterface::IceGatheringState newState) {
+}
+
+void RtcSession::OnIceCandidate(PeerTransport::Target target,
+                                const webrtc::IceCandidateInterface* candidate) {
+
+	if (this->observer_) {
+		this->observer_->OnIceCandidate(target, candidate);
+	}
+	return;
+}
+
+void RtcSession::OnIceCandidatesRemoved(PeerTransport::Target target,
+                                        const std::vector<cricket::Candidate>& candidates) {}
+
+void RtcSession::OnIceConnectionReceivingChange(PeerTransport::Target target, bool receiving) {}
+
+void RtcSession::OnIceCandidateError(PeerTransport::Target target, const std::string& address,
+                                     int port, const std::string& url, int error_code,
+                                     const std::string& error_text) {}
+
+void RtcSession::OnAddTrack(
+    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
+
+void RtcSession::OnTrack(PeerTransport::Target target,
+                         rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+
+void RtcSession::OnRemoveTrack(PeerTransport::Target target,
+                               rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+
+void RtcSession::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 
 } // namespace core
 } // namespace livekit
