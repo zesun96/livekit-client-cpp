@@ -61,6 +61,16 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 	// Set ICE transport type
 	rtc_config.type = static_cast<webrtc::PeerConnectionInterface::IceTransportsType>(
 	    options.rtc_config.ice_transport_type);
+	if (join_response.has_client_configuration()) {
+		auto& client_config = join_response.client_configuration();
+		if (client_config.force_relay()) {
+			rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kRelay;
+		}
+	}
+
+	rtc_config.ice_candidate_pool_size = 5;
+
+	rtc_config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
 
 	return rtc_config;
 }
@@ -84,16 +94,18 @@ bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);
 	publisher_pc_ =
 	    std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config, nullptr);
+	this->publisher_pc_->AddPeerTransportListener(this);
 	if (!publisher_pc_->Init()) {
 		return false;
 	}
-	this->publisher_pc_->AddPeerTransportListener(this);
+
 	subscriber_pc_ =
 	    std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config, nullptr);
+	this->subscriber_pc_->AddPeerTransportListener(this);
 	if (!subscriber_pc_->Init()) {
 		return false;
 	}
-	this->subscriber_pc_->AddPeerTransportListener(this);
+
 	return true;
 }
 
@@ -117,6 +129,11 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 	subscriber_pc_->SetRemoteDescription(std::move(offer));
 
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+	options.offer_to_receive_audio = true;
+	options.offer_to_receive_video = true;
+	options.use_rtp_mux = true;
+	options.use_obsolete_sctp_sdp = true;
+	options.ice_restart = true;
 	return subscriber_pc_->CreateAnswer(options);
 }
 

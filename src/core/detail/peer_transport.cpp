@@ -50,10 +50,58 @@ std::string serialize_sdp_error(webrtc::SdpParseError error) {
 	return ss.str();
 }
 
+std::unique_ptr<webrtc::IceCandidateInterface>
+deserialize_ice_candidate(const std::string& candidate_str) {
+	auto candidate_json = nlohmann::json::parse(candidate_str);
+	std::string sdp_mid = candidate_json["sdpMid"];
+	int sdp_mline_index = candidate_json["sdpMLineIndex"];
+	std::string candidate = candidate_json["candidate"];
+
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::IceCandidateInterface> candidate_ptr(
+	    webrtc::CreateIceCandidate(sdp_mid, sdp_mline_index, candidate, &error));
+	if (!candidate_ptr.get()) {
+		throw("deserialize ice candidate failed");
+	}
+	return std::move(candidate_ptr);
+}
+
 } // namespace
 
 namespace livekit {
 namespace core {
+
+std::map<PeerTransport::Target, const std::string> PeerTransport::target2String = {
+    {PeerTransport::Target::UNKNOWN, "unknown"},
+    {PeerTransport::Target::PUBLISHER, "publisher"},
+    {PeerTransport::Target::SUBSCRIBER, "subscriber"}};
+std::map<webrtc::PeerConnectionInterface::IceConnectionState, const std::string>
+    PeerTransport::iceConnectionState2String = {
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionNew, "new"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionChecking, "checking"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionConnected, "connected"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionCompleted, "completed"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionFailed, "failed"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionDisconnected,
+         "disconnected"},
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionClosed, "closed"}};
+
+std::map<webrtc::PeerConnectionInterface::IceGatheringState, const std::string>
+    PeerTransport::iceGatheringState2String = {
+        {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringNew, "new"},
+        {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringGathering, "gathering"},
+        {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringComplete, "complete"}};
+
+std::map<webrtc::PeerConnectionInterface::SignalingState, const std::string>
+    PeerTransport::signalingState2String = {
+        {webrtc::PeerConnectionInterface::SignalingState::kStable, "stable"},
+        {webrtc::PeerConnectionInterface::SignalingState::kHaveLocalOffer, "have-local-offer"},
+        {webrtc::PeerConnectionInterface::SignalingState::kHaveLocalPrAnswer,
+         "have-local-pranswer"},
+        {webrtc::PeerConnectionInterface::SignalingState::kHaveRemoteOffer, "have-remote-offer"},
+        {webrtc::PeerConnectionInterface::SignalingState::kHaveRemotePrAnswer,
+         "have-remote-pranswer"},
+        {webrtc::PeerConnectionInterface::SignalingState::kClosed, "closed"}};
 
 PeerTransport::PeerTransport(Target target,
                              webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
@@ -111,10 +159,7 @@ PeerTransport::~PeerTransport() {
 	}
 }
 
-bool PeerTransport::Init() {
-	pc_ = create_peer_connection();
-	return true;
-}
+bool PeerTransport::Init() { return create_peer_connection(); }
 
 void PeerTransport::AddPeerTransportListener(PeerTransport::PeerTransportListener* listener) {
 	this->listener_ = listener;
@@ -148,7 +193,16 @@ PeerTransport::CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswe
 	if (sessionDescription == nullptr) {
 		throw std::runtime_error(serialize_sdp_error(error));
 	}
-	return sessionDescription;
+	this->SetLocalDescription(std::move(sessionDescription));
+
+	auto new_offer = this->GetLocalDescription();
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> new_desc =
+	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, new_offer, &error);
+	if (new_desc == nullptr) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+	return new_desc;
 }
 
 void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
@@ -166,7 +220,22 @@ void PeerTransport::SetRemoteDescription(
 	auto future = observer->GetFuture();
 
 	this->pc_->SetRemoteDescription(std::move(offer), observer);
-	return future.get();
+
+	future.get();
+
+	for (auto& candidate_str : pending_candidates_) {
+		try {
+			auto candidate = deserialize_ice_candidate(candidate_str);
+			this->pc_->AddIceCandidate(candidate.get());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+	}
+	pending_candidates_.clear();
+
+	this->restarting_ice_.store(false);
+
+	return;
 }
 
 const std::string PeerTransport::GetLocalDescription() {
@@ -243,25 +312,59 @@ PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataCha
 }
 
 void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
-	auto candidate_json = nlohmann::json::parse(candidate_json_str);
-	std::string sdp_mid = candidate_json["sdpMid"];
-	int sdp_mline_index = candidate_json["sdpMLineIndex"];
-	std::string candidate_str = candidate_json["candidate"];
-	webrtc::SdpParseError error;
-	std::unique_ptr<webrtc::IceCandidateInterface> candidate(
-	    webrtc::CreateIceCandidate(sdp_mid, sdp_mline_index, candidate_str, &error));
-	if (!candidate.get()) {
+	if (this->pc_ == nullptr ||
+	    (!this->GetRemoteDescription().empty() && !restarting_ice_.load())) {
+		pending_candidates_.push_back(candidate_json_str);
 		return;
 	}
-	this->pc_->AddIceCandidate(candidate.get());
+
+	try {
+		auto candidate = deserialize_ice_candidate(candidate_json_str);
+		this->pc_->AddIceCandidate(candidate.get());
+	} catch (const std::exception& e) {
+		std::cerr << e.what() << '\n';
+	}
 	return;
 }
 
 bool PeerTransport::Negotiate() {
 	// May throw.
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
-	// options.offer_to_receive_audio = true;
+	options.offer_to_receive_video = 0;
+	options.offer_to_receive_audio = 0;
+	options.voice_activity_detection = true;
+	options.use_rtp_mux = true;
+	options.use_obsolete_sctp_sdp = true;
 	options.ice_restart = true;
+
+	try {
+		createAndSendPublisherOffer(options);
+	} catch (const std::exception& e) {
+		std::cerr << e.what() << '\n';
+		return false;
+	}
+
+	return true;
+}
+
+bool PeerTransport::create_peer_connection() {
+	webrtc::PeerConnectionDependencies deps{this};
+	auto result = this->pc_factory_->CreatePeerConnectionOrError(rtc_config_, std::move(deps));
+	if (!result.ok()) {
+		std::cerr << "Failed to create peer connection: " << result.error().message() << std::endl;
+		return false;
+	}
+	this->pc_ = result.value();
+	return true;
+	// return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr, this);
+}
+
+void PeerTransport::createAndSendPublisherOffer(
+    webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
+	if (options.ice_restart) {
+		this->restarting_ice_.store(true);
+	}
+
 	auto offer = this->CreateOffer(options);
 
 	webrtc::SdpParseError error;
@@ -283,11 +386,7 @@ bool PeerTransport::Negotiate() {
 	if (this->listener_) {
 		this->listener_->OnOffer(target_, std::move(new_desc));
 	}
-	return true;
-}
-
-rtc::scoped_refptr<webrtc::PeerConnectionInterface> PeerTransport::create_peer_connection() {
-	return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr, this);
+	return;
 }
 
 /* PeerConnection observer */
@@ -296,6 +395,8 @@ rtc::scoped_refptr<webrtc::PeerConnectionInterface> PeerTransport::create_peer_c
  * Triggered when the SignalingState changed.
  */
 void PeerTransport::OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) {
+	std::cout << "OnSignalingChange: " << "target=" << target2String[target_]
+	          << ",state=" << signalingState2String[newState] << std::endl;
 	return;
 }
 
@@ -335,13 +436,21 @@ void PeerTransport::OnRenegotiationNeeded() {}
  * state, so it may be "failed" if DTLS fails while ICE succeeds.
  */
 void PeerTransport::OnIceConnectionChange(
-    webrtc::PeerConnectionInterface::IceConnectionState newState) {}
+    webrtc::PeerConnectionInterface::IceConnectionState newState) {
+	std::cout << "OnIceConnectionChange: " << "target=" << target2String[target_]
+	          << ",state=" << iceConnectionState2String[newState] << std::endl;
+	return;
+}
 
 /**
  * Triggered any time the IceGatheringState changes.
  */
 void PeerTransport::OnIceGatheringChange(
-    webrtc::PeerConnectionInterface::IceGatheringState newState) {}
+    webrtc::PeerConnectionInterface::IceGatheringState newState) {
+	std::cout << "OnIceGatheringChange: " << "target=" << target2String[target_]
+	          << ",state=" << iceGatheringState2String[newState] << std::endl;
+	return;
+}
 
 /**
  * Triggered when a new ICE candidate has been gathered.

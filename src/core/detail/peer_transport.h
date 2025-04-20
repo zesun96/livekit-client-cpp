@@ -34,6 +34,15 @@ class PeerTransport : public webrtc::PeerConnectionObserver {
 public:
 	enum class Target { UNKNOWN = 0, PUBLISHER, SUBSCRIBER };
 	enum class SdpType : uint8_t { OFFER = 0, PRANSWER, ANSWER };
+
+	static std::map<Target, const std::string> target2String;
+	static std::map<webrtc::PeerConnectionInterface::IceConnectionState, const std::string>
+	    iceConnectionState2String;
+	static std::map<webrtc::PeerConnectionInterface::IceGatheringState, const std::string>
+	    iceGatheringState2String;
+	static std::map<webrtc::PeerConnectionInterface::SignalingState, const std::string>
+	    signalingState2String;
+
 	class SetLocalDescriptionObserver : public webrtc::SetLocalDescriptionObserverInterface {
 	public:
 		SetLocalDescriptionObserver() = default;
@@ -180,7 +189,10 @@ public:
 	bool Negotiate();
 
 private:
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface> create_peer_connection();
+	bool create_peer_connection();
+
+	void
+	createAndSendPublisherOffer(webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	// peer connection observer
 private:
@@ -220,7 +232,8 @@ private:
 
 	// PeerConnection instance.
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
-
+	std::vector<std::string> pending_candidates_;
+	std::atomic<bool> restarting_ice_ = false;
 	PeerTransport::PeerTransportListener* listener_ = nullptr;
 };
 } // namespace core
