@@ -103,6 +103,17 @@ std::map<webrtc::PeerConnectionInterface::SignalingState, const std::string>
          "have-remote-pranswer"},
         {webrtc::PeerConnectionInterface::SignalingState::kClosed, "closed"}};
 
+std::unique_ptr<webrtc::SessionDescriptionInterface> ConvertSdp(webrtc::SdpType type,
+                                                                const std::string& sdp) {
+	webrtc::SdpParseError error;
+	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
+	    webrtc::CreateSessionDescription(type, sdp, &error);
+	if (sessionDescription == nullptr) {
+		throw std::runtime_error(serialize_sdp_error(error));
+	}
+	return std::move(sessionDescription);
+}
+
 PeerTransport::PeerTransport(Target target,
                              webrtc::PeerConnectionInterface::RTCConfiguration& rtc_config,
                              webrtc::PeerConnectionFactoryInterface* factory)
@@ -169,7 +180,7 @@ void PeerTransport::RemovePeerTransportListener() { this->listener_ = nullptr; }
 
 std::string
 PeerTransport::CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
-
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	CreateSessionDescriptionObserver* sessionDescriptionObserver =
 	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
 	auto future = sessionDescriptionObserver->GetFuture();
@@ -179,33 +190,20 @@ PeerTransport::CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswer
 	return future.get();
 }
 
-std::unique_ptr<webrtc::SessionDescriptionInterface>
+std::string
 PeerTransport::CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options) {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	CreateSessionDescriptionObserver* sessionDescriptionObserver =
 	    new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
 	auto future = sessionDescriptionObserver->GetFuture();
 	this->pc_->CreateAnswer(sessionDescriptionObserver, options);
 	std::string answer = future.get();
 
-	webrtc::SdpParseError error;
-	std::unique_ptr<webrtc::SessionDescriptionInterface> sessionDescription =
-	    webrtc::CreateSessionDescription(webrtc::SdpType::kAnswer, answer, &error);
-	if (sessionDescription == nullptr) {
-		throw std::runtime_error(serialize_sdp_error(error));
-	}
-	this->SetLocalDescription(std::move(sessionDescription));
-
-	auto new_offer = this->GetLocalDescription();
-
-	std::unique_ptr<webrtc::SessionDescriptionInterface> new_desc =
-	    webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, new_offer, &error);
-	if (new_desc == nullptr) {
-		throw std::runtime_error(serialize_sdp_error(error));
-	}
-	return new_desc;
+	return answer;
 }
 
 void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	rtc::scoped_refptr<SetLocalDescriptionObserver> observer(
 	    new rtc::RefCountedObject<SetLocalDescriptionObserver>());
 	auto future = observer->GetFuture();
@@ -214,24 +212,32 @@ void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescripti
 }
 
 void PeerTransport::SetRemoteDescription(
-    std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
-	rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
-	    new rtc::RefCountedObject<SetRemoteDescriptionObserver>());
-	auto future = observer->GetFuture();
+    std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	try {
+		rtc::scoped_refptr<SetRemoteDescriptionObserver> observer(
+		    new rtc::RefCountedObject<SetRemoteDescriptionObserver>());
+		auto future = observer->GetFuture();
 
-	this->pc_->SetRemoteDescription(std::move(offer), observer);
-
-	future.get();
-
-	for (auto& candidate_str : pending_candidates_) {
-		try {
-			auto candidate = deserialize_ice_candidate(candidate_str);
-			this->pc_->AddIceCandidate(candidate.get());
-		} catch (const std::exception& e) {
-			std::cerr << e.what() << '\n';
-		}
+		this->pc_->SetRemoteDescription(std::move(desc), observer);
+		future.get();
+	} catch (const std::exception& err) {
+		std::cerr << err.what() << '\n';
+		return;
 	}
-	pending_candidates_.clear();
+
+	{
+		std::lock_guard<std::mutex> guard(pending_candidates_lock_);
+		for (auto& candidate_str : pending_candidates_) {
+			try {
+				auto candidate = deserialize_ice_candidate(candidate_str);
+				this->pc_->AddIceCandidate(candidate.get());
+			} catch (const std::exception& e) {
+				std::cerr << e.what() << '\n';
+			}
+		}
+		pending_candidates_.clear();
+	}
 
 	this->restarting_ice_.store(false);
 
@@ -239,6 +245,7 @@ void PeerTransport::SetRemoteDescription(
 }
 
 const std::string PeerTransport::GetLocalDescription() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	auto desc = this->pc_->local_description();
 	std::string sdp;
 
@@ -248,7 +255,11 @@ const std::string PeerTransport::GetLocalDescription() {
 }
 
 const std::string PeerTransport::GetRemoteDescription() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	auto desc = this->pc_->remote_description();
+	if (!desc) {
+		return "";
+	}
 	std::string sdp;
 
 	desc->ToString(&sdp);
@@ -258,13 +269,14 @@ const std::string PeerTransport::GetRemoteDescription() {
 
 std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
 PeerTransport::GetTransceivers() const {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	return this->pc_->GetTransceivers();
 }
 
 rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 PeerTransport::AddTransceiver(cricket::MediaType mediaType) {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	auto result = this->pc_->AddTransceiver(mediaType);
-
 	if (!result.ok()) {
 		rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver = nullptr;
 
@@ -277,6 +289,8 @@ PeerTransport::AddTransceiver(cricket::MediaType mediaType) {
 rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 PeerTransport::AddTransceiver(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
                               webrtc::RtpTransceiverInit rtpTransceiverInit) {
+
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	/*
 	 * Define a stream id so the generated local description is correct.
 	 * - with a stream id:    "a=ssrc:<ssrc-id> mslabel:<value>"
@@ -312,11 +326,16 @@ PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataCha
 }
 
 void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
+	
 	if (this->pc_ == nullptr ||
 	    (!this->GetRemoteDescription().empty() && !restarting_ice_.load())) {
-		pending_candidates_.push_back(candidate_json_str);
+		{
+			std::lock_guard<std::mutex> guard(pending_candidates_lock_);
+			pending_candidates_.push_back(candidate_json_str);
+		}
 		return;
 	}
+	std::lock_guard<std::mutex> guard(pc_lock_);
 
 	try {
 		auto candidate = deserialize_ice_candidate(candidate_json_str);
@@ -348,6 +367,7 @@ bool PeerTransport::Negotiate() {
 }
 
 bool PeerTransport::create_peer_connection() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
 	webrtc::PeerConnectionDependencies deps{this};
 	auto result = this->pc_factory_->CreatePeerConnectionOrError(rtc_config_, std::move(deps));
 	if (!result.ok()) {
@@ -456,6 +476,7 @@ void PeerTransport::OnIceGatheringChange(
  * Triggered when a new ICE candidate has been gathered.
  */
 void PeerTransport::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
+	RTC_LOG(LS_INFO) << __FUNCTION__ << " " << candidate->sdp_mline_index();
 	this->listener_->OnIceCandidate(target_, candidate);
 }
 

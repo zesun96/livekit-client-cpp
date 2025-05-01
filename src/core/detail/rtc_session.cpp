@@ -134,7 +134,16 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 	options.use_rtp_mux = true;
 	options.use_obsolete_sctp_sdp = true;
 	options.ice_restart = true;
-	return subscriber_pc_->CreateAnswer(options);
+	auto answer = subscriber_pc_->CreateAnswer(options);
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> answer_desc =
+	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
+
+	subscriber_pc_->SetLocalDescription(std::move(answer_desc));
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> answer_new_desc =
+	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
+	return answer_new_desc;
 }
 
 void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::SignalTarget target) {

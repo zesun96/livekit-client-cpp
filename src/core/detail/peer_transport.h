@@ -30,6 +30,10 @@
 
 namespace livekit {
 namespace core {
+
+std::unique_ptr<webrtc::SessionDescriptionInterface> ConvertSdp(webrtc::SdpType type,
+                                                                const std::string& sdp);
+
 class PeerTransport : public webrtc::PeerConnectionObserver {
 public:
 	enum class Target { UNKNOWN = 0, PUBLISHER, SUBSCRIBER };
@@ -165,11 +169,10 @@ public:
 
 public:
 	std::string CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
-	std::unique_ptr<webrtc::SessionDescriptionInterface>
-	CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
+	std::string CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
-	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
+	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
 
 	const std::string GetLocalDescription();
 	const std::string GetRemoteDescription();
@@ -226,12 +229,14 @@ private:
 	std::unique_ptr<rtc::Thread> signaling_thread_;
 	std::unique_ptr<rtc::Thread> worker_thread_;
 	rtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
-	webrtc::TaskQueueFactory* task_queue_factory_;
+	webrtc::TaskQueueFactory* task_queue_factory_ = nullptr;
 	// PeerConnection factory.
 	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
 
 	// PeerConnection instance.
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
+	mutable std::mutex pc_lock_;
+	mutable std::mutex pending_candidates_lock_;
 	std::vector<std::string> pending_candidates_;
 	std::atomic<bool> restarting_ice_ = false;
 	PeerTransport::PeerTransportListener* listener_ = nullptr;

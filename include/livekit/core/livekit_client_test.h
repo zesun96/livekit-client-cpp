@@ -28,6 +28,9 @@ namespace core {
 void TestWebrtc();
 
 bool Test();
+
+bool TestPeerConntion();
+
 } // namespace core
 } // namespace livekit
 

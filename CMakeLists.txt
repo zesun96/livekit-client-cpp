@@ -183,7 +183,7 @@ target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
 target_link_libraries(livekitclient PRIVATE libuv libssl zlib OpenSSL::SSL)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv)
+  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32)
 endif()
 
 if (WIN32)
