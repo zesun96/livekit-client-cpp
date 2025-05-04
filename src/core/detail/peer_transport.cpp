@@ -74,7 +74,19 @@ namespace core {
 std::map<PeerTransport::Target, const std::string> PeerTransport::target2String = {
     {PeerTransport::Target::UNKNOWN, "unknown"},
     {PeerTransport::Target::PUBLISHER, "publisher"},
-    {PeerTransport::Target::SUBSCRIBER, "subscriber"}};
+    {PeerTransport::Target::SUBSCRIBER, "subscriber"},
+};
+
+std::map<webrtc::PeerConnectionInterface::PeerConnectionState, const std::string>
+    PeerTransport::peerConnectionState2String = {
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kNew, "new"},
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kConnecting, "connecting"},
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kConnected, "connected"},
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kDisconnected, "disconnected"},
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kFailed, "failed"},
+        {webrtc::PeerConnectionInterface::PeerConnectionState::kClosed, "closed"},
+};
+
 std::map<webrtc::PeerConnectionInterface::IceConnectionState, const std::string>
     PeerTransport::iceConnectionState2String = {
         {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionNew, "new"},
@@ -84,13 +96,15 @@ std::map<webrtc::PeerConnectionInterface::IceConnectionState, const std::string>
         {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionFailed, "failed"},
         {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionDisconnected,
          "disconnected"},
-        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionClosed, "closed"}};
+        {webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionClosed, "closed"},
+};
 
 std::map<webrtc::PeerConnectionInterface::IceGatheringState, const std::string>
     PeerTransport::iceGatheringState2String = {
         {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringNew, "new"},
         {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringGathering, "gathering"},
-        {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringComplete, "complete"}};
+        {webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringComplete, "complete"},
+};
 
 std::map<webrtc::PeerConnectionInterface::SignalingState, const std::string>
     PeerTransport::signalingState2String = {
@@ -101,7 +115,8 @@ std::map<webrtc::PeerConnectionInterface::SignalingState, const std::string>
         {webrtc::PeerConnectionInterface::SignalingState::kHaveRemoteOffer, "have-remote-offer"},
         {webrtc::PeerConnectionInterface::SignalingState::kHaveRemotePrAnswer,
          "have-remote-pranswer"},
-        {webrtc::PeerConnectionInterface::SignalingState::kClosed, "closed"}};
+        {webrtc::PeerConnectionInterface::SignalingState::kClosed, "closed"},
+};
 
 std::unique_ptr<webrtc::SessionDescriptionInterface> ConvertSdp(webrtc::SdpType type,
                                                                 const std::string& sdp) {
@@ -326,7 +341,7 @@ PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataCha
 }
 
 void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
-	
+
 	if (this->pc_ == nullptr ||
 	    (!this->GetRemoteDescription().empty() && !restarting_ice_.load())) {
 		{
@@ -364,6 +379,20 @@ bool PeerTransport::Negotiate() {
 	}
 
 	return true;
+}
+
+bool PeerTransport::TestFlushIceCandidate() {
+	std::lock_guard<std::mutex> guard(pending_candidates_lock_);
+	for (auto& candidate_str : pending_candidates_) {
+		try {
+			auto candidate = deserialize_ice_candidate(candidate_str);
+			this->pc_->AddIceCandidate(candidate.get());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+	}
+	pending_candidates_.clear();
+	return !pending_candidates_.empty();
 }
 
 bool PeerTransport::create_peer_connection() {
@@ -424,7 +453,10 @@ void PeerTransport::OnSignalingChange(webrtc::PeerConnectionInterface::Signaling
  * Triggered when the ConnectionState changed.
  */
 void PeerTransport::OnConnectionChange(
-    webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
+    webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
+	std::cout << "OnConnectionChange: " << "target=" << target2String[target_]
+	          << ",state=" << peerConnectionState2String[new_state] << std::endl;
+}
 
 /**
  * Triggered when media is received on a new stream from remote peer.
@@ -483,19 +515,28 @@ void PeerTransport::OnIceCandidate(const webrtc::IceCandidateInterface* candidat
 /**
  * Triggered when the ICE candidates have been removed.
  */
-void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& /*candidates*/) {}
+void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& /*candidates*/) {
+	std::cout << "OnIceCandidatesRemoved: " << "target=" << target2String[target_] << std::endl;
+}
 
 /**
  * Triggered when the ICE connection receiving status changes.
  */
-void PeerTransport::OnIceConnectionReceivingChange(bool /*receiving*/) {}
+void PeerTransport::OnIceConnectionReceivingChange(bool /*receiving*/) {
+	std::cout << "OnIceConnectionReceivingChange: " << "target=" << target2String[target_]
+	          << std::endl;
+}
 
 /**
  * Triggered when the ICE connection receiving error.
  */
 void PeerTransport::OnIceCandidateError(const std::string& address, int port,
                                         const std::string& url, int error_code,
-                                        const std::string& error_text) {}
+                                        const std::string& error_text) {
+	std::cout << "OnIceCandidateError: " << "target=" << target2String[target_]
+	          << ",address=" << address << ",port=" << port << ",url=" << url
+	          << ",error_code=" << error_code << ",error_text=" << error_text << std::endl;
+}
 /**
  * Triggered when a receiver and its track are created.
  *
@@ -505,7 +546,9 @@ void PeerTransport::OnIceCandidateError(const std::string& address, int port,
  */
 void PeerTransport::OnAddTrack(
     rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& /*streams*/) {}
+    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& /*streams*/) {
+	std::cout << "OnAddTrack: " << "target=" << target2String[target_] << std::endl;
+}
 
 /**
  * Triggered when signaling indicates a transceiver will be receiving
@@ -520,7 +563,9 @@ void PeerTransport::OnAddTrack(
  * RTCSessionDescription" algorithm:
  *   https://w3c.github.io/webrtc-pc/#set-description
  */
-void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> /*transceiver*/) {}
+void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> /*transceiver*/) {
+	std::cout << "OnTrack: " << "target=" << target2String[target_] << std::endl;
+}
 
 /**
  * Triggered when signaling indicates that media will no longer be received on a
@@ -532,7 +577,9 @@ void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> 
  * will have changed direction to either sendonly or inactive.
  *   https://w3c.github.io/webrtc-pc/#process-remote-track-removal
  */
-void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/) {}
+void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/) {
+	std::cout << "OnRemoveTrack: " << "target=" << target2String[target_] << std::endl;
+}
 
 /**
  * Triggered when an interesting usage is detected by WebRTC.
@@ -543,7 +590,9 @@ void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterfac
  * The heuristics for defining what constitutes "interesting" are
  * implementation-defined.
  */
-void PeerTransport::OnInterestingUsage(int /*usagePattern*/) {}
+void PeerTransport::OnInterestingUsage(int /*usagePattern*/) {
+	std::cout << "OnInterestingUsage: " << "target=" << target2String[target_] << std::endl;
+}
 
 /* SetLocalDescriptionObserver */
 std::future<void> PeerTransport::SetLocalDescriptionObserver::GetFuture() {

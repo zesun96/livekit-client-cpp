@@ -40,6 +40,8 @@ public:
 	enum class SdpType : uint8_t { OFFER = 0, PRANSWER, ANSWER };
 
 	static std::map<Target, const std::string> target2String;
+	static std::map<webrtc::PeerConnectionInterface::PeerConnectionState, const std::string>
+	    peerConnectionState2String;
 	static std::map<webrtc::PeerConnectionInterface::IceConnectionState, const std::string>
 	    iceConnectionState2String;
 	static std::map<webrtc::PeerConnectionInterface::IceGatheringState, const std::string>
@@ -190,6 +192,8 @@ public:
 	void AddIceCandidate(const std::string& candidate_json_str);
 
 	bool Negotiate();
+
+	bool TestFlushIceCandidate();
 
 private:
 	bool create_peer_connection();

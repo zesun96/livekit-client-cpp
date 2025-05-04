@@ -31,6 +31,8 @@ bool Test();
 
 bool TestPeerConntion();
 
+void TestIceGathering();
+
 } // namespace core
 } // namespace livekit
 

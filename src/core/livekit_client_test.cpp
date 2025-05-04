@@ -25,6 +25,30 @@
 #include <rtc_base/win32_socket_init.h>
 #endif
 
+#include "api/rtc_event_log/rtc_event_log_factory.h"
+#include "api/task_queue/default_task_queue_factory.h"
+#include "api/video_codecs/video_decoder_factory.h"
+#include "api/video_codecs/video_decoder_factory_template.h"
+#include "api/video_codecs/video_decoder_factory_template_dav1d_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_open_h264_adapter.h"
+#include "api/video_codecs/video_encoder_factory.h"
+#include "api/video_codecs/video_encoder_factory_template.h"
+#include "api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_open_h264_adapter.h"
+#include <api/audio_codecs/builtin_audio_decoder_factory.h>
+#include <api/audio_codecs/builtin_audio_encoder_factory.h>
+#include <api/create_peerconnection_factory.h>
+#include <api/jsep.h>
+#include <api/video_codecs/builtin_video_decoder_factory.h>
+#include <api/video_codecs/builtin_video_encoder_factory.h>
+#include <rtc_base/helpers.h>
+#include <rtc_base/ssl_adapter.h>
+#include <rtc_base/time_utils.h>
+
 #include <nlohmann/json.hpp>
 
 #include <any>
@@ -246,6 +270,8 @@ bool TestPeerConntion() {
 		candidate_json["candidate"] = candidate_str;
 		candidate_json["sdpMid"] = candidate_ptr->sdp_mid();
 		candidate_json["sdpMLineIndex"] = candidate_ptr->sdp_mline_index();
+
+		std::cout << "bob got ice candidate:" << candidate_str << std::endl;
 		alice->AddIceCandidate(candidate_json.dump());
 	});
 
@@ -258,6 +284,8 @@ bool TestPeerConntion() {
 		candidate_json["candidate"] = candidate_str;
 		candidate_json["sdpMid"] = candidate_ptr->sdp_mid();
 		candidate_json["sdpMLineIndex"] = candidate_ptr->sdp_mline_index();
+
+		std::cout << "alice got ice candidate:" << candidate_str << std::endl;
 		bob->AddIceCandidate(candidate_json.dump());
 	});
 	alice_emitter.on("data_channel", [&](const std::any& dataChannel) {
@@ -327,9 +355,17 @@ bool TestPeerConntion() {
 	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
 	bob->SetRemoteDescription(std::move(answer_new_desc));
 
+	auto ice_timer_ = std::make_shared<Timer>();
+	ice_timer_->SetTimeout(
+	    [&]() {
+		    bob->TestFlushIceCandidate();
+		    alice->TestFlushIceCandidate();
+	    },
+	    2 * 1000);
+
 	auto timer_ = std::make_shared<Timer>();
 	timer_->SetTimeout(
-	    [=]() {
+	    [&]() {
 		    std::string data("This is a test");
 		    webrtc::DataBuffer buffer(data);
 		    bool ret = bob_reliable_dc->Send(buffer);
@@ -342,6 +378,243 @@ bool TestPeerConntion() {
 	}
 
 	return true;
+}
+
+struct test_ice_candidate {
+	std::string candidate;
+	std::string sdpMid;
+	int sdpMLineIndex;
+};
+
+class MyObserver : public webrtc::PeerConnectionObserver {
+public:
+	webrtc::PeerConnectionInterface* pc = nullptr;
+	std::vector<test_ice_candidate> pending_candidates_;
+
+	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override {
+		std::string sdp;
+		candidate->ToString(&sdp);
+		std::cout << "Local ICE Candidate: " << sdp << std::endl;
+		test_ice_candidate ice;
+		ice.candidate = sdp;
+		ice.sdpMid = candidate->sdp_mid();
+		ice.sdpMLineIndex = candidate->sdp_mline_index();
+		pending_candidates_.push_back(ice);
+	}
+
+	void
+	OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState new_state) override {
+		std::cout << "ICE Gathering State: " << static_cast<int>(new_state) << std::endl;
+	}
+
+	void
+	OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState newState) override {
+		std::cout << "ICE Connection State: " << static_cast<int>(newState) << std::endl;
+	}
+
+	void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override {
+		std::cout << "Signaling State: " << static_cast<int>(newState) << std::endl;
+	}
+	void
+	OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override {
+		std::cout << "Connection State: " << static_cast<int>(new_state) << std::endl;
+	}
+	void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
+	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
+	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
+		std::cout << "Data Channel Created" << std::endl;
+	}
+	void OnRenegotiationNeeded() override {}
+
+	void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override {}
+	void OnIceConnectionReceivingChange(bool receiving) override {}
+	void OnIceCandidateError(const std::string& address, int port, const std::string& url,
+	                         int error_code, const std::string& error_text) override {}
+	void OnAddTrack(
+	    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override {}
+	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {}
+	void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {}
+	void OnInterestingUsage(int usagePattern) override {}
+};
+
+class DummySetSessionDescriptionObserver : public webrtc::SetSessionDescriptionObserver {
+public:
+	static rtc::scoped_refptr<DummySetSessionDescriptionObserver> Create() {
+		return rtc::make_ref_counted<DummySetSessionDescriptionObserver>();
+	}
+	virtual void OnSuccess() { RTC_LOG(LS_INFO) << __FUNCTION__; }
+	virtual void OnFailure(webrtc::RTCError error) {
+		RTC_LOG(LS_INFO) << __FUNCTION__ << " " << ToString(error.type()) << ": "
+		                 << error.message();
+	}
+};
+
+void TestIceGathering() {
+#if defined(WEBRTC_WIN)
+	std::unique_ptr<rtc::WinsockInitializer> winsock_init_ =
+	    std::make_unique<rtc::WinsockInitializer>();
+#endif
+
+	auto network_thread = rtc::Thread::CreateWithSocketServer();
+	network_thread->Start();
+	auto worker_thread = rtc::Thread::Create();
+	worker_thread->Start();
+	auto signaling_thread = rtc::Thread::Create();
+	// auto signaling_thread = rtc::Thread::CreateWithSocketServer();
+	signaling_thread->Start();
+
+	auto factory = webrtc::CreatePeerConnectionFactory(
+	    network_thread.get(), worker_thread.get(), signaling_thread.get(), nullptr /*default_adm*/,
+	    webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(),
+	    nullptr, nullptr, nullptr /*audio_mixer*/, nullptr /*audio_processing*/);
+
+	webrtc::PeerConnectionInterface::RTCConfiguration config;
+	config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+	webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
+	rtc_ice_server.uri = "stun:stun.l.google.com:19302";
+	config.servers.push_back(rtc_ice_server);
+
+	auto observer = new MyObserver();
+	webrtc::PeerConnectionDependencies pc_dependencies(observer);
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc = nullptr;
+	auto error_or_peer_connection =
+	    factory->CreatePeerConnectionOrError(config, std::move(pc_dependencies));
+	if (error_or_peer_connection.ok()) {
+		pc = std::move(error_or_peer_connection.value());
+	}
+
+	if (pc == nullptr) {
+		return;
+	}
+
+	auto observer2 = new MyObserver();
+	webrtc::PeerConnectionDependencies pc_dependencies2(observer2);
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc2 = nullptr;
+	auto error_or_peer_connection2 =
+	    factory->CreatePeerConnectionOrError(config, std::move(pc_dependencies2));
+	if (error_or_peer_connection2.ok()) {
+		pc2 = std::move(error_or_peer_connection2.value());
+	}
+
+	if (pc2 == nullptr) {
+		return;
+	}
+
+	struct webrtc::DataChannelInit reliable_init;
+	reliable_init.ordered = true;
+	reliable_init.reliable = true;
+	std::string label = "_reliable";
+	auto pc_dc = pc->CreateDataChannel(label, &reliable_init);
+
+	struct webrtc::DataChannelInit reliable_init2;
+	reliable_init2.ordered = true;
+	reliable_init2.reliable = true;
+	std::string label2 = "_reliable";
+	auto pc2_dc = pc2->CreateDataChannel(label2, &reliable_init2);
+
+	// 创建 Offer 以触发候选收集
+	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+	options.offer_to_receive_video = 0;
+	options.offer_to_receive_audio = 0;
+	options.voice_activity_detection = true;
+	options.use_rtp_mux = true;
+	// options.use_obsolete_sctp_sdp = true;
+	options.ice_restart = true;
+	PeerTransport::CreateSessionDescriptionObserver* offer_sessionDescriptionObserver =
+	    new rtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
+	auto offer_future = offer_sessionDescriptionObserver->GetFuture();
+	pc->CreateOffer(offer_sessionDescriptionObserver, options);
+
+	auto offer = offer_future.get();
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> offer_desc =
+	    ConvertSdp(webrtc::SdpType::kOffer, offer);
+	pc->SetLocalDescription(DummySetSessionDescriptionObserver::Create().get(),
+	                        offer_desc.release());
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> offer_desc2 =
+	    ConvertSdp(webrtc::SdpType::kOffer, offer);
+	pc2->SetRemoteDescription(DummySetSessionDescriptionObserver::Create().get(),
+	                          offer_desc2.release());
+
+	PeerTransport::CreateSessionDescriptionObserver* remote_sessionDescriptionObserver =
+	    new rtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
+	auto future = remote_sessionDescriptionObserver->GetFuture();
+	pc2->CreateAnswer(remote_sessionDescriptionObserver, options);
+	std::string answer = future.get();
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> answer_desc =
+	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
+	pc2->SetLocalDescription(DummySetSessionDescriptionObserver::Create().get(),
+	                         answer_desc.release());
+
+	std::unique_ptr<webrtc::SessionDescriptionInterface> answer_desc2 =
+	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
+	pc->SetRemoteDescription(DummySetSessionDescriptionObserver::Create().get(),
+	                         answer_desc2.release());
+
+	// 等待候选收集完成
+	std::this_thread::sleep_for(std::chrono::seconds(5));
+
+	for (auto& candidate : observer->pending_candidates_) {
+		try {
+			webrtc::SdpParseError error;
+			std::unique_ptr<webrtc::IceCandidateInterface> candidate_ptr(webrtc::CreateIceCandidate(
+			    candidate.sdpMid, candidate.sdpMLineIndex, candidate.candidate, &error));
+			if (!candidate_ptr.get()) {
+				throw("deserialize ice candidate failed");
+			}
+			pc->AddIceCandidate(candidate_ptr.get());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+	}
+	observer->pending_candidates_.clear();
+
+	for (auto& candidate : observer2->pending_candidates_) {
+		try {
+			webrtc::SdpParseError error;
+			std::unique_ptr<webrtc::IceCandidateInterface> candidate_ptr(webrtc::CreateIceCandidate(
+			    candidate.sdpMid, candidate.sdpMLineIndex, candidate.candidate, &error));
+			if (!candidate_ptr.get()) {
+				throw("deserialize ice candidate failed");
+			}
+			pc->AddIceCandidate(candidate_ptr.get());
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << '\n';
+		}
+	}
+	observer2->pending_candidates_.clear();
+
+	std::this_thread::sleep_for(std::chrono::seconds(5));
+
+	auto timer_ = std::make_shared<Timer>();
+	timer_->SetTimeout(
+	    [&]() {
+		    std::string data("This is a test");
+		    webrtc::DataBuffer buffer(data);
+		    bool ret = pc_dc->Send(buffer);
+
+		    std::cout << "ret:" << ret << std::endl;
+	    },
+	    2 * 1000);
+
+	//   rtc::scoped_refptr<PeerTransport::SetLocalDescriptionObserver> local_observer(
+	//    new rtc::RefCountedObject<PeerTransport::SetLocalDescriptionObserver>());
+	// auto local_future = local_observer->GetFuture();
+	// pc->SetLocalDescription(std::move(offer_desc), local_observer);
+	// local_future.get();
+
+	//   rtc::scoped_refptr<PeerTransport::SetRemoteDescriptionObserver> remote_observer(
+	//    new rtc::RefCountedObject<PeerTransport::SetRemoteDescriptionObserver>());
+	// auto remote_future = remote_observer->GetFuture();
+	// pc->SetRemoteDescription(std::move(offer_desc2), remote_observer);
+	// remote_future.get();
+
+	while (true) {
+	}
+	return;
 }
 
 } // namespace core
