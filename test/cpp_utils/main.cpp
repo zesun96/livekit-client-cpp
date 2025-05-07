@@ -1,15 +1,20 @@
 #include "livekit/core/livekit_client_test.h"
+#include <iostream>
 #include <thread>
 
-void test1() { livekit::core::TestWebrtc(); }
-void test2() { livekit::core::Test(); }
+static void test1() { livekit::core::TestWebrtc(); }
+static void test2() { livekit::core::Test(); }
 
-void test3() { livekit::core::TestPeerConntion(); }
+static void test3() { livekit::core::TestPeerConntion(); }
 
-void test4() { livekit::core::TestIceGathering(); }
+static void test4() { livekit::core::TestIceGathering(); }
 
 int main(int argc, char* argv[]) {
-	livekit::core::Init();
+	auto ret = livekit::core::Init();
+	if (!ret) {
+		std::cout << "init failed" << std::endl;
+		return -1;
+	}
 	// std::thread t1(test1);
 	// t1.join();
 

@@ -386,6 +386,28 @@ struct test_ice_candidate {
 	int sdpMLineIndex;
 };
 
+class TestDataChannelObserver : public webrtc::DataChannelObserver {
+public:
+	void OnStateChange() override {
+		std::cout << "DataChannel state change" << std::endl;
+		return;
+	}
+	void OnMessage(const webrtc::DataBuffer& buffer) override {
+		std::string message(buffer.data.data<char>(), buffer.data.size());
+		std::cout << "DataChannel message: " << message << std::endl;
+		return;
+	}
+	void OnBufferedAmountChange(uint64_t sent_data_size) override {
+		std::cout << "DataChannel buffered amount change: " << sent_data_size << std::endl;
+		return;
+	}
+};
+
+TestDataChannelObserver* g_test_data_channel_observer = new TestDataChannelObserver();
+TestDataChannelObserver* g_test_data_channel_observer2 = new TestDataChannelObserver();
+int i = 0;
+std::mutex dc_pc_lock_;
+
 class MyObserver : public webrtc::PeerConnectionObserver {
 public:
 	webrtc::PeerConnectionInterface* pc = nullptr;
@@ -423,6 +445,14 @@ public:
 	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
 	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
 		std::cout << "Data Channel Created" << std::endl;
+		std::lock_guard<std::mutex> guard(dc_pc_lock_);
+		if (i == 0) {
+			i++;
+			dataChannel->RegisterObserver(g_test_data_channel_observer);
+        } else {
+			dataChannel->RegisterObserver(g_test_data_channel_observer2);
+        }
+		
 	}
 	void OnRenegotiationNeeded() override {}
 
@@ -461,7 +491,6 @@ void TestIceGathering() {
 	auto worker_thread = rtc::Thread::Create();
 	worker_thread->Start();
 	auto signaling_thread = rtc::Thread::Create();
-	// auto signaling_thread = rtc::Thread::CreateWithSocketServer();
 	signaling_thread->Start();
 
 	auto factory = webrtc::CreatePeerConnectionFactory(
@@ -474,6 +503,7 @@ void TestIceGathering() {
 	webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
 	rtc_ice_server.uri = "stun:stun.l.google.com:19302";
 	config.servers.push_back(rtc_ice_server);
+	config.disable_ipv6_on_wifi = true;
 
 	auto observer = new MyObserver();
 	webrtc::PeerConnectionDependencies pc_dependencies(observer);
@@ -501,17 +531,31 @@ void TestIceGathering() {
 		return;
 	}
 
+	rtc::scoped_refptr<webrtc::DataChannelInterface> pc_dc = nullptr;
 	struct webrtc::DataChannelInit reliable_init;
 	reliable_init.ordered = true;
 	reliable_init.reliable = true;
 	std::string label = "_reliable";
-	auto pc_dc = pc->CreateDataChannel(label, &reliable_init);
+	auto pc_dc_result = pc->CreateDataChannelOrError(label, &reliable_init);
+	if (pc_dc_result.ok()) {
+		pc_dc = pc_dc_result.MoveValue();
+	} else {
+		std::cout << "CreateDataChannelOrError failed" << std::endl;
+		return;
+	}
 
+	rtc::scoped_refptr<webrtc::DataChannelInterface> pc2_dc = nullptr;
 	struct webrtc::DataChannelInit reliable_init2;
 	reliable_init2.ordered = true;
 	reliable_init2.reliable = true;
 	std::string label2 = "_reliable";
-	auto pc2_dc = pc2->CreateDataChannel(label2, &reliable_init2);
+	auto pc2_dc_result = pc2->CreateDataChannelOrError(label2, &reliable_init2);
+	if (pc2_dc_result.ok()) {
+		pc2_dc = pc2_dc_result.MoveValue();
+	} else {
+		std::cout << "CreateDataChannelOrError failed" << std::endl;
+		return;
+	}
 
 	// 创建 Offer 以触发候选收集
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
@@ -519,7 +563,7 @@ void TestIceGathering() {
 	options.offer_to_receive_audio = 0;
 	options.voice_activity_detection = true;
 	options.use_rtp_mux = true;
-	// options.use_obsolete_sctp_sdp = true;
+	options.use_obsolete_sctp_sdp = true;
 	options.ice_restart = true;
 	PeerTransport::CreateSessionDescriptionObserver* offer_sessionDescriptionObserver =
 	    new rtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
@@ -589,16 +633,18 @@ void TestIceGathering() {
 
 	std::this_thread::sleep_for(std::chrono::seconds(5));
 
-	auto timer_ = std::make_shared<Timer>();
-	timer_->SetTimeout(
-	    [&]() {
-		    std::string data("This is a test");
-		    webrtc::DataBuffer buffer(data);
-		    bool ret = pc_dc->Send(buffer);
+    std::string data("This is a test");
+	webrtc::DataBuffer buffer(data);
+	bool ret = pc_dc->Send(buffer);
 
-		    std::cout << "ret:" << ret << std::endl;
-	    },
-	    2 * 1000);
+	std::cout << "ret:" << ret << std::endl;
+
+
+    std::string data2("This is a test2");
+	webrtc::DataBuffer buffer2(data2);
+	bool ret2 = pc2_dc->Send(buffer2);
+
+	std::cout << "ret2:" << ret2 << std::endl;
 
 	//   rtc::scoped_refptr<PeerTransport::SetLocalDescriptionObserver> local_observer(
 	//    new rtc::RefCountedObject<PeerTransport::SetLocalDescriptionObserver>());
