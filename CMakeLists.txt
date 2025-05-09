@@ -89,6 +89,7 @@ message(STATUS "libwebsockets include dir: ${LIBWEBSOCKETS_INCLUDE_DIRS}")
 message(STATUS "libwebsockets lib: ${LIBWEBSOCKETS_LIBRARIES}")
 message(STATUS "protobuf include dir: ${PROTOBUF_INCLUDE_DIRS}")
 message(STATUS "protobuf libraries: ${PROTOBUF_LIBRARIES}")
+message(STATUS "nlohmann_json include dir: ${nlohmann_json_SOURCE_DIR}/single_include")
 
 set(LK_PROTO_PATH protocol/protobufs)
 set(LK_PROTO_FILES
@@ -169,6 +170,7 @@ target_include_directories(livekitclient PRIVATE ${LIBWEBSOCKETS_INCLUDE_DIRS}/i
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
+target_include_directories(livekitclient PUBLIC ${nlohmann_json_SOURCE_DIR}/single_include)
 
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
@@ -181,7 +183,7 @@ target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
 target_link_libraries(livekitclient PRIVATE libuv libssl zlib OpenSSL::SSL)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv)
+  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32)
 endif()
 
 if (WIN32)

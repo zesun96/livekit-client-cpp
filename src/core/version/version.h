@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,23 +17,11 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_LIVEKIT_CLIENT_TEST_H_
-#define _LKC_CORE_LIVEKIT_CLIENT_TEST_H_
+#ifndef _LKC_CORE_VERSION_VERSION_H_
+#define _LKC_CORE_VERSION_VERSION_H_
 
-#include "livekit_client.h"
+#define LKC_CORE_VERSION_MAJOR 0
+#define LKC_CORE_VERSION_MINOR 0
+#define LKC_CORE_VERSION_PATCH 1
 
-namespace livekit {
-namespace core {
-
-void TestWebrtc();
-
-bool Test();
-
-bool TestPeerConntion();
-
-void TestIceGathering();
-
-} // namespace core
-} // namespace livekit
-
-#endif // _LKC_CORE_LIVEKIT_CLIENT_TEST_H_
+#endif // _LKC_CORE_VERSION_VERSION_H_

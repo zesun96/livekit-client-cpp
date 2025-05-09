@@ -68,6 +68,9 @@ fromProtoSessionDescription(const livekit::SessionDescription& desc) {
 livekit::SessionDescription
 toProtoSessionDescription(std::string mode,
                           std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
+	if (desc == nullptr) {
+		throw std::runtime_error("desc is null");
+	}
 	livekit::SessionDescription proto_desc;
 	auto description = desc->description();
 	std::string str_desc;
@@ -133,7 +136,7 @@ void SignalClient::Close(bool update_state) {}
 void SignalClient::SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	livekit::SignalRequest request;
 	auto* offer_msg = request.mutable_offer();
-	auto proto_offer = toProtoSessionDescription("answer", std::move(offer));
+	auto proto_offer = toProtoSessionDescription("offer", std::move(offer));
 	offer_msg->CopyFrom(proto_offer);
 	sendRequest(request);
 	return;
@@ -378,12 +381,12 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 	case livekit::SignalResponse::MessageCase::kOffer: {
 		std::unique_ptr<webrtc::SessionDescriptionInterface> sd = nullptr;
 		try {
-			sd = fromProtoSessionDescription(resp.answer());
+			sd = fromProtoSessionDescription(resp.offer());
 		} catch (const std::exception& e) {
 			std::cerr << e.what() << '\n';
 		}
 		if (sd == nullptr) {
-			std::cout << "failed to parse answer" << std::endl;
+			std::cout << "failed to parse offer" << std::endl;
 			return;
 		}
 		if (observer_) {
