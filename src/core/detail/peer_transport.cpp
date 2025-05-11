@@ -245,8 +245,47 @@ void PeerTransport::SetRemoteDescription(
 		std::lock_guard<std::mutex> guard(pending_candidates_lock_);
 		for (auto& candidate_str : pending_candidates_) {
 			try {
+				// signaling_thread_->PostTask([this, candidate_str]() {
+				// 	auto candidate = deserialize_ice_candidate(candidate_str);
+				// 	this->pc_->AddIceCandidate(std::move(candidate), [](webrtc::RTCError error) {
+				// 		if (error.ok()) {
+				// 			std::cout << "ICE Candidate added successfully." << std::endl;
+				// 		} else {
+				// 			switch (error.type()) {
+				// 			case webrtc::RTCErrorType::INVALID_PARAMETER:
+				// 				std::cerr << "Invalid candidate format: " << error.message()
+				// 				          << std::endl;
+				// 				break;
+				// 			case webrtc::RTCErrorType::INVALID_STATE:
+				// 				std::cerr << "Call AddIceCandidate after SetRemoteDescription!"
+				// 				          << std::endl;
+				// 				break;
+				// 			default:
+				// 				std::cerr << "Unexpected error: " << error.message() << std::endl;
+				// 			}
+				// 		}
+				// 	});
+				// });
+
 				auto candidate = deserialize_ice_candidate(candidate_str);
-				this->pc_->AddIceCandidate(candidate.get());
+				this->pc_->AddIceCandidate(std::move(candidate), [](webrtc::RTCError error) {
+					if (error.ok()) {
+						std::cout << "ICE Candidate added successfully." << std::endl;
+					} else {
+						switch (error.type()) {
+						case webrtc::RTCErrorType::INVALID_PARAMETER:
+							std::cerr << "Invalid candidate format: " << error.message()
+							          << std::endl;
+							break;
+						case webrtc::RTCErrorType::INVALID_STATE:
+							std::cerr << "Call AddIceCandidate after SetRemoteDescription!"
+							          << std::endl;
+							break;
+						default:
+							std::cerr << "Unexpected error: " << error.message() << std::endl;
+						}
+					}
+				});
 			} catch (const std::exception& e) {
 				std::cerr << e.what() << '\n';
 			}
@@ -279,6 +318,57 @@ const std::string PeerTransport::GetRemoteDescription() {
 
 	desc->ToString(&sdp);
 
+	return sdp;
+}
+
+const std::string PeerTransport::GetCurrentLocalDescription() {
+	auto desc = this->pc_->current_local_description();
+	if (!desc) {
+		return "";
+	}
+	std::string sdp;
+	desc->ToString(&sdp);
+	return sdp;
+}
+
+const std::string PeerTransport::GetCurrentRemoteDescription() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	if (!this->pc_) {
+		return "";
+	}
+	try {
+		const webrtc::SessionDescriptionInterface* desc = this->pc_->current_remote_description();
+		if (!desc) {
+			return "";
+		}
+		std::string sdp;
+		desc->ToString(&sdp);
+		return sdp;
+	} catch (const std::exception& e) {
+		std::cerr << e.what() << '\n';
+	}
+	return "";
+}
+
+const std::string PeerTransport::GetPendingLocalDescription() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	auto desc = this->pc_->pending_local_description();
+	if (!desc) {
+		return "";
+	}
+	std::string sdp;
+	desc->ToString(&sdp);
+	return sdp;
+}
+
+const std::string PeerTransport::GetPendingRemoteDescription() {
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	auto desc = this->pc_->pending_remote_description();
+	if (!desc) {
+		return "";
+	}
+	std::string sdp;
+	desc->ToString(&sdp);
 	return sdp;
 }
 
@@ -341,20 +431,34 @@ PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataCha
 }
 
 void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
-
-	if (this->pc_ == nullptr ||
-	    (!this->GetRemoteDescription().empty() && !restarting_ice_.load())) {
-		{
-			std::lock_guard<std::mutex> guard(pending_candidates_lock_);
-			pending_candidates_.push_back(candidate_json_str);
-		}
+	auto has_remot_decs = this->GetCurrentRemoteDescription().empty();
+	if (this->pc_ == nullptr || (has_remot_decs && !this->restarting_ice_.load())) {
+		std::lock_guard<std::mutex> guard(pending_candidates_lock_);
+		pending_candidates_.push_back(candidate_json_str);
 		return;
 	}
 	std::lock_guard<std::mutex> guard(pc_lock_);
-
 	try {
+		// signaling_thread_->PostTask([this, candidate_json_str]() {
+		// });
+
 		auto candidate = deserialize_ice_candidate(candidate_json_str);
-		this->pc_->AddIceCandidate(candidate.get());
+		this->pc_->AddIceCandidate(std::move(candidate), [](webrtc::RTCError error) {
+			if (error.ok()) {
+				std::cout << "ICE Candidate added successfully." << std::endl;
+			} else {
+				switch (error.type()) {
+				case webrtc::RTCErrorType::INVALID_PARAMETER:
+					std::cerr << "Invalid candidate format: " << error.message() << std::endl;
+					break;
+				case webrtc::RTCErrorType::INVALID_STATE:
+					std::cerr << "Call AddIceCandidate after SetRemoteDescription!" << std::endl;
+					break;
+				default:
+					std::cerr << "Unexpected error: " << error.message() << std::endl;
+				}
+			}
+		});
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << '\n';
 	}
@@ -386,7 +490,23 @@ bool PeerTransport::TestFlushIceCandidate() {
 	for (auto& candidate_str : pending_candidates_) {
 		try {
 			auto candidate = deserialize_ice_candidate(candidate_str);
-			this->pc_->AddIceCandidate(candidate.get());
+			this->pc_->AddIceCandidate(std::move(candidate), [](webrtc::RTCError error) {
+				if (error.ok()) {
+					std::cout << "ICE Candidate added successfully." << std::endl;
+				} else {
+					switch (error.type()) {
+					case webrtc::RTCErrorType::INVALID_PARAMETER:
+						std::cerr << "Invalid candidate format: " << error.message() << std::endl;
+						break;
+					case webrtc::RTCErrorType::INVALID_STATE:
+						std::cerr << "Call AddIceCandidate after SetRemoteDescription!"
+						          << std::endl;
+						break;
+					default:
+						std::cerr << "Unexpected error: " << error.message() << std::endl;
+					}
+				}
+			});
 		} catch (const std::exception& e) {
 			std::cerr << e.what() << '\n';
 		}
@@ -405,7 +525,6 @@ bool PeerTransport::create_peer_connection() {
 	}
 	this->pc_ = result.value();
 	return true;
-	// return this->pc_factory_->CreatePeerConnection(rtc_config_, nullptr, nullptr, this);
 }
 
 void PeerTransport::createAndSendPublisherOffer(
@@ -446,6 +565,7 @@ void PeerTransport::createAndSendPublisherOffer(
 void PeerTransport::OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) {
 	std::cout << "OnSignalingChange: " << "target=" << target2String[target_]
 	          << ",state=" << signalingState2String[newState] << std::endl;
+	this->listener_->OnSignalingChange(target_, newState);
 	return;
 }
 
@@ -456,28 +576,35 @@ void PeerTransport::OnConnectionChange(
     webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
 	std::cout << "OnConnectionChange: " << "target=" << target2String[target_]
 	          << ",state=" << peerConnectionState2String[new_state] << std::endl;
+	this->listener_->OnConnectionChange(target_, new_state);
 }
 
 /**
  * Triggered when media is received on a new stream from remote peer.
  */
-void PeerTransport::OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {}
+void PeerTransport::OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
+	this->listener_->OnAddStream(target_, stream);
+}
 
 /**
  * Triggered when a remote peer closes a stream.
  */
-void PeerTransport::OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> /*stream*/) {}
+void PeerTransport::OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
+	this->listener_->OnRemoveStream(target_, stream);
+}
 
 /**
  * Triggered when a remote peer opens a data channel.
  */
-void PeerTransport::OnDataChannel(
-    rtc::scoped_refptr<webrtc::DataChannelInterface> /*dataChannel*/) {}
+void PeerTransport::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {
+	std::cout << "OnDataChannel: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnDataChannel(target_, dataChannel);
+}
 
 /**
  * Triggered when renegotiation is needed. For example, an ICE restart has begun.
  */
-void PeerTransport::OnRenegotiationNeeded() {}
+void PeerTransport::OnRenegotiationNeeded() { this->listener_->OnRenegotiationNeeded(target_); }
 
 /**
  * Triggered any time the IceConnectionState changes.
@@ -491,6 +618,7 @@ void PeerTransport::OnIceConnectionChange(
     webrtc::PeerConnectionInterface::IceConnectionState newState) {
 	std::cout << "OnIceConnectionChange: " << "target=" << target2String[target_]
 	          << ",state=" << iceConnectionState2String[newState] << std::endl;
+	this->listener_->OnIceConnectionChange(target_, newState);
 	return;
 }
 
@@ -501,6 +629,7 @@ void PeerTransport::OnIceGatheringChange(
     webrtc::PeerConnectionInterface::IceGatheringState newState) {
 	std::cout << "OnIceGatheringChange: " << "target=" << target2String[target_]
 	          << ",state=" << iceGatheringState2String[newState] << std::endl;
+	this->listener_->OnIceGatheringChange(target_, newState);
 	return;
 }
 
@@ -515,16 +644,18 @@ void PeerTransport::OnIceCandidate(const webrtc::IceCandidateInterface* candidat
 /**
  * Triggered when the ICE candidates have been removed.
  */
-void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& /*candidates*/) {
+void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) {
 	std::cout << "OnIceCandidatesRemoved: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnIceCandidatesRemoved(target_, candidates);
 }
 
 /**
  * Triggered when the ICE connection receiving status changes.
  */
-void PeerTransport::OnIceConnectionReceivingChange(bool /*receiving*/) {
+void PeerTransport::OnIceConnectionReceivingChange(bool receiving) {
 	std::cout << "OnIceConnectionReceivingChange: " << "target=" << target2String[target_]
 	          << std::endl;
+	this->listener_->OnIceConnectionReceivingChange(target_, receiving);
 }
 
 /**
@@ -536,6 +667,8 @@ void PeerTransport::OnIceCandidateError(const std::string& address, int port,
 	std::cout << "OnIceCandidateError: " << "target=" << target2String[target_]
 	          << ",address=" << address << ",port=" << port << ",url=" << url
 	          << ",error_code=" << error_code << ",error_text=" << error_text << std::endl;
+
+	this->listener_->OnIceCandidateError(target_, address, port, url, error_code, error_text);
 }
 /**
  * Triggered when a receiver and its track are created.
@@ -545,9 +678,10 @@ void PeerTransport::OnIceCandidateError(const std::string& address, int port,
  * compatibility (and is called in the exact same situations as OnTrack).
  */
 void PeerTransport::OnAddTrack(
-    rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& /*streams*/) {
+    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {
 	std::cout << "OnAddTrack: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnAddTrack(target_, receiver, streams);
 }
 
 /**
@@ -563,8 +697,9 @@ void PeerTransport::OnAddTrack(
  * RTCSessionDescription" algorithm:
  *   https://w3c.github.io/webrtc-pc/#set-description
  */
-void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> /*transceiver*/) {
+void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
 	std::cout << "OnTrack: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnTrack(target_, transceiver);
 }
 
 /**
@@ -577,8 +712,9 @@ void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> 
  * will have changed direction to either sendonly or inactive.
  *   https://w3c.github.io/webrtc-pc/#process-remote-track-removal
  */
-void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> /*receiver*/) {
+void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
 	std::cout << "OnRemoveTrack: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnRemoveTrack(target_, receiver);
 }
 
 /**
@@ -590,8 +726,9 @@ void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterfac
  * The heuristics for defining what constitutes "interesting" are
  * implementation-defined.
  */
-void PeerTransport::OnInterestingUsage(int /*usagePattern*/) {
+void PeerTransport::OnInterestingUsage(int usagePattern) {
 	std::cout << "OnInterestingUsage: " << "target=" << target2String[target_] << std::endl;
+	this->listener_->OnInterestingUsage(target_, usagePattern);
 }
 
 /* SetLocalDescriptionObserver */

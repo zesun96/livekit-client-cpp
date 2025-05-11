@@ -19,6 +19,7 @@
 #include "version/version.h"
 
 #include <rtc_base/helpers.h>
+#include <rtc_base/logging.h>
 #include <rtc_base/ssl_adapter.h>
 #include <rtc_base/time_utils.h>
 
@@ -35,6 +36,8 @@ bool Init() {
 
 	ret = rtc::InitializeSSL();
 	ret = rtc::InitRandom(rtc::Time());
+
+	rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
 
 	return ret;
 }

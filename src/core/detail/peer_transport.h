@@ -171,6 +171,7 @@ public:
 
 public:
 	std::string CreateOffer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
+
 	std::string CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
@@ -178,6 +179,10 @@ public:
 
 	const std::string GetLocalDescription();
 	const std::string GetRemoteDescription();
+	const std::string GetCurrentLocalDescription();
+	const std::string GetCurrentRemoteDescription();
+	const std::string GetPendingLocalDescription();
+	const std::string GetPendingRemoteDescription();
 
 	std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
 	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>

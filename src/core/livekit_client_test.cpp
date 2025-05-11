@@ -121,6 +121,25 @@ private:
 	std::unordered_map<std::string, std::vector<Listener>> listeners_;
 };
 
+class DataChannelObserverListener : public webrtc::DataChannelObserver {
+public:
+	DataChannelObserverListener() = default;
+	virtual ~DataChannelObserverListener() = default;
+
+	void OnStateChange() override {
+		// emitter->emit("state_change");
+		return;
+	}
+
+	void OnMessage(const webrtc::DataBuffer& buffer) override {
+		std::string message(buffer.data.data<char>(), buffer.data.size());
+		std::cout << "DataChannel message: " << message << std::endl;
+		emitter->emit("message", message);
+	}
+	void OnBufferedAmountChange(uint64_t sent_data_size) override {}
+	EventEmitter* emitter = nullptr;
+};
+
 static EventEmitter bob_emitter;
 static EventEmitter alice_emitter;
 
@@ -135,9 +154,6 @@ public:
 
 	virtual void OnOffer(PeerTransport::Target target,
 	                     std::unique_ptr<webrtc::SessionDescriptionInterface> offer) override {
-		// emitter->emit(
-		//     "offer", EventValidType <webrtc::SessionDescriptionInterface*>{1, offer.get()});
-
 		emitter->emit("offer", offer.get());
 	}
 
@@ -216,25 +232,6 @@ public:
 	EventEmitter* emitter = nullptr;
 };
 
-class DataChannelObserverListener : public webrtc::DataChannelObserver {
-public:
-	DataChannelObserverListener() = default;
-	virtual ~DataChannelObserverListener() = default;
-
-	void OnStateChange() override {
-		// emitter->emit("state_change");
-		return;
-	}
-
-	void OnMessage(const webrtc::DataBuffer& buffer) override {
-		std::string message(buffer.data.data<char>(), buffer.data.size());
-		std::cout << "DataChannel message: " << message << std::endl;
-		emitter->emit("message", message);
-	}
-	void OnBufferedAmountChange(uint64_t sent_data_size) override {}
-	EventEmitter* emitter = nullptr;
-};
-
 bool TestPeerConntion() {
 #if defined(WEBRTC_WIN)
 	std::unique_ptr<rtc::WinsockInitializer> winsock_init_ =
@@ -242,26 +239,34 @@ bool TestPeerConntion() {
 #endif
 
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
+	rtc_config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
 	webrtc::PeerConnectionInterface::IceServer rtc_ice_server;
-	rtc_ice_server.uri = "stun:stun1.l.google.com:19302";
+	rtc_ice_server.uri = "stun:stun.l.google.com:19302";
 	rtc_config.servers.push_back(rtc_ice_server);
+	rtc_config.disable_ipv6_on_wifi = true;
 	rtc_config.continual_gathering_policy =
 	    webrtc::PeerConnectionInterface::ContinualGatheringPolicy::GATHER_ONCE;
 	// Set ICE transport type
 	rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kAll;
 
 	TestPeerTransportListener bob_listener;
+	DataChannelObserverListener* bob_data_channel_observer = new DataChannelObserverListener();
+	bob_data_channel_observer->emitter = &bob_emitter;
 	bob_listener.emitter = &bob_emitter;
 	auto bob =
 	    std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config, nullptr);
 	bob->AddPeerTransportListener(&bob_listener);
+	auto bob_ptr = bob.get();
 	TestPeerTransportListener alice_listener;
+	DataChannelObserverListener* alice_data_channel_observer = new DataChannelObserverListener();
+	alice_data_channel_observer->emitter = &alice_emitter;
 	alice_listener.emitter = &alice_emitter;
 	auto alice =
 	    std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config, nullptr);
 	alice->AddPeerTransportListener(&alice_listener);
+	auto alice_ptr = alice.get();
 
-	bob_emitter.on("ice_candidate", [&](const std::any& candidate) {
+	bob_emitter.on("ice_candidate", [alice_ptr](const std::any& candidate) {
 		std::cout << "bob got ice candidate" << std::endl;
 		auto candidate_ptr = std::any_cast<const webrtc::IceCandidateInterface*>(candidate);
 		std::string candidate_str;
@@ -272,10 +277,22 @@ bool TestPeerConntion() {
 		candidate_json["sdpMLineIndex"] = candidate_ptr->sdp_mline_index();
 
 		std::cout << "bob got ice candidate:" << candidate_str << std::endl;
-		alice->AddIceCandidate(candidate_json.dump());
+		std::thread t3([alice_ptr, candidate_json]() {
+			alice_ptr->AddIceCandidate(candidate_json.dump());
+			return;
+		});
+		t3.detach();
 	});
+	bob_emitter.on(
+	    "data_channel", [alice_ptr, bob_data_channel_observer](const std::any& dataChannel) {
+		    std::cout << "alice got data channel" << std::endl;
+		    auto dataChannel_ptr =
+		        std::any_cast<rtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
+		    std::cout << "Data Channel Created" << std::endl;
+		    dataChannel_ptr->RegisterObserver(bob_data_channel_observer);
+	    });
 
-	alice_emitter.on("ice_candidate", [&](const std::any& candidate) {
+	alice_emitter.on("ice_candidate", [bob_ptr](const std::any& candidate) {
 		std::cout << "alice got ice candidate" << std::endl;
 		auto candidate_ptr = std::any_cast<const webrtc::IceCandidateInterface*>(candidate);
 		std::string candidate_str;
@@ -286,14 +303,20 @@ bool TestPeerConntion() {
 		candidate_json["sdpMLineIndex"] = candidate_ptr->sdp_mline_index();
 
 		std::cout << "alice got ice candidate:" << candidate_str << std::endl;
-		bob->AddIceCandidate(candidate_json.dump());
+		std::thread t3([bob_ptr, candidate_json]() {
+			bob_ptr->AddIceCandidate(candidate_json.dump());
+			return;
+		});
+		t3.detach();
 	});
-	alice_emitter.on("data_channel", [&](const std::any& dataChannel) {
+	alice_emitter.on("data_channel", [alice_data_channel_observer](const std::any& dataChannel) {
 		std::cout << "alice got data channel" << std::endl;
 		auto dataChannel_ptr =
 		    std::any_cast<rtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
+		std::cout << "Data Channel Created" << std::endl;
+		dataChannel_ptr->RegisterObserver(alice_data_channel_observer);
 	});
-	alice_emitter.on("message", [&](const std::any& message) {
+	alice_emitter.on("message", [](const std::any& message) {
 		std::cout << "alice got message" << std::endl;
 		auto& message_ptr = std::any_cast<const std::string&>(message);
 		std::cout << "alice got message: " << message_ptr << std::endl;
@@ -355,24 +378,13 @@ bool TestPeerConntion() {
 	    ConvertSdp(webrtc::SdpType::kAnswer, answer);
 	bob->SetRemoteDescription(std::move(answer_new_desc));
 
-	auto ice_timer_ = std::make_shared<Timer>();
-	ice_timer_->SetTimeout(
-	    [&]() {
-		    bob->TestFlushIceCandidate();
-		    alice->TestFlushIceCandidate();
-	    },
-	    2 * 1000);
+	std::this_thread::sleep_for(std::chrono::seconds(5));
 
-	auto timer_ = std::make_shared<Timer>();
-	timer_->SetTimeout(
-	    [&]() {
-		    std::string data("This is a test");
-		    webrtc::DataBuffer buffer(data);
-		    bool ret = bob_reliable_dc->Send(buffer);
+	std::string data("This is a test");
+	webrtc::DataBuffer buffer(data);
+	bool ret = bob_reliable_dc->Send(buffer);
 
-		    std::cout << "ret:" << ret << std::endl;
-	    },
-	    12 * 1000);
+	std::cout << "ret:" << ret << std::endl;
 
 	while (true) {
 	}
@@ -402,11 +414,6 @@ public:
 		return;
 	}
 };
-
-TestDataChannelObserver* g_test_data_channel_observer = new TestDataChannelObserver();
-TestDataChannelObserver* g_test_data_channel_observer2 = new TestDataChannelObserver();
-int i = 0;
-std::mutex dc_pc_lock_;
 
 class MyObserver : public webrtc::PeerConnectionObserver {
 public:
@@ -445,14 +452,7 @@ public:
 	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
 	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
 		std::cout << "Data Channel Created" << std::endl;
-		std::lock_guard<std::mutex> guard(dc_pc_lock_);
-		if (i == 0) {
-			i++;
-			dataChannel->RegisterObserver(g_test_data_channel_observer);
-        } else {
-			dataChannel->RegisterObserver(g_test_data_channel_observer2);
-        }
-		
+		dataChannel->RegisterObserver(data_channel_observer);
 	}
 	void OnRenegotiationNeeded() override {}
 
@@ -466,6 +466,8 @@ public:
 	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {}
 	void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {}
 	void OnInterestingUsage(int usagePattern) override {}
+
+	TestDataChannelObserver* data_channel_observer;
 };
 
 class DummySetSessionDescriptionObserver : public webrtc::SetSessionDescriptionObserver {
@@ -506,6 +508,8 @@ void TestIceGathering() {
 	config.disable_ipv6_on_wifi = true;
 
 	auto observer = new MyObserver();
+	TestDataChannelObserver* data_channel_observer = new TestDataChannelObserver();
+	observer->data_channel_observer = data_channel_observer;
 	webrtc::PeerConnectionDependencies pc_dependencies(observer);
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc = nullptr;
 	auto error_or_peer_connection =
@@ -519,6 +523,8 @@ void TestIceGathering() {
 	}
 
 	auto observer2 = new MyObserver();
+	TestDataChannelObserver* data_channel_observer2 = new TestDataChannelObserver();
+	observer2->data_channel_observer = data_channel_observer2;
 	webrtc::PeerConnectionDependencies pc_dependencies2(observer2);
 	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc2 = nullptr;
 	auto error_or_peer_connection2 =
@@ -633,14 +639,13 @@ void TestIceGathering() {
 
 	std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    std::string data("This is a test");
+	std::string data("This is a test");
 	webrtc::DataBuffer buffer(data);
 	bool ret = pc_dc->Send(buffer);
 
 	std::cout << "ret:" << ret << std::endl;
 
-
-    std::string data2("This is a test2");
+	std::string data2("This is a test2");
 	webrtc::DataBuffer buffer2(data2);
 	bool ret2 = pc2_dc->Send(buffer2);
 

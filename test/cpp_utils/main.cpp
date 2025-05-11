@@ -21,11 +21,11 @@ int main(int argc, char* argv[]) {
 	// std::thread t2(test2);
 	// t2.join();
 
-	// std::thread t3(test3);
-	// t3.join();
+	std::thread t3(test3);
+	t3.join();
 
-	std::thread t4(test4);
-	t4.join();
+	//std::thread t4(test4);
+	//t4.join();
 	while (true) {
 	}
 	livekit::core::Destroy();
