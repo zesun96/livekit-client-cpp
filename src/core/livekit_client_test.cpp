@@ -108,8 +108,8 @@ public:
 		}
 	}
 
-	// 无数据版本保持独立
 	void emit(const std::string& event) {
+
 		if (auto it = listeners_.find(event); it != listeners_.end()) {
 			for (const auto& listener : it->second) {
 				listener(std::any{});
@@ -563,7 +563,6 @@ void TestIceGathering() {
 		return;
 	}
 
-	// 创建 Offer 以触发候选收集
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
 	options.offer_to_receive_video = 0;
 	options.offer_to_receive_audio = 0;
@@ -604,7 +603,6 @@ void TestIceGathering() {
 	pc->SetRemoteDescription(DummySetSessionDescriptionObserver::Create().get(),
 	                         answer_desc2.release());
 
-	// 等待候选收集完成
 	std::this_thread::sleep_for(std::chrono::seconds(5));
 
 	for (auto& candidate : observer->pending_candidates_) {
