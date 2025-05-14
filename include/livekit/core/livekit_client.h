@@ -22,12 +22,16 @@
 
 #include "room.h"
 
+#include <string>
 namespace livekit {
 namespace core {
 
-void TestWebrtc();
+bool Init();
 
-bool Test();
+bool Destroy();
+
+std::string Version();
+
 } // namespace core
 } // namespace livekit
 

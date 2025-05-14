@@ -3,10 +3,10 @@
 
 void start() {
 	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NDM3ODU4MTYsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjIiLCJuYmYiOjE3ND"
-	                    "M2OTk0MTYsInN1YiI6InVzZXIyIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.6ygSXvL4HzXWeSdj-6v2meAoO_y2Eau5QZtDlxcmWXI";
-	auto room_options = livekit::core::RoomOptions();
+	                    "eyJleHAiOjE3NDQyOTUwNzMsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3ND"
+	                    "QyMDg2NzMsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
+	                    "dHJ1ZX19.-eqtIhSAt0B-KKxOObJBNGDOC554oFuwXa-_YrNNRBg";
+	auto room_options = livekit::core::default_room_options();
 	auto room = livekit::core::Room();
 	room.Connect("http://localhost:7880/rtc", token, room_options);
 	while (true) {
@@ -15,6 +15,8 @@ void start() {
 }
 
 int main(int argc, char* argv[]) {
+	livekit::core::Init();
 	start();
+	livekit::core::Destroy();
 	return 0;
 }

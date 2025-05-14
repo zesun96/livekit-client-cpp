@@ -16,7 +16,46 @@
  */
 
 #include "livekit/core/livekit_client.h"
+#include "version/version.h"
+
+#include <rtc_base/helpers.h>
+#include <rtc_base/logging.h>
+#include <rtc_base/ssl_adapter.h>
+#include <rtc_base/time_utils.h>
+
+#include <iostream>
+#include <sstream>
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+
+bool Init() {
+	bool ret = true;
+
+	std::cout << "livekit_client version: " << Version() << std::endl;
+
+	ret = rtc::InitializeSSL();
+	ret = rtc::InitRandom(rtc::Time());
+
+	rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
+
+	return ret;
+}
+
+bool Destroy() {
+	bool ret = true;
+	ret = rtc::CleanupSSL();
+	return ret;
+}
+
+std::string Version() {
+
+	std::stringstream ss;
+
+	ss << LKC_CORE_VERSION_MAJOR << "." << LKC_CORE_VERSION_MINOR << "." << LKC_CORE_VERSION_PATCH;
+
+	return ss.str();
+}
+
+} // namespace core
 } // namespace livekit

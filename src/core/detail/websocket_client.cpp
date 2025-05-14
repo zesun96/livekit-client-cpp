@@ -90,6 +90,7 @@ void WebsocketClient::disconnect() { lws_context_destroy(context_); }
 
 void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 	if (wsi_ == nullptr) {
+		std::cout << "Websocket is not connected" << std::endl;
 		// log::error("Websocket is not connected");
 		return;
 	}
@@ -100,6 +101,7 @@ void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 
 	auto res = lws_callback_on_writable(wsi_);
 	if (res != 0) {
+		std::cout << "lws_callback_on_writable failed: " << res << std::endl;
 		// log::error("Failed lws_callback_on_writable: {}", res); // idc
 	}
 	return;
@@ -203,7 +205,7 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 
 void WebsocketClient::lws_thread(WebsocketClient* client) {
 	while (!client->stop_) {
-		lws_service(client->context_, 50);
+		lws_service(client->context_, 0);
 	}
 	if (client->context_ != nullptr) {
 		lws_context_destroy(client->context_);
