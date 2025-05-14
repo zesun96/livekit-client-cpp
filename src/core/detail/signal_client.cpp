@@ -249,13 +249,14 @@ void SignalClient::SendSimulateScenario(const livekit::SimulateScenario& scenari
 }
 
 void SignalClient::SendPing() {
-	livekit::SignalRequest req;
-	req.set_ping(utils::GetCurrentTimeMs());
-	sendRequest(req);
+	// livekit::SignalRequest req;
+	// req.set_ping(utils::GetCurrentTimeMs());
+	// sendRequest(req);
 
 	livekit::SignalRequest ping_req;
 	auto* ping_msg = ping_req.mutable_ping_req();
-	ping_msg->set_rtt(this->rtt());
+	auto rtt = this->rtt();
+	ping_msg->set_rtt(rtt);
 	ping_msg->set_timestamp(utils::GetCurrentTimeMs());
 	sendRequest(ping_req);
 	return;
@@ -510,13 +511,13 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kPong: {
+		this->resetPingTimeout();
+		ping_handled = true;
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kPongResp: {
 		auto lastPingTimestamp = resp.pong_resp().last_ping_timestamp();
-		int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-		                  std::chrono::high_resolution_clock::now().time_since_epoch())
-		                  .count();
+		int64_t now = utils::GetCurrentTimeMs();
 		this->rtt_.store(now - lastPingTimestamp);
 		this->resetPingTimeout();
 		ping_handled = true;
@@ -559,10 +560,13 @@ void SignalClient::resetPingTimeout() {
 		return;
 	}
 
-	pingTimeoutTimer_ = std::make_shared<Timer>();
-	pingTimeoutTimer_->SetTimeout(
+	std::lock_guard<std::mutex> guard(ping_timeout_timer_lock_);
+	// std::cout << "reset ping timeout, count:" << ping_timeout_timer_count_.load() << std::endl;
+	ping_timeout_timer_count_.fetch_add(1);
+	ping_timeout_timer_ = std::make_shared<Timer>();
+	ping_timeout_timer_->SetTimeout(
 	    [this]() {
-		    std::cout << "ping timeout" << std::endl;
+		    std::cout << "handle ping timeout" << std::endl;
 		    this->handleOnClose("ping timeout");
 	    },
 	    this->ping_timeout_duration_ * 1000);
@@ -571,8 +575,12 @@ void SignalClient::resetPingTimeout() {
 }
 
 void SignalClient::clearPingTimeout() {
-	if (pingTimeoutTimer_) {
-		pingTimeoutTimer_->Stop();
+	std::lock_guard<std::mutex> guard(ping_timeout_timer_lock_);
+	if (ping_timeout_timer_) {
+		std::cout << "clear ping timeout" << std::endl;
+		ping_timeout_timer_count_.fetch_sub(1);
+		ping_timeout_timer_->Stop();
+		ping_timeout_timer_ = nullptr;
 	}
 	return;
 }
@@ -585,8 +593,9 @@ void SignalClient::startPingInterval() {
 		return;
 	}
 
-	pingIntervalTimer_ = std::make_shared<Timer>();
-	pingIntervalTimer_->SetInterval(
+	std::lock_guard<std::mutex> guard(ping_interval_timer_lock_);
+	ping_interval_timer_ = std::make_shared<Timer>();
+	ping_interval_timer_->SetInterval(
 	    [this]() {
 		    std::cout << "ping interval" << std::endl;
 		    this->SendPing();
@@ -598,8 +607,11 @@ void SignalClient::startPingInterval() {
 
 void SignalClient::clearPingInterval() {
 	clearPingTimeout();
-	if (pingIntervalTimer_) {
-		pingIntervalTimer_->Stop();
+	std::lock_guard<std::mutex> guard(ping_interval_timer_lock_);
+	if (ping_interval_timer_) {
+		std::cout << "clear ping interval" << std::endl;
+		ping_interval_timer_->Stop();
+		ping_interval_timer_ = nullptr;
 	}
 	return;
 }
@@ -607,6 +619,8 @@ void SignalClient::clearPingInterval() {
 void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue) {
 	std::string serialized_request;
 	request.SerializeToString(&serialized_request);
+
+	std::cout << "sendRequest:" << request.DebugString() << std::endl;
 	auto ws_data = std::make_unique<WebsocketData>(
 	    serialized_request.c_str(), serialized_request.length(), WebsocketDataType::Binany);
 	wsc_->send(std::move(ws_data));

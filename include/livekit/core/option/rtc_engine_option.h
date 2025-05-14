@@ -38,7 +38,7 @@ enum class ContinualGatheringPolicy {
 	GatherContinually,
 };
 
-enum class IceTransportsType { Relay, NoHost, All };
+enum class IceTransportsType { None, Relay, NoHost, All };
 
 struct RtcConfiguration {
 	std::vector<IceServer> ice_servers;

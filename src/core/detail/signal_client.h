@@ -166,10 +166,13 @@ private:
 	std::unique_ptr<WebsocketClient> wsc_;
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
-	int ping_timeout_duration_;
-	int ping_interval_duration_;
-	std::shared_ptr<Timer> pingTimeoutTimer_ = nullptr;
-	std::shared_ptr<Timer> pingIntervalTimer_ = nullptr;
+	int ping_timeout_duration_ = 0;
+	int ping_interval_duration_ = 0;
+	mutable std::mutex ping_timeout_timer_lock_;
+	std::shared_ptr<Timer> ping_timeout_timer_ = nullptr;
+	std::atomic<int64_t> ping_timeout_timer_count_{0};
+	mutable std::mutex ping_interval_timer_lock_;
+	std::shared_ptr<Timer> ping_interval_timer_ = nullptr;
 	SignalClientObserver* observer_ = nullptr;
 	std::atomic<int64_t> rtt_;
 	std::atomic<uint64_t> request_id_;

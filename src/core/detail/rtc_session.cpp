@@ -59,6 +59,23 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 	        options.rtc_config.continual_gathering_policy);
 
 	// Set ICE transport type
+	switch (options.rtc_config.ice_transport_type) {
+	case livekit::core::IceTransportsType::None:
+		rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kNone;
+		break;
+	case livekit::core::IceTransportsType::Relay:
+		rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kRelay;
+		break;
+	case livekit::core::IceTransportsType::NoHost:
+		rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kNoHost;
+		break;
+	case livekit::core::IceTransportsType::All:
+		rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kAll;
+		break;
+	default:
+		rtc_config.type = webrtc::PeerConnectionInterface::IceTransportsType::kNone;
+		break;
+	}
 	rtc_config.type = static_cast<webrtc::PeerConnectionInterface::IceTransportsType>(
 	    options.rtc_config.ice_transport_type);
 	if (join_response.has_client_configuration()) {
@@ -68,9 +85,9 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 		}
 	}
 
-	rtc_config.ice_candidate_pool_size = 5;
-
+	// rtc_config.ice_candidate_pool_size = 5;
 	rtc_config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+	rtc_config.disable_ipv6_on_wifi = true;
 
 	return rtc_config;
 }
@@ -122,6 +139,12 @@ void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionIn
 
 std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscriberAnswerFromOffer(
     std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
+
+	struct webrtc::DataChannelInit reliable_init;
+	reliable_init.ordered = true;
+	reliable_init.reliable = true;
+	subscriber_pc_->CreateDataChannel("_reliable", &reliable_init);
+
 	std::string str_desc;
 	offer->ToString(&str_desc);
 	std::cout << "recived offer: " << str_desc << std::endl;

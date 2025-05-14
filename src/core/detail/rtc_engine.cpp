@@ -21,6 +21,7 @@
 #include "signal_client.h"
 
 #include <future>
+#include <nlohmann/json.hpp>
 
 namespace livekit {
 namespace core {
@@ -144,14 +145,20 @@ void RtcEngine::OnIceGatheringChange(PeerTransport::Target target,
 void RtcEngine::OnIceCandidate(PeerTransport::Target target,
                                const webrtc::IceCandidateInterface* candidate) {
 
-	std::string candidateStr;
+	std::string candidate_str;
+	candidate->ToString(&candidate_str);
 
-	candidate->ToString(&candidateStr);
+	nlohmann::json candidate_json;
+	candidate_json["candidate"] = candidate_str;
+	candidate_json["sdpMid"] = candidate->sdp_mid();
+	candidate_json["sdpMLineIndex"] = candidate->sdp_mline_index();
+
+	auto candidate_json_str = candidate_json.dump();
 
 	if (target == PeerTransport::Target::PUBLISHER) {
-		signal_client_->SendIceCandidate(candidateStr, livekit::SignalTarget::PUBLISHER);
+		signal_client_->SendIceCandidate(candidate_json_str, livekit::SignalTarget::PUBLISHER);
 	} else if (target == PeerTransport::Target::SUBSCRIBER) {
-		signal_client_->SendIceCandidate(candidateStr, livekit::SignalTarget::SUBSCRIBER);
+		signal_client_->SendIceCandidate(candidate_json_str, livekit::SignalTarget::SUBSCRIBER);
 	}
 
 	return;

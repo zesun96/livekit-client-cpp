@@ -6,7 +6,7 @@ void start() {
 	                    "eyJleHAiOjE3NDQyOTUwNzMsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3ND"
 	                    "QyMDg2NzMsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
 	                    "dHJ1ZX19.-eqtIhSAt0B-KKxOObJBNGDOC554oFuwXa-_YrNNRBg";
-	auto room_options = livekit::core::RoomOptions();
+	auto room_options = livekit::core::default_room_options();
 	auto room = livekit::core::Room();
 	room.Connect("http://localhost:7880/rtc", token, room_options);
 	while (true) {
