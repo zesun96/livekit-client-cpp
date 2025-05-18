@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,11 +17,48 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_REMOTE_PARTICIPANT_H_
-#define _LKC_CORE_REMOTE_PARTICIPANT_H_
+#ifndef _LKC_CORE_TRACK_TRACK_H_
+#define _LKC_CORE_TRACK_TRACK_H_
+
+#include <string>
 
 namespace livekit {
-namespace core {}
+namespace core {
+class Track {
+public:
+	enum class TrackKind {
+		Unknown = 0,
+		Audio = 1,
+		Video = 2,
+	};
+
+	enum class Source {
+		Unknown = 0,
+		Camera = 1,
+		Microphone = 2,
+		ScreenShare = 3,
+		ScreenShareAudio = 4,
+	};
+
+	enum class StreamState {
+		Unknown = 0,
+		Active = 1,
+		Paused = 2,
+	};
+
+	struct Dimensions {
+		int width;
+		int height;
+	};
+
+public:
+	Track() = default;
+	~Track() = default;
+
+private:
+	std::string sid;
+};
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_TRACK_TRACK_H_

@@ -15,4 +15,13 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+#define _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+
+namespace livekit {
+namespace core {}
+} // namespace livekit
+
+#endif // _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_

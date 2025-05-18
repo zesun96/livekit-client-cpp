@@ -15,7 +15,7 @@
  *limitations under the License.
  */
 
-#include "livekit/core/room.h"
+#include "room.h"
 #include "detail/converted_proto.h"
 #include "detail/rtc_engine.h"
 
@@ -58,5 +58,8 @@ bool Room::Connect(std::string url, std::string token, RoomOptions options) {
 
 	return true;
 }
+
+RoomInterface* CreateRoom() { return new Room(); }
+
 } // namespace core
 } // namespace livekit

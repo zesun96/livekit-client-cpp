@@ -17,11 +17,30 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_PUBLICATION_H_
-#define _LKC_CORE_PUBLICATION_H_
+#ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
+#define _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
+
+#include "track.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+class TrackPublication {
+public:
+	TrackPublication() = default;
+	~TrackPublication() = default;
+
+private:
+	Track::TrackKind kind;
+	Track::Source source;
+	Track::Dimensions dimensions;
+	std::string track_sid;
+	std::string track_name;
+	std::string mime_type;
+	bool simulcasted;
+
+	Track* track;
+};
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_TRACK_TRACK_PUBLICATION_H_

@@ -17,11 +17,26 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_LOCAL_PUBLICATION_H_
-#define _LKC_CORE_TRACK_LOCAL_PUBLICATION_H_
+#ifndef _LKC_CORE_ROOM_INTERFACE_H_
+#define _LKC_CORE_ROOM_INTERFACE_H_
+
+#include "option/room_option.h"
+#include "protostruct/livekit_rtc_struct.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class RoomInterface {
+public:
+	virtual ~RoomInterface() = default;
+
+	virtual bool Connect(std::string url, std::string token,
+	                     RoomOptions options = default_room_options()) = 0;
+};
+
+RoomInterface* CreateRoom();
+
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_ROOM_INTERFACE_H_

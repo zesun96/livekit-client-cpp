@@ -15,35 +15,10 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_ROOM_H_
-#define _LKC_CORE_ROOM_H_
-
-#include "option/room_option.h"
-#include "protostruct/livekit_rtc_struct.h"
-
-#include <memory>
+#include "local_participant.h"
 
 namespace livekit {
 namespace core {
-
-
-class RtcEngine;
-
-class Room {
-public:
-	Room();
-	~Room();
-
-	bool Connect(std::string url, std::string token, RoomOptions options = default_room_options());
-
-private:
-	std::unique_ptr<RtcEngine> rtc_engine_;
-	ServerInfo server_info_;
-};
-
+void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
 } // namespace core
 } // namespace livekit
-
-#endif //

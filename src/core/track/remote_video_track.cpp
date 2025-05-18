@@ -15,3 +15,4 @@
  *limitations under the License.
  */
 
+#include "livekit/core/track/remote_video_track.h"
