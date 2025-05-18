@@ -14,3 +14,25 @@
  *See the License for the specific language governing permissions and
  *limitations under the License.
  */
+
+#pragma once
+
+#ifndef _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
+#define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
+
+#include <map>
+#include <memory>
+#include <string>
+
+namespace livekit {
+
+namespace core {
+class LocalParticipantInterface {
+public:
+	virtual ~LocalParticipantInterface() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_

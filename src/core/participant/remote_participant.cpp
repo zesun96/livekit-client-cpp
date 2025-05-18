@@ -15,4 +15,10 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/video_track.h"
+#include "remote_participant.h"
+
+namespace livekit {
+namespace core {
+void RemoteParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+} // namespace core
+} // namespace livekit

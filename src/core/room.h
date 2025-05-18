@@ -17,11 +17,37 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_REMOTE_PUBLICATION_H_
-#define _LKC_CORE_TRACK_REMOTE_PUBLICATION_H_
+#ifndef _LKC_CORE_ROOM_H_
+#define _LKC_CORE_ROOM_H_
+
+#include "livekit/core/room_interface.h"
+
+#include "participant/local_participant.h"
+#include "participant/remote_participant.h"
+
+#include <map>
+#include <memory>
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class RtcEngine;
+
+class Room : public RoomInterface {
+public:
+	Room();
+	virtual ~Room();
+
+	bool Connect(std::string url, std::string token, RoomOptions options = default_room_options());
+
+private:
+	std::unique_ptr<RtcEngine> rtc_engine_;
+	std::unique_ptr<LocalParticipant> local_participant_;
+	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
+	ServerInfo server_info_;
+};
+
+} // namespace core
 } // namespace livekit
 
 #endif //

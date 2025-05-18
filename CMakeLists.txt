@@ -114,22 +114,26 @@ set(
 
   src/core/track/audio_track.cpp
   src/core/track/local_audio_track.cpp
-  src/core/track/local_publication.cpp
+  src/core/track/local_track_publication.cpp
   src/core/track/local_track.cpp
+  src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
-  src/core/track/publication.cpp
   src/core/track/remote_audio_track.cpp
-  src/core/track/remote_publication.cpp
   src/core/track/remote_track.cpp
+  src/core/track/remote_track_publication.cpp
   src/core/track/remote_video_track.cpp
+  src/core/track/track.cpp
+  src/core/track/track_publication.cpp
   src/core/track/video_track.cpp
 
   src/core/option/defalut_option.cpp
 
+  src/core/participant/local_participant.cpp
+  src/core/participant/participant.cpp
+  src/core/participant/remote_participant.cpp
+
   src/core/livekit_client.cpp
   src/core/livekit_client_test.cpp
-  src/core/local_participant.cpp
-  src/core/remote_participant.cpp
   src/core/room.cpp
 
   src/core/detail/converted_proto.cpp

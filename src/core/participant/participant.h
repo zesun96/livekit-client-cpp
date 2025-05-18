@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,4 +15,28 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_PARTICIPANT_H_
+#define _LKC_CORE_PARTICIPANT_H_
+
+#include "livekit_models.pb.h"
+#include "livekit_rtc.pb.h"
+#include "livekit/core/participant/participant_interface.h"
+
+#include <string>
+
+namespace livekit {
+namespace core {
+class Participant : public ParticipantInterface {
+public:
+	Participant() = default;
+	virtual ~Participant() = default;
+
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo info);
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_PARTICIPANT_H_

@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,22 +17,25 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_LIVEKIT_CLIENT_H_
-#define _LKC_CORE_LIVEKIT_CLIENT_H_
+#ifndef _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_H_
+#define _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_H_
 
-#include "room_interface.h"
+#include "participant.h"
+#include "livekit/core/participant/remote_participant__interface.h"
 
 #include <string>
+
 namespace livekit {
 namespace core {
 
-bool Init();
-
-bool Destroy();
-
-std::string Version();
+class RemoteParticipant : public Participant, public RemoteParticipantInterface {
+public:
+	RemoteParticipant() = default;
+	virtual ~RemoteParticipant() = default;
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
+};
 
 } // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_LIVEKIT_CLIENT_H_
+#endif // _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_H_

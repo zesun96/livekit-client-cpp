@@ -15,4 +15,20 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_
+#define _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_
+
+namespace livekit {
+namespace core {
+
+class RemoteParticipantInterface {
+public:
+	virtual ~RemoteParticipantInterface() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_

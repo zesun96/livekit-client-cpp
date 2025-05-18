@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,11 +17,26 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_LOCAL_PARTICIPANT_H_
-#define _LKC_CORE_LOCAL_PARTICIPANT_H_
+#ifndef _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
+#define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
+
+#include "livekit/core/participant/local_participant_interface.h"
+#include "participant.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+class LocalParticipant : public Participant, public LocalParticipantInterface {
+public:
+	LocalParticipant() = default;
+	virtual ~LocalParticipant() = default;
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
+
+private:
+	float audio_level;
+	bool is_speaking;
+	std::string sid;
+};
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
