@@ -20,18 +20,19 @@
 #ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
 #define _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
 
+#include "livekit/core/track/track_publication_interface.h"
 #include "track.h"
 
 namespace livekit {
 namespace core {
-class TrackPublication {
+class TrackPublication : public TrackPublicationInterface {
 public:
 	TrackPublication() = default;
-	~TrackPublication() = default;
+	virtual ~TrackPublication() = default;
 
 private:
 	Track::TrackKind kind;
-	Track::Source source;
+	Track::TrackSource source;
 	Track::Dimensions dimensions;
 	std::string track_sid;
 	std::string track_name;

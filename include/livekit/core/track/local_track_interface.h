@@ -17,48 +17,17 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_TRACK_H_
-#define _LKC_CORE_TRACK_TRACK_H_
-
-#include <string>
+#ifndef _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_
+#define _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_
 
 namespace livekit {
 namespace core {
-class Track {
+
+class LocalTrackInterface {
 public:
-	enum class TrackKind {
-		Unknown = 0,
-		Audio = 1,
-		Video = 2,
-	};
-
-	enum class Source {
-		Unknown = 0,
-		Camera = 1,
-		Microphone = 2,
-		ScreenShare = 3,
-		ScreenShareAudio = 4,
-	};
-
-	enum class StreamState {
-		Unknown = 0,
-		Active = 1,
-		Paused = 2,
-	};
-
-	struct Dimensions {
-		int width;
-		int height;
-	};
-
-public:
-	Track() = default;
-	~Track() = default;
-
-private:
-	std::string sid;
+	virtual ~LocalTrackInterface() = default;
 };
+
 } // namespace core
 } // namespace livekit
-
-#endif // _LKC_CORE_TRACK_TRACK_H_
+#endif // _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_

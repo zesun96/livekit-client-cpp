@@ -15,4 +15,4 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/track_publication.h"
+#include "track_publication.h"

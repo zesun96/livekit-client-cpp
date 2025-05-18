@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,4 +15,20 @@
  *limitations under the License.
  */
 
-#include "remote_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
+#define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
+
+namespace livekit {
+namespace core {
+
+class TrackPublicationInterface {
+public:
+	virtual ~TrackPublicationInterface() {}
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_

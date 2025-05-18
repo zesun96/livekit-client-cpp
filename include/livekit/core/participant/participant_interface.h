@@ -17,13 +17,11 @@
 
 #pragma once
 
-#pragma once
-
 #ifndef _LKC_CORE_PARTICIPANT_PARTICIPANT_INTERFACE_H_
 #define _LKC_CORE_PARTICIPANT_PARTICIPANT_INTERFACE_H_
 
-#include "livekit/core/track/track.h"
-#include "livekit/core/track/track_publication.h"
+#include "livekit/core/track/track_interface.h"
+#include "livekit/core/track/track_publication_interface.h"
 
 #include <string>
 
@@ -39,12 +37,12 @@ public:
 	virtual std::string Metadata() const = 0;
 	virtual std::string Attributes() const = 0;
 
-	virtual TrackPublication* GetTrackPublication(const Track::Source& source) = 0;
-	virtual TrackPublication* GetTrackPublicationByName(const std::string& name) = 0;
+	virtual TrackPublicationInterface* GetTrackPublication(const TrackInterface::TrackSource& source) = 0;
+	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) = 0;
 	virtual bool IsCameraEnabled() const = 0;
 	virtual bool IsMicrophoneEnabled() const = 0;
 	virtual bool IsScreenShareEnabled() const = 0;
-	virtual bool IsTrackPublicationEnabled(TrackPublication* publication) const = 0;
+	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) const = 0;
 
 protected:
 	virtual ~ParticipantInterface() = default;
