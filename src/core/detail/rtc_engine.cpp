@@ -58,6 +58,8 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 	return response;
 }
 
+void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { listener_ = listener; }
+
 void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	std::lock_guard<std::mutex> guard(session_lock_);
 	if (rtc_session_) {

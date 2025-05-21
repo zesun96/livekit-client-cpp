@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,11 +17,18 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
-#define _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
+#ifndef _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_H_
+#define _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_H_
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class AudioMediaTrack {
+public:
+	virtual ~AudioMediaTrack() = default;
+};
+
+} // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
+#endif // _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_H_

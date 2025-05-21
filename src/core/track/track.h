@@ -20,43 +20,37 @@
 #ifndef _LKC_CORE_TRACK_TRACK_H_
 #define _LKC_CORE_TRACK_TRACK_H_
 
-#include <string>
+#include "livekit/core/track/track_interface.h"
+
+#include <atomic>
 
 namespace livekit {
 namespace core {
-class Track {
+class Track : public TrackInterface {
 public:
-	enum class TrackKind {
-		Unknown = 0,
-		Audio = 1,
-		Video = 2,
-	};
-
-	enum class Source {
-		Unknown = 0,
-		Camera = 1,
-		Microphone = 2,
-		ScreenShare = 3,
-		ScreenShareAudio = 4,
-	};
-
-	enum class StreamState {
-		Unknown = 0,
-		Active = 1,
-		Paused = 2,
-	};
-
-	struct Dimensions {
-		int width;
-		int height;
-	};
-
 public:
 	Track() = default;
-	~Track() = default;
+	virtual ~Track() = default;
+
+	virtual std::string Sid() override { return sid_; };
+	virtual std::string Name() override { return name_; };
+	virtual TrackKind Kind() override { return kind_; };
+	virtual TrackSource Source() override { return source_; };
+	virtual TrackStreamState StreamState() override { return stream_state_; };
+	virtual TrackDimensions Dimensions() override { return dimensions_; };
+
+	bool Muted() { return muted_.load(); };
+
+	void SetMuted(bool muted) { muted_.store(muted); };
 
 private:
-	std::string sid;
+	std::string sid_;
+	std::string name_;
+	TrackKind kind_;
+	TrackSource source_;
+	TrackStreamState stream_state_;
+	TrackDimensions dimensions_;
+	std::atomic<bool> muted_;
 };
 } // namespace core
 } // namespace livekit

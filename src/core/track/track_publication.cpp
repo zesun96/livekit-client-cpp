@@ -15,4 +15,12 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/track_publication.h"
+#include "track_publication.h"
+
+namespace livekit {
+namespace core {
+
+void TrackPublication::UpdateInfo(TrackPublicationInfo info) {}
+
+} // namespace core
+} // namespace livekit

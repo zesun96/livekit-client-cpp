@@ -31,5 +31,8 @@ RoomOptions default_room_options() {
 	option.sdk_options.sdk_version = "0.0.1";
 	return option;
 }
+
+RoomConnectOptions default_room_connect_options() { return default_room_options(); }
+
 } // namespace core
 } // namespace livekit

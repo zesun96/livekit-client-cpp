@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,30 +17,17 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
-#define _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
-
-#include "track.h"
+#ifndef _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_
+#define _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_
 
 namespace livekit {
 namespace core {
-class TrackPublication {
+
+class LocalTrackInterface {
 public:
-	TrackPublication() = default;
-	~TrackPublication() = default;
-
-private:
-	Track::TrackKind kind;
-	Track::Source source;
-	Track::Dimensions dimensions;
-	std::string track_sid;
-	std::string track_name;
-	std::string mime_type;
-	bool simulcasted;
-
-	Track* track;
+	virtual ~LocalTrackInterface() = default;
 };
+
 } // namespace core
 } // namespace livekit
-
-#endif // _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
+#endif // _LKC_CORE_TRACK_LOCAL_TRACK_INTERFACE_H_

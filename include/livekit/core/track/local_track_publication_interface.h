@@ -15,4 +15,20 @@
  *limitations under the License.
  */
 
-#include "video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_INTERFACE_H_
+#define _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_INTERFACE_H_
+
+namespace livekit {
+namespace core {
+
+class LocalTrackPublicationInterface {
+public:
+	virtual ~LocalTrackPublicationInterface() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_INTERFACE_H_

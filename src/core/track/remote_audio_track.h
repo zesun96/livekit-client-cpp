@@ -15,4 +15,23 @@
  *limitations under the License.
  */
 
-#include "video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
+#define _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
+
+#include "remote_track.h"
+
+namespace livekit {
+namespace core {
+
+class RemoteAudioTrack : public RemoteTrack {
+public:
+	RemoteAudioTrack() = default;
+	virtual ~RemoteAudioTrack() override = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif //

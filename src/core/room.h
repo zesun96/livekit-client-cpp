@@ -33,16 +33,32 @@ namespace core {
 
 class RtcEngine;
 
-class Room : public RoomInterface {
+class Room : public RoomInterface, public RtcEngine::RtcEngineListener {
 public:
-	Room();
+	Room(RoomOptions options = default_room_options());
 	virtual ~Room();
 
-	bool Connect(std::string url, std::string token, RoomOptions options = default_room_options());
+	virtual bool Connect(std::string url, std::string token,
+	                     RoomConnectOptions opts = default_room_connect_options());
+	virtual bool IsConnected();
+	virtual bool Disconnect();
+	virtual LocalParticipantInterface* GetLocalParticipant();
+	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants();
+	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid);
+	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name);
+	virtual std::vector<ParticipantInterface*> Participants();
+	virtual ParticipantInterface* GetParticipantBySid(std::string sid);
+	virtual ParticipantInterface* GetParticipantByName(std::string name);
+
+	/* Pure virtual methods inherited from RtcEngineListener */
+public:
+	virtual void ConnectedEvent(livekit::JoinResponse join_resp) override;
 
 private:
-	std::unique_ptr<RtcEngine> rtc_engine_;
-	std::unique_ptr<LocalParticipant> local_participant_;
+	RoomOptions options_;
+	RoomState state_ = RoomState::Disconnected;
+	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
+	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
 	ServerInfo server_info_;
 };

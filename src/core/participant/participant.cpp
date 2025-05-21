@@ -19,6 +19,9 @@
 
 namespace livekit {
 namespace core {
+Participant::Participant(std::string sid, std::string identity, std::string name,
+                         std::string metadata, std::map<std::string, std::string> attributes)
+    : sid_(sid), identity_(identity), name_(name), metadata_(metadata), attributes_(attributes) {}
 
 void Participant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
 

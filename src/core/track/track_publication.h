@@ -17,35 +17,39 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_OPTION_ROOM_OPTION_H_
-#define _LKC_CORE_OPTION_ROOM_OPTION_H_
+#ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
+#define _LKC_CORE_TRACK_TRACK_PUBLICATION_H_
 
-#include "rtc_engine_option.h"
+#include "livekit/core/track/track_publication_interface.h"
+#include "track.h"
 
 namespace livekit {
 namespace core {
 
-struct RoomSdkOptions {
-	std::string sdk;
-	std::string sdk_version;
+struct TrackPublicationInfo {
+	Track* track;
+	Track::TrackKind kind;
 };
 
-struct RoomOptions {
-	bool auto_subscribe;
-	bool adaptive_stream;
-	bool dynacast;
-	RtcConfiguration rtc_config;
-	uint32_t join_retries;
-	RoomSdkOptions sdk_options;
+class TrackPublication : public TrackPublicationInterface {
+public:
+	TrackPublication() = default;
+	virtual ~TrackPublication() = default;
+
+	void UpdateInfo(TrackPublicationInfo info);
+
+private:
+	Track::TrackKind kind;
+	Track::TrackSource source;
+	Track::TrackDimensions dimensions;
+	std::string track_sid;
+	std::string track_name;
+	std::string mime_type;
+	bool simulcasted;
+
+	Track* track;
 };
-
-RoomOptions default_room_options();
-
-using RoomConnectOptions = RoomOptions;
-
-RoomConnectOptions default_room_connect_options();
-
 } // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_TRACK_TRACK_PUBLICATION_H_

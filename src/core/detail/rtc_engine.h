@@ -37,10 +37,19 @@ class RtcSession;
 class SignalClient;
 class RtcEngine : public SignalClientObserver, public RtcSession::RtcSessionListener {
 public:
+	class RtcEngineListener {
+	public:
+		virtual ~RtcEngineListener() = default;
+
+		virtual void ConnectedEvent(livekit::JoinResponse join_resp) = 0;
+	};
+
 	RtcEngine();
 	~RtcEngine();
 
 	livekit::JoinResponse Connect(std::string url, std::string token, EngineOptions options);
+
+	void SetRoomObserver(RtcEngineListener* listener);
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
@@ -114,6 +123,7 @@ private:
 	void createDataChannels();
 
 private:
+	RtcEngineListener* listener_ = nullptr;
 	mutable std::mutex session_lock_;
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;

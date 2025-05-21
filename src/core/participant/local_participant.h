@@ -20,21 +20,25 @@
 #ifndef _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
 
+#include "../detail/rtc_engine.h"
+#include "livekit/core/option/room_option.h"
 #include "livekit/core/participant/local_participant_interface.h"
+#include "livekit/core/track/audio_media_track.h"
+#include "livekit/core/track/video_media_track.h"
 #include "participant.h"
 
 namespace livekit {
 namespace core {
+
 class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
-	LocalParticipant() = default;
+	LocalParticipant(std::string sid, std::string identity, RtcEngine* engine, RoomOptions options);
 	virtual ~LocalParticipant() = default;
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
 
 private:
-	float audio_level;
-	bool is_speaking;
-	std::string sid;
+	RtcEngine* engine_;
+	RoomOptions options_;
 };
 } // namespace core
 } // namespace livekit

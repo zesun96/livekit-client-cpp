@@ -15,4 +15,24 @@
  *limitations under the License.
  */
 
-#include "video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_REMOTE_TRACK_H_
+#define _LKC_CORE_TRACK_REMOTE_TRACK_H_
+
+#include "livekit/core/track/remote_track_interface.h"
+#include "track.h"
+
+namespace livekit {
+namespace core {
+
+class RemoteTrack : public RemoteTrackInterface, public Track {
+public:
+	RemoteTrack() = default;
+	virtual ~RemoteTrack() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_TRACK_REMOTE_TRACK_H_
