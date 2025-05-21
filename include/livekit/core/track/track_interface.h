@@ -40,13 +40,13 @@ public:
 		ScreenShareAudio = 4,
 	};
 
-	enum class StreamState {
+	enum class TrackStreamState {
 		Unknown = 0,
 		Active = 1,
 		Paused = 2,
 	};
 
-	struct Dimensions {
+	struct TrackDimensions {
 		int width;
 		int height;
 	};
@@ -57,6 +57,9 @@ public:
 	virtual TrackKind Kind() = 0;
 	virtual TrackSource Source() = 0;
 	virtual std::string Sid() = 0;
+	virtual std::string Name() = 0;
+	virtual TrackStreamState StreamState() = 0;
+	virtual TrackDimensions Dimensions() = 0;
 
 protected:
 	virtual ~TrackInterface() = default;

@@ -16,3 +16,11 @@
  */
 
 #include "track_publication.h"
+
+namespace livekit {
+namespace core {
+
+void TrackPublication::UpdateInfo(TrackPublicationInfo info) {}
+
+} // namespace core
+} // namespace livekit

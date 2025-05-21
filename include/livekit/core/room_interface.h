@@ -21,6 +21,9 @@
 #define _LKC_CORE_ROOM_INTERFACE_H_
 
 #include "option/room_option.h"
+#include "participant/local_participant_interface.h"
+#include "participant/participant_interface.h"
+#include "participant/remote_participant__interface.h"
 #include "protostruct/livekit_rtc_struct.h"
 
 namespace livekit {
@@ -28,10 +31,29 @@ namespace core {
 
 class RoomInterface {
 public:
+	enum class RoomState {
+		Connecting,
+		Connected,
+		Disconnecting,
+		Disconnected,
+		Failed,
+	};
+
 	virtual ~RoomInterface() = default;
 
 	virtual bool Connect(std::string url, std::string token,
-	                     RoomOptions options = default_room_options()) = 0;
+	                     RoomConnectOptions opts = default_room_connect_options()) = 0;
+
+	virtual bool IsConnected() = 0;
+	virtual bool Disconnect() = 0;
+
+	virtual LocalParticipantInterface* GetLocalParticipant() = 0;
+	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;
+	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
+	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) = 0;
+	virtual std::vector<ParticipantInterface*> Participants() = 0;
+	virtual ParticipantInterface* GetParticipantBySid(std::string sid) = 0;
+	virtual ParticipantInterface* GetParticipantByName(std::string name) = 0;
 };
 
 RoomInterface* CreateRoom();

@@ -15,4 +15,23 @@
  *limitations under the License.
  */
 
-#include "video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_LOCAL_AUDIO_TRACK_H_
+#define _LKC_CORE_TRACK_LOCAL_AUDIO_TRACK_H_
+
+#include "local_track.h"
+
+namespace livekit {
+namespace core {
+
+class LocalAudioTrack : public LocalTrack {
+public:
+	LocalAudioTrack() = default;
+	virtual ~LocalAudioTrack() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif //

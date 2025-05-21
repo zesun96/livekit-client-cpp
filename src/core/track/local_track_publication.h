@@ -17,11 +17,22 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_REMOTE_VIDEO_TRACK_H_
-#define _LKC_CORE_TRACK_REMOTE_VIDEO_TRACK_H_
+#ifndef _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
+#define _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
+
+#include "livekit/core/track/local_track_publication_interface.h"
+#include "track_publication.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class LocalTrackPublication : public TrackPublication, public LocalTrackPublicationInterface {
+public:
+	LocalTrackPublication() = default;
+	virtual ~LocalTrackPublication() override = default;
+};
+
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_

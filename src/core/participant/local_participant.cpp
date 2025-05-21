@@ -19,6 +19,11 @@
 
 namespace livekit {
 namespace core {
+LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEngine* engine,
+                                   RoomOptions options)
+    : engine_(engine), options_(options),
+      Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
+
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
 } // namespace core
 } // namespace livekit

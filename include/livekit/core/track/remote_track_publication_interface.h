@@ -17,11 +17,18 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
-#define _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+#ifndef _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_INTERFACE_H_
+#define _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_INTERFACE_H_
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class RemoteTrackPublicationInterface {
+public:
+	virtual ~RemoteTrackPublicationInterface() = default;
+};
+
+} // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+#endif // _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_INTERFACE_H_

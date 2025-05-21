@@ -23,6 +23,7 @@
 #include "livekit/core/track/track_interface.h"
 #include "livekit/core/track/track_publication_interface.h"
 
+#include <map>
 #include <string>
 
 namespace livekit {
@@ -30,21 +31,23 @@ namespace core {
 
 class ParticipantInterface {
 public:
-	virtual std::string Identity() const = 0;
-	virtual std::string Name() const = 0;
-	virtual std::string Sid() const = 0;
-	virtual bool IsSpeaking() const = 0;
-	virtual std::string Metadata() const = 0;
-	virtual std::string Attributes() const = 0;
+	virtual std::string Identity() = 0;
+	virtual std::string Name() = 0;
+	virtual std::string Sid() = 0;
+	virtual bool IsSpeaking() = 0;
+	virtual std::string Metadata() = 0;
+	virtual std::map<std::string, std::string> Attributes() = 0;
+	virtual bool IsLocalParticipant() = 0;
 
-	virtual TrackPublicationInterface* GetTrackPublication(const TrackInterface::TrackSource& source) = 0;
+	virtual TrackPublicationInterface*
+	GetTrackPublication(const TrackInterface::TrackSource& source) = 0;
 	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) = 0;
-	virtual bool IsCameraEnabled() const = 0;
-	virtual bool IsMicrophoneEnabled() const = 0;
-	virtual bool IsScreenShareEnabled() const = 0;
-	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) const = 0;
+	virtual bool IsCameraEnabled() = 0;
+	virtual bool IsMicrophoneEnabled() = 0;
+	virtual bool IsScreenShareEnabled() = 0;
+	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) = 0;
 
-protected:
+public:
 	virtual ~ParticipantInterface() = default;
 };
 

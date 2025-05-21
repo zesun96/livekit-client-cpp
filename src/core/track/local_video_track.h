@@ -17,11 +17,21 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_VIDEO_TRACK_H_
-#define _LKC_CORE_TRACK_VIDEO_TRACK_H_
+#ifndef _LKC_CORE_TRACK_LOCAL_VIDEO_TRACK_H_
+#define _LKC_CORE_TRACK_LOCAL_VIDEO_TRACK_H_
+
+#include "local_track.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class LocalVideoTrack : public LocalTrack {
+public:
+	LocalVideoTrack() = default;
+	virtual ~LocalVideoTrack() = default;
+};
+
+} // namespace core
 } // namespace livekit
 
 #endif //

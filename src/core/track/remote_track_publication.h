@@ -17,11 +17,22 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
-#define _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
+#ifndef _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+#define _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_
+
+#include "livekit/core/track/remote_track_publication_interface.h"
+#include "track_publication.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class RemoteTrackPublication : public TrackPublication, public RemoteTrackPublicationInterface {
+public:
+	RemoteTrackPublication() = default;
+	virtual ~RemoteTrackPublication() override = default;
+};
+
+} // namespace core
 } // namespace livekit
 
-#endif //
+#endif // _LKC_CORE_TRACK_REMOTE_TRACK_PUBLICATION_H_

@@ -25,15 +25,23 @@
 
 namespace livekit {
 namespace core {
+
+struct TrackPublicationInfo {
+	Track* track;
+	Track::TrackKind kind;
+};
+
 class TrackPublication : public TrackPublicationInterface {
 public:
 	TrackPublication() = default;
 	virtual ~TrackPublication() = default;
 
+	void UpdateInfo(TrackPublicationInfo info);
+
 private:
 	Track::TrackKind kind;
 	Track::TrackSource source;
-	Track::Dimensions dimensions;
+	Track::TrackDimensions dimensions;
 	std::string track_sid;
 	std::string track_name;
 	std::string mime_type;

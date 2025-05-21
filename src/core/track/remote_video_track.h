@@ -17,11 +17,21 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_AUDIO_TRACK_H_
-#define _LKC_CORE_TRACK_AUDIO_TRACK_H_
+#ifndef _LKC_CORE_TRACK_REMOTE_VIDEO_TRACK_H_
+#define _LKC_CORE_TRACK_REMOTE_VIDEO_TRACK_H_
+
+#include "remote_track.h"
 
 namespace livekit {
-namespace core {}
+namespace core {
+
+class RemoteVideoTrack : public RemoteTrack {
+public:
+	RemoteVideoTrack() = default;
+	virtual ~RemoteVideoTrack() = default;
+};
+
+} // namespace core
 } // namespace livekit
 
 #endif //

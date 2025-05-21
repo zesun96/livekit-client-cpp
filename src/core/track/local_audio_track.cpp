@@ -15,4 +15,8 @@
  *limitations under the License.
  */
 
-#include "livekit/core/track/local_audio_track.h"
+#include "local_audio_track.h"
+
+namespace livekit {
+namespace core {} // namespace core
+} // namespace livekit

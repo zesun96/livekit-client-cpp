@@ -41,6 +41,10 @@ struct RoomOptions {
 
 RoomOptions default_room_options();
 
+using RoomConnectOptions = RoomOptions;
+
+RoomConnectOptions default_room_connect_options();
+
 } // namespace core
 } // namespace livekit
 

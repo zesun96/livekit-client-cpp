@@ -15,4 +15,21 @@
  *limitations under the License.
  */
 
-#include "video_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_VIDEO_TRACK_H_
+#define _LKC_CORE_TRACK_VIDEO_TRACK_H_
+
+namespace livekit {
+namespace core {
+
+class VideoTrack {
+public:
+	VideoTrack() = default;
+	virtual ~VideoTrack() = default;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif //
