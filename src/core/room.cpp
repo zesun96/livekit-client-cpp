@@ -63,6 +63,16 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	return true;
 }
 
+void Room::AddEventListener(RoomEventInterface* listener) {
+	event_listener_ = listener;
+	return;
+}
+
+void Room::RemoveEventListener() {
+	event_listener_ = nullptr;
+	return;
+}
+
 bool Room::IsConnected() { return this->state_ == RoomState::Connected; }
 
 bool Room::Disconnect() {
@@ -127,7 +137,12 @@ ParticipantInterface* Room::GetParticipantByName(std::string name) {
 	return dynamic_cast<ParticipantInterface*>(this->GetRemoteParticipantByName(name));
 }
 
-void Room::ConnectedEvent(livekit::JoinResponse join_resp) {}
+void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
+	this->state_ = RoomState::Connected;
+	if (this->event_listener_) {
+		this->event_listener_->OnConnected();
+	}
+}
 
 RoomInterface* CreateRoom() { return new Room(); }
 

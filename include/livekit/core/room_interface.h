@@ -25,6 +25,7 @@
 #include "participant/participant_interface.h"
 #include "participant/remote_participant__interface.h"
 #include "protostruct/livekit_rtc_struct.h"
+#include "room_event_interface.h"
 
 namespace livekit {
 namespace core {
@@ -43,6 +44,9 @@ public:
 
 	virtual bool Connect(std::string url, std::string token,
 	                     RoomConnectOptions opts = default_room_connect_options()) = 0;
+
+	virtual void AddEventListener(RoomEventInterface* listener) = 0;
+	virtual void RemoveEventListener() = 0;
 
 	virtual bool IsConnected() = 0;
 	virtual bool Disconnect() = 0;

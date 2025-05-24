@@ -24,17 +24,27 @@
 #include "livekit_rtc.pb.h"
 #include "peer_transport.h"
 
+#include <atomic>
+
 namespace livekit {
 namespace core {
 
 class RtcSession : public PeerTransport::PeerTransportListener {
 
 public:
+	enum class State { kNew, kConnecting, kConnected, kClosing, kClosed, kFailed };
+
 	class RtcSessionListener {
 	public:
 		virtual ~RtcSessionListener() = default;
 		virtual void OnLocalOffer(PeerTransport::Target target,
 		                          std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+
+		virtual void
+		OnStateChange(State connection_state,
+		              webrtc::PeerConnectionInterface::PeerConnectionState pub_state,
+		              webrtc::PeerConnectionInterface::PeerConnectionState sub_state) = 0;
+
 		virtual void
 		OnSignalingChange(PeerTransport::Target target,
 		                  webrtc::PeerConnectionInterface::SignalingState newState) = 0;
@@ -97,6 +107,8 @@ public:
 
 	const std::size_t GetPublishTransceiverCount() const;
 
+	void update_state();
+
 public:
 	/* Pure virtual methods inherited from PeerTransport::PeerTransportListener. */
 	virtual void OnOffer(PeerTransport::Target target,
@@ -147,6 +159,7 @@ private:
 	EngineOptions options_;
 	bool is_publisher_connection_required_;
 	bool is_subscriber_connection_required_;
+	std::atomic<State> state_ = State::kNew;
 };
 
 } // namespace core

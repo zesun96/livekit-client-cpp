@@ -183,6 +183,7 @@ public:
 	const std::string GetCurrentRemoteDescription();
 	const std::string GetPendingLocalDescription();
 	const std::string GetPendingRemoteDescription();
+	const webrtc::PeerConnectionInterface::PeerConnectionState GetConnectionState();
 
 	std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
 	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>

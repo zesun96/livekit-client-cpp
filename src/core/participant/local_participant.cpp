@@ -25,5 +25,11 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEng
       Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+
+bool LocalParticipant::PublishTrack(PublishOptions option,
+                                    std::shared_ptr<MediaTrackInterface> track) {
+	return true;
+}
+
 } // namespace core
 } // namespace livekit
