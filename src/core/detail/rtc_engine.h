@@ -80,6 +80,12 @@ public:
 public:
 	virtual void OnLocalOffer(PeerTransport::Target target,
 	                          std::unique_ptr<webrtc::SessionDescriptionInterface> offer) override;
+
+	virtual void
+	OnStateChange(RtcSession::State connection_state,
+	              webrtc::PeerConnectionInterface::PeerConnectionState pub_state,
+	              webrtc::PeerConnectionInterface::PeerConnectionState sub_state) override;
+
 	virtual void
 	OnSignalingChange(PeerTransport::Target target,
 	                  webrtc::PeerConnectionInterface::SignalingState newState) override;
@@ -123,13 +129,15 @@ private:
 	void createDataChannels();
 
 private:
-	RtcEngineListener* listener_ = nullptr;
+	RtcEngineListener* room_listener_ = nullptr;
 	mutable std::mutex session_lock_;
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
 	bool is_subscriber_primary_;
 	rtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
 	rtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
+
+	livekit::JoinResponse join_resp_;
 };
 
 } // namespace core

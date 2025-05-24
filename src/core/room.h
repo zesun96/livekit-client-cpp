@@ -39,16 +39,18 @@ public:
 	virtual ~Room();
 
 	virtual bool Connect(std::string url, std::string token,
-	                     RoomConnectOptions opts = default_room_connect_options());
-	virtual bool IsConnected();
-	virtual bool Disconnect();
-	virtual LocalParticipantInterface* GetLocalParticipant();
-	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants();
-	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid);
-	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name);
-	virtual std::vector<ParticipantInterface*> Participants();
-	virtual ParticipantInterface* GetParticipantBySid(std::string sid);
-	virtual ParticipantInterface* GetParticipantByName(std::string name);
+	                     RoomConnectOptions opts = default_room_connect_options()) override;
+	virtual void AddEventListener(RoomEventInterface* listener) override;
+	virtual void RemoveEventListener() override;
+	virtual bool IsConnected() override;
+	virtual bool Disconnect() override;
+	virtual LocalParticipantInterface* GetLocalParticipant() override;
+	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() override;
+	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
+	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) override;
+	virtual std::vector<ParticipantInterface*> Participants() override;
+	virtual ParticipantInterface* GetParticipantBySid(std::string sid) override;
+	virtual ParticipantInterface* GetParticipantByName(std::string name) override;
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:
@@ -61,6 +63,8 @@ private:
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
 	ServerInfo server_info_;
+
+	RoomEventInterface* event_listener_ = nullptr;
 };
 
 } // namespace core

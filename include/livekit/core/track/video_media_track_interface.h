@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -17,23 +17,20 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_LIVEKIT_CLIENT_H_
-#define _LKC_CORE_LIVEKIT_CLIENT_H_
+#ifndef _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_INTERFACE_H_
+#define _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_INTERFACE_H_
 
-#include "room_event_interface.h"
-#include "room_interface.h"
+#include "media_track_interface.h"
 
-#include <string>
 namespace livekit {
 namespace core {
 
-bool Init();
-
-bool Destroy();
-
-std::string Version();
+class VideoMediaTrackInterface : public MediaTrackInterface {
+public:
+	virtual ~VideoMediaTrackInterface() = default;
+};
 
 } // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_LIVEKIT_CLIENT_H_
+#endif // _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_INTERFACE_H_

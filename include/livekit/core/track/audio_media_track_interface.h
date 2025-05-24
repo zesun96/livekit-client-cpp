@@ -17,18 +17,20 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_H_
-#define _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_H_
+#ifndef _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_INTERFACE_H_
+#define _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_INTERFACE_H_
+
+#include "media_track_interface.h"
 
 namespace livekit {
 namespace core {
 
-class VideoMediaTrack {
+class AudioMediaTrackInterface : public MediaTrackInterface {
 public:
-	virtual ~VideoMediaTrack() = default;
+	virtual ~AudioMediaTrackInterface() = default;
 };
 
 } // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_TRACK_VIDEO_MEDIA_TRACK_H_
+#endif // _LKC_CORE_TRACK_AUDIO_MEDIA_TRACK_INTERFACE_H_

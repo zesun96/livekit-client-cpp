@@ -190,6 +190,78 @@ const std::size_t RtcSession::GetPublishTransceiverCount() const {
 	return this->publisher_pc_->GetTransceivers().size();
 }
 
+void RtcSession::update_state() {
+	const State previous_state = state_.load();
+	// const State new_publisher_state = State::kClosed;
+	// const State new_subscriber_state = State::kClosed;
+
+	auto new_publisher_state = is_publisher_connection_required_
+	                               ? publisher_pc_->GetConnectionState()
+	                               : webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
+
+	auto new_subscriber_state = is_subscriber_connection_required_
+	                                ? subscriber_pc_->GetConnectionState()
+	                                : webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
+
+	std::vector<webrtc::PeerConnectionInterface::PeerConnectionState> states;
+	if (is_publisher_connection_required_) {
+		states.push_back(new_publisher_state);
+	}
+	if (is_subscriber_connection_required_) {
+		states.push_back(new_subscriber_state);
+	}
+
+	if (std::all_of(states.begin(), states.end(),
+	                [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		                return state ==
+		                       webrtc::PeerConnectionInterface::PeerConnectionState::kConnected;
+	                })) {
+		state_.store(State::kConnected);
+	} else if (std::any_of(states.begin(), states.end(),
+	                       [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		                       return state ==
+		                              webrtc::PeerConnectionInterface::PeerConnectionState::kFailed;
+	                       })) {
+		state_.store(State::kFailed);
+	} else if (std::any_of(
+	               states.begin(), states.end(),
+	               [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		               return state ==
+		                      webrtc::PeerConnectionInterface::PeerConnectionState::kConnecting;
+	               })) {
+		state_.store(State::kConnecting);
+	} else if (std::all_of(states.begin(), states.end(),
+	                       [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		                       return state ==
+		                              webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
+	                       })) {
+		state_.store(State::kClosed);
+	} else if (std::any_of(states.begin(), states.end(),
+	                       [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		                       return state ==
+		                              webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
+	                       })) {
+		state_.store(State::kClosing);
+	} else if (std::all_of(states.begin(), states.end(),
+	                       [](webrtc::PeerConnectionInterface::PeerConnectionState state) {
+		                       return state ==
+		                              webrtc::PeerConnectionInterface::PeerConnectionState::kNew;
+	                       })) {
+		state_.store(State::kNew);
+	}
+
+	if (previous_state != state_.load() && this->observer_) {
+		this->observer_->OnStateChange(
+		    state_.load(),
+		    is_publisher_connection_required_
+		        ? publisher_pc_->GetConnectionState()
+		        : webrtc::PeerConnectionInterface::PeerConnectionState::kClosed,
+		    is_subscriber_connection_required_
+		        ? subscriber_pc_->GetConnectionState()
+		        : webrtc::PeerConnectionInterface::PeerConnectionState::kClosed);
+	}
+}
+
 std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
                                                EngineOptions options) {
 	auto rtc_session = std::make_unique<RtcSession>(join_response, options);
@@ -208,10 +280,14 @@ void RtcSession::OnOffer(PeerTransport::Target target,
 }
 
 void RtcSession::OnSignalingChange(PeerTransport::Target target,
-                                   webrtc::PeerConnectionInterface::SignalingState newState) {}
+                                   webrtc::PeerConnectionInterface::SignalingState newState) {
+	update_state();
+}
 
 void RtcSession::OnConnectionChange(
-    PeerTransport::Target target, webrtc::PeerConnectionInterface::PeerConnectionState new_state) {}
+    PeerTransport::Target target, webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
+	update_state();
+}
 
 void RtcSession::OnAddStream(PeerTransport::Target target,
                              rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
@@ -225,7 +301,9 @@ void RtcSession::OnDataChannel(PeerTransport::Target target,
 void RtcSession::OnRenegotiationNeeded(PeerTransport::Target target) {}
 
 void RtcSession::OnIceConnectionChange(
-    PeerTransport::Target target, webrtc::PeerConnectionInterface::IceConnectionState newState) {}
+    PeerTransport::Target target, webrtc::PeerConnectionInterface::IceConnectionState newState) {
+	update_state();
+}
 
 void RtcSession::OnIceGatheringChange(PeerTransport::Target target,
                                       webrtc::PeerConnectionInterface::IceGatheringState newState) {

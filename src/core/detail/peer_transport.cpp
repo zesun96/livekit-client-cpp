@@ -372,6 +372,14 @@ const std::string PeerTransport::GetPendingRemoteDescription() {
 	return sdp;
 }
 
+const webrtc::PeerConnectionInterface::PeerConnectionState PeerTransport::GetConnectionState() {
+	//std::lock_guard<std::mutex> guard(pc_lock_);
+	if (this->pc_) {
+		return this->pc_->peer_connection_state();
+	}
+	return webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
+}
+
 std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
 PeerTransport::GetTransceivers() const {
 	std::lock_guard<std::mutex> guard(pc_lock_);
@@ -565,7 +573,9 @@ void PeerTransport::createAndSendPublisherOffer(
 void PeerTransport::OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) {
 	std::cout << "OnSignalingChange: " << "target=" << target2String[target_]
 	          << ",state=" << signalingState2String[newState] << std::endl;
-	this->listener_->OnSignalingChange(target_, newState);
+	if (this->listener_) {
+		this->listener_->OnSignalingChange(target_, newState);
+	}
 	return;
 }
 
@@ -576,21 +586,27 @@ void PeerTransport::OnConnectionChange(
     webrtc::PeerConnectionInterface::PeerConnectionState new_state) {
 	std::cout << "OnConnectionChange: " << "target=" << target2String[target_]
 	          << ",state=" << peerConnectionState2String[new_state] << std::endl;
-	this->listener_->OnConnectionChange(target_, new_state);
+	if (this->listener_) {
+		this->listener_->OnConnectionChange(target_, new_state);
+	}
 }
 
 /**
  * Triggered when media is received on a new stream from remote peer.
  */
 void PeerTransport::OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
-	this->listener_->OnAddStream(target_, stream);
+	if (this->listener_) {
+		this->listener_->OnAddStream(target_, stream);
+	}
 }
 
 /**
  * Triggered when a remote peer closes a stream.
  */
 void PeerTransport::OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {
-	this->listener_->OnRemoveStream(target_, stream);
+	if (this->listener_) {
+		this->listener_->OnRemoveStream(target_, stream);
+	}
 }
 
 /**
@@ -598,13 +614,19 @@ void PeerTransport::OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterfa
  */
 void PeerTransport::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {
 	std::cout << "OnDataChannel: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnDataChannel(target_, dataChannel);
+	if (this->listener_) {
+		this->listener_->OnDataChannel(target_, dataChannel);
+	}
 }
 
 /**
  * Triggered when renegotiation is needed. For example, an ICE restart has begun.
  */
-void PeerTransport::OnRenegotiationNeeded() { this->listener_->OnRenegotiationNeeded(target_); }
+void PeerTransport::OnRenegotiationNeeded() {
+	if (this->listener_) {
+		this->listener_->OnRenegotiationNeeded(target_);
+	}
+}
 
 /**
  * Triggered any time the IceConnectionState changes.
@@ -618,7 +640,10 @@ void PeerTransport::OnIceConnectionChange(
     webrtc::PeerConnectionInterface::IceConnectionState newState) {
 	std::cout << "OnIceConnectionChange: " << "target=" << target2String[target_]
 	          << ",state=" << iceConnectionState2String[newState] << std::endl;
-	this->listener_->OnIceConnectionChange(target_, newState);
+
+	if (this->listener_) {
+		this->listener_->OnIceConnectionChange(target_, newState);
+	}
 	return;
 }
 
@@ -629,7 +654,10 @@ void PeerTransport::OnIceGatheringChange(
     webrtc::PeerConnectionInterface::IceGatheringState newState) {
 	std::cout << "OnIceGatheringChange: " << "target=" << target2String[target_]
 	          << ",state=" << iceGatheringState2String[newState] << std::endl;
-	this->listener_->OnIceGatheringChange(target_, newState);
+
+	if (this->listener_) {
+		this->listener_->OnIceGatheringChange(target_, newState);
+	}
 	return;
 }
 
@@ -638,7 +666,9 @@ void PeerTransport::OnIceGatheringChange(
  */
 void PeerTransport::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
 	RTC_LOG(LS_INFO) << __FUNCTION__ << " " << candidate->sdp_mline_index();
-	this->listener_->OnIceCandidate(target_, candidate);
+	if (this->listener_) {
+		this->listener_->OnIceCandidate(target_, candidate);
+	}
 }
 
 /**
@@ -646,7 +676,9 @@ void PeerTransport::OnIceCandidate(const webrtc::IceCandidateInterface* candidat
  */
 void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) {
 	std::cout << "OnIceCandidatesRemoved: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnIceCandidatesRemoved(target_, candidates);
+	if (this->listener_) {
+		this->listener_->OnIceCandidatesRemoved(target_, candidates);
+	}
 }
 
 /**
@@ -655,7 +687,10 @@ void PeerTransport::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>
 void PeerTransport::OnIceConnectionReceivingChange(bool receiving) {
 	std::cout << "OnIceConnectionReceivingChange: " << "target=" << target2String[target_]
 	          << std::endl;
-	this->listener_->OnIceConnectionReceivingChange(target_, receiving);
+
+	if (this->listener_) {
+		this->listener_->OnIceConnectionReceivingChange(target_, receiving);
+	}
 }
 
 /**
@@ -668,7 +703,9 @@ void PeerTransport::OnIceCandidateError(const std::string& address, int port,
 	          << ",address=" << address << ",port=" << port << ",url=" << url
 	          << ",error_code=" << error_code << ",error_text=" << error_text << std::endl;
 
-	this->listener_->OnIceCandidateError(target_, address, port, url, error_code, error_text);
+	if (this->listener_) {
+		this->listener_->OnIceCandidateError(target_, address, port, url, error_code, error_text);
+	}
 }
 /**
  * Triggered when a receiver and its track are created.
@@ -681,7 +718,9 @@ void PeerTransport::OnAddTrack(
     rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
     const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {
 	std::cout << "OnAddTrack: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnAddTrack(target_, receiver, streams);
+	if (this->listener_) {
+		this->listener_->OnAddTrack(target_, receiver, streams);
+	}
 }
 
 /**
@@ -699,7 +738,9 @@ void PeerTransport::OnAddTrack(
  */
 void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
 	std::cout << "OnTrack: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnTrack(target_, transceiver);
+	if (this->listener_) {
+		this->listener_->OnTrack(target_, transceiver);
+	}
 }
 
 /**
@@ -714,7 +755,9 @@ void PeerTransport::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> 
  */
 void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
 	std::cout << "OnRemoveTrack: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnRemoveTrack(target_, receiver);
+	if (this->listener_) {
+		this->listener_->OnRemoveTrack(target_, receiver);
+	}
 }
 
 /**
@@ -728,7 +771,9 @@ void PeerTransport::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterfac
  */
 void PeerTransport::OnInterestingUsage(int usagePattern) {
 	std::cout << "OnInterestingUsage: " << "target=" << target2String[target_] << std::endl;
-	this->listener_->OnInterestingUsage(target_, usagePattern);
+	if (this->listener_) {
+		this->listener_->OnInterestingUsage(target_, usagePattern);
+	}
 }
 
 /* SetLocalDescriptionObserver */

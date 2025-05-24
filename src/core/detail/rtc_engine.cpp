@@ -44,6 +44,7 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 	std::lock_guard<std::mutex> guard(session_lock_);
 	livekit::JoinResponse response = signal_client_->Connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
+	join_resp_ = response;
 	is_subscriber_primary_ = response.subscriber_primary();
 	if (response.has_room()) {
 		rtc_session_ = RtcSession::Create(response, options);
@@ -58,7 +59,7 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 	return response;
 }
 
-void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { listener_ = listener; }
+void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_ = listener; }
 
 void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	std::lock_guard<std::mutex> guard(session_lock_);
@@ -118,6 +119,17 @@ void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
 void RtcEngine::OnLocalOffer(PeerTransport::Target target,
                              std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	this->signal_client_->SendOffer(std::move(offer));
+}
+
+void RtcEngine::OnStateChange(RtcSession::State connection_state,
+                              webrtc::PeerConnectionInterface::PeerConnectionState pub_state,
+                              webrtc::PeerConnectionInterface::PeerConnectionState sub_state) {
+	std::cout << "RtcEngine::OnStateChange()" << int(connection_state) << std::endl;
+	if (connection_state == RtcSession::State::kConnected) {
+		if (room_listener_) {
+			room_listener_->ConnectedEvent(this->join_resp_);
+		}
+	}
 }
 
 void RtcEngine::OnSignalingChange(PeerTransport::Target target,
