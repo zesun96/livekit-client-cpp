@@ -42,8 +42,7 @@ public:
 	virtual std::map<std::string, std::string> Attributes() override { return attributes_; }
 	virtual bool IsLocalParticipant() override { return is_local_particitant_; }
 
-	virtual TrackPublicationInterface*
-	GetTrackPublication(const TrackInterface::TrackSource& source) override {
+	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override {
 		return nullptr;
 	};
 	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) override {

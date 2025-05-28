@@ -112,6 +112,7 @@ set(
   src/core/e2ee/e2ee_manager.cpp
   src/core/e2ee/key_provider.cpp
 
+  src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
   src/core/track/local_audio_track.cpp
   src/core/track/local_track_publication.cpp
@@ -122,6 +123,7 @@ set(
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
   src/core/track/remote_video_track.cpp
+  src/core/track/track_factory.cpp
   src/core/track/track.cpp
   src/core/track/track_publication.cpp
   src/core/track/video_track.cpp

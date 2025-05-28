@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,19 +15,19 @@
  *limitations under the License.
  */
 
-#include "local_participant.h"
+#include "audio_source.h"
 
 namespace livekit {
 namespace core {
-LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEngine* engine,
-                                   RoomOptions options)
-    : engine_(engine), options_(options),
-      Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
 
-void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+void AudioSource::CaptureFrame(void* data, uint32_t sample_rate, uint32_t num_channels,
+                               uint32_t samples_per_channel) {
+	// process audio data
+}
 
-bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
-	return true;
+AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,
+                                        uint32_t num_channels, uint32_t queue_size_samples) {
+	return new AudioSource();
 }
 
 } // namespace core

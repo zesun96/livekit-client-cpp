@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,20 +15,22 @@
  *limitations under the License.
  */
 
-#include "local_participant.h"
+#pragma once
+
+#ifndef _LKC_CORE_TRACK_TRACK_FACTORY_H_
+#define _LKC_CORE_TRACK_TRACK_FACTORY_H_
+
+#include "audio_source_interface.h"
+#include "local_track_interface.h"
+#include "remote_track_interface.h"
+#include "track_interface.h"
 
 namespace livekit {
 namespace core {
-LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEngine* engine,
-                                   RoomOptions options)
-    : engine_(engine), options_(options),
-      Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
 
-void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
-
-bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
-	return true;
-}
+LocalTrackInterface* CreateLocalAudioTreack(std::string name, AudioSourceInterface* source);
 
 } // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_TRACK_TRACK_FACTORY_H_
