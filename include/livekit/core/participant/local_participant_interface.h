@@ -20,7 +20,8 @@
 #ifndef _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
 
-#include "../track/media_track_interface.h"
+#include "../track/local_track_interface.h"
+#include "../track/track_interface.h"
 
 #include <map>
 #include <memory>
@@ -30,16 +31,48 @@ namespace livekit {
 
 namespace core {
 
-struct PublishOptions {
-	std::string name;
+enum class VideoCodec {
+	VP8,
+	H264,
+	VP9,
+	AV1,
+};
+
+struct VideoEncoding {
+	uint64_t max_bitrate = 0;
+	float max_framerate = 0.0f;
+};
+
+struct VideoPreset {
+	VideoEncoding encoding = {0, 0.0f};
+	uint32_t width = 0;
+	uint32_t height = 0;
+};
+
+struct AudioEncoding {
+	uint64_t max_bitrate = 0;
+};
+
+struct AudioPreset {
+	AudioEncoding encoding = {0};
+};
+
+struct TrackPublishOptions {
+	VideoEncoding video_encoding;
+	AudioEncoding audio_encoding;
+	VideoCodec video_codec = VideoCodec::VP8;
+	bool dtx = true;
+	bool red = true;
+	bool simulcast = true;
+	TrackSource source = TrackSource::Unknown;
+	std::string stream;
 };
 
 class LocalParticipantInterface {
 public:
 	virtual ~LocalParticipantInterface() = default;
 
-	virtual bool PublishTrack(PublishOptions option,
-	                          std::shared_ptr<MediaTrackInterface> track) = 0;
+	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
 };
 
 } // namespace core

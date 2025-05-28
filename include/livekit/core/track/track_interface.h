@@ -24,33 +24,34 @@
 
 namespace livekit {
 namespace core {
+
+enum class TrackKind {
+	Unknown = 0,
+	Audio = 1,
+	Video = 2,
+};
+
+enum class TrackSource {
+	Unknown = 0,
+	Camera = 1,
+	Microphone = 2,
+	ScreenShare = 3,
+	ScreenShareAudio = 4,
+};
+
+enum class TrackStreamState {
+	Unknown = 0,
+	Active = 1,
+	Paused = 2,
+};
+
+struct TrackDimensions {
+	int width;
+	int height;
+};
+
 class TrackInterface {
 public:
-	enum class TrackKind {
-		Unknown = 0,
-		Audio = 1,
-		Video = 2,
-	};
-
-	enum class TrackSource {
-		Unknown = 0,
-		Camera = 1,
-		Microphone = 2,
-		ScreenShare = 3,
-		ScreenShareAudio = 4,
-	};
-
-	enum class TrackStreamState {
-		Unknown = 0,
-		Active = 1,
-		Paused = 2,
-	};
-
-	struct TrackDimensions {
-		int width;
-		int height;
-	};
-
 	virtual std::string GetRTCStats() = 0;
 	virtual void SetEnabled(bool enabled) = 0;
 	virtual bool IsEnabled() = 0;

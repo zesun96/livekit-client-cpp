@@ -24,6 +24,8 @@
 #include "livekit/core/option/room_option.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/track/audio_media_track_interface.h"
+#include "livekit/core/track/audio_source_interface.h"
+#include "livekit/core/track/local_track_interface.h"
 #include "livekit/core/track/video_media_track_interface.h"
 #include "participant.h"
 
@@ -34,10 +36,10 @@ class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
 	LocalParticipant(std::string sid, std::string identity, RtcEngine* engine, RoomOptions options);
 	virtual ~LocalParticipant() = default;
+
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
 
-	virtual bool PublishTrack(PublishOptions option,
-	                          std::shared_ptr<MediaTrackInterface> track) override;
+	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
 
 private:
 	RtcEngine* engine_;
