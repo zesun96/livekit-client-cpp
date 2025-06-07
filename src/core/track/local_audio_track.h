@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_TRACK_LOCAL_AUDIO_TRACK_H_
 #define _LKC_CORE_TRACK_LOCAL_AUDIO_TRACK_H_
 
+#include "audio_source.h"
+#include "audio_track.h"
 #include "local_track.h"
 
 namespace livekit {
@@ -27,8 +29,12 @@ namespace core {
 
 class LocalAudioTrack : public LocalTrack {
 public:
-	LocalAudioTrack() = default;
+	LocalAudioTrack(std::unique_ptr<AudioTrack> audio_track, AudioSourceInterface* source);
 	virtual ~LocalAudioTrack() = default;
+
+private:
+	std::unique_ptr<AudioTrack> track_;
+	AudioSourceInterface* source_;
 };
 
 } // namespace core

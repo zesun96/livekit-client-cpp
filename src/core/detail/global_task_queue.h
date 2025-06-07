@@ -17,10 +17,17 @@
 
 #pragma once
 
-#include "local_audio_track.h"
+#ifndef _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_
+#define _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_
 
-#include "livekit/core/track/track_factory.h"
+#include "api/task_queue/task_queue_factory.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+
+webrtc::TaskQueueFactory* GetGlobalTaskQueueFactory();
+
+} // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_

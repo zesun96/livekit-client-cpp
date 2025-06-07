@@ -35,12 +35,12 @@ class AudioSourceInterface {
 public:
 	virtual ~AudioSourceInterface() = default;
 
-	virtual void CaptureFrame(void* data, uint32_t sample_rate, uint32_t num_channels,
+	virtual bool CaptureFrame(void* audio_data, uint32_t sample_rate, uint32_t num_channels,
 	                          uint32_t samples_per_channel) = 0;
 };
 
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,
-                                        uint32_t num_channels, uint32_t queue_size_samples);
+                                        uint32_t num_channels, uint32_t queue_size_ms);
 
 } // namespace core
 } // namespace livekit

@@ -39,11 +39,16 @@ public:
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
 
+	virtual LocalTrackInterface* CreateLocalAudioTreack(std::string label,
+	                                                    AudioSourceInterface* source) override;
+
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
 
 private:
 	RtcEngine* engine_;
 	RoomOptions options_;
+
+	// AudioSourceInterface* source_;
 };
 } // namespace core
 } // namespace livekit

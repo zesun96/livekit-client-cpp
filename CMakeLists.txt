@@ -15,6 +15,11 @@ if(MSVC)
   # Configure MSVC runtime library settings for Debug and Release builds using MTd
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+
+  add_definitions(
+    -DABSL_OPTION_USE_INLINE_NAMESPACE=0
+    -DABSL_OPTION_INLINE_NAMESPACE_NAME=
+  )
 endif()
 
 include(GNUInstallDirs)
@@ -119,6 +124,7 @@ set(
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
+   src/core/track/media_stream_track.cpp
   src/core/track/remote_audio_track.cpp
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
@@ -140,7 +146,9 @@ set(
 
   src/core/detail/converted_proto.cpp
   src/core/detail/internals.cpp
+  src/core/detail/global_task_queue.cpp
   src/core/detail/peer_transport.cpp
+  src/core/detail/peer_transport_factory.cpp
   src/core/detail/rtc_engine.cpp
   src/core/detail/rtc_session.cpp
   src/core/detail/signal_client.cpp

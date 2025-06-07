@@ -15,12 +15,17 @@
  *limitations under the License.
  */
 
-#pragma once
+#include "global_task_queue.h"
 
-#include "local_audio_track.h"
-
-#include "livekit/core/track/track_factory.h"
+#include "api/task_queue/default_task_queue_factory.h"
+#include "api/task_queue/task_queue_factory.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+webrtc::TaskQueueFactory* GetGlobalTaskQueueFactory() {
+	static std::unique_ptr<webrtc::TaskQueueFactory> global_task_queue_factory =
+	    webrtc::CreateDefaultTaskQueueFactory();
+	return global_task_queue_factory.get();
+}
+} // namespace core
 } // namespace livekit

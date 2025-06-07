@@ -26,11 +26,7 @@
 #include "track_interface.h"
 
 namespace livekit {
-namespace core {
-
-LocalTrackInterface* CreateLocalAudioTreack(std::string name, AudioSourceInterface* source);
-
-} // namespace core
+namespace core {} // namespace core
 } // namespace livekit
 
 #endif // _LKC_CORE_TRACK_TRACK_FACTORY_H_

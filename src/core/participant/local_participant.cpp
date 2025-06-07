@@ -17,6 +17,10 @@
 
 #include "local_participant.h"
 
+#include "../track/audio_source.h"
+#include "../track/audio_track.h"
+#include "../track/local_audio_track.h"
+
 namespace livekit {
 namespace core {
 LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEngine* engine,
@@ -25,6 +29,21 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity, RtcEng
       Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+
+LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
+                                                              AudioSourceInterface* source) {
+	AudioSource* audio_source = dynamic_cast<AudioSource*>(source);
+	auto peer_transport_factory_ = engine_->GetSessionPeerTransportFactory();
+	if (peer_transport_factory_) {
+		auto peer_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
+		    peer_transport_factory_->GetPeerConnectFactory());
+		auto rtc_audio_track = peer_factory_->CreateAudioTrack(label, audio_source->Get().get());
+		auto audio_track = std::make_unique<AudioTrack>(rtc_audio_track);
+		auto local_track = new LocalAudioTrack(std::move(audio_track), source);
+		return local_track;
+	}
+	return nullptr;
+}
 
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
 	return true;

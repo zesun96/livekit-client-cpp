@@ -50,8 +50,13 @@ int main(int argc, char* argv[]) {
 	std::cout << "wav file info: " << "[sampleRate=" << wav.sampleRate << "]"
 	          << "[channels=" << wav.channels << "]" << std::endl;
 
-	float* pSampleData = (float*)malloc(wav.totalPCMFrameCount * wav.channels * sizeof(float));
-	drwav_read_pcm_frames_f32(&wav, wav.totalPCMFrameCount, pSampleData);
+	drwav_int16* pSampleData =
+	    (drwav_int16*)malloc(wav.totalPCMFrameCount * wav.channels * sizeof(drwav_int16));
+	if (pSampleData == NULL) {
+		std::cout << "Failed to allocate memory" << std::endl;
+		return -1;
+	}
+	drwav_read_pcm_frames_s16(&wav, wav.totalPCMFrameCount, pSampleData);
 
 	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
 	                    "eyJleHAiOjE3NDgxODk0NzIsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3ND"
@@ -97,11 +102,31 @@ int main(int argc, char* argv[]) {
 	auto audio_source =
 	    livekit::core::CreateAudioSource(audio_source_options, wav.sampleRate, wav.channels, 0);
 
-	auto audio_track = livekit::core::CreateLocalAudioTreack("file", audio_source);
+	auto audio_track = local_participant->CreateLocalAudioTreack("file", audio_source);
+	if (!audio_track) {
+		std::cout << "Failed to create local audio track" << std::endl;
+		room->RemoveEventListener();
+		drwav_uninit(&wav);
+		free(pSampleData);
+		return -1;
+	}
 
 	local_participant->PublishTrack(audio_track, publish_options);
 
-	while (true) {
+	auto max_samples = wav.totalPCMFrameCount * wav.channels;
+	auto num_samples = wav.sampleRate / 1000 * 20 * wav.channels;
+	int written_samples = 0;
+	while (written_samples < max_samples) {
+		auto available_samples = max_samples - written_samples;
+		auto frame_size = std::min(int(num_samples), int(available_samples));
+		int32_t* frame_data = new int32_t[frame_size]{0};
+		for (int i = 0; i < frame_size; i++) {
+			frame_data[i] = int32_t(pSampleData[i]);
+		}
+		audio_source->CaptureFrame(frame_data, wav.sampleRate, wav.channels,
+		                           frame_size / wav.channels);
+		delete[] frame_data;
+		written_samples += frame_size;
 	}
 
 	room->RemoveEventListener();
