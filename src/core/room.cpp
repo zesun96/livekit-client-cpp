@@ -42,7 +42,8 @@ namespace core {
 Room::Room(RoomOptions options) : options_(options) {
 	rtc_engine_ = std::make_unique<RtcEngine>();
 	rtc_engine_->SetRoomObserver(this);
-	local_participant_ = std::make_unique<LocalParticipant>("", "", rtc_engine_.get(), options_);
+	local_participant_ = std::make_unique<LocalParticipant>("", "", EncryptionType::None,
+	                                                        rtc_engine_.get(), options_);
 }
 
 Room::~Room() {}

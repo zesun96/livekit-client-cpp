@@ -33,7 +33,6 @@ public:
 	virtual ~LocalAudioTrack() = default;
 
 private:
-	std::unique_ptr<AudioTrack> track_;
 	AudioSourceInterface* source_;
 };
 

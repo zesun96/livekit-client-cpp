@@ -39,13 +39,7 @@
       "inheritEnvironments": [
         "msvc_x64_x64"
       ],
-      "variables": [
-        {
-          "name": "VCPKG_TARGET_TRIPLET",
-          "value": "x64-windows-v143",
-          "type": "STRING"
-        }
-      ]
+      "variables": []
     },
     {
       "name": "x64-Release-v143",

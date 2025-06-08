@@ -21,7 +21,7 @@
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
 
 #include "../detail/rtc_engine.h"
-#include "livekit/core/option/room_option.h"
+#include "livekit/core/option/option.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/track/audio_media_track_interface.h"
 #include "livekit/core/track/audio_source_interface.h"
@@ -34,7 +34,8 @@ namespace core {
 
 class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
-	LocalParticipant(std::string sid, std::string identity, RtcEngine* engine, RoomOptions options);
+	LocalParticipant(std::string sid, std::string identity, EncryptionType encryption_type,
+	                 RtcEngine* engine, RoomOptions options);
 	virtual ~LocalParticipant() = default;
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
@@ -47,6 +48,7 @@ public:
 private:
 	RtcEngine* engine_;
 	RoomOptions options_;
+	EncryptionType encryption_type_;
 
 	// AudioSourceInterface* source_;
 };

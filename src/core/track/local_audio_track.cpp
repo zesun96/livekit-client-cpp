@@ -21,7 +21,7 @@ namespace livekit {
 namespace core {
 LocalAudioTrack::LocalAudioTrack(std::unique_ptr<AudioTrack> audio_track,
                                  AudioSourceInterface* source)
-    : track_(std::move(audio_track)), source_(source) {}
+    : LocalTrack(std::move(audio_track)), source_(source) {}
 
 } // namespace core
 } // namespace livekit

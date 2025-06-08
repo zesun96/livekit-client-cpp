@@ -35,5 +35,81 @@ ServerInfo from_proto(livekit::ServerInfo proto) {
 
 livekit::ServerInfo to_proto(ServerInfo src) { return livekit::ServerInfo(); }
 
+TrackKind from_proto(livekit::TrackType proto) {
+	switch (proto) {
+	case livekit::TrackType::AUDIO:
+		return TrackKind::Audio;
+	case livekit::TrackType::VIDEO:
+		return TrackKind::Video;
+	default:
+		return TrackKind::Unknown;
+	}
+}
+
+livekit::TrackType to_proto(TrackKind src) {
+	switch (src) {
+	case TrackKind::Audio:
+		return livekit::TrackType::AUDIO;
+	case TrackKind::Video:
+		return livekit::TrackType::VIDEO;
+	}
+}
+
+TrackSource from_proto(livekit::TrackSource proto) {
+	switch (proto) {
+	case livekit::TrackSource::MICROPHONE:
+		return TrackSource::Microphone;
+	case livekit::TrackSource::CAMERA:
+		return TrackSource::Camera;
+	case livekit::TrackSource::SCREEN_SHARE:
+		return TrackSource::ScreenShare;
+	case livekit::TrackSource::SCREEN_SHARE_AUDIO:
+		return TrackSource::ScreenShareAudio;
+	default:
+		return TrackSource::Unknown;
+	}
+}
+
+livekit::TrackSource to_proto(TrackSource src) {
+	switch (src) {
+	case TrackSource::Microphone:
+		return livekit::TrackSource::MICROPHONE;
+	case TrackSource::Camera:
+		return livekit::TrackSource::CAMERA;
+	case TrackSource::ScreenShare:
+		return livekit::TrackSource::SCREEN_SHARE;
+	case TrackSource::ScreenShareAudio:
+		return livekit::TrackSource::SCREEN_SHARE_AUDIO;
+	default:
+		return livekit::TrackSource::UNKNOWN;
+	}
+}
+
+EncryptionType from_proto(livekit::Encryption_Type proto) {
+	switch (proto) {
+	case livekit::Encryption_Type::Encryption_Type_NONE:
+		return EncryptionType::None;
+	case livekit::Encryption_Type::Encryption_Type_GCM:
+		return EncryptionType::Gcm;
+	case livekit::Encryption_Type::Encryption_Type_CUSTOM:
+		return EncryptionType::Custom;
+	default:
+		return EncryptionType::None;
+	}
+}
+
+livekit::Encryption_Type to_proto(EncryptionType src) {
+	switch (src) {
+	case EncryptionType::None:
+		return livekit::Encryption_Type::Encryption_Type_NONE;
+	case EncryptionType::Gcm:
+		return livekit::Encryption_Type::Encryption_Type_GCM;
+	case EncryptionType::Custom:
+		return livekit::Encryption_Type::Encryption_Type_CUSTOM;
+	default:
+		return livekit::Encryption_Type::Encryption_Type_NONE;
+	}
+}
+
 } // namespace core
 } // namespace livekit
