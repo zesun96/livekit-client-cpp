@@ -69,6 +69,14 @@ void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> an
 	return;
 }
 
+std::shared_ptr<PeerTransportFactory> RtcEngine::GetSessionPeerTransportFactory() {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		return rtc_session_->GetPeerTransportFactory();
+	}
+	return nullptr;
+}
+
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) { return; }
 void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) {

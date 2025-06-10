@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,12 +15,19 @@
  *limitations under the License.
  */
 
-#include "local_track.h"
+#pragma once
+
+#ifndef _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_
+#define _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_
+
+#include "api/task_queue/task_queue_factory.h"
 
 namespace livekit {
 namespace core {
-LocalTrack::LocalTrack(std::unique_ptr<MediaStreamTrack> meida_track)
-    : meida_track_(std::move(meida_track)) {}
+
+webrtc::TaskQueueFactory* GetGlobalTaskQueueFactory();
 
 } // namespace core
 } // namespace livekit
+
+#endif // _LKC_CORE_DETAIL_GLOBAL_TASK_QUEUE_H_

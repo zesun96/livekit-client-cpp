@@ -20,7 +20,10 @@
 #ifndef _LKC_CORE_CONVERTED_PROTO_H_
 #define _LKC_CORE_CONVERTED_PROTO_H_
 
+#include "livekit/core/option/option.h"
 #include "livekit/core/protostruct/livekit_rtc_struct.h"
+#include "livekit/core/track/track_interface.h"
+#include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
 
 namespace livekit {
@@ -31,6 +34,15 @@ livekit::JoinResponse to_proto(ProtoJoinResponse src);
 
 ServerInfo from_proto(livekit::ServerInfo proto);
 livekit::ServerInfo to_proto(ServerInfo src);
+
+TrackKind from_proto(livekit::TrackType proto);
+livekit::TrackType to_proto(TrackKind src);
+
+TrackSource from_proto(livekit::TrackSource proto);
+livekit::TrackSource to_proto(TrackSource src);
+
+EncryptionType from_proto(livekit::Encryption_Type proto);
+livekit::Encryption_Type to_proto(EncryptionType src);
 
 } // namespace core
 } // namespace livekit

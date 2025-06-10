@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,12 +15,9 @@
  *limitations under the License.
  */
 
-#include "local_track.h"
+#pragma once
 
-namespace livekit {
-namespace core {
-LocalTrack::LocalTrack(std::unique_ptr<MediaStreamTrack> meida_track)
-    : meida_track_(std::move(meida_track)) {}
+#ifndef _LKC_CORE_TRACK_AUDIO_STREAM_INTERFACE_H_
+#define _LKC_CORE_TRACK_AUDIO_STREAM_INTERFACE_H_
 
-} // namespace core
-} // namespace livekit
+#endif // _LKC_CORE_TRACK_AUDIO_STREAM_INTERFACE_H_

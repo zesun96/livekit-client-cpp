@@ -1,6 +1,6 @@
 /**
  *
- * Copyright (c) 2024 sunze
+ * Copyright (c) 2025 sunze
  *
  *Licensed under the Apache License, Version 2.0 (the "License");
  *you may not use this file except in compliance with the License.
@@ -15,12 +15,22 @@
  *limitations under the License.
  */
 
-#include "local_track.h"
-
+#include "media_stream_track.h"
 namespace livekit {
 namespace core {
-LocalTrack::LocalTrack(std::unique_ptr<MediaStreamTrack> meida_track)
-    : meida_track_(std::move(meida_track)) {}
+
+MediaStreamTrack::MediaStreamTrack(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track)
+    : track_(std::move(track)) {}
+
+std::string MediaStreamTrack::kind() const { return track_->kind(); }
+
+std::string MediaStreamTrack::id() const { return track_->id(); }
+
+bool MediaStreamTrack::enabled() const { return track_->enabled(); }
+
+bool MediaStreamTrack::set_enabled(bool enable) const { return track_->set_enabled(enable); }
+
+TrackState MediaStreamTrack::state() const { return static_cast<TrackState>(track_->state()); }
 
 } // namespace core
 } // namespace livekit

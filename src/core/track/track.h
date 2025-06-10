@@ -43,6 +43,10 @@ public:
 
 	void SetMuted(bool muted) { muted_.store(muted); };
 
+	std::string GetRTCStats() override { return ""; };
+	void SetEnabled(bool enabled) override {};
+	bool IsEnabled() override { return true; };
+
 private:
 	std::string sid_;
 	std::string name_;

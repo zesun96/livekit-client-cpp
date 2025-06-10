@@ -183,6 +183,16 @@ PeerTransport::~PeerTransport() {
 	if (this->pc_ != nullptr) {
 		this->pc_->Close();
 	}
+	if (this->worker_thread_ != nullptr) {
+		this->worker_thread_->Stop();
+	}
+	if (this->signaling_thread_ != nullptr) {
+		this->signaling_thread_->Stop();
+		;
+	}
+	if (this->network_thread_ != nullptr) {
+		this->network_thread_->Stop();
+	}
 }
 
 bool PeerTransport::Init() { return create_peer_connection(); }
@@ -373,7 +383,7 @@ const std::string PeerTransport::GetPendingRemoteDescription() {
 }
 
 const webrtc::PeerConnectionInterface::PeerConnectionState PeerTransport::GetConnectionState() {
-	//std::lock_guard<std::mutex> guard(pc_lock_);
+	// std::lock_guard<std::mutex> guard(pc_lock_);
 	if (this->pc_) {
 		return this->pc_->peer_connection_state();
 	}

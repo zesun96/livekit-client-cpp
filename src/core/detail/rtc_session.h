@@ -23,6 +23,7 @@
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit_rtc.pb.h"
 #include "peer_transport.h"
+#include "peer_transport_factory.h"
 
 #include <atomic>
 
@@ -93,6 +94,8 @@ public:
 
 	bool Init();
 
+	std::shared_ptr<PeerTransportFactory> GetPeerTransportFactory() { return peer_factory_; }
+
 	void AddObserver(RtcSession::RtcSessionListener* observer);
 	void RemoveObserver();
 
@@ -152,6 +155,7 @@ public:
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override;
 
 private:
+	std::shared_ptr<PeerTransportFactory> peer_factory_;
 	livekit::JoinResponse join_response_;
 	RtcSessionListener* observer_ = nullptr;
 	std::unique_ptr<PeerTransport> publisher_pc_;

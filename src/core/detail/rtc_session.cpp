@@ -103,21 +103,23 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 	bool subscriber_primary = join_response.subscriber_primary();
 	is_publisher_connection_required_ = !subscriber_primary;
 	is_subscriber_connection_required_ = subscriber_primary;
+
+	peer_factory_ = PeerTransportFactory::Create();
 }
 
 RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
 
 bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);
-	publisher_pc_ =
-	    std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config, nullptr);
+	publisher_pc_ = std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config,
+	                                                peer_factory_->GetPeerConnectFactory());
 	this->publisher_pc_->AddPeerTransportListener(this);
 	if (!publisher_pc_->Init()) {
 		return false;
 	}
 
-	subscriber_pc_ =
-	    std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config, nullptr);
+	subscriber_pc_ = std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config,
+	                                                 peer_factory_->GetPeerConnectFactory());
 	this->subscriber_pc_->AddPeerTransportListener(this);
 	if (!subscriber_pc_->Init()) {
 		return false;

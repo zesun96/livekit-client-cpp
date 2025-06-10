@@ -51,6 +51,8 @@ public:
 
 	void SetRoomObserver(RtcEngineListener* listener);
 
+	std::shared_ptr<PeerTransportFactory> GetSessionPeerTransportFactory();
+
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
 	virtual void OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) override;

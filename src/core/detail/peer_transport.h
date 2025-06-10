@@ -235,9 +235,9 @@ private:
 	Target target_;
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config_;
 	// Signaling and worker threads.
-	std::unique_ptr<rtc::Thread> network_thread_;
-	std::unique_ptr<rtc::Thread> signaling_thread_;
-	std::unique_ptr<rtc::Thread> worker_thread_;
+	std::unique_ptr<rtc::Thread> network_thread_ = nullptr;
+	std::unique_ptr<rtc::Thread> signaling_thread_ = nullptr;
+	std::unique_ptr<rtc::Thread> worker_thread_ = nullptr;
 	rtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
 	webrtc::TaskQueueFactory* task_queue_factory_ = nullptr;
 	// PeerConnection factory.
