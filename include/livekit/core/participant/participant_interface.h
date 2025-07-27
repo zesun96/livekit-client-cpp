@@ -39,8 +39,7 @@ public:
 	virtual std::map<std::string, std::string> Attributes() = 0;
 	virtual bool IsLocalParticipant() = 0;
 
-	virtual TrackPublicationInterface*
-	GetTrackPublication(const TrackInterface::TrackSource& source) = 0;
+	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) = 0;
 	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) = 0;
 	virtual bool IsCameraEnabled() = 0;
 	virtual bool IsMicrophoneEnabled() = 0;

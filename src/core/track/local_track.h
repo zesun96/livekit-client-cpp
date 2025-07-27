@@ -21,6 +21,8 @@
 #define _LKC_CORE_TRACK_LOCAL_TRACK_H_
 
 #include "livekit/core/track/local_track_interface.h"
+
+#include "media_stream_track.h"
 #include "track.h"
 
 namespace livekit {
@@ -28,8 +30,14 @@ namespace core {
 
 class LocalTrack : public LocalTrackInterface, public Track {
 public:
-	LocalTrack() = default;
+	LocalTrack(std::string sid, std::string name, TrackKind kind,
+	           std::unique_ptr<MediaStreamTrack> meida_track);
 	virtual ~LocalTrack() = default;
+
+	MediaStreamTrack* media_track() const { return meida_track_.get(); }
+
+private:
+	std::unique_ptr<MediaStreamTrack> meida_track_;
 };
 
 } // namespace core

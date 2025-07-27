@@ -35,9 +35,19 @@ bool Init() {
 	std::cout << "livekit_client version: " << Version() << std::endl;
 
 	ret = rtc::InitializeSSL();
+	RTC_CHECK(ret) << "Failed to CleanupSSL()";
 	ret = rtc::InitRandom(rtc::Time());
-
+#if _DEBUG
+	rtc::LogMessage::LogToDebug(rtc::LS_VERBOSE);
+	rtc::LogMessage::LogTimestamps(true);
+#else
 	rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
+#endif
+
+#ifdef WEBRTC_WIN
+	WSADATA data;
+	WSAStartup(MAKEWORD(1, 0), &data);
+#endif
 
 	return ret;
 }
@@ -45,6 +55,10 @@ bool Init() {
 bool Destroy() {
 	bool ret = true;
 	ret = rtc::CleanupSSL();
+	RTC_CHECK(ret) << "Failed to CleanupSSL()";
+#ifdef WEBRTC_WIN
+	WSACleanup();
+#endif
 	return ret;
 }
 

@@ -103,21 +103,24 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 	bool subscriber_primary = join_response.subscriber_primary();
 	is_publisher_connection_required_ = !subscriber_primary;
 	is_subscriber_connection_required_ = subscriber_primary;
+	publisher_negotiation_debouncer_ = std::move(Debouncer::Create(std::chrono::milliseconds(150)));
+
+	peer_factory_ = PeerTransportFactory::Create();
 }
 
 RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
 
 bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);
-	publisher_pc_ =
-	    std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config, nullptr);
+	publisher_pc_ = std::make_unique<PeerTransport>(PeerTransport::Target::PUBLISHER, rtc_config,
+	                                                peer_factory_->GetPeerConnectFactory());
 	this->publisher_pc_->AddPeerTransportListener(this);
 	if (!publisher_pc_->Init()) {
 		return false;
 	}
 
-	subscriber_pc_ =
-	    std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config, nullptr);
+	subscriber_pc_ = std::make_unique<PeerTransport>(PeerTransport::Target::SUBSCRIBER, rtc_config,
+	                                                 peer_factory_->GetPeerConnectFactory());
 	this->subscriber_pc_->AddPeerTransportListener(this);
 	if (!subscriber_pc_->Init()) {
 		return false;
@@ -131,6 +134,25 @@ void RtcSession::AddObserver(RtcSession::RtcSessionListener* observer) {
 }
 
 void RtcSession::RemoveObserver() { this->observer_ = nullptr; }
+
+rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
+                         std::vector<webrtc::RtpEncodingParameters> send_encodings) {
+
+	auto init = webrtc::RtpTransceiverInit();
+	init.direction = webrtc::RtpTransceiverDirection::kSendOnly;
+	init.send_encodings = send_encodings;
+	auto transceiver = publisher_pc_->AddTransceiver(track->media_track()->rtc_track(), init);
+	return transceiver;
+}
+
+void RtcSession::PublisherNegotiationNeeded() {
+	has_published_.store(true);
+	// if (publisher_negotiation_debouncer_->lock()) {
+	// 	publisher_pc_->Negotiate();
+	// }
+	publisher_pc_->Negotiate();
+}
 
 void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	this->publisher_pc_->SetRemoteDescription(std::move(answer));

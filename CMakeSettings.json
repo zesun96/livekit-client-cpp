@@ -4,12 +4,14 @@
       "name": "x64-Debug",
       "generator": "Ninja",
       "configurationType": "Debug",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": [
+        "msvc_x64_x64"
+      ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
       "ctestCommandArgs": "",
       "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake",
-      "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v142"
+      "cmakeCommandArgs": "-DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v142"
     },
     {
       "name": "x64-Release",
@@ -17,10 +19,12 @@
       "configurationType": "Release",
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v142",
+      "cmakeCommandArgs": "-DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v142",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": [
+        "msvc_x64_x64"
+      ],
       "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake"
     },
     {
@@ -29,10 +33,13 @@
       "configurationType": "Debug",
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v143",
+      "cmakeCommandArgs": "-DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v143",
       "ctestCommandArgs": "",
       "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake",
-      "inheritEnvironments": [ "msvc_x64_x64" ]
+      "inheritEnvironments": [
+        "msvc_x64_x64"
+      ],
+      "variables": []
     },
     {
       "name": "x64-Release-v143",
@@ -40,11 +47,13 @@
       "configurationType": "Release",
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v143",
+      "cmakeCommandArgs": "-DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\cmake\\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-v143",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
       "cmakeToolchain": "${env.VCPKG_ROOT}\\scripts\\buildsystems\\vcpkg.cmake",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": [
+        "msvc_x64_x64"
+      ],
       "variables": []
     }
   ]

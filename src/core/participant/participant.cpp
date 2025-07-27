@@ -25,5 +25,15 @@ Participant::Participant(std::string sid, std::string identity, std::string name
 
 void Participant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
 
+void Participant::AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication) {
+	std::lock_guard<std::mutex> guard(track_publications_mutex_);
+	track_publications_[publication->Sid()] = publication;
+}
+
+void Participant::RemoveTrackPublication(std::string track_sid) {
+	std::lock_guard<std::mutex> guard(track_publications_mutex_);
+	track_publications_.erase(track_sid);
+}
+
 } // namespace core
 } // namespace livekit

@@ -23,31 +23,32 @@
 #include "livekit/core/track/track_publication_interface.h"
 #include "track.h"
 
+#include "livekit_models.pb.h"
+
 namespace livekit {
 namespace core {
 
-struct TrackPublicationInfo {
-	Track* track;
-	Track::TrackKind kind;
-};
-
 class TrackPublication : public TrackPublicationInterface {
 public:
-	TrackPublication() = default;
+	TrackPublication(livekit::TrackInfo info, Track* track);
 	virtual ~TrackPublication() = default;
 
-	void UpdateInfo(TrackPublicationInfo info);
+	virtual std::string Sid() override;
+
+	void UpdateInfo(livekit::TrackInfo info);
 
 private:
-	Track::TrackKind kind;
-	Track::TrackSource source;
-	Track::TrackDimensions dimensions;
-	std::string track_sid;
-	std::string track_name;
-	std::string mime_type;
-	bool simulcasted;
+	livekit::TrackInfo info_;
+	TrackKind kind_;
+	TrackSource source_;
+	TrackDimensions dimensions_;
+	std::string track_sid_;
+	std::string track_name_;
+	std::string mime_type_;
+	bool simulcasted_;
+	bool muted_;
 
-	Track* track;
+	Track* track_;
 };
 } // namespace core
 } // namespace livekit

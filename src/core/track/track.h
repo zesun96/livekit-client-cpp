@@ -22,6 +22,10 @@
 
 #include "livekit/core/track/track_interface.h"
 
+#include "livekit_models.pb.h"
+
+#include <api/rtp_transceiver_interface.h>
+
 #include <atomic>
 
 namespace livekit {
@@ -29,21 +33,30 @@ namespace core {
 class Track : public TrackInterface {
 public:
 public:
-	Track() = default;
+	Track(std::string sid, std::string name, TrackKind kind);
 	virtual ~Track() = default;
 
-	virtual std::string Sid() override { return sid_; };
-	virtual std::string Name() override { return name_; };
-	virtual TrackKind Kind() override { return kind_; };
-	virtual TrackSource Source() override { return source_; };
-	virtual TrackStreamState StreamState() override { return stream_state_; };
-	virtual TrackDimensions Dimensions() override { return dimensions_; };
+	virtual std::string Sid() override;
+	virtual std::string Name() override;
+	virtual TrackKind Kind() override;
+	virtual TrackSource Source() override;
+	virtual TrackStreamState StreamState() override;
+	virtual TrackDimensions Dimensions() override;
 
-	bool Muted() { return muted_.load(); };
+	bool Muted();
 
-	void SetMuted(bool muted) { muted_.store(muted); };
+	void SetMuted(bool muted);
+
+	std::string GetRTCStats() override;
+	void SetEnabled(bool enabled) override;
+	bool IsEnabled() override;
+
+	void UpdateInfo(livekit::TrackInfo info);
+
+	void SetTransceiver(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 
 private:
+	livekit::TrackInfo info_;
 	std::string sid_;
 	std::string name_;
 	TrackKind kind_;
@@ -51,6 +64,7 @@ private:
 	TrackStreamState stream_state_;
 	TrackDimensions dimensions_;
 	std::atomic<bool> muted_;
+	rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
 };
 } // namespace core
 } // namespace livekit

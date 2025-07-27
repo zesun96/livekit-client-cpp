@@ -16,3 +16,17 @@
  */
 
 #include "local_track_publication.h"
+
+namespace livekit {
+namespace core {
+
+LocalTrackPublication::LocalTrackPublication(livekit::TrackInfo info, LocalTrack* track)
+    : TrackPublication(info, track) {}
+
+void LocalTrackPublication::UpdatePublishOptions(TrackPublishOptions option) {
+	option_ = option;
+	return;
+}
+
+} // namespace core
+} // namespace livekit

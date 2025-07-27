@@ -69,8 +69,81 @@ void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> an
 	return;
 }
 
+std::shared_ptr<PeerTransportFactory> RtcEngine::GetSessionPeerTransportFactory() {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		return rtc_session_->GetPeerTransportFactory();
+	}
+	return nullptr;
+}
+
+std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackRequest& req) {
+	if (req.cid() == "") {
+		throw std::runtime_error("cid is empty");
+	}
+
+	std::promise<livekit::TrackInfo> promise;
+	std::future<livekit::TrackInfo> future = promise.get_future();
+	{
+		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+		if (pending_track_resolvers_.count(req.cid()) > 0) {
+			throw std::runtime_error("a track with the same ID has already been published");
+		}
+		pending_track_resolvers_[req.cid()] = std::move(promise);
+	}
+
+	try {
+		signal_client_->SendAddTrack(req);
+		auto status = future.wait_for(std::chrono::milliseconds(150+200));
+		if (status == std::future_status::timeout) {
+			return std::nullopt;
+		}
+		return future.get();
+	} catch (const std::exception& e) {
+		std::cerr << e.what() << '\n';
+		throw e;
+	}
+	return std::nullopt;
+}
+
+rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
+                        std::vector<webrtc::RtpEncodingParameters> send_encodings) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		return rtc_session_->CreateSender(track, options, send_encodings);
+	}
+	return nullptr;
+}
+
+void RtcEngine::PublisherNegotiationNeeded() {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (rtc_session_) {
+		return rtc_session_->PublisherNegotiationNeeded();
+	}
+}
+
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
-void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) { return; }
+
+void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) {
+	std::cout << "received trackPublishedResponse:" << response.cid() << "; "
+	          << response.track().sid() << std::endl;
+
+	auto& cid = response.cid();
+	{
+		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+		auto it = pending_track_resolvers_.find(cid);
+		if (it == pending_track_resolvers_.end()) {
+			std::cerr << "missing track resolver for " << cid << std::endl;
+			return;
+		}
+		auto& promise = it->second;
+		promise.set_value(response.track());
+		pending_track_resolvers_.erase(it);
+	}
+	return;
+}
+
 void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) {
 	return;
 }

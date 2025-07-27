@@ -4,10 +4,13 @@
     "homepage": "https://github.com/zesun96/livekit-client-cpp",
     "license": "Apache-2.0",
     "dependencies": [
+        "abseil",
         {
             "name": "openssl"
         },
-        "protobuf",
+        {
+            "name": "protobuf"
+        },
         "libwebsockets"
     ],
     "overrides": [

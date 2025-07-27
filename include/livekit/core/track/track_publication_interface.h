@@ -20,12 +20,16 @@
 #ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 #define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 
+#include <string>
+
 namespace livekit {
 namespace core {
 
 class TrackPublicationInterface {
 public:
 	virtual ~TrackPublicationInterface() {}
+
+	virtual std::string Sid() = 0;
 };
 
 } // namespace core

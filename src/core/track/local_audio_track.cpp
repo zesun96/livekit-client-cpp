@@ -18,5 +18,10 @@
 #include "local_audio_track.h"
 
 namespace livekit {
-namespace core {} // namespace core
+namespace core {
+LocalAudioTrack::LocalAudioTrack(std::string name, std::unique_ptr<AudioTrack> audio_track,
+                                 AudioSourceInterface* source)
+    : LocalTrack("TR_unknown", name, TrackKind::Audio, std::move(audio_track)), source_(source) {}
+
+} // namespace core
 } // namespace livekit

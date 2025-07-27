@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_OPTION_OPTION_H_
 #define _LKC_CORE_OPTION_OPTION_H_
 
+#include "e2ee_option.h"
+#include "media_option.h"
 #include "room_option.h"
 #include "rtc_engine_option.h"
 #include "signal_option.h"

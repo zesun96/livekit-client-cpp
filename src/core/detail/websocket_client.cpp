@@ -17,7 +17,6 @@
 
 #include "websocket_client.h"
 
-#include <iostream>
 #include <stdexcept>
 
 namespace livekit {
@@ -35,9 +34,20 @@ WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_op
 	info.protocols = protocols;
 	info.gid = -1;
 	info.uid = -1;
+	info.pt_serv_buf_size = 32 * 1024;
+	info.options = LWS_SERVER_OPTION_VALIDATE_UTF8;
 	info.user =
 	    this; // this is used in the callback_wrapper (lws_context_user(lws_get_context(wsi)))
+	/*
+	 * since we know this lws context is only ever going to be used with
+	 * one client wsis / fds / sockets at a time, let lws know it doesn't
+	 * have to use the default allocations for fd tables up to ulimit -n.
+	 * It will just allocate for 1 internal and 1 (+ 1 http2 nwsi) that we
+	 * will use.
+	 */
+	info.fd_limit_per_thread = 1 + 1 + 1;
 
+	lwsl_user("LWS client\n");
 	context_ = lws_create_context(&info);
 	if (context_ == NULL)
 		throw std::runtime_error("lws context creation failed");
@@ -90,7 +100,7 @@ void WebsocketClient::disconnect() { lws_context_destroy(context_); }
 
 void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 	if (wsi_ == nullptr) {
-		std::cout << "Websocket is not connected" << std::endl;
+		lwsl_user("Websocket is not connected");
 		// log::error("Websocket is not connected");
 		return;
 	}
@@ -101,7 +111,7 @@ void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 
 	auto res = lws_callback_on_writable(wsi_);
 	if (res != 0) {
-		std::cout << "lws_callback_on_writable failed: " << res << std::endl;
+		lwsl_user("lws_callback_on_writable failed: %d", res);
 		// log::error("Failed lws_callback_on_writable: {}", res); // idc
 	}
 	return;
@@ -164,6 +174,7 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 	}
 	case LWS_CALLBACK_CLIENT_CLOSED: {
 		// try to reconnect
+		lwsl_user("LWS_CALLBACK_CLIENT_CLOSED");
 		this->conn_established_ = false;
 		this->wsi_ = nullptr;
 		this->restart_after_ =
@@ -192,6 +203,7 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 				free(payload);
 				msg_tx_queue_.pop();
 			}
+			lws_callback_on_writable(wsi);
 		}
 		break;
 	}
@@ -205,7 +217,13 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 
 void WebsocketClient::lws_thread(WebsocketClient* client) {
 	while (!client->stop_) {
-		lws_service(client->context_, 0);
+		lws_service(client->context_, 10);
+		// {
+		// 	std::lock_guard<std::mutex> guard(client->lock_);
+		// 	if (client->msg_tx_queue_.size() > 0) {
+		// 		lws_callback_on_writable(client->wsi_);
+		// 	}
+		// }
 	}
 	if (client->context_ != nullptr) {
 		lws_context_destroy(client->context_);

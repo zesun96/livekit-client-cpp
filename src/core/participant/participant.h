@@ -24,6 +24,7 @@
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
 
+#include <mutex>
 #include <string>
 
 namespace livekit {
@@ -42,8 +43,7 @@ public:
 	virtual std::map<std::string, std::string> Attributes() override { return attributes_; }
 	virtual bool IsLocalParticipant() override { return is_local_particitant_; }
 
-	virtual TrackPublicationInterface*
-	GetTrackPublication(const TrackInterface::TrackSource& source) override {
+	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override {
 		return nullptr;
 	};
 	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) override {
@@ -58,6 +58,9 @@ public:
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo info);
 
+	void AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication);
+	void RemoveTrackPublication(std::string track_sid);
+
 protected:
 	bool is_local_particitant_ = false;
 	std::string sid_;
@@ -67,9 +70,10 @@ protected:
 	std::map<std::string, std::string> attributes_;
 	livekit::ParticipantInfo info_;
 	bool is_speaking_ = false;
-	std::map<std::string, TrackPublicationInterface*> track_publications_;
-	std::map<std::string, TrackPublicationInterface*> audio_track_publications_;
-	std::map<std::string, TrackPublicationInterface*> video_track_publications_;
+	std::mutex track_publications_mutex_;
+	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> track_publications_;
+	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> audio_track_publications_;
+	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> video_track_publications_;
 	float audio_level_ = 0.0f;
 	int64_t last_spoke_at_ = 0;
 	livekit::ParticipantPermission permissions_;

@@ -28,6 +28,7 @@ Because webrtc requires C++20.
 - [libwebrtc](https://github.com/livekit/rust-sdks/releases) (cmake FetchContent by default)
 - [protobuf](https://github.com/protocolbuffers/protobuf) (cmake find_package by default)
 - [nlohmann_json](https://github.com/nlohmann/json) (as submodule by default)
+- [dr_libs](https://github.com/mackron/dr_libs) (as submodule by default for examples)
 
 ## Examples
 

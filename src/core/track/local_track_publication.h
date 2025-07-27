@@ -20,16 +20,25 @@
 #ifndef _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
 #define _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_H_
 
+#include "livekit/core/option/option.h"
 #include "livekit/core/track/local_track_publication_interface.h"
+#include "local_track.h"
 #include "track_publication.h"
+
+#include "livekit_models.pb.h"
 
 namespace livekit {
 namespace core {
 
 class LocalTrackPublication : public TrackPublication, public LocalTrackPublicationInterface {
 public:
-	LocalTrackPublication() = default;
+	LocalTrackPublication(livekit::TrackInfo info, LocalTrack* track);
 	virtual ~LocalTrackPublication() override = default;
+
+	void UpdatePublishOptions(TrackPublishOptions option);
+
+private:
+	TrackPublishOptions option_;
 };
 
 } // namespace core
