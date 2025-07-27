@@ -115,7 +115,7 @@ public:
 
 	void SendMuteTrack(std::string& track_sid, bool muted);
 
-	void SendAddTrack(livekit::AddTrackRequest& request);
+	void SendAddTrack(const livekit::AddTrackRequest& request);
 
 	void SendUpdateLocalMetadata(const std::string& metadata, const std::string& name,
 	                             const std::map<std::string, std::string> attributes);

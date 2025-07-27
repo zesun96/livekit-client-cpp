@@ -30,7 +30,8 @@ namespace core {
 
 class LocalTrack : public LocalTrackInterface, public Track {
 public:
-	LocalTrack(std::unique_ptr<MediaStreamTrack> meida_track);
+	LocalTrack(std::string sid, std::string name, TrackKind kind,
+	           std::unique_ptr<MediaStreamTrack> meida_track);
 	virtual ~LocalTrack() = default;
 
 	MediaStreamTrack* media_track() const { return meida_track_.get(); }

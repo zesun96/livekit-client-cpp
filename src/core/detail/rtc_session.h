@@ -20,10 +20,14 @@
 #ifndef _LKC_CORE_DETAIL_RTC_SESSION_H_
 #define _LKC_CORE_DETAIL_RTC_SESSION_H_
 
+#include "debouncer.h"
+#include "livekit/core/option/option.h"
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit_rtc.pb.h"
 #include "peer_transport.h"
 #include "peer_transport_factory.h"
+
+#include "../track/local_track.h"
 
 #include <atomic>
 
@@ -99,6 +103,12 @@ public:
 	void AddObserver(RtcSession::RtcSessionListener* observer);
 	void RemoveObserver();
 
+	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	CreateSender(LocalTrack* track, TrackPublishOptions options,
+	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+
+	void PublisherNegotiationNeeded();
+
 public:
 	void SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer);
 	std::unique_ptr<webrtc::SessionDescriptionInterface>
@@ -164,6 +174,8 @@ private:
 	bool is_publisher_connection_required_;
 	bool is_subscriber_connection_required_;
 	std::atomic<State> state_ = State::kNew;
+	std::atomic<bool> has_published_ = false;
+	std::unique_ptr<Debouncer> publisher_negotiation_debouncer_ = nullptr;
 };
 
 } // namespace core

@@ -145,6 +145,7 @@ set(
   src/core/room.cpp
 
   src/core/detail/converted_proto.cpp
+  src/core/detail/debouncer.cpp
   src/core/detail/internals.cpp
   src/core/detail/global_task_queue.cpp
   src/core/detail/peer_transport.cpp

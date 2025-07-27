@@ -41,9 +41,10 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 	if (peer_transport_factory_) {
 		auto peer_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
 		    peer_transport_factory_->GetPeerConnectFactory());
-		auto rtc_audio_track = peer_factory_->CreateAudioTrack(label, audio_source->Get().get());
+		auto uuid = rtc::CreateRandomUuid();
+		auto rtc_audio_track = peer_factory_->CreateAudioTrack(uuid, audio_source->Get().get());
 		auto audio_track = std::make_unique<AudioTrack>(rtc_audio_track);
-		auto local_track = new LocalAudioTrack(std::move(audio_track), source);
+		auto local_track = new LocalAudioTrack(label, std::move(audio_track), source);
 		return local_track;
 	}
 	return nullptr;
@@ -51,11 +52,13 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
 	auto local_track = dynamic_cast<LocalTrack*>(track);
+	auto kind = local_track->Kind();
+	auto cid = local_track->media_track()->rtc_track()->id();
 	auto req = livekit::AddTrackRequest();
-	req.set_sid(local_track->media_track()->rtc_track()->id());
+	req.set_cid(cid);
 	req.set_name(local_track->Name());
-	req.set_type(to_proto(local_track->Kind()));
-	req.set_source(to_proto(local_track->Source()));
+	req.set_type(to_proto(kind));
+	req.set_source(to_proto(option.source));
 	req.set_muted(local_track->Muted());
 	req.set_disable_dtx(!option.dtx);
 	req.set_disable_red(!option.red);
@@ -63,6 +66,46 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	req.set_stream(option.stream);
 
 	auto audio_track = dynamic_cast<LocalAudioTrack*>(track);
+
+	try {
+		std::cout << "PublishTrack,name" << req.name() << ",kind" << req.type() << std::endl;
+		auto option_ti = engine_->AddTrack(req);
+		if (!option_ti.has_value()) {
+			return false;
+		}
+		auto& ti = option_ti.value();
+		std::string primary_codec_mime;
+		auto& codecs = ti.codecs();
+		for (auto codec : codecs) {
+			primary_codec_mime = codec.mime_type();
+			break;
+		}
+
+		if (!primary_codec_mime.empty() && kind == TrackKind::Video) {
+		}
+
+		auto publication = std::make_shared<LocalTrackPublication>(ti, local_track);
+		local_track->UpdateInfo(ti);
+		std::vector<webrtc::RtpEncodingParameters> send_encodings;
+		auto transceiver = engine_->CreateSender(local_track, option, send_encodings);
+
+		if (!transceiver) {
+			return false;
+		}
+		local_track->SetTransceiver(transceiver);
+
+		engine_->PublisherNegotiationNeeded();
+
+		publication->UpdatePublishOptions(option);
+
+		this->AddTrackPublication(publication);
+
+		local_track->media_track()->set_enabled(true);
+
+	} catch (const std::exception& e) {
+		std::cout << "publish track error:" <<  e.what() << std::endl;
+		return false;
+	}
 	return true;
 }
 

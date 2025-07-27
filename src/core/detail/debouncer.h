@@ -17,33 +17,37 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_TRACK_TRACK_INTERFACE_H_
-#define _LKC_CORE_TRACK_TRACK_INTERFACE_H_
+#ifndef _LKC_CORE_CONVERTED_DEBOUNCER_H_
+#define _LKC_CORE_CONVERTED_DEBOUNCER_H_
 
-#include "livekit/core/option/option.h"
-
-#include <string>
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <mutex>
 
 namespace livekit {
 namespace core {
 
-class TrackInterface {
+class Debouncer {
 public:
-	virtual std::string GetRTCStats() = 0;
-	virtual void SetEnabled(bool enabled) = 0;
-	virtual bool IsEnabled() = 0;
-	virtual TrackKind Kind() = 0;
-	virtual TrackSource Source() = 0;
-	virtual std::string Sid() = 0;
-	virtual std::string Name() = 0;
-	virtual TrackStreamState StreamState() = 0;
-	virtual TrackDimensions Dimensions() = 0;
+	static std::unique_ptr<Debouncer> Create(std::chrono::milliseconds interval);
 
-protected:
-	virtual ~TrackInterface() = default;
+	bool lock();
+
+	Debouncer(const Debouncer&) = delete;
+	Debouncer& operator=(const Debouncer&) = delete;
+	Debouncer(Debouncer&&) = delete;
+	Debouncer& operator=(Debouncer&&) = delete;
+
+private:
+	explicit Debouncer(std::chrono::milliseconds interval);
+
+	std::chrono::milliseconds interval_;
+	std::mutex mutex_;
+	std::atomic<std::chrono::steady_clock::time_point> last_time_;
 };
 
 } // namespace core
 } // namespace livekit
 
-#endif // _LKC_CORE_TRACK_TRACK_INTERFACE_H_
+#endif // _LKC_CORE_CONVERTED_DEBOUNCER_H_

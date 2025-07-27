@@ -92,8 +92,8 @@ AudioSource::InternalSource::InternalSource(const cricket::AudioOptions& options
 	                                                 // using x2 the queue size
 	buffer_.reserve(queue_size_samples_ + notify_threshold_samples_);
 
-	audio_queue_ = task_queue_factory->CreateTaskQueue("AudioSourceCapture",
-	                                                   webrtc::TaskQueueFactory::Priority::NORMAL);
+	audio_queue_ = std::move(task_queue_factory->CreateTaskQueue(
+	    "AudioSourceCapture", webrtc::TaskQueueFactory::Priority::NORMAL));
 
 	audio_task_ = webrtc::RepeatingTaskHandle::Start(
 	    audio_queue_.get(),
@@ -120,7 +120,10 @@ AudioSource::InternalSource::InternalSource(const cricket::AudioOptions& options
 	    webrtc::TaskQueueBase::DelayPrecision::kHigh);
 }
 
-AudioSource::InternalSource::~InternalSource() { delete[] silence_buffer_; }
+AudioSource::InternalSource::~InternalSource() {
+	audio_task_.Stop();
+	delete[] silence_buffer_;
+}
 
 bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate,
                                                 uint32_t number_of_channels,

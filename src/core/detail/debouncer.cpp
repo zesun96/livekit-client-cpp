@@ -15,24 +15,34 @@
  *limitations under the License.
  */
 
-#pragma once
-
-#ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
-#define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
-
-#include <string>
+#include "debouncer.h"
 
 namespace livekit {
 namespace core {
 
-class TrackPublicationInterface {
-public:
-	virtual ~TrackPublicationInterface() {}
+Debouncer::Debouncer(std::chrono::milliseconds interval)
+    : interval_(interval), last_time_(std::chrono::steady_clock::time_point::min()) {}
 
-	virtual std::string Sid() = 0;
-};
+bool Debouncer::lock() {
+	auto now = std::chrono::steady_clock::now();
+	auto last = last_time_.load(std::memory_order_relaxed);
+
+	if (now - last < interval_) {
+		return false;
+	}
+
+	std::lock_guard<std::mutex> guard(mutex_);
+	if ((now - last_time_.load()) < interval_) {
+		return false;
+	}
+
+	last_time_ = now;
+	return true;
+}
+
+std::unique_ptr<Debouncer> Debouncer::Create(std::chrono::milliseconds interval) {
+	return std::unique_ptr<Debouncer>(new Debouncer(interval));
+}
 
 } // namespace core
 } // namespace livekit
-
-#endif // _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_

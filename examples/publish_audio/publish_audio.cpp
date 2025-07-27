@@ -58,10 +58,14 @@ int main(int argc, char* argv[]) {
 	}
 	drwav_read_pcm_frames_s16(&wav, wav.totalPCMFrameCount, pSampleData);
 
+	auto max_samples = wav.totalPCMFrameCount * wav.channels;
+	auto num_samples = wav.sampleRate / 1000 * 20 * wav.channels;
+	int written_samples = 0;
+
 	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NDgxODk0NzIsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3ND"
-	                    "gxMDMwNzIsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.yoXRnCof7a4DctSflPA6LsYK7gC589JUWkrI8OWn5WM";
+	                    "eyJleHAiOjE3NTM3MTUxMDgsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3NT"
+	                    "M2Mjg3MDgsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
+	                    "dHJ1ZX19.RWdzr7xTj-vt4m4sC66A2FLotB2jhVa33uUIgL_Cz7I";
 	auto room_options = livekit::core::default_room_connect_options();
 	auto room = livekit::core::CreateRoom();
 
@@ -111,11 +115,15 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 
-	local_participant->PublishTrack(audio_track, publish_options);
+	if (!local_participant->PublishTrack(audio_track, publish_options)) {
+		room->RemoveEventListener();
+		drwav_uninit(&wav);
+		free(pSampleData);
+		return -1;
+	}
 
-	auto max_samples = wav.totalPCMFrameCount * wav.channels;
-	auto num_samples = wav.sampleRate / 1000 * 20 * wav.channels;
-	int written_samples = 0;
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
 	while (written_samples < max_samples) {
 		auto available_samples = max_samples - written_samples;
 		auto frame_size = std::min(int(num_samples), int(available_samples));

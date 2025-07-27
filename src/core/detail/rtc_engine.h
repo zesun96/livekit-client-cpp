@@ -25,8 +25,10 @@
 #include "rtc_session.h"
 #include "signal_client.h"
 
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace livekit {
@@ -52,6 +54,14 @@ public:
 	void SetRoomObserver(RtcEngineListener* listener);
 
 	std::shared_ptr<PeerTransportFactory> GetSessionPeerTransportFactory();
+
+	std::optional<livekit::TrackInfo> AddTrack(const livekit::AddTrackRequest& req);
+
+	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	CreateSender(LocalTrack* track, TrackPublishOptions options,
+	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+
+	void PublisherNegotiationNeeded();
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
@@ -140,6 +150,8 @@ private:
 	rtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
 
 	livekit::JoinResponse join_resp_;
+	mutable std::mutex pending_track_resolvers_lock_;
+	std::map<std::string, std::promise<livekit::TrackInfo>> pending_track_resolvers_;
 };
 
 } // namespace core

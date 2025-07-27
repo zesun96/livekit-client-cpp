@@ -29,7 +29,8 @@ namespace core {
 
 class LocalAudioTrack : public LocalTrack {
 public:
-	LocalAudioTrack(std::unique_ptr<AudioTrack> audio_track, AudioSourceInterface* source);
+	LocalAudioTrack(std::string name, std::unique_ptr<AudioTrack> audio_track,
+	                AudioSourceInterface* source);
 	virtual ~LocalAudioTrack() = default;
 
 private:

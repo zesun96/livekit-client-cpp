@@ -21,6 +21,7 @@
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_H_
 
 #include "../detail/rtc_engine.h"
+#include "../track/local_track_publication.h"
 #include "livekit/core/option/option.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/track/audio_media_track_interface.h"

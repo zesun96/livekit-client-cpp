@@ -169,10 +169,13 @@ void SignalClient::SendMuteTrack(std::string& track_sid, bool muted) {
 	return;
 }
 
-void SignalClient::SendAddTrack(livekit::AddTrackRequest& request) {
+void SignalClient::SendAddTrack(const livekit::AddTrackRequest& request) {
 	livekit::SignalRequest req;
 	auto* add_track_msg = req.mutable_add_track();
 	add_track_msg->CopyFrom(request);
+	std::cout << "SendAddTrack:"
+	          << "source=" << add_track_msg->source() << ",kind=" << add_track_msg->type()
+	          << ",cid=" << add_track_msg->cid() << std::endl;
 	sendRequest(req);
 	return;
 }

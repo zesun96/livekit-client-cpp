@@ -25,6 +25,9 @@
 #include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
+#include "media/engine/webrtc_media_engine.h"
+#include "modules/audio_device/include/audio_device.h"
+#include "modules/audio_device/include/audio_device_factory.h"
 #include "rtc_base/thread.h"
 #include <api/create_peerconnection_factory.h>
 
@@ -44,11 +47,36 @@ PeerTransportFactory::PeerTransportFactory() {
 	signaling_thread_->SetName("signaling_thread", &signaling_thread_);
 	signaling_thread_->Start();
 
-	this->peer_factory_ = webrtc::CreatePeerConnectionFactory(
-	    this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
-	    nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
-	    webrtc::CreateBuiltinAudioDecoderFactory(), nullptr, nullptr, nullptr /*audio_mixer*/,
-	    nullptr /*audio_processing*/);
+	// this->peer_factory_ = webrtc::CreatePeerConnectionFactory(
+	//     this->network_thread_.get(), this->worker_thread_.get(), this->signaling_thread_.get(),
+	//     nullptr /*default_adm*/, webrtc::CreateBuiltinAudioEncoderFactory(),
+	//     webrtc::CreateBuiltinAudioDecoderFactory(), nullptr, nullptr, nullptr /*audio_mixer*/,
+	//     nullptr /*audio_processing*/);
+
+	webrtc::PeerConnectionFactoryDependencies dependencies;
+	dependencies.network_thread = network_thread_.get();
+	dependencies.worker_thread = worker_thread_.get();
+	dependencies.signaling_thread = signaling_thread_.get();
+	dependencies.socket_factory = network_thread_->socketserver();
+	dependencies.task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
+	dependencies.event_log_factory =
+	    std::make_unique<webrtc::RtcEventLogFactory>(dependencies.task_queue_factory.get());
+	dependencies.call_factory = webrtc::CreateCallFactory();
+	dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
+
+	cricket::MediaEngineDependencies media_deps;
+	media_deps.task_queue_factory = dependencies.task_queue_factory.get();
+
+	// media_deps.video_encoder_factory =
+	// std::move(std::make_unique<livekit::VideoEncoderFactory>()); media_deps.video_decoder_factory
+	// = std::move(std::make_unique<livekit::VideoDecoderFactory>());
+	media_deps.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
+	media_deps.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
+	// media_deps.audio_processing = webrtc::AudioProcessingBuilder().Create();
+	media_deps.trials = dependencies.trials.get();
+
+	dependencies.media_engine = cricket::CreateMediaEngine(std::move(media_deps));
+	peer_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
 }
 
 PeerTransportFactory::~PeerTransportFactory() {

@@ -19,8 +19,9 @@
 
 namespace livekit {
 namespace core {
-LocalTrack::LocalTrack(std::unique_ptr<MediaStreamTrack> meida_track)
-    : meida_track_(std::move(meida_track)) {}
+LocalTrack::LocalTrack(std::string sid, std::string name, TrackKind kind,
+                       std::unique_ptr<MediaStreamTrack> meida_track)
+    : meida_track_(std::move(meida_track)), Track(sid, name, kind) {}
 
 } // namespace core
 } // namespace livekit

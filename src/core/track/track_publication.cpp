@@ -16,11 +16,28 @@
  */
 
 #include "track_publication.h"
+#include "../detail/converted_proto.h"
 
 namespace livekit {
 namespace core {
+TrackPublication::TrackPublication(livekit::TrackInfo info, Track* track)
+    : info_(info), track_(track), kind_(from_proto(info.type())),
+      source_(from_proto(info_.source())), dimensions_{info.width(), info_.height()},
+      track_sid_(info.sid()), simulcasted_(info.simulcast()), mime_type_(info.mime_type()),
+      muted_(info_.muted()) {}
 
-void TrackPublication::UpdateInfo(TrackPublicationInfo info) {}
+std::string TrackPublication::Sid() { return track_sid_; }
+
+void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
+	info_ = info;
+	kind_ = from_proto(info.type());
+	source_ = from_proto(info_.source());
+	dimensions_ = {info.width(), info.height()};
+	track_sid_ = info.sid();
+	simulcasted_ = info.simulcast();
+	mime_type_ = info.mime_type();
+	muted_ = info_.muted();
+}
 
 } // namespace core
 } // namespace livekit
