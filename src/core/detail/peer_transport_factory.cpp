@@ -19,6 +19,7 @@
 
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
+// #include "api/enable_media.h"
 #include "api/peer_connection_interface.h"
 #include "api/rtc_error.h"
 #include "api/rtc_event_log/rtc_event_log_factory.h"
@@ -64,18 +65,26 @@ PeerTransportFactory::PeerTransportFactory() {
 	dependencies.call_factory = webrtc::CreateCallFactory();
 	dependencies.trials = std::make_unique<webrtc::FieldTrialBasedConfig>();
 
+	audio_device_ = worker_thread_->BlockingCall(
+	    [&] { return rtc::make_ref_counted<AudioDevice>(dependencies.task_queue_factory.get()); });
+
+	// dependencies.adm = audio_device_;
+
 	cricket::MediaEngineDependencies media_deps;
 	media_deps.task_queue_factory = dependencies.task_queue_factory.get();
 
 	// media_deps.video_encoder_factory =
 	// std::move(std::make_unique<livekit::VideoEncoderFactory>()); media_deps.video_decoder_factory
 	// = std::move(std::make_unique<livekit::VideoDecoderFactory>());
+	media_deps.adm = audio_device_;
 	media_deps.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
 	media_deps.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
-	// media_deps.audio_processing = webrtc::AudioProcessingBuilder().Create();
+	media_deps.audio_processing = webrtc::AudioProcessingBuilder().Create();
 	media_deps.trials = dependencies.trials.get();
 
 	dependencies.media_engine = cricket::CreateMediaEngine(std::move(media_deps));
+
+	// webrtc::EnableMedia(dependencies);
 	peer_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
 }
 

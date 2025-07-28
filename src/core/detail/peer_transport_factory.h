@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_DETAIL_PEER_TRANSPORT_FACTORY_H_
 #define _LKC_CORE_DETAIL_PEER_TRANSPORT_FACTORY_H_
 
+#include "audio_device.h"
+
 #include "api/peer_connection_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_factory.h"
@@ -48,7 +50,7 @@ public:
 	rtc::Thread* signaling_thread() const;
 
 private:
-	// rtc::scoped_refptr<AudioDevice> audio_device_;
+	rtc::scoped_refptr<AudioDevice> audio_device_;
 	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_factory_;
 	webrtc::TaskQueueFactory* task_queue_factory_;
 
