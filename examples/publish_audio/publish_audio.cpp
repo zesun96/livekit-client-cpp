@@ -63,9 +63,9 @@ int main(int argc, char* argv[]) {
 	int written_samples = 0;
 
 	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NTM3MTUxMDgsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3NT"
-	                    "M2Mjg3MDgsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.RWdzr7xTj-vt4m4sC66A2FLotB2jhVa33uUIgL_Cz7I";
+	                    "eyJleHAiOjE3NTM4MDE1MjQsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3NT"
+	                    "M3MTUxMjQsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
+	                    "dHJ1ZX19.VoIttGvMfGtBG9arUgOdU9W9kQ2Izc7G1px-AeQFByc";
 	auto room_options = livekit::core::default_room_connect_options();
 	auto room = livekit::core::CreateRoom();
 
