@@ -96,7 +96,12 @@ void WebsocketClient::connect() {
 
 void WebsocketClient::service() { lws_thread_ = new std::thread(lws_thread, this); }
 
-void WebsocketClient::disconnect() { lws_context_destroy(context_); }
+void WebsocketClient::disconnect() {
+	stop_ = true;
+	if (lws_thread_ && lws_thread_->joinable()) {
+		lws_thread_->join();
+	}
+}
 
 void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 	if (wsi_ == nullptr) {

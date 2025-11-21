@@ -38,7 +38,7 @@ bool Init() {
 	RTC_CHECK(ret) << "Failed to CleanupSSL()";
 	ret = rtc::InitRandom(rtc::Time());
 #if _DEBUG
-	rtc::LogMessage::LogToDebug(rtc::LS_VERBOSE);
+	rtc::LogMessage::LogToDebug(rtc::LS_INFO);
 	rtc::LogMessage::LogTimestamps(true);
 #else
 	rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
