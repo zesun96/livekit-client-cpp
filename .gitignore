@@ -8,3 +8,7 @@ out
 .vs/
 .vscode/
 deps/libwebrtc
+/deps/dr_libs/
+/deps/nlohmann_json/
+/deps/plog/
+/protocol/

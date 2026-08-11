@@ -53,9 +53,9 @@
 - Prefer small, versioned release/source archives declared through `FetchContent`, pinned with a
   cryptographic `URL_HASH`. Do not replace them with unpinned branches or full-history clones.
 - Preserve `USE_SYSTEM_*` options when adding or changing a vendored dependency.
-- The `protocol`, `deps/plog`, `deps/nlohmann_json`, and `deps/dr_libs` gitlinks are legacy local
-  checkouts. Production CMake uses pinned archives. Do not initialize, update, stage, or commit
-  those submodule pointers unless a task explicitly requests a submodule migration.
+- The legacy source-tree paths `protocol`, `deps/plog`, `deps/nlohmann_json`, and `deps/dr_libs` are
+  intentionally ignored. Production CMake uses pinned archives; do not reintroduce them as Git
+  submodules or commit local copies unless a task explicitly requests a dependency migration.
 - Keep the protocol archive revision aligned with the protobuf schemas expected by the client.
 - Keep protobuf compatible with the Abseil ABI embedded in the supported libwebrtc package. A
   protobuf upgrade requires a complete configure, build, and link validation.
@@ -93,8 +93,8 @@
 ## Commit rules
 
 - Review `git status --short`, `git diff`, and `git diff --cached` before every commit.
-- Stage explicit paths or use exclusion pathspecs. Never stage legacy submodule pointer changes,
-  build output, logs, credentials, editor state, or unrelated user changes.
+- Stage explicit paths or use exclusion pathspecs. Never stage local dependency source trees, build
+  output, logs, credentials, editor state, or unrelated user changes.
 - Use Conventional Commit subjects:
 
   ```text
