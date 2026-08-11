@@ -26,16 +26,16 @@ namespace livekit {
 namespace core {
 
 struct RoomSdkOptions {
-	std::string sdk;
-	std::string sdk_version;
+	std::string sdk = "cpp";
+	std::string sdk_version = "0.0.1";
 };
 
 struct RoomOptions {
-	bool auto_subscribe;
-	bool adaptive_stream;
-	bool dynacast;
+	bool auto_subscribe = true;
+	bool adaptive_stream = false;
+	bool dynacast = false;
 	RtcConfiguration rtc_config;
-	uint32_t join_retries;
+	uint32_t join_retries = 3;
 	RoomSdkOptions sdk_options;
 };
 

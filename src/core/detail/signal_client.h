@@ -144,9 +144,9 @@ public:
 private:
 	bool init();
 	void sendRequest(livekit::SignalRequest& request, bool from_queue = false);
-	void onWsMessage(std::shared_ptr<WebsocketData>& data);
+	void onWsMessage(const WebsocketData& data);
 	void onWsEvent(enum EventCode code, EventReason reason);
-	void handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data);
+	void handleWsBinaryMessage(const WebsocketData& data);
 	bool isEstablishingConnection();
 	void handleSignalResponse(livekit::SignalResponse& resp);
 	void resetPingTimeout();
@@ -154,6 +154,7 @@ private:
 	void startPingInterval();
 	void clearPingInterval();
 	void handleOnClose(std::string reason);
+	void resolveJoinResponse(const livekit::JoinResponse& response);
 	uint64_t getNextRequestId();
 
 	int64_t rtt() const;
@@ -166,6 +167,7 @@ private:
 	std::unique_ptr<WebsocketClient> wsc_;
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
+	bool join_response_resolved_ = false;
 	int ping_timeout_duration_ = 0;
 	int ping_interval_duration_ = 0;
 	mutable std::mutex ping_timeout_timer_lock_;

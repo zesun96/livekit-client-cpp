@@ -30,6 +30,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace livekit {
 namespace core {
@@ -152,6 +153,7 @@ private:
 	livekit::JoinResponse join_resp_;
 	mutable std::mutex pending_track_resolvers_lock_;
 	std::map<std::string, std::promise<livekit::TrackInfo>> pending_track_resolvers_;
+	std::thread initial_negotiation_thread_;
 };
 
 } // namespace core

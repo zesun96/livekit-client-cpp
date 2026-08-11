@@ -18,24 +18,33 @@
 #include "websocket_uri.h"
 
 #include <stdexcept>
+#include <utility>
 
 namespace livekit {
 namespace core {
 
-WebsocketUri::WebsocketUri(Url url) : url_(url) {}
+WebsocketUri::WebsocketUri(Url url) : url_(std::move(url)), secure_(url_.GetScheme() == "wss") {}
 
-WebsocketUri::~WebsocketUri() {}
-
-WebsocketUri WebsocketUri::parse_and_validate(std::string uri, std::string chargepoint_id,
-                                              int security_profile) {
+WebsocketUri WebsocketUri::parse_and_validate(const std::string& uri) {
 	if (uri.empty()) {
-		throw std::invalid_argument("`uri`-parameter must not be empty");
+		throw std::invalid_argument("WebSocket URI must not be empty");
 	}
-	// if (chargepoint_id.empty()) {
-	// 	throw std::invalid_argument("`chargepoint_id`-parameter must not be empty");
-	// }
-	auto tmp = WebsocketUri(Url(uri));
-	return tmp;
+
+	Url url(uri);
+	if (url.GetScheme() == "http") {
+		url.SetScheme("ws");
+	} else if (url.GetScheme() == "https") {
+		url.SetScheme("wss");
+	} else if (url.GetScheme() != "ws" && url.GetScheme() != "wss") {
+		throw std::invalid_argument("WebSocket URI scheme must be ws, wss, http, or https");
+	}
+	if (url.GetHost().empty()) {
+		throw std::invalid_argument("WebSocket URI must include a host");
+	}
+	if (url.GetPort() == 0) {
+		url.SetPort(url.GetScheme() == "wss" ? 443 : 80);
+	}
+	return WebsocketUri(std::move(url));
 }
 
 } // namespace core

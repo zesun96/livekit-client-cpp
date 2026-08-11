@@ -40,13 +40,13 @@ namespace livekit {
 namespace core {
 
 struct WebsocketConnectionOptions {
-	int retry_backoff_random_range_s;
-	int retry_backoff_repeat_times;
-	int retry_backoff_wait_minimum_s;
-	int max_connection_attempts;
-	int ping_interval_s;
+	int retry_backoff_random_range_s = 0;
+	int retry_backoff_repeat_times = 0;
+	int retry_backoff_wait_minimum_s = 1;
+	int max_connection_attempts = 0;
+	int ping_interval_s = 24;
 	std::string ping_payload;
-	int pong_timeout_s;
+	int pong_timeout_s = 52;
 };
 
 class WebsocketClient {
@@ -56,18 +56,18 @@ public:
 
 	void connect();
 	void disconnect();
-	void send(std::unique_ptr<WebsocketData> message);
+	void send(WebsocketData message);
 	void service();
-	void set_recv_cb(const std::function<void(std::shared_ptr<WebsocketData>&)>& cb);
+	void set_recv_cb(const std::function<void(const WebsocketData&)>& cb);
 	void set_event_cb(const std::function<void(enum EventCode, EventReason)>& cb);
 
 private:
 	static int callback_wrapper(struct lws* wsi, enum lws_callback_reasons reason, void* user,
 	                            void* in, size_t len);
 
-	static void lws_thread(WebsocketClient* client);
+	void run_service_loop();
 
-	int happlay_cb(struct lws* wsi, enum lws_callback_reasons reason, void* in, size_t len);
+	int handle_callback(struct lws* wsi, enum lws_callback_reasons reason, void* in, size_t len);
 
 	struct lws_protocols protocols[2] = {
 	    {
@@ -87,17 +87,16 @@ private:
 	std::string uri_;
 	size_t reconnect_attempts_ = 0;
 	std::optional<std::chrono::time_point<std::chrono::steady_clock>> restart_after_ = std::nullopt;
-	std::queue<std::unique_ptr<WebsocketData>> msg_tx_queue_;
-	std::vector<uint8_t> send_buffer_;
-	bool conn_established_ = false;
+	std::queue<WebsocketData> msg_tx_queue_;
+	std::atomic<bool> conn_established_ = false;
 	struct lws_context* context_ = nullptr;
 	struct lws* wsi_ = nullptr;
 	std::atomic<bool> stop_ = false;
 	mutable std::mutex lock_;
-	std::function<void(std::shared_ptr<WebsocketData>&)> func_recv_cb_ = nullptr;
+	std::function<void(const WebsocketData&)> func_recv_cb_ = nullptr;
 	std::function<void(enum EventCode, EventReason)> func_event_cb_ = nullptr;
 	// websocket sending and receiving thread
-	std::thread* lws_thread_ = nullptr;
+	std::thread service_thread_;
 	WebsocketUri ws_uri_;
 };
 

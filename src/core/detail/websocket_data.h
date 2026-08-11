@@ -20,31 +20,33 @@
 #ifndef _LKC_CORE_DETAIL_WEBSOCKET_DATA_H_
 #define _LKC_CORE_DETAIL_WEBSOCKET_DATA_H_
 
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace livekit {
 namespace core {
 
-enum class EventCode { Unknown, Connected, DisConnected };
+enum class EventCode { Unknown, Connected, Disconnected };
 
 using EventReason = std::string;
 
-enum class WebsocketDataType { Unknown, Text, Binany };
+enum class WebsocketDataType { Unknown, Text, Binary };
 
-struct WebsocketData {
+class WebsocketData final {
+public:
 	WebsocketData() = default;
-	WebsocketData(const void* in, uint32_t length, WebsocketDataType type);
-	virtual ~WebsocketData();
-	WebsocketData(const WebsocketData&) = delete;
-	WebsocketData& operator=(const WebsocketData&) = delete;
+	WebsocketData(const void* data, std::size_t size, WebsocketDataType type);
 
-	void release();
-	void copy_from(WebsocketData* ws_data);
+	const std::uint8_t* data() const noexcept { return bytes_.data(); }
+	std::size_t size() const noexcept { return bytes_.size(); }
+	bool empty() const noexcept { return bytes_.empty(); }
+	WebsocketDataType type() const noexcept { return type_; }
 
-	int8_t* data = nullptr;
-	WebsocketDataType type = WebsocketDataType::Text;
-	uint32_t length = 0;
+private:
+	std::vector<std::uint8_t> bytes_;
+	WebsocketDataType type_ = WebsocketDataType::Text;
 };
 
 } // namespace core

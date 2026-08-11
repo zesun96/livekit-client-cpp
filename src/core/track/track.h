@@ -63,7 +63,7 @@ private:
 	TrackSource source_;
 	TrackStreamState stream_state_;
 	TrackDimensions dimensions_;
-	std::atomic<bool> muted_;
+	std::atomic<bool> muted_{false};
 	rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
 };
 } // namespace core

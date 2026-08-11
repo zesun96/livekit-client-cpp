@@ -24,19 +24,32 @@
 #include <rtc_base/time_utils.h>
 
 #include <iostream>
-#include <sstream>
+#include <mutex>
+
+namespace {
+std::mutex initialization_mutex;
+std::size_t initialization_count = 0;
+} // namespace
 
 namespace livekit {
 namespace core {
 
 bool Init() {
-	bool ret = true;
+	std::lock_guard<std::mutex> guard(initialization_mutex);
+	if (initialization_count != 0) {
+		++initialization_count;
+		return true;
+	}
 
 	std::cout << "livekit_client version: " << Version() << std::endl;
 
-	ret = rtc::InitializeSSL();
-	RTC_CHECK(ret) << "Failed to CleanupSSL()";
-	ret = rtc::InitRandom(rtc::Time());
+	if (!rtc::InitializeSSL()) {
+		return false;
+	}
+	if (!rtc::InitRandom(rtc::Time())) {
+		rtc::CleanupSSL();
+		return false;
+	}
 #if _DEBUG
 	rtc::LogMessage::LogToDebug(rtc::LS_INFO);
 	rtc::LogMessage::LogTimestamps(true);
@@ -46,29 +59,33 @@ bool Init() {
 
 #ifdef WEBRTC_WIN
 	WSADATA data;
-	WSAStartup(MAKEWORD(1, 0), &data);
+	if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+		rtc::CleanupSSL();
+		return false;
+	}
 #endif
 
-	return ret;
+	initialization_count = 1;
+	return true;
 }
 
 bool Destroy() {
-	bool ret = true;
-	ret = rtc::CleanupSSL();
-	RTC_CHECK(ret) << "Failed to CleanupSSL()";
+	std::lock_guard<std::mutex> guard(initialization_mutex);
+	if (initialization_count == 0) {
+		return true;
+	}
+	if (--initialization_count != 0) {
+		return true;
+	}
 #ifdef WEBRTC_WIN
 	WSACleanup();
 #endif
-	return ret;
+	return rtc::CleanupSSL();
 }
 
 std::string Version() {
-
-	std::stringstream ss;
-
-	ss << LKC_CORE_VERSION_MAJOR << "." << LKC_CORE_VERSION_MINOR << "." << LKC_CORE_VERSION_PATCH;
-
-	return ss.str();
+	return std::to_string(LKC_CORE_VERSION_MAJOR) + "." + std::to_string(LKC_CORE_VERSION_MINOR) +
+	       "." + std::to_string(LKC_CORE_VERSION_PATCH);
 }
 
 } // namespace core

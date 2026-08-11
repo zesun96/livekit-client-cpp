@@ -25,6 +25,7 @@
 #include "participant/local_participant.h"
 #include "participant/remote_participant.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 
@@ -58,13 +59,13 @@ public:
 
 private:
 	RoomOptions options_;
-	RoomState state_ = RoomState::Disconnected;
+	std::atomic<RoomState> state_{RoomState::Disconnected};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
 	ServerInfo server_info_;
 
-	RoomEventInterface* event_listener_ = nullptr;
+	std::atomic<RoomEventInterface*> event_listener_{nullptr};
 };
 
 } // namespace core

@@ -23,9 +23,11 @@
 #include "option/room_option.h"
 #include "participant/local_participant_interface.h"
 #include "participant/participant_interface.h"
-#include "participant/remote_participant__interface.h"
+#include "participant/remote_participant_interface.h"
 #include "protostruct/livekit_rtc_struct.h"
 #include "room_event_interface.h"
+
+#include <memory>
 
 namespace livekit {
 namespace core {
@@ -61,6 +63,7 @@ public:
 };
 
 RoomInterface* CreateRoom();
+std::unique_ptr<RoomInterface> CreateRoomUnique(RoomOptions options = default_room_options());
 
 } // namespace core
 } // namespace livekit

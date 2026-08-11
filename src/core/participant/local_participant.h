@@ -39,7 +39,7 @@ public:
 	                 RtcEngine* engine, RoomOptions options);
 	virtual ~LocalParticipant() = default;
 
-	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info) override;
 
 	virtual LocalTrackInterface* CreateLocalAudioTreack(std::string label,
 	                                                    AudioSourceInterface* source) override;

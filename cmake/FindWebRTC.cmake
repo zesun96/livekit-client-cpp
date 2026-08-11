@@ -1,5 +1,7 @@
 # Find WebRTC include path
 
+set(LIBWEBRTC_ROOT "" CACHE PATH "Path to a prebuilt libwebrtc package containing include/ and lib/")
+
 set(WEBRTC_HOST_URL "https://github.com/zesun96/libwebrtc/releases/download/webrtc-dac8015-4")
 
 
@@ -32,18 +34,24 @@ else()
   set(WEBRTC_BUILD_TYPE "release")
 endif()
 
-set(WEBRTC_DOWNLOAD_URL "${WEBRTC_HOST_URL}/webrtc-${WEBRTC_PLATFORM}-${WEBRTC_ARCH}-${WEBRTC_BUILD_TYPE}.zip")
-set(WEBRTC_DIR "${CMAKE_SOURCE_DIR}/deps/libwebrtc/${WEBRTC_PLATFORM}_${WEBRTC_ARCH}_${WEBRTC_BUILD_TYPE}")
-message(STATUS "WEBRTC_DOWNLOAD_URL: ${WEBRTC_DOWNLOAD_URL}")
+if(LIBWEBRTC_ROOT)
+  get_filename_component(LIBWEBRTC_ROOT "${LIBWEBRTC_ROOT}" ABSOLUTE)
+  if(NOT EXISTS "${LIBWEBRTC_ROOT}/include" OR NOT EXISTS "${LIBWEBRTC_ROOT}/lib")
+    message(FATAL_ERROR "LIBWEBRTC_ROOT must contain include/ and lib/: ${LIBWEBRTC_ROOT}")
+  endif()
+  FetchContent_Declare(libwebrtc SOURCE_DIR "${LIBWEBRTC_ROOT}")
+else()
+  set(WEBRTC_DOWNLOAD_URL "${WEBRTC_HOST_URL}/webrtc-${WEBRTC_PLATFORM}-${WEBRTC_ARCH}-${WEBRTC_BUILD_TYPE}.zip")
+  set(WEBRTC_DIR "${PROJECT_SOURCE_DIR}/deps/libwebrtc/${WEBRTC_PLATFORM}_${WEBRTC_ARCH}_${WEBRTC_BUILD_TYPE}")
+  message(STATUS "WEBRTC_DOWNLOAD_URL: ${WEBRTC_DOWNLOAD_URL}")
 
-# download libwebrtc
-FetchContent_Declare(
+  FetchContent_Declare(
     libwebrtc
-    URL  ${WEBRTC_DOWNLOAD_URL}
-    SOURCE_DIR  ${WEBRTC_DIR}
-)
+    URL ${WEBRTC_DOWNLOAD_URL}
+    SOURCE_DIR ${WEBRTC_DIR}
+  )
+endif()
 
 FetchContent_MakeAvailable(libwebrtc)
 
 message(STATUS "libwebrtc source dir: ${libwebrtc_SOURCE_DIR}")
-

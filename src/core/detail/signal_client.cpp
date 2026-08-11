@@ -24,6 +24,7 @@
 #include <chrono>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -97,7 +98,7 @@ SignalClient::SignalClient(std::string url, std::string token, SignalOptions opt
 
 SignalClient::~SignalClient() {
 	std::cout << "SignalClient::~SignalClient()" << std::endl;
-	wsc_->disconnect();
+	Close(false);
 }
 
 bool SignalClient::init() {
@@ -117,7 +118,14 @@ void SignalClient::AddObserver(SignalClientObserver* observer) {
 void SignalClient::RemoveObserver() { observer_ = nullptr; }
 
 livekit::JoinResponse SignalClient::Connect() {
-	state_ = SignalConnectionState::CONNECTING;
+	{
+		std::lock_guard<std::mutex> guard(lock_);
+		if (join_response_resolved_) {
+			promise_ = std::promise<livekit::JoinResponse>();
+			join_response_resolved_ = false;
+		}
+		state_ = SignalConnectionState::CONNECTING;
+	}
 
 	wsc_->connect();
 	wsc_->service();
@@ -131,7 +139,18 @@ livekit::JoinResponse SignalClient::Connect() {
 	return livekit::JoinResponse();
 }
 
-void SignalClient::Close(bool update_state) {}
+void SignalClient::Close(bool update_state) {
+	if (update_state) {
+		state_ = SignalConnectionState::DISCONNECTING;
+	}
+	clearPingInterval();
+	if (wsc_) {
+		wsc_->disconnect();
+	}
+	if (update_state) {
+		state_ = SignalConnectionState::DISCONNECTED;
+	}
+}
 
 void SignalClient::SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	livekit::SignalRequest request;
@@ -277,13 +296,16 @@ void SignalClient::SendUpdateLocalAudioTrack(
 	return;
 }
 
-void SignalClient::onWsMessage(std::shared_ptr<WebsocketData>& data) {
-	if (data->type == WebsocketDataType::Binany) {
-		std::cout << "WebSocket binany message, len:" << data->length << std::endl;
-		handleWsBinanyMessage(data);
+void SignalClient::onWsMessage(const WebsocketData& data) {
+	if (data.type() == WebsocketDataType::Binary) {
+		std::cout << "WebSocket binary message, len:" << data.size() << std::endl;
+		handleWsBinaryMessage(data);
 	} else {
-		std::cout << "WebSocket message, len:" << data->length
-		          << ", data:" << std::string_view((char*)data->data, data->length) << std::endl;
+		const auto text =
+		    data.empty()
+		        ? std::string_view{}
+		        : std::string_view(reinterpret_cast<const char*>(data.data()), data.size());
+		std::cout << "WebSocket message, len:" << data.size() << ", data:" << text << std::endl;
 	}
 
 	return;
@@ -291,23 +313,22 @@ void SignalClient::onWsMessage(std::shared_ptr<WebsocketData>& data) {
 
 void SignalClient::onWsEvent(enum EventCode code, EventReason reason) {
 	std::cout << "WebSocket event:" << int(code) << ", reason" << reason << std::endl;
-	std::lock_guard<std::mutex> guard(lock_);
 	if (code == EventCode::Connected) {
 
-	} else if (code == EventCode::DisConnected) {
+	} else if (code == EventCode::Disconnected) {
 		this->handleOnClose(reason);
-		if (state_ != SignalConnectionState::CONNECTED) {
-			state_ = SignalConnectionState::DISCONNECTED;
-			promise_.set_value(livekit::JoinResponse());
-		}
 	}
 	return;
 }
 
-void SignalClient::handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data) {
+void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 	std::lock_guard<std::mutex> guard(lock_);
+	if (data.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+		std::cerr << "WebSocket signal message is too large" << std::endl;
+		return;
+	}
 	livekit::SignalResponse resp{};
-	bool ret = resp.ParseFromArray(data->data, data->length);
+	bool ret = resp.ParseFromArray(data.data(), static_cast<int>(data.size()));
 	if (ret) {
 		std::cout << "SignalResponsecase(: " << resp.message_case() << std::endl;
 		if (state_ != SignalConnectionState::CONNECTED) {
@@ -325,11 +346,11 @@ void SignalClient::handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data) {
 					this->startPingInterval();
 				}
 
-				promise_.set_value(resp.join());
+				resolveJoinResponse(resp.join());
 				break;
 			case livekit::SignalResponse::MessageCase::kLeave:
 				if (isEstablishingConnection()) {
-					promise_.set_value(livekit::JoinResponse());
+					resolveJoinResponse(livekit::JoinResponse());
 				}
 				break;
 			default:
@@ -337,9 +358,9 @@ void SignalClient::handleWsBinanyMessage(std::shared_ptr<WebsocketData>& data) {
 					state_ = SignalConnectionState::CONNECTED;
 					this->startPingInterval();
 					if (resp.message_case() == livekit::SignalResponse::MessageCase::kReconnect) {
-						promise_.set_value(resp.join());
+						resolveJoinResponse(resp.join());
 					} else {
-						promise_.set_value(livekit::JoinResponse());
+						resolveJoinResponse(livekit::JoinResponse());
 						should_process_message = true;
 					}
 				} else if (!option_.reconnect) {
@@ -552,8 +573,31 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 
 void SignalClient::handleOnClose(std::string reason) {
 	std::cout << "WebSocket closed, reason:" << reason << std::endl;
+	SignalClientObserver* observer = nullptr;
+	bool notify_observer = false;
+	{
+		std::lock_guard<std::mutex> guard(lock_);
+		const auto previous_state = state_.exchange(SignalConnectionState::DISCONNECTED);
+		notify_observer = previous_state != SignalConnectionState::DISCONNECTED;
+		if (previous_state == SignalConnectionState::CONNECTING ||
+		    previous_state == SignalConnectionState::RECONNECTING) {
+			resolveJoinResponse(livekit::JoinResponse());
+		}
+		observer = observer_;
+	}
 	clearPingInterval();
+	if (notify_observer && observer) {
+		observer->OnClose();
+	}
 	return;
+}
+
+void SignalClient::resolveJoinResponse(const livekit::JoinResponse& response) {
+	if (join_response_resolved_) {
+		return;
+	}
+	join_response_resolved_ = true;
+	promise_.set_value(response);
 }
 
 void SignalClient::resetPingTimeout() {
@@ -624,9 +668,8 @@ void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue)
 	request.SerializeToString(&serialized_request);
 
 	std::cout << "sendRequest:" << request.DebugString() << std::endl;
-	auto ws_data = std::make_unique<WebsocketData>(
-	    serialized_request.c_str(), serialized_request.length(), WebsocketDataType::Binany);
-	wsc_->send(std::move(ws_data));
+	wsc_->send(WebsocketData(serialized_request.data(), serialized_request.size(),
+	                         WebsocketDataType::Binary));
 	return;
 }
 

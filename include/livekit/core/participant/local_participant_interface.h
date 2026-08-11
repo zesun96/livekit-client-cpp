@@ -21,6 +21,7 @@
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
 
 #include "livekit/core/option/option.h"
+#include "livekit/core/participant/participant_interface.h"
 
 #include "../track/audio_source_interface.h"
 #include "../track/local_track_interface.h"
@@ -29,17 +30,26 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace livekit {
 
 namespace core {
 
-class LocalParticipantInterface {
+class LocalParticipantInterface : public virtual ParticipantInterface {
 public:
 	virtual ~LocalParticipantInterface() = default;
 
 	virtual LocalTrackInterface* CreateLocalAudioTreack(std::string label,
 	                                                    AudioSourceInterface* source) = 0;
+	LocalTrackInterface* CreateLocalAudioTrack(std::string label, AudioSourceInterface* source) {
+		return CreateLocalAudioTreack(std::move(label), source);
+	}
+	std::unique_ptr<LocalTrackInterface> CreateLocalAudioTrackUnique(std::string label,
+	                                                                 AudioSourceInterface* source) {
+		return std::unique_ptr<LocalTrackInterface>(
+		    CreateLocalAudioTreack(std::move(label), source));
+	}
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
 };

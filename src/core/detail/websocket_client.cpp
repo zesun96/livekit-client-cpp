@@ -17,14 +17,17 @@
 
 #include "websocket_client.h"
 
+#include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace livekit {
 namespace core {
 
 WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_options,
                                  std::string uri)
-    : uri_(uri) {
+    : connection_options_(connection_options), uri_(std::move(uri)),
+      ws_uri_(WebsocketUri::parse_and_validate(uri_)) {
 
 	// lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
 	struct lws_context_creation_info info;
@@ -36,6 +39,9 @@ WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_op
 	info.uid = -1;
 	info.pt_serv_buf_size = 32 * 1024;
 	info.options = LWS_SERVER_OPTION_VALIDATE_UTF8;
+	if (ws_uri_.is_secure()) {
+		info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+	}
 	info.user =
 	    this; // this is used in the callback_wrapper (lws_context_user(lws_get_context(wsi)))
 	/*
@@ -54,9 +60,12 @@ WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_op
 }
 
 WebsocketClient::~WebsocketClient() {
-	stop_ = true;
-	if (lws_thread_ && lws_thread_->joinable()) {
-		lws_thread_->join();
+	disconnect();
+	func_recv_cb_ = nullptr;
+	func_event_cb_ = nullptr;
+	if (context_ != nullptr) {
+		lws_context_destroy(context_);
+		context_ = nullptr;
 	}
 }
 
@@ -73,13 +82,12 @@ void WebsocketClient::connect() {
 	    .jitter_percent = 20,
 	};
 
-	ws_uri_ = WebsocketUri::parse_and_validate(uri_);
 	std::string ws_relative_url = ws_uri_.get_relative_url();
 	struct lws_client_connect_info connect_info = {
 	    .context = context_,
 	    .address = ws_uri_.get_hostname().c_str(), //"127.0.0.1"
 	    .port = ws_uri_.get_port(),                // 7880,
-	    .ssl_connection = false,
+	    .ssl_connection = ws_uri_.is_secure() ? LCCSCF_USE_SSL : 0,
 	    .path = ws_relative_url.c_str(),
 	    .host = ws_uri_.get_hostname().c_str(),
 	    .origin = ws_uri_.get_hostname().c_str(),
@@ -94,19 +102,27 @@ void WebsocketClient::connect() {
 		throw std::runtime_error("lws connection failed");
 }
 
-void WebsocketClient::service() { lws_thread_ = new std::thread(lws_thread, this); }
+void WebsocketClient::service() {
+	if (service_thread_.joinable()) {
+		throw std::logic_error("WebSocket service is already running");
+	}
+	stop_ = false;
+	service_thread_ = std::thread(&WebsocketClient::run_service_loop, this);
+}
 
 void WebsocketClient::disconnect() {
 	stop_ = true;
-	if (lws_thread_ && lws_thread_->joinable()) {
-		lws_thread_->join();
+	if (context_ != nullptr) {
+		lws_cancel_service(context_);
+	}
+	if (service_thread_.joinable() && service_thread_.get_id() != std::this_thread::get_id()) {
+		service_thread_.join();
 	}
 }
 
-void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
-	if (wsi_ == nullptr) {
+void WebsocketClient::send(WebsocketData message) {
+	if (!conn_established_ || wsi_ == nullptr) {
 		lwsl_user("Websocket is not connected");
-		// log::error("Websocket is not connected");
 		return;
 	}
 	{
@@ -122,7 +138,7 @@ void WebsocketClient::send(std::unique_ptr<WebsocketData> message) {
 	return;
 }
 
-void WebsocketClient::set_recv_cb(const std::function<void(std::shared_ptr<WebsocketData>&)>& cb) {
+void WebsocketClient::set_recv_cb(const std::function<void(const WebsocketData&)>& cb) {
 	func_recv_cb_ = cb;
 }
 
@@ -133,12 +149,12 @@ void WebsocketClient::set_event_cb(const std::function<void(enum EventCode, Even
 int WebsocketClient::callback_wrapper(struct lws* wsi, enum lws_callback_reasons reason, void* user,
                                       void* in, size_t len) {
 	void* context_user = lws_context_user(lws_get_context(wsi));
-	WebsocketClient* client = reinterpret_cast<WebsocketClient*>(context_user);
-	return client->happlay_cb(wsi, reason, in, len);
+	auto* client = static_cast<WebsocketClient*>(context_user);
+	return client->handle_callback(wsi, reason, in, len);
 }
 
-int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reason, void* in,
-                                size_t len) {
+int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons reason, void* in,
+                                     size_t len) {
 	switch (reason) {
 	case LWS_CALLBACK_CLIENT_ESTABLISHED: {
 		this->conn_established_ = true;
@@ -149,33 +165,25 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_RECEIVE: {
-		// lwsl_info("Received data: %s\n", (char*)in);
-		// Handle incoming messages here
 		if (this->func_recv_cb_) {
-			if (lws_frame_is_binary(wsi)) {
-				std::shared_ptr<WebsocketData> data =
-				    std::make_shared<WebsocketData>(in, len, WebsocketDataType::Binany);
-				this->func_recv_cb_(data);
-			} else {
-				std::shared_ptr<WebsocketData> data =
-				    std::make_shared<WebsocketData>(in, len, WebsocketDataType::Text);
-				this->func_recv_cb_(data);
-			}
+			const auto type =
+			    lws_frame_is_binary(wsi) ? WebsocketDataType::Binary : WebsocketDataType::Text;
+			const WebsocketData data(in, len, type);
+			this->func_recv_cb_(data);
 		}
 
 		break;
 	}
 	case LWS_CALLBACK_WSI_DESTROY: {
 		if (this->func_event_cb_)
-			this->func_event_cb_(EventCode::DisConnected, std::string());
+			this->func_event_cb_(EventCode::Disconnected, std::string());
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-		if (!this->conn_established_) {
-			// fall through to LWS_CALLBACK_CLOSED
-		} else {
+		if (this->conn_established_) {
 			break;
 		}
+		[[fallthrough]];
 	}
 	case LWS_CALLBACK_CLIENT_CLOSED: {
 		// try to reconnect
@@ -188,27 +196,33 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_WRITEABLE: {
+		std::optional<WebsocketData> message;
 		{
 			std::lock_guard<std::mutex> guard(lock_);
-			// check if there are messages in the queue and if connection has been established
-			if (msg_tx_queue_.size() > 0 && this->conn_established_) {
-				std::unique_ptr<WebsocketData> data = std::move(msg_tx_queue_.front());
-				size_t payload_len = data->length;
-				unsigned char* payload = (unsigned char*)malloc(LWS_PRE + payload_len);
-				if (!payload) {
-					lwsl_err("Failed to allocate buffer\n");
-					return -1;
-				}
-				memcpy(payload + LWS_PRE, data->data, payload_len);
-				if (data->type == WebsocketDataType::Binany) {
-					int write = lws_write(wsi, payload + LWS_PRE, payload_len, LWS_WRITE_BINARY);
-				} else {
-					int write = lws_write(wsi, payload + LWS_PRE, payload_len, LWS_WRITE_TEXT);
-				}
-				free(payload);
+			if (!msg_tx_queue_.empty() && this->conn_established_) {
+				message.emplace(std::move(msg_tx_queue_.front()));
 				msg_tx_queue_.pop();
 			}
-			lws_callback_on_writable(wsi);
+		}
+		if (message) {
+			std::vector<unsigned char> payload(LWS_PRE + message->size());
+			if (!message->empty()) {
+				std::copy(message->data(), message->data() + message->size(),
+				          payload.begin() + LWS_PRE);
+			}
+			const auto mode =
+			    message->type() == WebsocketDataType::Binary ? LWS_WRITE_BINARY : LWS_WRITE_TEXT;
+			const int written = lws_write(wsi, payload.data() + LWS_PRE, message->size(), mode);
+			if (written < 0 || static_cast<std::size_t>(written) != message->size()) {
+				lwsl_err("WebSocket write failed: %d of %zu bytes\n", written, message->size());
+				return -1;
+			}
+		}
+		{
+			std::lock_guard<std::mutex> guard(lock_);
+			if (!msg_tx_queue_.empty() && this->conn_established_) {
+				lws_callback_on_writable(wsi);
+			}
 		}
 		break;
 	}
@@ -220,19 +234,9 @@ int WebsocketClient::happlay_cb(struct lws* wsi, enum lws_callback_reasons reaso
 	return 0;
 }
 
-void WebsocketClient::lws_thread(WebsocketClient* client) {
-	while (!client->stop_) {
-		lws_service(client->context_, 10);
-		// {
-		// 	std::lock_guard<std::mutex> guard(client->lock_);
-		// 	if (client->msg_tx_queue_.size() > 0) {
-		// 		lws_callback_on_writable(client->wsi_);
-		// 	}
-		// }
-	}
-	if (client->context_ != nullptr) {
-		lws_context_destroy(client->context_);
-		client->context_ = nullptr;
+void WebsocketClient::run_service_loop() {
+	while (!stop_) {
+		lws_service(context_, 10);
 	}
 }
 

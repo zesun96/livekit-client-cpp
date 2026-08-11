@@ -86,7 +86,8 @@ Url::Url(std::string const& url) {
 	if (*urlIter == '/') {
 		++urlIter;
 
-		auto const pathIter = std::find(urlIter, url.end(), '?');
+		auto const pathIter = std::find_if(urlIter, url.end(),
+		                                   [](char value) { return value == '?' || value == '#'; });
 		encoded_path_ = std::string(urlIter, pathIter);
 
 		urlIter = pathIter;
@@ -162,28 +163,23 @@ std::string Url::Encode(const std::string& value, const std::string& doNotEncode
 }
 
 void Url::AppendQueryParameters(const std::string& query) {
-	std::string::const_iterator cur = query.begin();
-	if (cur != query.end() && *cur == '?') {
-		++cur;
-	}
+	std::size_t position = !query.empty() && query.front() == '?' ? 1 : 0;
+	while (position <= query.size()) {
+		const auto separator = query.find('&', position);
+		const auto end = separator == std::string::npos ? query.size() : separator;
+		const auto equals = query.find('=', position);
+		const auto key_end = equals == std::string::npos || equals > end ? end : equals;
+		const auto value_begin = key_end == end ? end : key_end + 1;
 
-	while (cur != query.end()) {
-		auto key_end = std::find(cur, query.end(), '=');
-		std::string query_key = std::string(cur, key_end);
-
-		cur = key_end;
-		if (cur != query.end()) {
-			++cur;
+		const auto key = query.substr(position, key_end - position);
+		if (!key.empty()) {
+			encoded_query_parameters_[key] = query.substr(value_begin, end - value_begin);
 		}
 
-		auto value_end = std::find(cur, query.end(), '&');
-		std::string query_value = std::string(cur, value_end);
-
-		cur = value_end;
-		if (cur != query.end()) {
-			++cur;
+		if (separator == std::string::npos) {
+			break;
 		}
-		encoded_query_parameters_[std::move(query_key)] = std::move(query_value);
+		position = separator + 1;
 	}
 }
 
@@ -200,13 +196,14 @@ std::string Url::GetUrlWithoutQuery(bool relative) const {
 		}
 	}
 
-	if (!encoded_path_.empty()) {
-		if (!relative) {
-			if (encoded_path_[0] != '/') {
-				url += "/";
-			}
+	if (encoded_path_.empty()) {
+		if (relative) {
+			url = "/";
 		}
-
+	} else {
+		if (encoded_path_[0] != '/') {
+			url += "/";
+		}
 		url += encoded_path_;
 	}
 

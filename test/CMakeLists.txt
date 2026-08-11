@@ -1,5 +1,15 @@
-# build test
+include(${PROJECT_SOURCE_DIR}/cmake/Testing.cmake)
 
-include_directories("../include")
+add_subdirectory(unit)
 
-add_subdirectory(cpp_utils)
+if(BUILD_FUNCTIONAL_TESTS)
+  add_subdirectory(functional)
+endif()
+
+if(BUILD_INTEGRATION_TESTS)
+  add_subdirectory(integration)
+endif()
+
+if(BUILD_LEGACY_TEST_TOOLS)
+  add_subdirectory(cpp_utils)
+endif()

@@ -29,23 +29,23 @@ namespace livekit {
 namespace core {
 class WebsocketUri {
 public:
-	static WebsocketUri parse_and_validate(std::string uri, std::string chargepoint_id = "",
-	                                       int security_profile = 0);
+	static WebsocketUri parse_and_validate(const std::string& uri);
 
 public:
-	WebsocketUri(Url url);
-    WebsocketUri() = default;
-	~WebsocketUri();
+	explicit WebsocketUri(Url url);
+	WebsocketUri() = default;
 
-	const std::string& get_hostname() { return url_.GetHost(); }
+	const std::string& get_hostname() const noexcept { return url_.GetHost(); }
 
-	uint16_t get_port() { return url_.GetPort(); }
+	uint16_t get_port() const noexcept { return url_.GetPort(); }
 
-	const std::string get_relative_url() { return url_.GetRelativeUrl(); }
+	std::string get_relative_url() const { return url_.GetRelativeUrl(); }
+
+	bool is_secure() const noexcept { return secure_; }
 
 private:
 	Url url_;
-	bool secure_;
+	bool secure_ = false;
 };
 
 } // namespace core

@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
 	                    "gxMDMwNzIsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
 	                    "dHJ1ZX19.yoXRnCof7a4DctSflPA6LsYK7gC589JUWkrI8OWn5WM";
 	auto room_options = livekit::core::default_room_connect_options();
-	auto room = livekit::core::CreateRoom();
+	auto room = livekit::core::CreateRoomUnique();
 
 	auto event = std::make_shared<RoomEvent>();
 	room->AddEventListener(event.get());

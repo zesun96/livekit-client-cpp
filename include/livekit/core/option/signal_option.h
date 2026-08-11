@@ -31,10 +31,10 @@ struct SignalSdkOptions {
 };
 
 struct SignalOptions {
-	bool auto_subscribe;
-	bool adaptive_stream;
-	bool reconnect;
-	int reconnect_reason;
+	bool auto_subscribe = true;
+	bool adaptive_stream = false;
+	bool reconnect = false;
+	int reconnect_reason = 0;
 	SignalSdkOptions sdk_options;
 };
 

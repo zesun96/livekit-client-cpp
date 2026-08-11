@@ -20,10 +20,10 @@
 #ifndef _LKC_CORE_CONVERTED_DEBOUNCER_H_
 #define _LKC_CORE_CONVERTED_DEBOUNCER_H_
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace livekit {
 namespace core {
@@ -44,7 +44,7 @@ private:
 
 	std::chrono::milliseconds interval_;
 	std::mutex mutex_;
-	std::atomic<std::chrono::steady_clock::time_point> last_time_;
+	std::optional<std::chrono::steady_clock::time_point> last_time_;
 };
 
 } // namespace core
