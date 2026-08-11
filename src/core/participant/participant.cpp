@@ -17,13 +17,66 @@
 
 #include "participant.h"
 
+#include <utility>
+
 namespace livekit {
 namespace core {
 Participant::Participant(std::string sid, std::string identity, std::string name,
                          std::string metadata, std::map<std::string, std::string> attributes)
-    : sid_(sid), identity_(identity), name_(name), metadata_(metadata), attributes_(attributes) {}
+    : sid_(std::move(sid)), name_(std::move(name)), identity_(std::move(identity)),
+      metadata_(std::move(metadata)), attributes_(std::move(attributes)) {}
 
-void Participant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+Participant::Participant(const livekit::ParticipantInfo& info) { UpdateFromInfo(info); }
+
+std::string Participant::Identity() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return identity_;
+}
+
+std::string Participant::Name() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return name_;
+}
+
+std::string Participant::Sid() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return sid_;
+}
+
+bool Participant::IsSpeaking() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return is_speaking_;
+}
+
+std::string Participant::Metadata() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return metadata_;
+}
+
+std::map<std::string, std::string> Participant::Attributes() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return attributes_;
+}
+
+bool Participant::IsLocalParticipant() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return is_local_participant_;
+}
+
+void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	info_ = info;
+	sid_ = info.sid();
+	identity_ = info.identity();
+	name_ = info.name();
+	metadata_ = info.metadata();
+	attributes_.clear();
+	for (const auto& [key, value] : info.attributes()) {
+		attributes_.emplace(key, value);
+	}
+	permissions_ = info.permission();
+	kind_ = info.kind();
+}
 
 void Participant::AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication) {
 	std::lock_guard<std::mutex> guard(track_publications_mutex_);

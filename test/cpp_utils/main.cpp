@@ -24,10 +24,8 @@ int main(int argc, char* argv[]) {
 	std::thread t3(test3);
 	t3.join();
 
-	//std::thread t4(test4);
-	//t4.join();
-	while (true) {
-	}
+	// std::thread t4(test4);
+	// t4.join();
 	livekit::core::Destroy();
 	return 0;
 }

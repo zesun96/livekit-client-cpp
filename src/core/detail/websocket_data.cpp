@@ -17,32 +17,19 @@
 
 #include "websocket_data.h"
 
+#include <stdexcept>
+
 namespace livekit {
 namespace core {
-WebsocketData::WebsocketData(const void* in, uint32_t length, WebsocketDataType type)
-    : length(length), type(type) {
-	if (length > 0) {
-		data = new int8_t[length]{0};
-		memcpy(data, in, length);
-	} else {
-		throw "buf size need greater than zero";
+WebsocketData::WebsocketData(const void* data, std::size_t size, WebsocketDataType type)
+    : type_(type) {
+	if (data == nullptr && size != 0) {
+		throw std::invalid_argument("WebSocket payload is null");
 	}
-}
-WebsocketData::~WebsocketData() { release(); }
-
-void WebsocketData::release() {
-	if (data != nullptr) {
-		delete[] data;
-		data = nullptr;
+	if (size != 0) {
+		const auto* first = static_cast<const std::uint8_t*>(data);
+		bytes_.assign(first, first + size);
 	}
-	length = 0;
-}
-
-void WebsocketData::copy_from(WebsocketData* ws_data) {
-	data = new int8_t[ws_data->length];
-	memcpy(data, ws_data->data, ws_data->length);
-	length = ws_data->length;
-	type = ws_data->type;
 }
 
 } // namespace core

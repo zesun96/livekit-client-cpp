@@ -17,22 +17,21 @@
 
 #include "debouncer.h"
 
+#include <stdexcept>
+
 namespace livekit {
 namespace core {
 
-Debouncer::Debouncer(std::chrono::milliseconds interval)
-    : interval_(interval), last_time_(std::chrono::steady_clock::time_point::min()) {}
+Debouncer::Debouncer(std::chrono::milliseconds interval) : interval_(interval) {
+	if (interval < std::chrono::milliseconds::zero()) {
+		throw std::invalid_argument("Debounce interval must not be negative");
+	}
+}
 
 bool Debouncer::lock() {
-	auto now = std::chrono::steady_clock::now();
-	auto last = last_time_.load(std::memory_order_relaxed);
-
-	if (now - last < interval_) {
-		return false;
-	}
-
 	std::lock_guard<std::mutex> guard(mutex_);
-	if ((now - last_time_.load()) < interval_) {
+	const auto now = std::chrono::steady_clock::now();
+	if (last_time_ && now - *last_time_ < interval_) {
 		return false;
 	}
 

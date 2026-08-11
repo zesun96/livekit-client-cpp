@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_TRACK_AUDIO_SOURCE_INTERFACE_H_
 #define _LKC_CORE_TRACK_AUDIO_SOURCE_INTERFACE_H_
 
+#include <memory>
 #include <stdint.h>
 
 namespace livekit {
@@ -41,6 +42,14 @@ public:
 
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,
                                         uint32_t num_channels, uint32_t queue_size_ms);
+
+inline std::unique_ptr<AudioSourceInterface> CreateAudioSourceUnique(AudioSourceOptions options,
+                                                                     uint32_t sample_rate,
+                                                                     uint32_t num_channels,
+                                                                     uint32_t queue_size_ms) {
+	return std::unique_ptr<AudioSourceInterface>(
+	    CreateAudioSource(options, sample_rate, num_channels, queue_size_ms));
+}
 
 } // namespace core
 } // namespace livekit

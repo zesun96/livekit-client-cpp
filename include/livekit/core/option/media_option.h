@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_OPTION_MEDIA_OPTION_H_
 #define _LKC_CORE_OPTION_MEDIA_OPTION_H_
 
+#include <cstdint>
 #include <string>
 
 namespace livekit {
@@ -46,8 +47,8 @@ enum class TrackStreamState {
 };
 
 struct TrackDimensions {
-	uint32_t width;
-	uint32_t height;
+	uint32_t width = 0;
+	uint32_t height = 0;
 };
 
 enum class VideoCodec {

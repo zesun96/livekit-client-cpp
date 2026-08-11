@@ -17,18 +17,10 @@
 
 #pragma once
 
-#ifndef _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_
-#define _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_
+#ifndef _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_COMPAT_INTERFACE_H_
+#define _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_COMPAT_INTERFACE_H_
 
-namespace livekit {
-namespace core {
+// Compatibility include for the historical misspelled public header.
+#include "remote_participant_interface.h"
 
-class RemoteParticipantInterface {
-public:
-	virtual ~RemoteParticipantInterface() = default;
-};
-
-} // namespace core
-} // namespace livekit
-
-#endif // _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_INTERFACE_H_
+#endif // _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_COMPAT_INTERFACE_H_

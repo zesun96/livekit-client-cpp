@@ -20,8 +20,8 @@
 #ifndef _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_H_
 #define _LKC_CORE_PARTICIPANT_REMOTE_PARTICIPANT_H_
 
+#include "livekit/core/participant/remote_participant_interface.h"
 #include "participant.h"
-#include "livekit/core/participant/remote_participant__interface.h"
 
 #include <string>
 
@@ -30,9 +30,9 @@ namespace core {
 
 class RemoteParticipant : public Participant, public RemoteParticipantInterface {
 public:
-	RemoteParticipant() = default;
+	explicit RemoteParticipant(const livekit::ParticipantInfo& info);
 	virtual ~RemoteParticipant() = default;
-	virtual void UpdateFromInfo(const livekit::ParticipantInfo info) override;
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info) override;
 };
 
 } // namespace core

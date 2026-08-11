@@ -24,25 +24,46 @@
 
 #include "livekit_models.pb.h"
 
+#include <utility>
+
 namespace livekit {
 namespace core {
 LocalParticipant::LocalParticipant(std::string sid, std::string identity,
                                    EncryptionType encryption_type, RtcEngine* engine,
                                    RoomOptions options)
     : engine_(engine), options_(options), encryption_type_(encryption_type),
-      Participant(sid, identity, "", "", std::map<std::string, std::string>{}) {}
+      Participant(std::move(sid), std::move(identity), "", "",
+                  std::map<std::string, std::string>{}) {
+	is_local_participant_ = true;
+}
 
-void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
+	Participant::UpdateFromInfo(info);
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	is_local_participant_ = true;
+}
 
 LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
                                                               AudioSourceInterface* source) {
-	AudioSource* audio_source = dynamic_cast<AudioSource*>(source);
+	if (engine_ == nullptr || source == nullptr) {
+		return nullptr;
+	}
+	auto* audio_source = dynamic_cast<AudioSource*>(source);
+	if (audio_source == nullptr) {
+		return nullptr;
+	}
 	auto peer_transport_factory_ = engine_->GetSessionPeerTransportFactory();
 	if (peer_transport_factory_) {
 		auto peer_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
 		    peer_transport_factory_->GetPeerConnectFactory());
+		if (!peer_factory_) {
+			return nullptr;
+		}
 		auto uuid = rtc::CreateRandomUuid();
 		auto rtc_audio_track = peer_factory_->CreateAudioTrack(uuid, audio_source->Get().get());
+		if (!rtc_audio_track) {
+			return nullptr;
+		}
 		auto audio_track = std::make_unique<AudioTrack>(rtc_audio_track);
 		auto local_track = new LocalAudioTrack(label, std::move(audio_track), source);
 		return local_track;
@@ -51,7 +72,14 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 }
 
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
-	auto local_track = dynamic_cast<LocalTrack*>(track);
+	if (engine_ == nullptr || track == nullptr) {
+		return false;
+	}
+	auto* local_track = dynamic_cast<LocalTrack*>(track);
+	if (local_track == nullptr || local_track->media_track() == nullptr ||
+	    local_track->media_track()->rtc_track() == nullptr) {
+		return false;
+	}
 	auto kind = local_track->Kind();
 	auto cid = local_track->media_track()->rtc_track()->id();
 	auto req = livekit::AddTrackRequest();
@@ -65,8 +93,6 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	req.set_encryption(to_proto(encryption_type_));
 	req.set_stream(option.stream);
 
-	auto audio_track = dynamic_cast<LocalAudioTrack*>(track);
-
 	try {
 		std::cout << "PublishTrack,name" << req.name() << ",kind" << req.type() << std::endl;
 		auto option_ti = engine_->AddTrack(req);
@@ -75,10 +101,9 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		}
 		auto& ti = option_ti.value();
 		std::string primary_codec_mime;
-		auto& codecs = ti.codecs();
-		for (auto codec : codecs) {
-			primary_codec_mime = codec.mime_type();
-			break;
+		const auto& codecs = ti.codecs();
+		if (!codecs.empty()) {
+			primary_codec_mime = codecs.Get(0).mime_type();
 		}
 
 		if (!primary_codec_mime.empty() && kind == TrackKind::Video) {
@@ -103,7 +128,7 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		local_track->media_track()->set_enabled(true);
 
 	} catch (const std::exception& e) {
-		std::cout << "publish track error:" <<  e.what() << std::endl;
+		std::cout << "publish track error:" << e.what() << std::endl;
 		return false;
 	}
 	return true;

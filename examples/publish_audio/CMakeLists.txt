@@ -4,14 +4,7 @@ project(publish_audio_project)
 
 add_executable(publish_audio publish_audio.cpp)
 
-if (NOT TARGET dr_libs)
-    add_subdirectory(
-      ${CMAKE_SOURCE_DIR}/deps/dr_libs
-      ${CMAKE_BINARY_DIR}/deps/dr_libs
-    )
-endif()
-
-target_include_directories(publish_audio PUBLIC ${CMAKE_SOURCE_DIR}/deps/dr_libs)
+target_include_directories(publish_audio PRIVATE ${dr_libs_SOURCE_DIR})
  
 target_link_libraries(publish_audio PRIVATE livekitclient)
 

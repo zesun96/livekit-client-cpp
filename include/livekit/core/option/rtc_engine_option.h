@@ -42,14 +42,15 @@ enum class IceTransportsType { None, Relay, NoHost, All };
 
 struct RtcConfiguration {
 	std::vector<IceServer> ice_servers;
-	ContinualGatheringPolicy continual_gathering_policy;
-	IceTransportsType ice_transport_type;
+	ContinualGatheringPolicy continual_gathering_policy =
+	    ContinualGatheringPolicy::GatherContinually;
+	IceTransportsType ice_transport_type = IceTransportsType::All;
 };
 
 struct EngineOptions {
 	RtcConfiguration rtc_config;
 	SignalOptions signal_options;
-	uint32_t join_retries;
+	uint32_t join_retries = 3;
 };
 
 } // namespace core

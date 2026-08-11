@@ -19,6 +19,10 @@
 
 namespace livekit {
 namespace core {
-void RemoteParticipant::UpdateFromInfo(const livekit::ParticipantInfo info) {}
+RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info) : Participant(info) {}
+
+void RemoteParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
+	Participant::UpdateFromInfo(info);
+}
 } // namespace core
 } // namespace livekit

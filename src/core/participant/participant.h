@@ -29,19 +29,20 @@
 
 namespace livekit {
 namespace core {
-class Participant : public ParticipantInterface {
+class Participant : public virtual ParticipantInterface {
 public:
 	Participant(std::string sid, std::string identity, std::string name, std::string metadata,
 	            std::map<std::string, std::string> attributes);
+	explicit Participant(const livekit::ParticipantInfo& info);
 	virtual ~Participant() = default;
 
-	virtual std::string Identity() override { return identity_; }
-	virtual std::string Name() override { return name_; }
-	virtual std::string Sid() override { return sid_; }
-	virtual bool IsSpeaking() override { return is_speaking_; }
-	virtual std::string Metadata() override { return metadata_; }
-	virtual std::map<std::string, std::string> Attributes() override { return attributes_; }
-	virtual bool IsLocalParticipant() override { return is_local_particitant_; }
+	virtual std::string Identity() override;
+	virtual std::string Name() override;
+	virtual std::string Sid() override;
+	virtual bool IsSpeaking() override;
+	virtual std::string Metadata() override;
+	virtual std::map<std::string, std::string> Attributes() override;
+	virtual bool IsLocalParticipant() override;
 
 	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override {
 		return nullptr;
@@ -56,13 +57,14 @@ public:
 		return false;
 	};
 
-	virtual void UpdateFromInfo(const livekit::ParticipantInfo info);
+	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info);
 
 	void AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication);
 	void RemoveTrackPublication(std::string track_sid);
 
 protected:
-	bool is_local_particitant_ = false;
+	bool is_local_participant_ = false;
+	mutable std::mutex participant_mutex_;
 	std::string sid_;
 	std::string name_;
 	std::string identity_;
@@ -77,8 +79,8 @@ protected:
 	float audio_level_ = 0.0f;
 	int64_t last_spoke_at_ = 0;
 	livekit::ParticipantPermission permissions_;
-	livekit::ParticipantInfo_Kind kind_;
-	livekit::ConnectionQuality connection_quality_;
+	livekit::ParticipantInfo_Kind kind_{};
+	livekit::ConnectionQuality connection_quality_{};
 };
 
 } // namespace core

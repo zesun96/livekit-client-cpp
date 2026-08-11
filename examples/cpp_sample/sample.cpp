@@ -7,7 +7,7 @@ static void start() {
 	                    "AwODUzOTMsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
 	                    "dHJ1ZX19.cRQx6rxKooOt9dbqz1WgEfen0A4VDlsfMNTRDJE3mZM";
 	auto room_options = livekit::core::default_room_connect_options();
-	auto room = livekit::core::CreateRoom();
+	auto room = livekit::core::CreateRoomUnique();
 	room->Connect("http://localhost:7880/rtc", token, room_options);
 	while (true) {
 	}

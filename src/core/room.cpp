@@ -46,44 +46,53 @@ Room::Room(RoomOptions options) : options_(options) {
 	                                                        rtc_engine_.get(), options_);
 }
 
-Room::~Room() {}
+Room::~Room() = default;
 
 bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) {
-	EngineOptions engine_options = make_engine_config(opts);
-	livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
-	if (join_response.room().name().empty()) {
+	auto expected = state_.load();
+	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {
 		return false;
 	}
-	if (join_response.has_server_info()) {
-		server_info_ = from_proto(join_response.server_info());
-	} else {
-		server_info_.region = join_response.server_region();
-		server_info_.version = join_response.server_version();
+	if (!state_.compare_exchange_strong(expected, RoomState::Connecting)) {
+		return false;
+	}
+
+	try {
+		EngineOptions engine_options = make_engine_config(opts);
+		livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
+		if (!join_response.has_room()) {
+			state_ = RoomState::Failed;
+			return false;
+		}
+		if (join_response.has_server_info()) {
+			server_info_ = from_proto(join_response.server_info());
+		} else {
+			server_info_.region = join_response.server_region();
+			server_info_.version = join_response.server_version();
+		}
+	} catch (...) {
+		state_ = RoomState::Failed;
+		throw;
 	}
 
 	return true;
 }
 
-void Room::AddEventListener(RoomEventInterface* listener) {
-	event_listener_ = listener;
-	return;
-}
+void Room::AddEventListener(RoomEventInterface* listener) { event_listener_.store(listener); }
 
-void Room::RemoveEventListener() {
-	event_listener_ = nullptr;
-	return;
-}
+void Room::RemoveEventListener() { event_listener_.store(nullptr); }
 
-bool Room::IsConnected() { return this->state_ == RoomState::Connected; }
+bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
 
 bool Room::Disconnect() {
-	if (this->state_ == RoomState::Disconnecting || this->state_ == RoomState::Disconnected) {
+	auto state = state_.load();
+	if (state == RoomState::Disconnecting || state == RoomState::Disconnected) {
 		return false;
 	}
-	this->state_ = RoomState::Disconnecting;
+	state_ = RoomState::Disconnecting;
 
 	// do disconnect
-	this->state_ = RoomState::Disconnected;
+	state_ = RoomState::Disconnected;
 	return true;
 }
 
@@ -139,13 +148,17 @@ ParticipantInterface* Room::GetParticipantByName(std::string name) {
 }
 
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
-	this->state_ = RoomState::Connected;
-	if (this->event_listener_) {
-		this->event_listener_->OnConnected();
+	state_ = RoomState::Connected;
+	if (auto* listener = event_listener_.load()) {
+		listener->OnConnected();
 	}
 }
 
 RoomInterface* CreateRoom() { return new Room(); }
+
+std::unique_ptr<RoomInterface> CreateRoomUnique(RoomOptions options) {
+	return std::make_unique<Room>(std::move(options));
+}
 
 } // namespace core
 } // namespace livekit

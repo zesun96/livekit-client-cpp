@@ -2,19 +2,15 @@
 #  Root CMake file for livekit-client-cpp-sdk
 #
 # ----------------------------------------------------------------------------
-cmake_minimum_required (VERSION 3.11)
+cmake_minimum_required (VERSION 3.15)
 
 project ("livekit-client-cpp-sdk")
 
 set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
 
 if(MSVC)
-  # For MSVC RUNTIME LIBRARY, need CMP0091=NEW and cmake 3.15+
   cmake_policy(SET CMP0091 NEW)
-
-  # Configure MSVC runtime library settings for Debug and Release builds using MTd
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
   add_definitions(
     -DABSL_OPTION_USE_INLINE_NAMESPACE=0
@@ -33,16 +29,19 @@ set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
 option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
 option(USE_SYSTEM_JSON "Use system nlohmann/json" OFF)
 option(USE_SYSTEM_ABSL "Use system Abseil" OFF)
+option(USE_SYSTEM_PLOG "Use system plog" OFF)
+option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_TEST "Build tests" ON)
+option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
+option(BUILD_INTEGRATION_TESTS "Build tests that connect to a LiveKit server" OFF)
+option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
 
 include(FetchContent)
+include(cmake/Dependencies.cmake)
 include(cmake/FindWebRTC.cmake)
 
 if(USE_SYSTEM_ABSL)
   find_package(absl CONFIG REQUIRED)
-endif()
-
-if (NOT TARGET plog)
-    add_subdirectory(deps/plog EXCLUDE_FROM_ALL)
 endif()
 
 find_package(libwebsockets CONFIG REQUIRED)
@@ -68,23 +67,19 @@ else()
 endif()
 
 if(USE_SYSTEM_PROTOBUF)
-  find_package(protobuf CONFIG REQUIRED)
+  find_package(Protobuf CONFIG REQUIRED)
 else()
   if (NOT TARGET probobuf)
     add_subdirectory(deps/probobuf EXCLUDE_FROM_ALL)
   endif()
 endif()
 
-
-if(USE_SYSTEM_JSON)
-  find_package(nlohmann_json 3.2.0 REQUIRED)
-else()
-  # Typically you don't care so much for a third party library's tests to be
-  # run from your own project's code.
-  set(JSON_BuildTests OFF CACHE INTERNAL "")
-  if (NOT TARGET nlohmann_json)
-    add_subdirectory(deps/nlohmann_json)
+if(Protobuf_PROTOC_EXECUTABLE)
+  if(NOT TARGET protobuf::protoc)
+    add_executable(protobuf::protoc IMPORTED)
   endif()
+  set_property(TARGET protobuf::protoc PROPERTY
+    IMPORTED_LOCATION "${Protobuf_PROTOC_EXECUTABLE}")
 endif()
 
 
@@ -94,9 +89,9 @@ message(STATUS "libwebsockets include dir: ${LIBWEBSOCKETS_INCLUDE_DIRS}")
 message(STATUS "libwebsockets lib: ${LIBWEBSOCKETS_LIBRARIES}")
 message(STATUS "protobuf include dir: ${PROTOBUF_INCLUDE_DIRS}")
 message(STATUS "protobuf libraries: ${PROTOBUF_LIBRARIES}")
-message(STATUS "nlohmann_json include dir: ${nlohmann_json_SOURCE_DIR}/single_include")
+message(STATUS "nlohmann_json source dir: ${nlohmann_json_SOURCE_DIR}")
 
-set(LK_PROTO_PATH protocol/protobufs)
+set(LK_PROTO_PATH "${livekit_protocol_SOURCE_DIR}/protobufs")
 set(LK_PROTO_FILES
     ${LK_PROTO_PATH}/livekit_models.proto
     ${LK_PROTO_PATH}/livekit_metrics.proto
@@ -120,7 +115,6 @@ set(
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
   src/core/track/local_audio_track.cpp
-  src/core/track/local_track_publication.cpp
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
@@ -141,7 +135,6 @@ set(
   src/core/participant/remote_participant.cpp
 
   src/core/livekit_client.cpp
-  src/core/livekit_client_test.cpp
   src/core/room.cpp
 
   src/core/detail/audio_device.cpp
@@ -177,16 +170,18 @@ protobuf_generate(
     PROTOC_OUT_DIR ${PROTO_BINARY_DIR}
 )
 
-link_directories(${libwebrtc_SOURCE_DIR}/lib)
-link_directories(${LK_VCPKG_LIBRARIES_DIR})
-
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
-target_include_directories(livekitclient PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(
+  livekitclient
+  PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+)
 target_include_directories(livekitclient PRIVATE ${LIBWEBSOCKETS_INCLUDE_DIRS}/include)
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
-target_include_directories(livekitclient PUBLIC ${nlohmann_json_SOURCE_DIR}/single_include)
+
+target_link_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/lib)
+target_link_directories(livekitclient PRIVATE ${LK_VCPKG_LIBRARIES_DIR})
 
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
@@ -213,18 +208,13 @@ if (WIN32)
   endif()
 endif()
 
-if(NOT BUILD_EXAMPLES)
-  set(BUILD_EXAMPLES true)
-endif()
 # examples
 if(BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-if(NOT BUILD_TEST)
-  set(BUILD_TEST true)
-endif()
 # test
 if(BUILD_TEST)
+  enable_testing()
   add_subdirectory(test)
 endif()

@@ -47,7 +47,8 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 
-	std::cout << "wav file info: " << "[sampleRate=" << wav.sampleRate << "]"
+	std::cout << "wav file info: "
+	          << "[sampleRate=" << wav.sampleRate << "]"
 	          << "[channels=" << wav.channels << "]" << std::endl;
 
 	drwav_int16* pSampleData =
@@ -67,7 +68,7 @@ int main(int argc, char* argv[]) {
 	                    "M3MTUxMjQsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
 	                    "dHJ1ZX19.VoIttGvMfGtBG9arUgOdU9W9kQ2Izc7G1px-AeQFByc";
 	auto room_options = livekit::core::default_room_connect_options();
-	auto room = livekit::core::CreateRoom();
+	auto room = livekit::core::CreateRoomUnique();
 
 	auto event = std::make_shared<RoomEvent>();
 	room->AddEventListener(event.get());
@@ -103,10 +104,10 @@ int main(int argc, char* argv[]) {
 
 	livekit::core::AudioSourceOptions audio_source_options;
 
-	auto audio_source =
-	    livekit::core::CreateAudioSource(audio_source_options, wav.sampleRate, wav.channels, 0);
+	auto audio_source = livekit::core::CreateAudioSourceUnique(audio_source_options, wav.sampleRate,
+	                                                           wav.channels, 0);
 
-	auto audio_track = local_participant->CreateLocalAudioTreack("file", audio_source);
+	auto audio_track = local_participant->CreateLocalAudioTrackUnique("file", audio_source.get());
 	if (!audio_track) {
 		std::cout << "Failed to create local audio track" << std::endl;
 		room->RemoveEventListener();
@@ -115,7 +116,7 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 
-	if (!local_participant->PublishTrack(audio_track, publish_options)) {
+	if (!local_participant->PublishTrack(audio_track.get(), publish_options)) {
 		room->RemoveEventListener();
 		drwav_uninit(&wav);
 		free(pSampleData);

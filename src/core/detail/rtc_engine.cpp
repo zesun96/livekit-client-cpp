@@ -23,6 +23,10 @@
 #include <future>
 #include <nlohmann/json.hpp>
 
+namespace {
+constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
+}
+
 namespace livekit {
 namespace core {
 
@@ -33,11 +37,16 @@ RtcEngine::~RtcEngine() {
 	if (signal_client_) {
 		signal_client_->RemoveObserver();
 	}
-	return;
+	if (initial_negotiation_thread_.joinable()) {
+		initial_negotiation_thread_.join();
+	}
 }
 
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
+	if (initial_negotiation_thread_.joinable()) {
+		initial_negotiation_thread_.join();
+	}
 	signal_client_ = SignalClient::Create(url, token, options.signal_options);
 	signal_client_->AddObserver(this);
 
@@ -50,9 +59,7 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 		rtc_session_ = RtcSession::Create(response, options);
 		this->rtc_session_->AddObserver(this);
 		if (!is_subscriber_primary_ || response.fast_publish()) {
-			// std::async(std::launch::async, [this]() { return this->negotiate(); });
-			std::thread t([this]() { return this->negotiate(); });
-			t.detach();
+			initial_negotiation_thread_ = std::thread([this]() { negotiate(); });
 		}
 	}
 
@@ -78,8 +85,11 @@ std::shared_ptr<PeerTransportFactory> RtcEngine::GetSessionPeerTransportFactory(
 }
 
 std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackRequest& req) {
-	if (req.cid() == "") {
+	if (req.cid().empty()) {
 		throw std::runtime_error("cid is empty");
+	}
+	if (!signal_client_) {
+		throw std::runtime_error("signal client is not connected");
 	}
 
 	std::promise<livekit::TrackInfo> promise;
@@ -94,16 +104,18 @@ std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackReq
 
 	try {
 		signal_client_->SendAddTrack(req);
-		auto status = future.wait_for(std::chrono::milliseconds(150+200));
+		auto status = future.wait_for(kAddTrackTimeout);
 		if (status == std::future_status::timeout) {
+			std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+			pending_track_resolvers_.erase(req.cid());
 			return std::nullopt;
 		}
 		return future.get();
-	} catch (const std::exception& e) {
-		std::cerr << e.what() << '\n';
-		throw e;
+	} catch (...) {
+		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+		pending_track_resolvers_.erase(req.cid());
+		throw;
 	}
-	return std::nullopt;
 }
 
 rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
@@ -274,13 +286,15 @@ void RtcEngine::OnInterestingUsage(PeerTransport::Target target, int usagePatter
 
 void RtcEngine::negotiate() {
 	std::lock_guard<std::mutex> guard(session_lock_);
+	if (!rtc_session_) {
+		return;
+	}
 	// don't negotiate without any transceivers or data channel,
 	// it will generate sdp without ice frag then negotiate failed
-	if (this->rtc_session_ && this->rtc_session_->GetPublishTransceiverCount() == 0 &&
-	    !this->lossyDC_ && !this->reliableDC_) {
+	if (rtc_session_->GetPublishTransceiverCount() == 0 && !lossyDC_ && !reliableDC_) {
 		this->createDataChannels();
 	}
-	this->rtc_session_->Negotiate();
+	rtc_session_->Negotiate();
 }
 
 void RtcEngine::createDataChannels() {
