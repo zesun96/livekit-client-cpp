@@ -71,6 +71,7 @@ public:
 	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
 	void RemoteMuteChangedEvent(const std::string& sid, bool muted) override;
+	void LocalTrackUnpublishedEvent(const std::string& sid) override;
 	void SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) override;
 	void RoomUpdateEvent(const livekit::Room& update) override;
 	void

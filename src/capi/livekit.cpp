@@ -31,6 +31,8 @@ struct lk_room {
 	std::unique_ptr<CRoomEvents> events;
 	std::mutex callbacks_mutex;
 	std::mutex callback_lifetime_mutex;
+	std::mutex local_tracks_mutex;
+	std::vector<lk_local_track_t*> local_tracks;
 	lk_room_callbacks_t callbacks{};
 	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
 };
@@ -53,7 +55,7 @@ struct lk_local_track {
 	lk_audio_source_t* audio_source = nullptr;
 	lk_video_source_t* video_source = nullptr;
 	std::shared_ptr<RoomHandleState> room_state;
-	bool published = false;
+	std::atomic_bool published{false};
 };
 
 namespace {
@@ -351,6 +353,19 @@ public:
 		Track(callbacks_member(&lk_room_callbacks_t::on_track_unpublished), track, participant);
 	}
 
+	void OnLocalTrackPublished(core::TrackPublicationInterface* track,
+	                           core::ParticipantInterface* participant) override {
+		MarkLocalTrackPublished(track, true);
+		Track(callbacks_member(&lk_room_callbacks_t::on_local_track_published), track, participant);
+	}
+
+	void OnLocalTrackUnpublished(core::TrackPublicationInterface* track,
+	                             core::ParticipantInterface* participant) override {
+		MarkLocalTrackPublished(track, false);
+		Track(callbacks_member(&lk_room_callbacks_t::on_local_track_unpublished), track,
+		      participant);
+	}
+
 	void OnTrackMuted(core::TrackPublicationInterface* track,
 	                  core::ParticipantInterface* participant) override {
 		Track(callbacks_member(&lk_room_callbacks_t::on_track_muted), track, participant);
@@ -471,6 +486,20 @@ public:
 
 private:
 	template <typename Member> static Member callbacks_member(Member member) { return member; }
+
+	void MarkLocalTrackPublished(core::TrackPublicationInterface* publication, bool published) {
+		if (owner_ == nullptr || publication == nullptr) {
+			return;
+		}
+		auto* local_track = publication->Track();
+		std::lock_guard<std::mutex> guard(owner_->local_tracks_mutex);
+		for (auto* handle : owner_->local_tracks) {
+			if (handle != nullptr && handle->track.get() == local_track) {
+				handle->published.store(published);
+				break;
+			}
+		}
+	}
 
 	void Participant(lk_participant_event_callback lk_room_callbacks_t::*callback,
 	                 core::ParticipantInterface* participant) {
@@ -603,6 +632,15 @@ void lk_room_destroy(lk_room_t* room) {
 		}
 		room->state->connected.store(false);
 		room->state->alive.store(false);
+		{
+			std::lock_guard<std::mutex> guard(room->local_tracks_mutex);
+			for (auto* track : room->local_tracks) {
+				if (track != nullptr) {
+					track->owner = nullptr;
+				}
+			}
+			room->local_tracks.clear();
+		}
 		{ std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex); }
 		delete room;
 	} catch (...) {
@@ -912,6 +950,10 @@ lk_status_t lk_room_create_audio_track(lk_room_t* room, const char* label,
 		result->room_state = room->state;
 		result->audio_source = source;
 		source->track_references.fetch_add(1);
+		{
+			std::lock_guard<std::mutex> guard(room->local_tracks_mutex);
+			room->local_tracks.push_back(result.get());
+		}
 		*track = result.release();
 		return LK_STATUS_OK;
 	});
@@ -937,6 +979,10 @@ lk_status_t lk_room_create_video_track(lk_room_t* room, const char* label,
 		result->room_state = room->state;
 		result->video_source = source;
 		source->track_references.fetch_add(1);
+		{
+			std::lock_guard<std::mutex> guard(room->local_tracks_mutex);
+			room->local_tracks.push_back(result.get());
+		}
 		*track = result.release();
 		return LK_STATUS_OK;
 	});
@@ -952,7 +998,7 @@ lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
 		if (track->owner != room) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "track belongs to a different room");
 		}
-		if (track->published) {
+		if (track->published.load()) {
 			return Failure(LK_STATUS_INVALID_STATE, "track is already published");
 		}
 		core::TrackPublishOptions publish_options;
@@ -980,8 +1026,39 @@ lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
 		if (!participant->PublishTrack(track->track.get(), publish_options)) {
 			return Failure(LK_STATUS_OPERATION_FAILED, "failed to publish track");
 		}
-		track->published = true;
+		track->published.store(true);
 		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish) {
+	return Guard([&] {
+		if (track == nullptr || track->track == nullptr || track->owner == nullptr ||
+		    track->room_state == nullptr || !track->room_state->alive.load()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "live local track is required");
+		}
+		if (!track->published.load()) {
+			return Failure(LK_STATUS_INVALID_STATE, "track is not published");
+		}
+		auto* participant = LocalParticipant(track->owner);
+		if (participant == nullptr ||
+		    !participant->UnpublishTrack(track->track.get(), stop_on_unpublish != 0)) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to unpublish track");
+		}
+		track->published.store(false);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_republish_all_tracks(lk_room_t* room) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "live room is required");
+		}
+		return participant->RepublishAllTracks()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to republish all tracks");
 	});
 }
 
@@ -991,7 +1068,7 @@ lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted) {
 		    track->room_state == nullptr || !track->room_state->alive.load()) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "live local track is required");
 		}
-		if (!track->published) {
+		if (!track->published.load()) {
 			return Failure(LK_STATUS_INVALID_STATE, "track is not published");
 		}
 		return track->owner->room->SetLocalTrackMuted(track->track->Sid(), muted != 0)
@@ -1004,10 +1081,16 @@ lk_status_t lk_local_track_destroy(lk_local_track_t* track) {
 	if (track == nullptr) {
 		return LK_STATUS_OK;
 	}
-	if (track->published && track->room_state != nullptr && track->room_state->alive.load() &&
-	    track->room_state->connected.load()) {
+	if (track->published.load() && track->room_state != nullptr &&
+	    track->room_state->alive.load() && track->room_state->connected.load()) {
 		return Failure(LK_STATUS_INVALID_STATE,
 		               "disconnect the room before destroying a published track");
+	}
+	if (track->owner != nullptr && track->room_state != nullptr &&
+	    track->room_state->alive.load()) {
+		std::lock_guard<std::mutex> guard(track->owner->local_tracks_mutex);
+		auto& tracks = track->owner->local_tracks;
+		tracks.erase(std::remove(tracks.begin(), tracks.end(), track), tracks.end());
 	}
 	if (track->audio_source != nullptr) {
 		track->audio_source->track_references.fetch_sub(1);

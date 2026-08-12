@@ -24,8 +24,13 @@ LocalTrackPublication::LocalTrackPublication(livekit::TrackInfo info, LocalTrack
     : TrackPublication(info, track) {}
 
 void LocalTrackPublication::UpdatePublishOptions(TrackPublishOptions option) {
+	std::lock_guard<std::mutex> guard(option_mutex_);
 	option_ = option;
-	return;
+}
+
+TrackPublishOptions LocalTrackPublication::PublishOptions() const {
+	std::lock_guard<std::mutex> guard(option_mutex_);
+	return option_;
 }
 
 } // namespace core

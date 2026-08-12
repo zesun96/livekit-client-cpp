@@ -34,6 +34,8 @@ public:
 	~RemoteTrack() override = default;
 
 	MediaStreamTrack* media_track() const { return media_track_.get(); }
+	void SetEnabled(bool enabled) override;
+	bool IsEnabled() override;
 
 private:
 	std::unique_ptr<MediaStreamTrack> media_track_;

@@ -54,6 +54,7 @@ public:
 		MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
 		virtual void RemoteMuteChangedEvent(const std::string& sid, bool muted) = 0;
+		virtual void LocalTrackUnpublishedEvent(const std::string& sid) = 0;
 		virtual void SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) = 0;
 		virtual void RoomUpdateEvent(const livekit::Room& update) = 0;
 		virtual void
@@ -75,6 +76,7 @@ public:
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	CreateSender(LocalTrack* track, TrackPublishOptions options,
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+	bool RemoveSender(LocalTrack* track);
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);

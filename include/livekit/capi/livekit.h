@@ -183,6 +183,8 @@ typedef struct lk_room_callbacks {
 	lk_room_metadata_callback on_room_metadata_changed;
 	lk_connection_quality_callback on_connection_quality_changed;
 	lk_active_speakers_callback on_active_speakers_changed;
+	lk_track_event_callback on_local_track_published;
+	lk_track_event_callback on_local_track_unpublished;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -280,6 +282,8 @@ LKC_API lk_status_t lk_room_create_video_track(lk_room_t* room, const char* labe
                                                lk_video_source_t* source, lk_local_track_t** track);
 LKC_API lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
                                            const lk_track_publish_options_t* options);
+LKC_API lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish);
+LKC_API lk_status_t lk_room_republish_all_tracks(lk_room_t* room);
 LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
 

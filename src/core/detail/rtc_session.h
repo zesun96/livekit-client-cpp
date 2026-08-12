@@ -109,6 +109,7 @@ public:
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	CreateSender(LocalTrack* track, TrackPublishOptions options,
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+	bool RemoveSender(LocalTrack* track);
 
 	void PublisherNegotiationNeeded();
 

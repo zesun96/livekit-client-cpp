@@ -130,9 +130,15 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	return true;
 }
 
-void Room::AddEventListener(RoomEventInterface* listener) { event_listener_.store(listener); }
+void Room::AddEventListener(RoomEventInterface* listener) {
+	event_listener_.store(listener);
+	local_participant_->SetEventListener(listener);
+}
 
-void Room::RemoveEventListener() { event_listener_.store(nullptr); }
+void Room::RemoveEventListener() {
+	local_participant_->SetEventListener(nullptr);
+	event_listener_.store(nullptr);
+}
 
 bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
 
@@ -359,6 +365,26 @@ void Room::RemoteMuteChangedEvent(const std::string& sid, bool muted) {
 		} else {
 			listener->OnTrackUnmuted(publication.get(), participant.get());
 		}
+	}
+}
+
+void Room::LocalTrackUnpublishedEvent(const std::string& sid) {
+	auto publications = local_participant_->TrackPublicationsSnapshot();
+	auto found = publications.find(sid);
+	if (found == publications.end()) {
+		return;
+	}
+	auto publication = found->second;
+	if (auto* local_track = dynamic_cast<LocalTrack*>(publication->Track())) {
+		if (local_participant_->UnpublishTrack(local_track, true)) {
+			return;
+		}
+		local_track->SetTransceiver(nullptr);
+		local_track->SetEnabled(false);
+	}
+	local_participant_->RemoveTrackPublication(sid);
+	if (auto* listener = event_listener_.load()) {
+		listener->OnLocalTrackUnpublished(publication.get(), local_participant_.get());
 	}
 }
 

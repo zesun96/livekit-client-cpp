@@ -30,8 +30,12 @@
 #include "livekit/core/track/video_media_track_interface.h"
 #include "participant.h"
 
+#include <atomic>
+
 namespace livekit {
 namespace core {
+
+class RoomEventInterface;
 
 class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
@@ -47,16 +51,22 @@ public:
 	                                           VideoSourceInterface* source) override;
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
+	bool UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) override;
+	std::size_t UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
+	                            bool stop_on_unpublish) override;
+	bool RepublishAllTracks() override;
 	bool SetMetadata(const std::string& metadata) override;
 	bool SetName(const std::string& name) override;
 	bool SetAttributes(const std::map<std::string, std::string>& attributes) override;
 	bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
+	void SetEventListener(RoomEventInterface* listener);
 
 private:
 	RtcEngine* engine_;
 	RoomOptions options_;
 	EncryptionType encryption_type_;
+	std::atomic<RoomEventInterface*> event_listener_{nullptr};
 
 	// AudioSourceInterface* source_;
 };

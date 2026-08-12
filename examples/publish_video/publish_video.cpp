@@ -67,6 +67,10 @@ int main(int argc, char* argv[]) {
 	}
 
 	std::cout << "Published 640x360 synthetic video for 5 seconds" << std::endl;
+	if (!room->GetLocalParticipant()->UnpublishTrack(track.get())) {
+		std::cerr << "Failed to unpublish video track" << std::endl;
+		return 1;
+	}
 	track.reset();
 	source.reset();
 	room->Disconnect();

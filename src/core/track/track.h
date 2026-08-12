@@ -27,6 +27,7 @@
 #include <api/rtp_transceiver_interface.h>
 
 #include <atomic>
+#include <mutex>
 
 namespace livekit {
 namespace core {
@@ -53,6 +54,7 @@ public:
 	void UpdateInfo(livekit::TrackInfo info);
 
 	void SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> Transceiver() const;
 
 private:
 	livekit::TrackInfo info_;
@@ -63,6 +65,8 @@ private:
 	TrackStreamState stream_state_;
 	TrackDimensions dimensions_;
 	std::atomic<bool> muted_{false};
+	std::atomic<bool> enabled_{true};
+	mutable std::mutex transceiver_mutex_;
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
 };
 } // namespace core

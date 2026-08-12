@@ -41,8 +41,8 @@ bool Track::Muted() { return muted_.load(); };
 void Track::SetMuted(bool muted) { muted_.store(muted); };
 
 std::string Track::GetRTCStats() { return ""; };
-void Track::Track::SetEnabled(bool enabled) {};
-bool Track::IsEnabled() { return true; };
+void Track::SetEnabled(bool enabled) { enabled_.store(enabled); };
+bool Track::IsEnabled() { return enabled_.load(); };
 
 void Track::UpdateInfo(livekit::TrackInfo info) {
 	info_ = info;
@@ -53,7 +53,13 @@ void Track::UpdateInfo(livekit::TrackInfo info) {
 }
 
 void Track::SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	std::lock_guard<std::mutex> guard(transceiver_mutex_);
 	transceiver_ = transceiver;
+}
+
+webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> Track::Transceiver() const {
+	std::lock_guard<std::mutex> guard(transceiver_mutex_);
+	return transceiver_;
 }
 
 } // namespace core

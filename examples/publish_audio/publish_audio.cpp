@@ -58,6 +58,10 @@ int main(int argc, char* argv[]) {
 	}
 
 	std::cout << "Published a 440 Hz audio tone for 5 seconds" << std::endl;
+	if (!room->GetLocalParticipant()->UnpublishTrack(track.get())) {
+		std::cerr << "Failed to unpublish audio track" << std::endl;
+		return 1;
+	}
 	track.reset();
 	source.reset();
 	room->Disconnect();

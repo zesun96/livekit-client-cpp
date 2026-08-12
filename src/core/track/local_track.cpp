@@ -23,5 +23,16 @@ LocalTrack::LocalTrack(std::string sid, std::string name, TrackKind kind,
                        std::unique_ptr<MediaStreamTrack> meida_track)
     : meida_track_(std::move(meida_track)), Track(sid, name, kind) {}
 
+void LocalTrack::SetEnabled(bool enabled) {
+	Track::SetEnabled(enabled);
+	if (meida_track_ != nullptr) {
+		meida_track_->set_enabled(enabled);
+	}
+}
+
+bool LocalTrack::IsEnabled() {
+	return Track::IsEnabled() && meida_track_ != nullptr && meida_track_->enabled();
+}
+
 } // namespace core
 } // namespace livekit

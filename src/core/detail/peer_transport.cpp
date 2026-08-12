@@ -437,6 +437,23 @@ PeerTransport::AddTransceiver(webrtc::scoped_refptr<webrtc::MediaStreamTrackInte
 	return result.value();
 }
 
+bool PeerTransport::RemoveTrack(
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	if (!transceiver) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	if (!pc_ || !transceiver->sender()) {
+		return false;
+	}
+	const auto direction_error =
+	    transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kInactive);
+	if (!direction_error.ok()) {
+		return false;
+	}
+	return pc_->RemoveTrackOrError(transceiver->sender()).ok();
+}
+
 webrtc::scoped_refptr<webrtc::DataChannelInterface>
 PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config) {
 	const auto result = this->pc_->CreateDataChannelOrError(label, config);

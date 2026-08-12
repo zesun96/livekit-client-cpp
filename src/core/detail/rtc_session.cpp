@@ -158,6 +158,13 @@ RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	return transceiver;
 }
 
+bool RtcSession::RemoveSender(LocalTrack* track) {
+	if (track == nullptr || publisher_pc_ == nullptr) {
+		return false;
+	}
+	return publisher_pc_->RemoveTrack(track->Transceiver());
+}
+
 void RtcSession::PublisherNegotiationNeeded() {
 	has_published_.store(true);
 	// if (publisher_negotiation_debouncer_->lock()) {
