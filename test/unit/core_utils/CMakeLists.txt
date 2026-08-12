@@ -14,6 +14,8 @@ add_executable(
   websocket_data_test.cpp
   uri_test.cpp
   async_utils_test.cpp
+  signal_url_test.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/core/detail/signal_url.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/uri.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_uri.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_data.cpp
@@ -23,7 +25,9 @@ add_executable(
 target_compile_features(livekit_core_utils_tests PRIVATE cxx_std_20)
 target_include_directories(
   livekit_core_utils_tests
-  PRIVATE ${LIVEKIT_CLIENT_ROOT}/src/core/detail
+  PRIVATE
+    ${LIVEKIT_CLIENT_ROOT}/include
+    ${LIVEKIT_CLIENT_ROOT}/src/core/detail
 )
 target_link_libraries(livekit_core_utils_tests PRIVATE GTest::gtest_main)
 

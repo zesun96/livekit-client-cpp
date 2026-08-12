@@ -108,7 +108,19 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 	peer_factory_ = PeerTransportFactory::Create();
 }
 
-RtcSession::~RtcSession() { std::cout << "RtcSession::~RtcSession()" << std::endl; }
+RtcSession::~RtcSession() {
+	std::cout << "RtcSession::~RtcSession()" << std::endl;
+	RemoveObserver();
+	if (publisher_pc_) {
+		publisher_pc_->RemovePeerTransportListener();
+	}
+	if (subscriber_pc_) {
+		subscriber_pc_->RemovePeerTransportListener();
+	}
+	subscriber_pc_.reset();
+	publisher_pc_.reset();
+	peer_factory_.reset();
+}
 
 bool RtcSession::Init() {
 	auto rtc_config = make_rtc_config_join(join_response_, options_);

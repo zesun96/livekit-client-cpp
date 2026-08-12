@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -57,6 +58,7 @@ public:
 	void connect();
 	void disconnect();
 	void send(WebsocketData message);
+	bool flush(std::chrono::milliseconds timeout);
 	void service();
 	void set_recv_cb(const std::function<void(const WebsocketData&)>& cb);
 	void set_event_cb(const std::function<void(enum EventCode, EventReason)>& cb);
@@ -93,6 +95,8 @@ private:
 	struct lws* wsi_ = nullptr;
 	std::atomic<bool> stop_ = false;
 	mutable std::mutex lock_;
+	std::condition_variable tx_condition_;
+	bool write_in_progress_ = false;
 	std::function<void(const WebsocketData&)> func_recv_cb_ = nullptr;
 	std::function<void(enum EventCode, EventReason)> func_event_cb_ = nullptr;
 	// websocket sending and receiving thread

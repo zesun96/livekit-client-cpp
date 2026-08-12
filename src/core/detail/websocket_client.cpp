@@ -135,7 +135,14 @@ void WebsocketClient::send(WebsocketData message) {
 		lwsl_user("lws_callback_on_writable failed: %d", res);
 		// log::error("Failed lws_callback_on_writable: {}", res); // idc
 	}
+	lws_cancel_service(context_);
 	return;
+}
+
+bool WebsocketClient::flush(std::chrono::milliseconds timeout) {
+	std::unique_lock<std::mutex> guard(lock_);
+	return tx_condition_.wait_for(guard, timeout,
+	                              [this] { return msg_tx_queue_.empty() && !write_in_progress_; });
 }
 
 void WebsocketClient::set_recv_cb(const std::function<void(const WebsocketData&)>& cb) {
@@ -202,8 +209,10 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 			if (!msg_tx_queue_.empty() && this->conn_established_) {
 				message.emplace(std::move(msg_tx_queue_.front()));
 				msg_tx_queue_.pop();
+				write_in_progress_ = true;
 			}
 		}
+		int write_result = 0;
 		if (message) {
 			std::vector<unsigned char> payload(LWS_PRE + message->size());
 			if (!message->empty()) {
@@ -215,14 +224,19 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 			const int written = lws_write(wsi, payload.data() + LWS_PRE, message->size(), mode);
 			if (written < 0 || static_cast<std::size_t>(written) != message->size()) {
 				lwsl_err("WebSocket write failed: %d of %zu bytes\n", written, message->size());
-				return -1;
+				write_result = -1;
 			}
 		}
 		{
 			std::lock_guard<std::mutex> guard(lock_);
+			write_in_progress_ = false;
 			if (!msg_tx_queue_.empty() && this->conn_established_) {
 				lws_callback_on_writable(wsi);
 			}
+		}
+		tx_condition_.notify_all();
+		if (write_result != 0) {
+			return write_result;
 		}
 		break;
 	}

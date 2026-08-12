@@ -25,6 +25,7 @@
 #include "rtc_session.h"
 #include "signal_client.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -45,12 +46,15 @@ public:
 		virtual ~RtcEngineListener() = default;
 
 		virtual void ConnectedEvent(livekit::JoinResponse join_resp) = 0;
+		virtual void
+		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
 	};
 
 	RtcEngine();
 	~RtcEngine();
 
 	livekit::JoinResponse Connect(std::string url, std::string token, EngineOptions options);
+	void Disconnect();
 
 	void SetRoomObserver(RtcEngineListener* listener);
 
@@ -145,7 +149,7 @@ private:
 	void createDataChannels();
 
 private:
-	RtcEngineListener* room_listener_ = nullptr;
+	std::atomic<RtcEngineListener*> room_listener_{nullptr};
 	mutable std::mutex session_lock_;
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;

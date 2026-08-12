@@ -28,6 +28,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 
 namespace livekit {
 namespace core {
@@ -56,12 +57,17 @@ public:
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:
 	virtual void ConnectedEvent(livekit::JoinResponse join_resp) override;
+	virtual void
+	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
 
 private:
+	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates);
+
 	RoomOptions options_;
 	std::atomic<RoomState> state_{RoomState::Disconnected};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
+	mutable std::mutex participants_mutex_;
 	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
 	ServerInfo server_info_;
 

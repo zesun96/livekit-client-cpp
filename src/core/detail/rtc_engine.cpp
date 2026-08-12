@@ -34,39 +34,70 @@ RtcEngine::RtcEngine() : is_subscriber_primary_(true) {}
 
 RtcEngine::~RtcEngine() {
 	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
-	if (signal_client_) {
-		signal_client_->RemoveObserver();
-	}
-	if (initial_negotiation_thread_.joinable()) {
-		initial_negotiation_thread_.join();
-	}
+	room_listener_.store(nullptr);
+	Disconnect();
 }
 
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
-	if (initial_negotiation_thread_.joinable()) {
-		initial_negotiation_thread_.join();
-	}
+	Disconnect();
+
 	signal_client_ = SignalClient::Create(url, token, options.signal_options);
 	signal_client_->AddObserver(this);
 
-	std::lock_guard<std::mutex> guard(session_lock_);
 	livekit::JoinResponse response = signal_client_->Connect();
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
+	if (!response.has_room()) {
+		Disconnect();
+		return response;
+	}
+
+	std::lock_guard<std::mutex> guard(session_lock_);
 	join_resp_ = response;
 	is_subscriber_primary_ = response.subscriber_primary();
-	if (response.has_room()) {
-		rtc_session_ = RtcSession::Create(response, options);
-		this->rtc_session_->AddObserver(this);
-		if (!is_subscriber_primary_ || response.fast_publish()) {
-			initial_negotiation_thread_ = std::thread([this]() { negotiate(); });
-		}
+	rtc_session_ = RtcSession::Create(response, options);
+	if (!rtc_session_) {
+		join_resp_.Clear();
+		return livekit::JoinResponse();
+	}
+	rtc_session_->AddObserver(this);
+	if (!is_subscriber_primary_ || response.fast_publish()) {
+		initial_negotiation_thread_ = std::thread([this]() { negotiate(); });
 	}
 
 	return response;
 }
 
-void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_ = listener; }
+void RtcEngine::Disconnect() {
+	// Signal callbacks run on the WebSocket service thread. Detach and stop that thread before
+	// releasing the RTC session it may call into.
+	if (signal_client_) {
+		signal_client_->RemoveObserver();
+		signal_client_->SendLeave();
+		signal_client_->Close();
+	}
+
+	if (initial_negotiation_thread_.joinable()) {
+		initial_negotiation_thread_.join();
+	}
+
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		lossyDC_ = nullptr;
+		reliableDC_ = nullptr;
+		if (rtc_session_) {
+			rtc_session_->RemoveObserver();
+			rtc_session_.reset();
+		}
+		join_resp_.Clear();
+	}
+
+	signal_client_.reset();
+	std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+	pending_track_resolvers_.clear();
+}
+
+void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_.store(listener); }
 
 void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	std::lock_guard<std::mutex> guard(session_lock_);
@@ -185,7 +216,9 @@ void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) 
 }
 void RtcEngine::OnClose() { return; }
 void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) {
-	return;
+	if (auto* listener = room_listener_.load()) {
+		listener->ParticipantUpdateEvent(updates);
+	}
 }
 void RtcEngine::OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) { return; }
 void RtcEngine::OnRoomUpdate(const livekit::Room& update) { return; }
@@ -211,8 +244,8 @@ void RtcEngine::OnStateChange(RtcSession::State connection_state,
                               webrtc::PeerConnectionInterface::PeerConnectionState sub_state) {
 	std::cout << "RtcEngine::OnStateChange()" << int(connection_state) << std::endl;
 	if (connection_state == RtcSession::State::kConnected) {
-		if (room_listener_) {
-			room_listener_->ConnectedEvent(this->join_resp_);
+		if (auto* listener = room_listener_.load()) {
+			listener->ConnectedEvent(this->join_resp_);
 		}
 	}
 }

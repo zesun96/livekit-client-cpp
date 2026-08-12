@@ -18,6 +18,7 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "signal_url.h"
 #include "utils.h"
 #include "websocket_uri.h"
 
@@ -88,8 +89,7 @@ namespace core {
 SignalClient::SignalClient(std::string url, std::string token, SignalOptions option)
     : url_(url), token_(token), option_(option), state_(SignalConnectionState::DISCONNECTED),
       rtt_(0) {
-	std::string request = url_ + "?access_token=" + token_ +
-	                      "&auto_subscribe=1&sdk=cpp&version=0.0.1&protocol=15&adaptive_stream=1";
+	std::string request = detail::BuildSignalUrl(url_, token_, option_);
 	WebsocketConnectionOptions ws_option;
 	wsc_ = std::make_unique<WebsocketClient>(ws_option, request);
 
@@ -111,11 +111,14 @@ bool SignalClient::init() {
 }
 
 void SignalClient::AddObserver(SignalClientObserver* observer) {
+	std::lock_guard<std::mutex> guard(lock_);
 	observer_ = observer;
-	return;
 }
 
-void SignalClient::RemoveObserver() { observer_ = nullptr; }
+void SignalClient::RemoveObserver() {
+	std::lock_guard<std::mutex> guard(lock_);
+	observer_ = nullptr;
+}
 
 livekit::JoinResponse SignalClient::Connect() {
 	{
@@ -294,6 +297,17 @@ void SignalClient::SendUpdateLocalAudioTrack(
 	}
 	sendRequest(req);
 	return;
+}
+
+void SignalClient::SendLeave() {
+	livekit::SignalRequest request;
+	auto* leave = request.mutable_leave();
+	leave->set_reason(livekit::DisconnectReason::CLIENT_INITIATED);
+	leave->set_action(livekit::LeaveRequest::DISCONNECT);
+	sendRequest(request);
+	// Match the official clients' short grace period so the leave frame reaches the server before
+	// the WebSocket service thread is stopped.
+	wsc_->flush(std::chrono::milliseconds(250));
 }
 
 void SignalClient::onWsMessage(const WebsocketData& data) {
