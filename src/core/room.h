@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace livekit {
 namespace core {
@@ -88,7 +89,12 @@ private:
 
 	struct IncomingFile {
 		FileReceivedEvent event;
-		uint64_t expected_length = 0;
+		std::optional<uint64_t> expected_length;
+		uint64_t next_chunk = 0;
+	};
+	struct IncomingText {
+		TextReceivedEvent event;
+		std::optional<uint64_t> expected_length;
 		uint64_t next_chunk = 0;
 	};
 
@@ -101,8 +107,9 @@ private:
 	std::map<std::string, std::shared_ptr<RemoteTrack>> remote_tracks_;
 	std::map<std::string, webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
 	    pending_media_tracks_;
-	std::mutex incoming_files_mutex_;
+	std::mutex incoming_streams_mutex_;
 	std::map<std::string, IncomingFile> incoming_files_;
+	std::map<std::string, IncomingText> incoming_texts_;
 	ServerInfo server_info_;
 	mutable std::mutex room_info_mutex_;
 	livekit::Room room_info_;

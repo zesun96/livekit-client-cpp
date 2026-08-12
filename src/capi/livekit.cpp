@@ -311,6 +311,20 @@ std::vector<std::string> DestinationIdentities(const char* const* identities, si
 	return result;
 }
 
+bool CopyAttributes(const lk_attribute_t* attributes, size_t count,
+                    std::map<std::string, std::string>& result) {
+	if (count != 0 && attributes == nullptr) {
+		return false;
+	}
+	for (size_t index = 0; index < count; ++index) {
+		if (attributes[index].key == nullptr || attributes[index].value == nullptr) {
+			return false;
+		}
+		result[attributes[index].key] = attributes[index].value;
+	}
+	return true;
+}
+
 } // namespace
 
 class CRoomEvents final : public core::RoomEventInterface {
@@ -429,7 +443,31 @@ public:
 		});
 	}
 
+	void OnTextReceived(const core::TextReceivedEvent& event) override {
+		const lk_text_received_t c_event{event.stream_id.c_str(),
+		                                 event.text.c_str(),
+		                                 event.topic.c_str(),
+		                                 event.participant_identity.c_str(),
+		                                 event.reply_to_stream_id.c_str(),
+		                                 event.timestamp};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_text_received != nullptr) {
+				callbacks.on_text_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
+	void OnByteReceived(const core::ByteReceivedEvent& event) override {
+		File(callbacks_member(&lk_room_callbacks_t::on_byte_received), event);
+	}
+
 	void OnFileReceived(const core::FileReceivedEvent& event) override {
+		File(callbacks_member(&lk_room_callbacks_t::on_file_received), event);
+	}
+
+private:
+	void File(lk_file_received_callback lk_room_callbacks_t::*callback,
+	          const core::FileReceivedEvent& event) {
 		const lk_file_received_t c_event{event.data.data(),
 		                                 event.data.size(),
 		                                 event.stream_id.c_str(),
@@ -438,12 +476,13 @@ public:
 		                                 event.topic.c_str(),
 		                                 event.participant_identity.c_str()};
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
-			if (callbacks.on_file_received != nullptr) {
-				callbacks.on_file_received(callbacks.user_data, owner_, &c_event);
+			if (callbacks.*callback != nullptr) {
+				(callbacks.*callback)(callbacks.user_data, owner_, &c_event);
 			}
 		});
 	}
 
+public:
 	void OnRoomMetadataChanged(const std::string& metadata) override {
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_room_metadata_changed != nullptr) {
@@ -598,6 +637,23 @@ void lk_file_send_options_init(lk_file_send_options_t* options) {
 		*options = {};
 		options->struct_size = sizeof(*options);
 		options->topic = "files";
+		options->mime_type = "application/octet-stream";
+		options->chunk_size = 15000;
+	}
+}
+
+void lk_text_send_options_init(lk_text_send_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->chunk_size = 15000;
+	}
+}
+
+void lk_byte_send_options_init(lk_byte_send_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
 		options->mime_type = "application/octet-stream";
 		options->chunk_size = 15000;
 	}
@@ -1154,6 +1210,107 @@ lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t da
 	});
 }
 
+lk_status_t lk_room_send_text(lk_room_t* room, const char* text,
+                              const lk_text_send_options_t* options) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || text == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and text are required");
+		}
+		core::TextSendOptions send_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid text options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, topic) &&
+			    options->topic != nullptr) {
+				send_options.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 &&
+				    options->destination_identities == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				send_options.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, attribute_count) &&
+			    !CopyAttributes(options->attributes, options->attribute_count,
+			                    send_options.attributes)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid text attributes");
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, reply_to_stream_id) &&
+			    options->reply_to_stream_id != nullptr) {
+				send_options.reply_to_stream_id = options->reply_to_stream_id;
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, attached_stream_id_count)) {
+				if (options->attached_stream_id_count != 0 &&
+				    options->attached_stream_ids == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "attached stream IDs are null");
+				}
+				send_options.attached_stream_ids = DestinationIdentities(
+				    options->attached_stream_ids, options->attached_stream_id_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, chunk_size)) {
+				send_options.chunk_size = options->chunk_size;
+			}
+		}
+		return participant->SendText(text, std::move(send_options))
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to send text stream");
+	});
+}
+
+lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, size_t data_size,
+                               const lk_byte_send_options_t* options) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || (data == nullptr && data_size != 0)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid room or byte buffer");
+		}
+		core::ByteSendOptions send_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid byte options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, topic) &&
+			    options->topic != nullptr) {
+				send_options.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, mime_type) &&
+			    options->mime_type != nullptr) {
+				send_options.mime_type = options->mime_type;
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, name) && options->name != nullptr) {
+				send_options.name = options->name;
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 &&
+				    options->destination_identities == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				send_options.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, attribute_count) &&
+			    !CopyAttributes(options->attributes, options->attribute_count,
+			                    send_options.attributes)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid byte attributes");
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, chunk_size)) {
+				send_options.chunk_size = options->chunk_size;
+			}
+		}
+		std::vector<uint8_t> payload;
+		if (data_size != 0) {
+			payload.assign(data, data + data_size);
+		}
+		return participant->SendBytes(payload, std::move(send_options))
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to send byte stream");
+	});
+}
+
 lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
                               const lk_file_send_options_t* options) {
 	return Guard([&] {
@@ -1184,6 +1341,11 @@ lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
 			}
 			if (LKC_HAS_FIELD(options, lk_file_send_options_t, chunk_size)) {
 				send_options.chunk_size = options->chunk_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, attribute_count) &&
+			    !CopyAttributes(options->attributes, options->attribute_count,
+			                    send_options.attributes)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid file attributes");
 			}
 		}
 		return participant->SendFile(path, std::move(send_options))

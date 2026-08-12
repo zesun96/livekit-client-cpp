@@ -144,6 +144,113 @@ public:
 	bool participant_is_local = false;
 };
 
+class DataStreamEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnTextReceived(const TextReceivedEvent& event) override { texts.push_back(event); }
+	void OnByteReceived(const ByteReceivedEvent& event) override { bytes.push_back(event); }
+	void OnFileReceived(const FileReceivedEvent& event) override { files.push_back(event); }
+
+	std::vector<TextReceivedEvent> texts;
+	std::vector<ByteReceivedEvent> bytes;
+	std::vector<FileReceivedEvent> files;
+};
+
+livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
+	livekit::DataPacket packet;
+	packet.set_participant_identity("sender");
+	auto* header = packet.mutable_stream_header();
+	header->set_stream_id(id);
+	header->set_topic("stream-topic");
+	header->set_timestamp(1234);
+	header->set_total_length(size);
+	(*header->mutable_attributes())["kind"] = "test";
+	return packet;
+}
+
+livekit::DataPacket StreamChunk(const std::string& id, uint64_t index, const std::string& content) {
+	livekit::DataPacket packet;
+	auto* chunk = packet.mutable_stream_chunk();
+	chunk->set_stream_id(id);
+	chunk->set_chunk_index(index);
+	chunk->set_content(content);
+	return packet;
+}
+
+livekit::DataPacket StreamTrailer(const std::string& id) {
+	livekit::DataPacket packet;
+	packet.mutable_stream_trailer()->set_stream_id(id);
+	return packet;
+}
+
+TEST(DataStreamStateTest, ReassemblesTextAndByteStreams) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+
+	auto text_header = StreamHeader("text-1", 11);
+	auto* text = text_header.mutable_stream_header()->mutable_text_header();
+	text->set_reply_to_stream_id("parent");
+	text->add_attached_stream_ids("file-1");
+	room.DataPacketEvent(text_header);
+	room.DataPacketEvent(StreamChunk("text-1", 0, "hello "));
+	room.DataPacketEvent(StreamChunk("text-1", 1, "world"));
+	room.DataPacketEvent(StreamTrailer("text-1"));
+	ASSERT_EQ(events.texts.size(), 1u);
+	EXPECT_EQ(events.texts[0].text, "hello world");
+	EXPECT_EQ(events.texts[0].reply_to_stream_id, "parent");
+	EXPECT_EQ(events.texts[0].attached_stream_ids, std::vector<std::string>{"file-1"});
+	EXPECT_EQ(events.texts[0].attributes.at("kind"), "test");
+	EXPECT_EQ(events.texts[0].participant_identity, "sender");
+	EXPECT_EQ(events.texts[0].timestamp, 1234);
+
+	auto bytes_header = StreamHeader("bytes-1", 4);
+	bytes_header.mutable_stream_header()->set_mime_type("application/test");
+	bytes_header.mutable_stream_header()->mutable_byte_header();
+	room.DataPacketEvent(bytes_header);
+	room.DataPacketEvent(StreamChunk("bytes-1", 0, "data"));
+	room.DataPacketEvent(StreamTrailer("bytes-1"));
+	ASSERT_EQ(events.bytes.size(), 1u);
+	EXPECT_EQ(events.bytes[0].data, std::vector<uint8_t>({'d', 'a', 't', 'a'}));
+	EXPECT_TRUE(events.files.empty());
+
+	auto file_header = StreamHeader("file-1", 4);
+	file_header.mutable_stream_header()->mutable_byte_header()->set_name("test.bin");
+	room.DataPacketEvent(file_header);
+	room.DataPacketEvent(StreamChunk("file-1", 0, "file"));
+	auto file_trailer = StreamTrailer("file-1");
+	(*file_trailer.mutable_stream_trailer()->mutable_attributes())["complete"] = "true";
+	room.DataPacketEvent(file_trailer);
+	ASSERT_EQ(events.bytes.size(), 2u);
+	ASSERT_EQ(events.files.size(), 1u);
+	EXPECT_EQ(events.files[0].name, "test.bin");
+	EXPECT_EQ(events.files[0].attributes.at("complete"), "true");
+	EXPECT_EQ(events.files[0].timestamp, 1234);
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, HandlesInlineStreamsAndRejectsInvalidChunks) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+
+	auto inline_text = StreamHeader("inline", 5);
+	inline_text.mutable_stream_header()->mutable_text_header();
+	inline_text.mutable_stream_header()->set_inline_content("hello");
+	room.DataPacketEvent(inline_text);
+	ASSERT_EQ(events.texts.size(), 1u);
+	EXPECT_EQ(events.texts[0].text, "hello");
+
+	auto invalid = StreamHeader("invalid", 3);
+	invalid.mutable_stream_header()->mutable_byte_header()->set_name("bad.bin");
+	room.DataPacketEvent(invalid);
+	room.DataPacketEvent(StreamChunk("invalid", 1, "bad"));
+	room.DataPacketEvent(StreamTrailer("invalid"));
+	EXPECT_TRUE(events.bytes.empty());
+	EXPECT_TRUE(events.files.empty());
+	room.RemoveEventListener();
+}
+
 TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {
 	Room room;
 	LocalTrackEvents events;

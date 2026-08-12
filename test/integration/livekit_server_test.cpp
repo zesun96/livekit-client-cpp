@@ -115,6 +115,18 @@ public:
 		file_data_ = event.data;
 	}
 
+	void OnTextReceived(const TextReceivedEvent& event) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		text_topic_ = event.topic;
+		text_ = event.text;
+	}
+
+	void OnByteReceived(const ByteReceivedEvent& event) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		byte_topic_ = event.topic;
+		byte_data_ = event.data;
+	}
+
 	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
 	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
 	bool video_subscribed() const { return video_subscribed_.load(); }
@@ -134,6 +146,14 @@ public:
 		return file_name_ == name && file_mime_type_ == mime_type && file_topic_ == topic &&
 		       file_data_ == expected;
 	}
+	bool received_text(const std::string& topic, const std::string& text) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return text_topic_ == topic && text_ == text;
+	}
+	bool received_bytes(const std::string& topic, const std::vector<uint8_t>& data) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return byte_topic_ == topic && byte_data_ == data;
+	}
 
 private:
 	std::atomic<bool> audio_subscribed_{false};
@@ -152,6 +172,10 @@ private:
 	std::string file_mime_type_;
 	std::string file_topic_;
 	std::vector<uint8_t> file_data_;
+	std::string text_topic_;
+	std::string text_;
+	std::string byte_topic_;
+	std::vector<uint8_t> byte_data_;
 };
 
 class ParticipantEvents final : public RoomEventInterface {
@@ -498,6 +522,21 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(lossy_payload, data_options));
 	ASSERT_TRUE(
 	    WaitUntil([&] { return events.received_data("integration-lossy", lossy_payload, false); }));
+
+	TextSendOptions text_options;
+	text_options.topic = "integration-text";
+	text_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	ASSERT_TRUE(sender->GetLocalParticipant()->SendText("hello from C++", text_options));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_text("integration-text", "hello from C++"); }));
+
+	const std::vector<uint8_t> byte_payload{'b', 'y', 't', 'e', 's'};
+	ByteSendOptions byte_options;
+	byte_options.topic = "integration-bytes";
+	byte_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	ASSERT_TRUE(sender->GetLocalParticipant()->SendBytes(byte_payload, byte_options));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_bytes("integration-bytes", byte_payload); }));
 
 	std::vector<uint8_t> file_payload(40 * 1024);
 	for (std::size_t i = 0; i < file_payload.size(); ++i) {

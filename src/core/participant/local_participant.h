@@ -59,6 +59,8 @@ public:
 	bool SetName(const std::string& name) override;
 	bool SetAttributes(const std::map<std::string, std::string>& attributes) override;
 	bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) override;
+	bool SendText(const std::string& text, TextSendOptions options) override;
+	bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
 	void SetEventListener(RoomEventInterface* listener);
 

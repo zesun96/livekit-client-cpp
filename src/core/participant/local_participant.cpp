@@ -29,6 +29,7 @@
 #include "livekit_models.pb.h"
 #include "rtc_base/crypto_random.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +37,65 @@
 
 namespace livekit {
 namespace core {
+
+namespace {
+
+constexpr std::size_t kMaximumDataStreamChunkSize = 15'000;
+
+int64_t CurrentTimestampMilliseconds() {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+	           std::chrono::system_clock::now().time_since_epoch())
+	    .count();
+}
+
+template <typename Options>
+void PopulateStreamPacket(livekit::DataPacket& packet, const Options& options) {
+	for (const auto& identity : options.destination_identities) {
+		packet.add_destination_identities(identity);
+	}
+}
+
+template <typename Options>
+void PopulateStreamHeader(livekit::DataStream_Header& header, const std::string& stream_id,
+                          uint64_t total_length, const Options& options) {
+	header.set_stream_id(stream_id);
+	header.set_timestamp(CurrentTimestampMilliseconds());
+	header.set_topic(options.topic);
+	header.set_total_length(total_length);
+	for (const auto& [key, value] : options.attributes) {
+		(*header.mutable_attributes())[key] = value;
+	}
+}
+
+template <typename Options>
+bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const uint8_t* data,
+                       std::size_t size, const Options& options) {
+	if (engine == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize || (data == nullptr && size != 0)) {
+		return false;
+	}
+	uint64_t chunk_index = 0;
+	for (std::size_t offset = 0; offset < size; offset += options.chunk_size) {
+		const auto count = std::min(options.chunk_size, size - offset);
+		livekit::DataPacket chunk_packet;
+		PopulateStreamPacket(chunk_packet, options);
+		auto* chunk = chunk_packet.mutable_stream_chunk();
+		chunk->set_stream_id(stream_id);
+		chunk->set_chunk_index(chunk_index++);
+		chunk->set_content(data + offset, count);
+		if (!engine->SendDataPacket(chunk_packet, true)) {
+			return false;
+		}
+	}
+
+	livekit::DataPacket trailer_packet;
+	PopulateStreamPacket(trailer_packet, options);
+	trailer_packet.mutable_stream_trailer()->set_stream_id(stream_id);
+	return engine->SendDataPacket(trailer_packet, true);
+}
+
+} // namespace
+
 LocalParticipant::LocalParticipant(std::string sid, std::string identity,
                                    EncryptionType encryption_type, RtcEngine* engine,
                                    RoomOptions options)
@@ -281,8 +341,51 @@ bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublish
 	return engine_->SendDataPacket(packet, options.reliable);
 }
 
+bool LocalParticipant::SendText(const std::string& text, TextSendOptions options) {
+	if (engine_ == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize) {
+		return false;
+	}
+	const std::string stream_id = webrtc::CreateRandomUuid();
+	livekit::DataPacket header_packet;
+	PopulateStreamPacket(header_packet, options);
+	auto* header = header_packet.mutable_stream_header();
+	PopulateStreamHeader(*header, stream_id, text.size(), options);
+	header->set_mime_type("text/plain");
+	auto* text_header = header->mutable_text_header();
+	text_header->set_operation_type(livekit::DataStream_OperationType_CREATE);
+	text_header->set_reply_to_stream_id(options.reply_to_stream_id);
+	for (const auto& attached_stream_id : options.attached_stream_ids) {
+		text_header->add_attached_stream_ids(attached_stream_id);
+	}
+	if (!engine_->SendDataPacket(header_packet, true)) {
+		return false;
+	}
+	return SendStreamPayload(engine_, stream_id, reinterpret_cast<const uint8_t*>(text.data()),
+	                         text.size(), options);
+}
+
+bool LocalParticipant::SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) {
+	if (engine_ == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize) {
+		return false;
+	}
+	const std::string stream_id = webrtc::CreateRandomUuid();
+	livekit::DataPacket header_packet;
+	PopulateStreamPacket(header_packet, options);
+	auto* header = header_packet.mutable_stream_header();
+	PopulateStreamHeader(*header, stream_id, data.size(), options);
+	header->set_mime_type(options.mime_type);
+	header->mutable_byte_header()->set_name(options.name);
+	if (!engine_->SendDataPacket(header_packet, true)) {
+		return false;
+	}
+	return SendStreamPayload(engine_, stream_id, data.data(), data.size(), options);
+}
+
 bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options) {
-	if (engine_ == nullptr || options.chunk_size == 0 || options.chunk_size > 15'000) {
+	if (engine_ == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize) {
 		return false;
 	}
 	std::ifstream input(path, std::ios::binary | std::ios::ate);
@@ -297,22 +400,12 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 	input.seekg(0, std::ios::beg);
 
 	const std::string stream_id = webrtc::CreateRandomUuid();
-	auto add_destinations = [&options](livekit::DataPacket& packet) {
-		for (const auto& identity : options.destination_identities) {
-			packet.add_destination_identities(identity);
-		}
-	};
 
 	livekit::DataPacket header_packet;
-	add_destinations(header_packet);
+	PopulateStreamPacket(header_packet, options);
 	auto* header = header_packet.mutable_stream_header();
-	header->set_stream_id(stream_id);
-	header->set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
-	                          std::chrono::system_clock::now().time_since_epoch())
-	                          .count());
-	header->set_topic(options.topic);
+	PopulateStreamHeader(*header, stream_id, file_size, options);
 	header->set_mime_type(options.mime_type);
-	header->set_total_length(file_size);
 	header->mutable_byte_header()->set_name(std::filesystem::path(path).filename().string());
 	if (!engine_->SendDataPacket(header_packet, true)) {
 		return false;
@@ -327,7 +420,7 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 			break;
 		}
 		livekit::DataPacket chunk_packet;
-		add_destinations(chunk_packet);
+		PopulateStreamPacket(chunk_packet, options);
 		auto* chunk = chunk_packet.mutable_stream_chunk();
 		chunk->set_stream_id(stream_id);
 		chunk->set_chunk_index(chunk_index++);
@@ -338,7 +431,7 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 	}
 
 	livekit::DataPacket trailer_packet;
-	add_destinations(trailer_packet);
+	PopulateStreamPacket(trailer_packet, options);
 	trailer_packet.mutable_stream_trailer()->set_stream_id(stream_id);
 	return engine_->SendDataPacket(trailer_packet, true);
 }

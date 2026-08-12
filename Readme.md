@@ -97,7 +97,7 @@ the server URL and short-lived tokens in the environment:
 
 - `LIVEKIT_TOKEN_SINGLE`: a unique identity for the single-client lifecycle test.
 - `LIVEKIT_TOKEN` and `LIVEKIT_TOKEN_2`: two different identities in the same room for the
-  participant, audio, video, data-message, and file-transfer tests.
+  participant, audio, video, data-message, text/byte-stream, and file-transfer tests.
 - `LIVEKIT_TOKEN_2_UPDATE` (optional): replaces `LIVEKIT_TOKEN_2` in the participant-state test
   and must be generated with `lk create-token --allow-update-metadata`; when omitted,
   metadata/name/attribute update checks are skipped.
