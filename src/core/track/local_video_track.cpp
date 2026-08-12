@@ -16,3 +16,14 @@
  */
 
 #include "local_video_track.h"
+
+namespace livekit {
+namespace core {
+
+LocalVideoTrack::LocalVideoTrack(std::string name, std::unique_ptr<VideoTrack> video_track,
+                                 VideoSourceInterface* source)
+    : LocalTrack("TR_unknown", std::move(name), TrackKind::Video, std::move(video_track)),
+      source_(source) {}
+
+} // namespace core
+} // namespace livekit

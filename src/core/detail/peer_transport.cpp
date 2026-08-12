@@ -493,7 +493,6 @@ bool PeerTransport::Negotiate() {
 	options.voice_activity_detection = true;
 	options.use_rtp_mux = true;
 	options.use_obsolete_sctp_sdp = true;
-	options.ice_restart = true;
 
 	try {
 		createAndSendPublisherOffer(options);

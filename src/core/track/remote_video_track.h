@@ -21,14 +21,28 @@
 #define _LKC_CORE_TRACK_REMOTE_VIDEO_TRACK_H_
 
 #include "remote_track.h"
+#include "video_track.h"
+
+#include "livekit/core/track/video_frame.h"
+
+#include <functional>
 
 namespace livekit {
 namespace core {
 
-class RemoteVideoTrack : public RemoteTrack {
+class RemoteVideoTrack : public RemoteTrack,
+                         private webrtc::VideoSinkInterface<webrtc::VideoFrame> {
 public:
-	RemoteVideoTrack() = default;
-	virtual ~RemoteVideoTrack() = default;
+	using FrameCallback = std::function<void(const VideoFrame&)>;
+
+	RemoteVideoTrack(std::string sid, std::string name, std::unique_ptr<VideoTrack> video_track,
+	                 FrameCallback callback);
+	~RemoteVideoTrack() override;
+
+private:
+	void OnFrame(const webrtc::VideoFrame& frame) override;
+
+	FrameCallback callback_;
 };
 
 } // namespace core

@@ -1,11 +1,22 @@
 #include "livekit/core/livekit_client.h"
+#include "livekit/core/participant/local_participant_interface.h"
+#include "livekit/core/participant/remote_participant_interface.h"
+#include "livekit/core/track/audio_source_interface.h"
+#include "livekit/core/track/remote_track_interface.h"
+#include "livekit/core/track/video_source_interface.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 namespace livekit::core {
 namespace {
@@ -36,6 +47,108 @@ bool WaitUntil(const std::function<bool()>& predicate,
 	} while (std::chrono::steady_clock::now() < deadline);
 	return predicate();
 }
+
+class MediaEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+
+	void OnTrackSubscribed(RemoteTrackInterface* track, RemoteParticipantInterface*) override {
+		if (track->Kind() == TrackKind::Audio) {
+			audio_subscribed_.store(true);
+		} else if (track->Kind() == TrackKind::Video) {
+			video_subscribed_.store(true);
+		}
+	}
+
+	void OnAudioFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	                  const AudioFrame& frame) override {
+		if (!frame.data.empty() && frame.sample_rate > 0 && frame.num_channels > 0) {
+			audio_frames_.fetch_add(1);
+		}
+	}
+
+	void OnVideoFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	                  const VideoFrame& frame) override {
+		last_video_width_.store(frame.width);
+		last_video_height_.store(frame.height);
+		const auto expected_size = static_cast<std::size_t>(frame.width) * frame.height * 3 / 2;
+		if (frame.width > 0 && frame.height > 0 && frame.data.size() == expected_size) {
+			video_frames_.fetch_add(1);
+		}
+	}
+
+	void OnDataReceived(const DataReceivedEvent& event) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		data_topic_ = event.topic;
+		data_ = event.payload;
+		data_reliable_ = event.reliable;
+	}
+
+	void OnFileReceived(const FileReceivedEvent& event) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		file_name_ = event.name;
+		file_mime_type_ = event.mime_type;
+		file_topic_ = event.topic;
+		file_data_ = event.data;
+	}
+
+	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
+	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
+	bool video_subscribed() const { return video_subscribed_.load(); }
+	uint64_t video_frame_count() const { return video_frames_.load(); }
+	uint32_t last_video_width() const { return last_video_width_.load(); }
+	uint32_t last_video_height() const { return last_video_height_.load(); }
+	bool received_data(const std::string& topic, const std::vector<uint8_t>& expected,
+	                   bool reliable) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return data_topic_ == topic && data_ == expected && data_reliable_ == reliable;
+	}
+	bool received_file(const std::string& name, const std::string& mime_type,
+	                   const std::string& topic, const std::vector<uint8_t>& expected) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return file_name_ == name && file_mime_type_ == mime_type && file_topic_ == topic &&
+		       file_data_ == expected;
+	}
+
+private:
+	std::atomic<bool> audio_subscribed_{false};
+	std::atomic<bool> video_subscribed_{false};
+	std::atomic<uint64_t> audio_frames_{0};
+	std::atomic<uint64_t> video_frames_{0};
+	std::atomic<uint32_t> last_video_width_{0};
+	std::atomic<uint32_t> last_video_height_{0};
+	std::mutex lock_;
+	std::string data_topic_;
+	std::vector<uint8_t> data_;
+	bool data_reliable_ = false;
+	std::string file_name_;
+	std::string file_mime_type_;
+	std::string file_topic_;
+	std::vector<uint8_t> file_data_;
+};
+
+class TemporaryFile {
+public:
+	explicit TemporaryFile(const std::vector<uint8_t>& data) {
+		path_ =
+		    std::filesystem::temp_directory_path() /
+		    ("livekit-cpp-integration-" +
+		     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
+		std::ofstream output(path_, std::ios::binary);
+		output.write(reinterpret_cast<const char*>(data.data()),
+		             static_cast<std::streamsize>(data.size()));
+	}
+
+	~TemporaryFile() {
+		std::error_code error;
+		std::filesystem::remove(path_, error);
+	}
+
+	const std::filesystem::path& path() const { return path_; }
+
+private:
+	std::filesystem::path path_;
+};
 
 TEST(LiveKitServerTest, ConnectsWithEnvironmentCredentials) {
 	const char* url = std::getenv("LIVEKIT_URL");
@@ -95,6 +208,143 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	EXPECT_TRUE(WaitUntil(
 	    [&] { return first_room->GetRemoteParticipantBySid(second_local->Sid()) == nullptr; }));
 	EXPECT_TRUE(first_room->Disconnect());
+}
+
+TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the media "
+		                "integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "integration-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions audio_options;
+	audio_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), audio_options));
+
+	std::vector<int16_t> audio_samples(480, 1500);
+	const auto audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!events.audio_received() && std::chrono::steady_clock::now() < audio_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_TRUE(events.audio_received());
+
+	VideoFrame video_frame;
+	video_frame.width = 320;
+	video_frame.height = 180;
+	video_frame.data.resize(video_frame.width * video_frame.height * 3 / 2, 128);
+	std::fill(video_frame.data.begin(),
+	          video_frame.data.begin() + video_frame.width * video_frame.height, 64);
+	video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+	                               std::chrono::steady_clock::now().time_since_epoch())
+	                               .count();
+	auto video_source = CreateVideoSourceUnique();
+	ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+	auto video_track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    "integration-video", video_source.get());
+	ASSERT_NE(video_track, nullptr);
+	TrackPublishOptions video_options;
+	video_options.source = TrackSource::Camera;
+	video_options.simulcast = false;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
+
+	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!events.video_received() && std::chrono::steady_clock::now() < video_deadline) {
+		video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                               std::chrono::steady_clock::now().time_since_epoch())
+		                               .count();
+		ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+		ASSERT_TRUE(audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(33));
+	}
+	ASSERT_TRUE(events.video_received())
+	    << "subscribed=" << events.video_subscribed() << ", frames=" << events.video_frame_count()
+	    << ", last_size=" << events.last_video_width() << 'x' << events.last_video_height();
+
+	video_track.reset();
+	video_source.reset();
+	audio_track.reset();
+	audio_source.reset();
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the data "
+		                "integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	const std::vector<uint8_t> data_payload{'l', 'i', 'v', 'e', 'k', 'i', 't'};
+	DataPublishOptions data_options;
+	data_options.topic = "integration-data";
+	data_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(data_payload, data_options));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_data("integration-data", data_payload, true); }));
+
+	const std::vector<uint8_t> lossy_payload{'l', 'o', 's', 's', 'y'};
+	data_options.reliable = false;
+	data_options.topic = "integration-lossy";
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(lossy_payload, data_options));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_data("integration-lossy", lossy_payload, false); }));
+
+	std::vector<uint8_t> file_payload(40 * 1024);
+	for (std::size_t i = 0; i < file_payload.size(); ++i) {
+		file_payload[i] = static_cast<uint8_t>(i % 251);
+	}
+	TemporaryFile file(file_payload);
+	FileSendOptions file_options;
+	file_options.topic = "integration-file";
+	file_options.mime_type = "application/x-livekit-test";
+	file_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	ASSERT_TRUE(sender->GetLocalParticipant()->SendFile(file.path().string(), file_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return events.received_file(file.path().filename().string(),
+		                                "application/x-livekit-test", "integration-file",
+		                                file_payload);
+	    },
+	    std::chrono::seconds(10)));
+
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
 }
 
 } // namespace

@@ -22,6 +22,7 @@
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 
+#include <limits>
 #include <stdexcept>
 
 namespace livekit {
@@ -128,16 +129,24 @@ AudioSource::InternalSource::~InternalSource() {
 bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate,
                                                 uint32_t number_of_channels,
                                                 size_t number_of_frames) {
+	if (data == nullptr || sample_rate == 0 || number_of_channels == 0 || number_of_frames == 0) {
+		return false;
+	}
 	webrtc::MutexLock lock(&mutex_);
-	size_t total_samples = number_of_frames * number_of_channels;
+	if (number_of_frames > std::numeric_limits<std::size_t>::max() / number_of_channels) {
+		return false;
+	}
+	const std::size_t total_samples = number_of_frames * number_of_channels;
 
 	if (queue_size_samples_) {
-		int available = (queue_size_samples_ + notify_threshold_samples_) - buffer_.size();
-		if (available < total_samples)
+		const std::size_t capacity = queue_size_samples_ + notify_threshold_samples_;
+		if (buffer_.size() > capacity || total_samples > capacity - buffer_.size()) {
 			return false;
+		}
 
 		int16_t* pcm_data = static_cast<int16_t*>(data);
-		buffer_.assign(pcm_data, pcm_data + total_samples);
+		buffer_.insert(buffer_.end(), pcm_data, pcm_data + total_samples);
+		missed_frames_ = 0;
 	} else {
 		// capture directly when the queue buffer is 0 (frame size must be 10ms)
 		for (auto sink : sinks_)

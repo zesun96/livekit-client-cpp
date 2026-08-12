@@ -20,14 +20,29 @@
 #ifndef _LKC_CORE_ROOM_EVENT_INTERFACE_H_
 #define _LKC_CORE_ROOM_EVENT_INTERFACE_H_
 
+#include "data_packet.h"
+#include "track/audio_frame.h"
+#include "track/video_frame.h"
+
 namespace livekit {
 namespace core {
+
+class RemoteParticipantInterface;
+class RemoteTrackInterface;
 
 class RoomEventInterface {
 public:
 	virtual ~RoomEventInterface() {}
 
 	virtual void OnConnected() = 0;
+	virtual void OnDisconnected() {}
+	virtual void OnTrackSubscribed(RemoteTrackInterface*, RemoteParticipantInterface*) {}
+	virtual void OnAudioFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	                          const AudioFrame&) {}
+	virtual void OnVideoFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	                          const VideoFrame&) {}
+	virtual void OnDataReceived(const DataReceivedEvent&) {}
+	virtual void OnFileReceived(const FileReceivedEvent&) {}
 };
 
 } // namespace core

@@ -174,11 +174,6 @@ void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionIn
 std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscriberAnswerFromOffer(
     std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 
-	struct webrtc::DataChannelInit reliable_init;
-	reliable_init.ordered = true;
-	reliable_init.reliable = true;
-	subscriber_pc_->CreateDataChannel("_reliable", &reliable_init);
-
 	std::string str_desc;
 	offer->ToString(&str_desc);
 	std::cout << "recived offer: " << str_desc << std::endl;
@@ -190,7 +185,6 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 	options.offer_to_receive_video = true;
 	options.use_rtp_mux = true;
 	options.use_obsolete_sctp_sdp = true;
-	options.ice_restart = true;
 	auto answer = subscriber_pc_->CreateAnswer(options);
 
 	std::unique_ptr<webrtc::SessionDescriptionInterface> answer_desc =
@@ -330,7 +324,11 @@ void RtcSession::OnRemoveStream(PeerTransport::Target target,
                                 webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcSession::OnDataChannel(PeerTransport::Target target,
-                               webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+                               webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {
+	if (observer_) {
+		observer_->OnDataChannel(target, std::move(dataChannel));
+	}
+}
 
 void RtcSession::OnRenegotiationNeeded(PeerTransport::Target target) {}
 
@@ -366,7 +364,11 @@ void RtcSession::OnAddTrack(
     const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
 
 void RtcSession::OnTrack(PeerTransport::Target target,
-                         webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+                         webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	if (observer_) {
+		observer_->OnTrack(target, std::move(transceiver));
+	}
+}
 
 void RtcSession::OnRemoveTrack(PeerTransport::Target target,
                                webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}

@@ -16,3 +16,13 @@
  */
 
 #include "remote_track.h"
+
+namespace livekit {
+namespace core {
+
+RemoteTrack::RemoteTrack(std::string sid, std::string name, TrackKind kind,
+                         std::unique_ptr<MediaStreamTrack> media_track)
+    : Track(std::move(sid), std::move(name), kind), media_track_(std::move(media_track)) {}
+
+} // namespace core
+} // namespace livekit

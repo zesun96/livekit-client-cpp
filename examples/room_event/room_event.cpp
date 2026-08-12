@@ -1,85 +1,101 @@
-/**
- *
- * Copyright (c) 2025 sunze
- *
- *Licensed under the Apache License, Version 2.0 (the "License");
- *you may not use this file except in compliance with the License.
- *You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- *Unless required by applicable law or agreed to in writing, software
- *distributed under the License is distributed on an "AS IS" BASIS,
- *WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *See the License for the specific language governing permissions and
- *limitations under the License.
- */
+#include "example_utils.h"
 
-#include "livekit/core/livekit_client.h"
+#include "livekit/core/participant/remote_participant_interface.h"
+#include "livekit/core/track/remote_track_interface.h"
 
-#include "livekit/core/track/audio_media_track_interface.h"
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
+#include <string>
 #include <thread>
 
-class RoomEvent : public livekit::core::RoomEventInterface {
+class RoomEvents final : public livekit::core::RoomEventInterface {
 public:
-	RoomEvent() = default;
-	virtual ~RoomEvent() = default;
-	virtual void OnConnected() override {
+	void OnConnected() override {
+		connected_.store(true);
 		std::cout << "Room connected" << std::endl;
-		return;
 	}
-};
 
-class AudioTrack : public livekit::core::AudioMediaTrackInterface {
-public:
-	AudioTrack() {}
-	virtual ~AudioTrack() = default;
+	void OnDisconnected() override { std::cout << "Room disconnected" << std::endl; }
 
-	virtual MediaTrackKind kind() override { return MediaTrackKind::kAudio; }
+	void OnTrackSubscribed(livekit::core::RemoteTrackInterface* track,
+	                       livekit::core::RemoteParticipantInterface* participant) override {
+		std::cout << "Subscribed "
+		          << (track->Kind() == livekit::core::TrackKind::Audio ? "audio" : "video")
+		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
+	}
+
+	void OnAudioFrame(livekit::core::RemoteTrackInterface*,
+	                  livekit::core::RemoteParticipantInterface*,
+	                  const livekit::core::AudioFrame&) override {
+		if (audio_frames_.fetch_add(1) == 0) {
+			std::cout << "Receiving audio frames" << std::endl;
+		}
+	}
+
+	void OnVideoFrame(livekit::core::RemoteTrackInterface*,
+	                  livekit::core::RemoteParticipantInterface*,
+	                  const livekit::core::VideoFrame& frame) override {
+		if (video_frames_.fetch_add(1) == 0) {
+			std::cout << "Receiving " << frame.width << 'x' << frame.height << " video frames"
+			          << std::endl;
+		}
+	}
+
+	void OnDataReceived(const livekit::core::DataReceivedEvent& event) override {
+		std::cout << "Data received: topic=" << event.topic << ", bytes=" << event.payload.size()
+		          << ", from=" << event.participant_identity << std::endl;
+	}
+
+	void OnFileReceived(const livekit::core::FileReceivedEvent& event) override {
+		std::cout << "File received: " << event.name << " (" << event.data.size() << " bytes)"
+		          << std::endl;
+	}
+
+	bool connected() const { return connected_.load(); }
+
+private:
+	std::atomic<bool> connected_{false};
+	std::atomic<uint64_t> audio_frames_{0};
+	std::atomic<uint64_t> video_frames_{0};
 };
 
 int main(int argc, char* argv[]) {
-
-	livekit::core::Init();
-
-	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NDgxODk0NzIsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3ND"
-	                    "gxMDMwNzIsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.yoXRnCof7a4DctSflPA6LsYK7gC589JUWkrI8OWn5WM";
-	auto room_options = livekit::core::default_room_connect_options();
+	const auto arguments = livekit::examples::ReadConnectionArguments(argc, argv);
+	if (!livekit::examples::ValidateConnectionArguments(arguments, argv[0])) {
+		return 2;
+	}
+	livekit::examples::ClientRuntime runtime;
+	if (!runtime.initialized()) {
+		std::cerr << "Failed to initialize LiveKit" << std::endl;
+		return 1;
+	}
 	auto room = livekit::core::CreateRoomUnique();
-
-	auto event = std::make_shared<RoomEvent>();
-	room->AddEventListener(event.get());
-
-	room->Connect("http://localhost:7880/rtc", token, room_options);
-
-	auto i = 0;
-	while (!room->IsConnected() && i < 5) {
-		std::this_thread::sleep_for(std::chrono::seconds(10));
-		i++;
+	RoomEvents events;
+	room->AddEventListener(&events);
+	if (!room->Connect(arguments.url, arguments.token) ||
+	    !livekit::examples::WaitUntil([&] { return events.connected(); })) {
+		std::cerr << "Failed to connect to LiveKit" << std::endl;
+		return 1;
 	}
 
-	if (!room->IsConnected()) {
-		std::cout << "Failed to connect to room" << std::endl;
-		room->RemoveEventListener();
-		return -1;
+	int listen_seconds = 30;
+	if (argc >= 4) {
+		try {
+			listen_seconds = std::stoi(argv[3]);
+		} catch (const std::exception&) {
+			std::cerr << "listen-seconds must be a positive integer" << std::endl;
+			return 2;
+		}
 	}
-
-	auto local_participant = room->GetLocalParticipant();
-	if (!local_participant) {
-		std::cout << "Failed to get local participant" << std::endl;
-		room->RemoveEventListener();
-		return -1;
+	if (listen_seconds <= 0) {
+		std::cerr << "listen-seconds must be a positive integer" << std::endl;
+		return 2;
 	}
-
-	while (true) {
-	}
-
+	std::cout << "Listening for room events for " << listen_seconds << " seconds..." << std::endl;
+	std::this_thread::sleep_for(std::chrono::seconds(listen_seconds));
+	room->Disconnect();
 	room->RemoveEventListener();
-
-	livekit::core::Destroy();
 	return 0;
 }

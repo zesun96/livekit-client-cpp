@@ -61,6 +61,7 @@ public:
 
 	void AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication);
 	void RemoveTrackPublication(std::string track_sid);
+	bool HasTrackSid(const std::string& track_sid);
 
 protected:
 	bool is_local_participant_ = false;

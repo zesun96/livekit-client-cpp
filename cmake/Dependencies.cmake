@@ -37,19 +37,7 @@ endif()
 # protobuf schemas are consumed from this archive.
 FetchContent_Declare(
   livekit_protocol
-  URL https://github.com/livekit/protocol/archive/5bd7e73f315a4496a4f0ca778d7a94de8b432f00.tar.gz
-  URL_HASH SHA256=40e3662841b6884f3e8cf1391fcb1c7bcdc343ba5964c4dbace28a7e0dc287b9
+  URL https://github.com/livekit/protocol/archive/refs/tags/v1.50.4.tar.gz
+  URL_HASH SHA256=a2aba0546975f51badd7f91f3cebb7dcc94df6801b9d359af6ee52b14705733b
 )
 FetchContent_MakeAvailable(livekit_protocol)
-
-# dr_libs is only required by the publish_audio example.  Upstream does not
-# publish releases, so use a small source snapshot pinned to the prior
-# submodule revision.
-if(BUILD_EXAMPLES)
-  FetchContent_Declare(
-    dr_libs
-    URL https://github.com/mackron/dr_libs/archive/9cb7092ac8c75a82b5c6ea72652ca8d0091d7ffa.tar.gz
-    URL_HASH SHA256=c735e09975069d69544f8dcb4a5f8668e0300aa673382076d35e954345685dad
-  )
-  FetchContent_MakeAvailable(dr_libs)
-endif()

@@ -39,7 +39,9 @@ namespace core {
 class RtcSession;
 
 class SignalClient;
-class RtcEngine : public SignalClientObserver, public RtcSession::RtcSessionListener {
+class RtcEngine : public SignalClientObserver,
+                  public RtcSession::RtcSessionListener,
+                  public webrtc::DataChannelObserver {
 public:
 	class RtcEngineListener {
 	public:
@@ -48,6 +50,9 @@ public:
 		virtual void ConnectedEvent(livekit::JoinResponse join_resp) = 0;
 		virtual void
 		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
+		virtual void
+		MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) = 0;
+		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
 	};
 
 	RtcEngine();
@@ -67,6 +72,7 @@ public:
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
 
 	void PublisherNegotiationNeeded();
+	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
@@ -144,9 +150,17 @@ public:
 	              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override;
 
+	/* Pure virtual methods inherited from webrtc::DataChannelObserver. */
+	void OnStateChange() override;
+	void OnMessage(const webrtc::DataBuffer& buffer) override;
+	void OnBufferedAmountChange(uint64_t sent_data_size) override;
+
 private:
 	void negotiate();
 	void createDataChannels();
+	void registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
+	                         bool publisher_channel = false);
+	void unregisterDataChannels();
 
 private:
 	std::atomic<RtcEngineListener*> room_listener_{nullptr};
@@ -156,10 +170,13 @@ private:
 	bool is_subscriber_primary_;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
+	std::mutex data_channels_lock_;
+	std::vector<webrtc::scoped_refptr<webrtc::DataChannelInterface>> data_channels_;
 
 	livekit::JoinResponse join_resp_;
 	mutable std::mutex pending_track_resolvers_lock_;
 	std::map<std::string, std::promise<livekit::TrackInfo>> pending_track_resolvers_;
+	std::mutex initial_negotiation_mutex_;
 	std::thread initial_negotiation_thread_;
 };
 

@@ -1,148 +1,65 @@
-/**
- *
- * Copyright (c) 2025 sunze
- *
- *Licensed under the Apache License, Version 2.0 (the "License");
- *you may not use this file except in compliance with the License.
- *You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- *Unless required by applicable law or agreed to in writing, software
- *distributed under the License is distributed on an "AS IS" BASIS,
- *WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *See the License for the specific language governing permissions and
- *limitations under the License.
- */
-
-#include "livekit/core/livekit_client.h"
+#include "example_utils.h"
 
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/track/audio_source_interface.h"
-#include "livekit/core/track/track_factory.h"
+
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <numbers>
 #include <thread>
-
-#define DR_WAV_IMPLEMENTATION
-#include "dr_wav.h"
-
-class RoomEvent : public livekit::core::RoomEventInterface {
-public:
-	RoomEvent() = default;
-	virtual ~RoomEvent() = default;
-	virtual void OnConnected() override {
-		std::cout << "Room connected" << std::endl;
-		return;
-	}
-};
+#include <vector>
 
 int main(int argc, char* argv[]) {
-
-	livekit::core::Init();
-
-	drwav wav;
-	if (!drwav_init_file(&wav, "change-sophie.wav", NULL)) {
-		std::cout << "Failed to open wav file" << std::endl;
-		return -1;
+	const auto arguments = livekit::examples::ReadConnectionArguments(argc, argv);
+	if (!livekit::examples::ValidateConnectionArguments(arguments, argv[0])) {
+		return 2;
 	}
-
-	std::cout << "wav file info: "
-	          << "[sampleRate=" << wav.sampleRate << "]"
-	          << "[channels=" << wav.channels << "]" << std::endl;
-
-	drwav_int16* pSampleData =
-	    (drwav_int16*)malloc(wav.totalPCMFrameCount * wav.channels * sizeof(drwav_int16));
-	if (pSampleData == NULL) {
-		std::cout << "Failed to allocate memory" << std::endl;
-		return -1;
+	livekit::examples::ClientRuntime runtime;
+	if (!runtime.initialized()) {
+		std::cerr << "Failed to initialize LiveKit" << std::endl;
+		return 1;
 	}
-	drwav_read_pcm_frames_s16(&wav, wav.totalPCMFrameCount, pSampleData);
-
-	auto max_samples = wav.totalPCMFrameCount * wav.channels;
-	auto num_samples = wav.sampleRate / 1000 * 20 * wav.channels;
-	int written_samples = 0;
-
-	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NTM4MDE1MjQsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3NT"
-	                    "M3MTUxMjQsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.VoIttGvMfGtBG9arUgOdU9W9kQ2Izc7G1px-AeQFByc";
-	auto room_options = livekit::core::default_room_connect_options();
 	auto room = livekit::core::CreateRoomUnique();
-
-	auto event = std::make_shared<RoomEvent>();
-	room->AddEventListener(event.get());
-
-	room->Connect("http://localhost:7880/rtc", token, room_options);
-
-	auto i = 0;
-	while (!room->IsConnected() && i < 5) {
-		std::this_thread::sleep_for(std::chrono::seconds(10));
-		i++;
+	if (!room->Connect(arguments.url, arguments.token) ||
+	    !livekit::examples::WaitUntil([&] { return room->IsConnected(); })) {
+		std::cerr << "Failed to connect to LiveKit" << std::endl;
+		return 1;
 	}
 
-	if (!room->IsConnected()) {
-		std::cout << "Failed to connect to room" << std::endl;
-		room->RemoveEventListener();
-		drwav_uninit(&wav);
-		free(pSampleData);
-		return -1;
+	constexpr uint32_t sample_rate = 48000;
+	constexpr uint32_t channels = 1;
+	constexpr uint32_t samples_per_frame = sample_rate / 100;
+	auto source = livekit::core::CreateAudioSourceUnique({}, sample_rate, channels, 200);
+	auto track =
+	    room->GetLocalParticipant()->CreateLocalAudioTrackUnique("synthetic-tone", source.get());
+	livekit::core::TrackPublishOptions options;
+	options.source = livekit::core::TrackSource::Microphone;
+	if (!track || !room->GetLocalParticipant()->PublishTrack(track.get(), options)) {
+		std::cerr << "Failed to publish audio track" << std::endl;
+		return 1;
 	}
 
-	auto local_participant = room->GetLocalParticipant();
-	if (!local_participant) {
-		std::cout << "Failed to get local participant" << std::endl;
-		room->RemoveEventListener();
-		drwav_uninit(&wav);
-		free(pSampleData);
-		return -1;
-	}
-
-	// publish audio
-	livekit::core::TrackPublishOptions publish_options;
-	publish_options.source = livekit::core::TrackSource::Microphone;
-
-	livekit::core::AudioSourceOptions audio_source_options;
-
-	auto audio_source = livekit::core::CreateAudioSourceUnique(audio_source_options, wav.sampleRate,
-	                                                           wav.channels, 0);
-
-	auto audio_track = local_participant->CreateLocalAudioTrackUnique("file", audio_source.get());
-	if (!audio_track) {
-		std::cout << "Failed to create local audio track" << std::endl;
-		room->RemoveEventListener();
-		drwav_uninit(&wav);
-		free(pSampleData);
-		return -1;
-	}
-
-	if (!local_participant->PublishTrack(audio_track.get(), publish_options)) {
-		room->RemoveEventListener();
-		drwav_uninit(&wav);
-		free(pSampleData);
-		return -1;
-	}
-
-	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-	while (written_samples < max_samples) {
-		auto available_samples = max_samples - written_samples;
-		auto frame_size = std::min(int(num_samples), int(available_samples));
-		int32_t* frame_data = new int32_t[frame_size]{0};
-		for (int i = 0; i < frame_size; i++) {
-			frame_data[i] = int32_t(pSampleData[i]);
+	std::vector<int16_t> samples(samples_per_frame);
+	uint64_t sample_index = 0;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (std::chrono::steady_clock::now() < deadline) {
+		for (auto& sample : samples) {
+			const double phase = 2.0 * std::numbers::pi * 440.0 * sample_index++ / sample_rate;
+			sample = static_cast<int16_t>(std::sin(phase) * 6000.0);
 		}
-		audio_source->CaptureFrame(frame_data, wav.sampleRate, wav.channels,
-		                           frame_size / wav.channels);
-		delete[] frame_data;
-		written_samples += frame_size;
+		if (!source->CaptureFrame(samples.data(), sample_rate, channels, samples_per_frame)) {
+			std::cerr << "Audio source queue is full" << std::endl;
+			return 1;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 
-	room->RemoveEventListener();
-
-	livekit::core::Destroy();
-
-	drwav_uninit(&wav);
-	free(pSampleData);
+	std::cout << "Published a 440 Hz audio tone for 5 seconds" << std::endl;
+	track.reset();
+	source.reset();
+	room->Disconnect();
 	return 0;
 }

@@ -24,6 +24,10 @@
 #include "api/environment/environment_factory.h"
 #include "api/peer_connection_interface.h"
 #include "api/task_queue/default_task_queue_factory.h"
+#include "api/video_codecs/video_decoder_factory_template.h"
+#include "api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template.h"
+#include "api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h"
 #include "rtc_base/thread.h"
 
 #include <iostream>
@@ -50,7 +54,11 @@ PeerTransportFactory::PeerTransportFactory() {
 	peer_factory_ = webrtc::CreatePeerConnectionFactory(
 	    network_thread_.get(), worker_thread_.get(), signaling_thread_.get(), audio_device_,
 	    webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(),
-	    nullptr, nullptr, nullptr, std::move(audio_processing));
+	    std::make_unique<
+	        webrtc::VideoEncoderFactoryTemplate<webrtc::LibvpxVp8EncoderTemplateAdapter>>(),
+	    std::make_unique<
+	        webrtc::VideoDecoderFactoryTemplate<webrtc::LibvpxVp8DecoderTemplateAdapter>>(),
+	    nullptr, std::move(audio_processing));
 }
 
 PeerTransportFactory::~PeerTransportFactory() {

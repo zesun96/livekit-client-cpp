@@ -21,11 +21,13 @@
 #include "signal_client.h"
 
 #include <future>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 namespace {
 constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
-}
+constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
+} // namespace
 
 namespace livekit {
 namespace core {
@@ -77,14 +79,22 @@ void RtcEngine::Disconnect() {
 		signal_client_->Close();
 	}
 
-	if (initial_negotiation_thread_.joinable()) {
-		initial_negotiation_thread_.join();
+	{
+		std::lock_guard<std::mutex> guard(initial_negotiation_mutex_);
+		if (initial_negotiation_thread_.joinable()) {
+			initial_negotiation_thread_.join();
+		}
+	}
+	unregisterDataChannels();
+
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		lossyDC_ = nullptr;
+		reliableDC_ = nullptr;
 	}
 
 	{
 		std::lock_guard<std::mutex> guard(session_lock_);
-		lossyDC_ = nullptr;
-		reliableDC_ = nullptr;
 		if (rtc_session_) {
 			rtc_session_->RemoveObserver();
 			rtc_session_.reset();
@@ -164,6 +174,48 @@ void RtcEngine::PublisherNegotiationNeeded() {
 	if (rtc_session_) {
 		return rtc_session_->PublisherNegotiationNeeded();
 	}
+}
+
+bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable) {
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> channel;
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		channel = reliable ? reliableDC_ : lossyDC_;
+	}
+	if (!channel) {
+		std::lock_guard<std::mutex> guard(initial_negotiation_mutex_);
+		if (initial_negotiation_thread_.joinable()) {
+			initial_negotiation_thread_.join();
+		}
+	}
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		channel = reliable ? reliableDC_ : lossyDC_;
+	}
+	if (!channel) {
+		negotiate();
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		channel = reliable ? reliableDC_ : lossyDC_;
+	}
+	if (!channel) {
+		return false;
+	}
+
+	const auto deadline = std::chrono::steady_clock::now() + kDataChannelOpenTimeout;
+	while (channel->state() == webrtc::DataChannelInterface::kConnecting &&
+	       std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	if (channel->state() != webrtc::DataChannelInterface::kOpen) {
+		return false;
+	}
+
+	std::string serialized;
+	if (!packet.SerializeToString(&serialized)) {
+		return false;
+	}
+	return channel->Send(
+	    webrtc::DataBuffer(webrtc::CopyOnWriteBuffer(serialized.data(), serialized.size()), true));
 }
 
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
@@ -264,7 +316,9 @@ void RtcEngine::OnRemoveStream(PeerTransport::Target target,
                                webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcEngine::OnDataChannel(PeerTransport::Target target,
-                              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+                              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {
+	registerDataChannel(std::move(dataChannel));
+}
 
 void RtcEngine::OnRenegotiationNeeded(PeerTransport::Target target) {}
 
@@ -310,7 +364,17 @@ void RtcEngine::OnAddTrack(
     const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
 
 void RtcEngine::OnTrack(PeerTransport::Target target,
-                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	if (target != PeerTransport::Target::SUBSCRIBER || !transceiver || !transceiver->receiver()) {
+		return;
+	}
+	auto track = transceiver->receiver()->track();
+	if (track) {
+		if (auto* listener = room_listener_.load()) {
+			listener->MediaTrackEvent(std::move(track));
+		}
+	}
+}
 
 void RtcEngine::OnRemoveTrack(PeerTransport::Target target,
                               webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
@@ -322,9 +386,12 @@ void RtcEngine::negotiate() {
 	if (!rtc_session_) {
 		return;
 	}
-	// don't negotiate without any transceivers or data channel,
-	// it will generate sdp without ice frag then negotiate failed
-	if (rtc_session_->GetPublishTransceiverCount() == 0 && !lossyDC_ && !reliableDC_) {
+	bool has_publisher_data_channels = false;
+	{
+		std::lock_guard<std::mutex> data_guard(data_channels_lock_);
+		has_publisher_data_channels = lossyDC_ && reliableDC_;
+	}
+	if (!has_publisher_data_channels) {
 		this->createDataChannels();
 	}
 	rtc_session_->Negotiate();
@@ -338,13 +405,60 @@ void RtcEngine::createDataChannels() {
 	lossy_init.ordered = true;
 	lossy_init.reliable = false;
 	lossy_init.maxRetransmits = 0;
-	this->lossyDC_ = this->rtc_session_->CreateDataChannel("_lossy", &lossy_init);
+	auto lossy_channel = this->rtc_session_->CreateDataChannel("_lossy", &lossy_init);
+	registerDataChannel(std::move(lossy_channel), true);
 
 	struct webrtc::DataChannelInit reliable_init;
 	reliable_init.ordered = true;
 	reliable_init.reliable = true;
-	this->reliableDC_ = this->rtc_session_->CreateDataChannel("_reliable", &reliable_init);
+	auto reliable_channel = this->rtc_session_->CreateDataChannel("_reliable", &reliable_init);
+	registerDataChannel(std::move(reliable_channel), true);
 }
+
+void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
+                                    bool publisher_channel) {
+	if (!channel) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(data_channels_lock_);
+	for (const auto& existing : data_channels_) {
+		if (existing.get() == channel.get()) {
+			return;
+		}
+	}
+	channel->RegisterObserver(this);
+	data_channels_.push_back(channel);
+	if (publisher_channel && channel->label() == "_reliable") {
+		reliableDC_ = channel;
+	} else if (publisher_channel && channel->label() == "_lossy") {
+		lossyDC_ = channel;
+	}
+}
+
+void RtcEngine::unregisterDataChannels() {
+	std::lock_guard<std::mutex> guard(data_channels_lock_);
+	for (const auto& channel : data_channels_) {
+		channel->UnregisterObserver();
+	}
+	data_channels_.clear();
+}
+
+void RtcEngine::OnStateChange() {}
+
+void RtcEngine::OnMessage(const webrtc::DataBuffer& buffer) {
+	if (buffer.data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+		return;
+	}
+	livekit::DataPacket packet;
+	if (!packet.ParseFromArray(buffer.data.data(), static_cast<int>(buffer.data.size()))) {
+		return;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->DataPacketEvent(packet);
+	}
+}
+
+void RtcEngine::OnBufferedAmountChange(uint64_t sent_data_size) {}
 
 } // namespace core
 } // namespace livekit

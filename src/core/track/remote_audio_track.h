@@ -20,15 +20,26 @@
 #ifndef _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
 #define _LKC_CORE_TRACK_REMOTE_AUDIO_TRACK_H_
 
+#include "audio_track.h"
 #include "remote_track.h"
+
+#include "livekit/core/track/audio_frame.h"
+
+#include <functional>
 
 namespace livekit {
 namespace core {
 
 class RemoteAudioTrack : public RemoteTrack {
 public:
-	RemoteAudioTrack() = default;
-	virtual ~RemoteAudioTrack() override = default;
+	using FrameCallback = std::function<void(const AudioFrame&)>;
+
+	RemoteAudioTrack(std::string sid, std::string name, std::unique_ptr<AudioTrack> audio_track,
+	                 FrameCallback callback);
+	~RemoteAudioTrack() override = default;
+
+private:
+	std::shared_ptr<AudioSink> sink_;
 };
 
 } // namespace core
