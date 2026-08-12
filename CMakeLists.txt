@@ -125,6 +125,8 @@ set(
   src/core/livekit_client.cpp
   src/core/room.cpp
 
+  src/capi/livekit.cpp
+
   src/core/detail/audio_device.cpp
   src/core/detail/converted_proto.cpp
   src/core/detail/debouncer.cpp

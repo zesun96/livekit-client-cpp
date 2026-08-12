@@ -1,0 +1,1061 @@
+#include "livekit/capi/livekit.h"
+
+#include "livekit/core/livekit_client.h"
+#include "livekit/core/track/audio_source_interface.h"
+#include "livekit/core/track/local_track_interface.h"
+#include "livekit/core/track/remote_track_interface.h"
+#include "livekit/core/track/video_source_interface.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <exception>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace core = livekit::core;
+
+class CRoomEvents;
+
+struct RoomHandleState {
+	std::atomic_bool alive{true};
+	std::atomic_bool connected{false};
+};
+
+struct lk_room {
+	std::unique_ptr<core::RoomInterface> room;
+	std::unique_ptr<CRoomEvents> events;
+	std::mutex callbacks_mutex;
+	std::mutex callback_lifetime_mutex;
+	lk_room_callbacks_t callbacks{};
+	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
+};
+
+struct lk_audio_source {
+	std::unique_ptr<core::AudioSourceInterface> source;
+	std::atomic_size_t track_references{0};
+	uint32_t sample_rate = 0;
+	uint32_t num_channels = 0;
+};
+
+struct lk_video_source {
+	std::unique_ptr<core::VideoSourceInterface> source;
+	std::atomic_size_t track_references{0};
+};
+
+struct lk_local_track {
+	std::unique_ptr<core::LocalTrackInterface> track;
+	lk_room_t* owner = nullptr;
+	lk_audio_source_t* audio_source = nullptr;
+	lk_video_source_t* video_source = nullptr;
+	std::shared_ptr<RoomHandleState> room_state;
+	bool published = false;
+};
+
+namespace {
+
+thread_local std::string last_error;
+
+void SetError(std::string error) { last_error = std::move(error); }
+
+lk_status_t Failure(lk_status_t status, const char* message) {
+	SetError(message);
+	return status;
+}
+
+template <typename Function> lk_status_t Guard(Function&& function) noexcept {
+	try {
+		last_error.clear();
+		return function();
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return LK_STATUS_EXCEPTION;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return LK_STATUS_EXCEPTION;
+	}
+}
+
+template <typename Function> size_t SizeGuard(Function&& function) noexcept {
+	try {
+		last_error.clear();
+		return function();
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return 0;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return 0;
+	}
+}
+
+size_t CopyString(const std::string& value, char* buffer, size_t buffer_size) noexcept {
+	const size_t required = value.size() + 1;
+	if (buffer != nullptr && buffer_size != 0) {
+		const size_t count = std::min(value.size(), buffer_size - 1);
+		std::memcpy(buffer, value.data(), count);
+		buffer[count] = '\0';
+	}
+	return required;
+}
+
+bool HasField(size_t struct_size, size_t offset, size_t field_size) {
+	return struct_size >= offset + field_size;
+}
+
+#define LKC_HAS_FIELD(value, type, field)                                                          \
+	HasField((value)->struct_size, offsetof(type, field), sizeof((value)->field))
+
+core::TrackSource ToCoreTrackSource(lk_track_source_t source) {
+	switch (source) {
+	case LK_TRACK_SOURCE_CAMERA:
+		return core::TrackSource::Camera;
+	case LK_TRACK_SOURCE_MICROPHONE:
+		return core::TrackSource::Microphone;
+	case LK_TRACK_SOURCE_SCREEN_SHARE:
+		return core::TrackSource::ScreenShare;
+	case LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO:
+		return core::TrackSource::ScreenShareAudio;
+	default:
+		return core::TrackSource::Unknown;
+	}
+}
+
+lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
+	switch (kind) {
+	case core::TrackKind::Audio:
+		return LK_TRACK_KIND_AUDIO;
+	case core::TrackKind::Video:
+		return LK_TRACK_KIND_VIDEO;
+	default:
+		return LK_TRACK_KIND_UNKNOWN;
+	}
+}
+
+lk_track_source_t ToCTrackSource(core::TrackSource source) {
+	switch (source) {
+	case core::TrackSource::Camera:
+		return LK_TRACK_SOURCE_CAMERA;
+	case core::TrackSource::Microphone:
+		return LK_TRACK_SOURCE_MICROPHONE;
+	case core::TrackSource::ScreenShare:
+		return LK_TRACK_SOURCE_SCREEN_SHARE;
+	case core::TrackSource::ScreenShareAudio:
+		return LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO;
+	default:
+		return LK_TRACK_SOURCE_UNKNOWN;
+	}
+}
+
+lk_connection_quality_t ToCConnectionQuality(core::ConnectionQuality quality) {
+	switch (quality) {
+	case core::ConnectionQuality::Poor:
+		return LK_CONNECTION_QUALITY_POOR;
+	case core::ConnectionQuality::Good:
+		return LK_CONNECTION_QUALITY_GOOD;
+	case core::ConnectionQuality::Excellent:
+		return LK_CONNECTION_QUALITY_EXCELLENT;
+	case core::ConnectionQuality::Lost:
+		return LK_CONNECTION_QUALITY_LOST;
+	default:
+		return LK_CONNECTION_QUALITY_UNKNOWN;
+	}
+}
+
+struct OwnedParticipantInfo {
+	explicit OwnedParticipantInfo(core::ParticipantInterface* participant) {
+		if (participant == nullptr) {
+			return;
+		}
+		sid = participant->Sid();
+		identity = participant->Identity();
+		name = participant->Name();
+		metadata = participant->Metadata();
+		info = {sid.c_str(),
+		        identity.c_str(),
+		        name.c_str(),
+		        metadata.c_str(),
+		        participant->AudioLevel(),
+		        ToCConnectionQuality(participant->GetConnectionQuality()),
+		        participant->IsSpeaking() ? 1 : 0,
+		        participant->IsLocalParticipant() ? 1 : 0};
+	}
+
+	std::string sid;
+	std::string identity;
+	std::string name;
+	std::string metadata;
+	lk_participant_info_t info{};
+};
+
+struct OwnedTrackInfo {
+	explicit OwnedTrackInfo(core::TrackPublicationInterface* publication) {
+		if (publication == nullptr) {
+			return;
+		}
+		sid = publication->Sid();
+		name = publication->Name();
+		mime_type = publication->MimeType();
+		const auto dimensions = publication->Dimensions();
+		info = {sid.c_str(),
+		        name.c_str(),
+		        mime_type.c_str(),
+		        ToCTrackKind(publication->Kind()),
+		        ToCTrackSource(publication->Source()),
+		        dimensions.width,
+		        dimensions.height,
+		        publication->IsMuted() ? 1 : 0,
+		        publication->IsSimulcasted() ? 1 : 0};
+	}
+
+	OwnedTrackInfo(core::RemoteTrackInterface* track,
+	               core::RemoteParticipantInterface* participant) {
+		core::TrackPublicationInterface* publication = nullptr;
+		if (track != nullptr && participant != nullptr) {
+			for (auto* candidate : participant->GetTrackPublications()) {
+				if (candidate->Sid() == track->Sid()) {
+					publication = candidate;
+					break;
+				}
+			}
+		}
+		if (publication != nullptr) {
+			sid = publication->Sid();
+			name = publication->Name();
+			mime_type = publication->MimeType();
+			const auto dimensions = publication->Dimensions();
+			info = {sid.c_str(),
+			        name.c_str(),
+			        mime_type.c_str(),
+			        ToCTrackKind(publication->Kind()),
+			        ToCTrackSource(publication->Source()),
+			        dimensions.width,
+			        dimensions.height,
+			        publication->IsMuted() ? 1 : 0,
+			        publication->IsSimulcasted() ? 1 : 0};
+			return;
+		}
+		if (track == nullptr) {
+			return;
+		}
+		sid = track->Sid();
+		name = track->Name();
+		const auto dimensions = track->Dimensions();
+		info = {sid.c_str(),
+		        name.c_str(),
+		        "",
+		        ToCTrackKind(track->Kind()),
+		        ToCTrackSource(track->Source()),
+		        dimensions.width,
+		        dimensions.height,
+		        0,
+		        0};
+	}
+
+	std::string sid;
+	std::string name;
+	std::string mime_type;
+	lk_track_publication_info_t info{};
+};
+
+core::LocalParticipantInterface* LocalParticipant(lk_room_t* room) {
+	return room != nullptr && room->room != nullptr ? room->room->GetLocalParticipant() : nullptr;
+}
+
+core::LocalParticipantInterface* LocalParticipant(const lk_room_t* room) {
+	return room != nullptr && room->room != nullptr ? room->room->GetLocalParticipant() : nullptr;
+}
+
+template <typename Function> void InvokeRoomCallback(lk_room_t* owner, Function&& function) {
+	if (owner == nullptr) {
+		return;
+	}
+	std::lock_guard<std::mutex> lifetime_guard(owner->callback_lifetime_mutex);
+	lk_room_callbacks_t callbacks{};
+	{
+		std::lock_guard<std::mutex> guard(owner->callbacks_mutex);
+		callbacks = owner->callbacks;
+	}
+	function(callbacks);
+}
+
+std::vector<std::string> DestinationIdentities(const char* const* identities, size_t count) {
+	std::vector<std::string> result;
+	result.reserve(count);
+	for (size_t index = 0; index < count; ++index) {
+		if (identities[index] != nullptr) {
+			result.emplace_back(identities[index]);
+		}
+	}
+	return result;
+}
+
+} // namespace
+
+class CRoomEvents final : public core::RoomEventInterface {
+public:
+	explicit CRoomEvents(lk_room_t* owner) : owner_(owner) {}
+
+	void OnConnected() override {
+		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_connected != nullptr) {
+				callbacks.on_connected(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void OnDisconnected() override {
+		owner_->state->connected.store(false);
+		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_disconnected != nullptr) {
+				callbacks.on_disconnected(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void OnParticipantConnected(core::RemoteParticipantInterface* participant) override {
+		Participant(callbacks_member(&lk_room_callbacks_t::on_participant_connected), participant);
+	}
+
+	void OnParticipantDisconnected(core::RemoteParticipantInterface* participant) override {
+		Participant(callbacks_member(&lk_room_callbacks_t::on_participant_disconnected),
+		            participant);
+	}
+
+	void OnTrackPublished(core::TrackPublicationInterface* track,
+	                      core::RemoteParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_track_published), track, participant);
+	}
+
+	void OnTrackUnpublished(core::TrackPublicationInterface* track,
+	                        core::RemoteParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_track_unpublished), track, participant);
+	}
+
+	void OnTrackMuted(core::TrackPublicationInterface* track,
+	                  core::ParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_track_muted), track, participant);
+	}
+
+	void OnTrackUnmuted(core::TrackPublicationInterface* track,
+	                    core::ParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_track_unmuted), track, participant);
+	}
+
+	void OnTrackSubscribed(core::RemoteTrackInterface* track,
+	                       core::RemoteParticipantInterface* participant) override {
+		OwnedTrackInfo owned_track(track, participant);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_track_subscribed != nullptr) {
+				callbacks.on_track_subscribed(callbacks.user_data, owner_, &owned_track.info,
+				                              &owned_participant.info);
+			}
+		});
+	}
+
+	void OnAudioFrame(core::RemoteTrackInterface* track,
+	                  core::RemoteParticipantInterface* participant,
+	                  const core::AudioFrame& frame) override {
+		OwnedTrackInfo owned_track(track, participant);
+		OwnedParticipantInfo owned_participant(participant);
+		const lk_audio_frame_t c_frame{frame.data.data(), frame.data.size(), frame.sample_rate,
+		                               frame.num_channels, frame.samples_per_channel};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_audio_frame != nullptr) {
+				callbacks.on_audio_frame(callbacks.user_data, owner_, &owned_track.info,
+				                         &owned_participant.info, &c_frame);
+			}
+		});
+	}
+
+	void OnVideoFrame(core::RemoteTrackInterface* track,
+	                  core::RemoteParticipantInterface* participant,
+	                  const core::VideoFrame& frame) override {
+		OwnedTrackInfo owned_track(track, participant);
+		OwnedParticipantInfo owned_participant(participant);
+		const lk_video_frame_t c_frame{frame.data.data(), frame.data.size(), frame.width,
+		                               frame.height, frame.timestamp_us};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_video_frame != nullptr) {
+				callbacks.on_video_frame(callbacks.user_data, owner_, &owned_track.info,
+				                         &owned_participant.info, &c_frame);
+			}
+		});
+	}
+
+	void OnDataReceived(const core::DataReceivedEvent& event) override {
+		const lk_data_received_t c_event{event.payload.data(), event.payload.size(),
+		                                 event.topic.c_str(), event.participant_identity.c_str(),
+		                                 event.reliable ? 1 : 0};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_data_received != nullptr) {
+				callbacks.on_data_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
+	void OnFileReceived(const core::FileReceivedEvent& event) override {
+		const lk_file_received_t c_event{event.data.data(),
+		                                 event.data.size(),
+		                                 event.stream_id.c_str(),
+		                                 event.name.c_str(),
+		                                 event.mime_type.c_str(),
+		                                 event.topic.c_str(),
+		                                 event.participant_identity.c_str()};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_file_received != nullptr) {
+				callbacks.on_file_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
+	void OnRoomMetadataChanged(const std::string& metadata) override {
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_room_metadata_changed != nullptr) {
+				callbacks.on_room_metadata_changed(callbacks.user_data, owner_, metadata.c_str());
+			}
+		});
+	}
+
+	void OnConnectionQualityChanged(core::ConnectionQuality quality,
+	                                core::ParticipantInterface* participant) override {
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_connection_quality_changed != nullptr) {
+				callbacks.on_connection_quality_changed(callbacks.user_data, owner_,
+				                                        ToCConnectionQuality(quality),
+				                                        &owned_participant.info);
+			}
+		});
+	}
+
+	void
+	OnActiveSpeakersChanged(const std::vector<core::ParticipantInterface*>& participants) override {
+		std::vector<OwnedParticipantInfo> owned;
+		owned.reserve(participants.size());
+		for (auto* participant : participants) {
+			owned.emplace_back(participant);
+		}
+		std::vector<lk_participant_info_t> infos;
+		infos.reserve(owned.size());
+		for (const auto& participant : owned) {
+			infos.push_back(participant.info);
+		}
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_active_speakers_changed != nullptr) {
+				callbacks.on_active_speakers_changed(callbacks.user_data, owner_, infos.data(),
+				                                     infos.size());
+			}
+		});
+	}
+
+private:
+	template <typename Member> static Member callbacks_member(Member member) { return member; }
+
+	void Participant(lk_participant_event_callback lk_room_callbacks_t::*callback,
+	                 core::ParticipantInterface* participant) {
+		OwnedParticipantInfo owned(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.*callback != nullptr) {
+				(callbacks.*callback)(callbacks.user_data, owner_, &owned.info);
+			}
+		});
+	}
+
+	void Track(lk_track_event_callback lk_room_callbacks_t::*callback,
+	           core::TrackPublicationInterface* track, core::ParticipantInterface* participant) {
+		OwnedTrackInfo owned_track(track);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.*callback != nullptr) {
+				(callbacks.*callback)(callbacks.user_data, owner_, &owned_track.info,
+				                      &owned_participant.info);
+			}
+		});
+	}
+
+	lk_room_t* owner_;
+};
+
+extern "C" {
+
+lk_status_t lk_init(void) {
+	return Guard([] { return core::Init() ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED; });
+}
+
+lk_status_t lk_shutdown(void) {
+	return Guard([] { return core::Destroy() ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED; });
+}
+
+size_t lk_version(char* buffer, size_t buffer_size) {
+	try {
+		last_error.clear();
+		return CopyString(core::Version(), buffer, buffer_size);
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return 0;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return 0;
+	}
+}
+
+const char* lk_last_error(void) { return last_error.c_str(); }
+
+void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
+	if (callbacks != nullptr) {
+		*callbacks = {};
+		callbacks->struct_size = sizeof(*callbacks);
+	}
+}
+
+void lk_audio_source_options_init(lk_audio_source_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->sample_rate = 48000;
+		options->num_channels = 1;
+		options->queue_size_ms = 200;
+	}
+}
+
+void lk_video_source_options_init(lk_video_source_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+	}
+}
+
+void lk_track_publish_options_init(lk_track_publish_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->dtx = 1;
+		options->red = 1;
+		options->simulcast = 1;
+	}
+}
+
+void lk_data_publish_options_init(lk_data_publish_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->reliable = 1;
+	}
+}
+
+void lk_file_send_options_init(lk_file_send_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->topic = "files";
+		options->mime_type = "application/octet-stream";
+		options->chunk_size = 15000;
+	}
+}
+
+lk_status_t lk_room_create(lk_room_t** room) {
+	return Guard([&] {
+		if (room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room output is null");
+		}
+		*room = nullptr;
+		auto result = std::make_unique<lk_room_t>();
+		result->room = core::CreateRoomUnique();
+		if (!result->room) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to create room");
+		}
+		result->events = std::make_unique<CRoomEvents>(result.get());
+		result->room->AddEventListener(result->events.get());
+		*room = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_room_destroy(lk_room_t* room) {
+	if (room == nullptr) {
+		return;
+	}
+	try {
+		room->room->RemoveEventListener();
+		if (room->room->IsConnected()) {
+			room->room->Disconnect();
+		}
+		room->state->connected.store(false);
+		room->state->alive.store(false);
+		{ std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex); }
+		delete room;
+	} catch (...) {
+		SetError("exception while destroying room");
+	}
+}
+
+lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbacks_t* callbacks) {
+	return Guard([&] {
+		if (room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is null");
+		}
+		lk_room_callbacks_t copy{};
+		if (callbacks != nullptr) {
+			if (callbacks->struct_size < sizeof(callbacks->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid callbacks struct size");
+			}
+			std::memcpy(&copy, callbacks, std::min(callbacks->struct_size, sizeof(copy)));
+			copy.struct_size = sizeof(copy);
+		}
+		std::lock_guard<std::mutex> guard(room->callbacks_mutex);
+		room->callbacks = copy;
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token) {
+	return Guard([&] {
+		if (room == nullptr || url == nullptr || token == nullptr || *url == '\0' ||
+		    *token == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, URL, and token are required");
+		}
+		if (!room->room->Connect(url, token)) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room");
+		}
+		room->state->connected.store(true);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_disconnect(lk_room_t* room) {
+	return Guard([&] {
+		if (room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is null");
+		}
+		if (!room->room->Disconnect()) {
+			return Failure(LK_STATUS_INVALID_STATE, "room is already disconnected");
+		}
+		room->state->connected.store(false);
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_room_is_connected(const lk_room_t* room) {
+	return room != nullptr && room->room != nullptr && room->room->IsConnected() ? 1 : 0;
+}
+
+size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard(
+	    [&] { return room != nullptr ? CopyString(room->room->Sid(), buffer, buffer_size) : 0; });
+}
+
+size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard(
+	    [&] { return room != nullptr ? CopyString(room->room->Name(), buffer, buffer_size) : 0; });
+}
+
+size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return room != nullptr ? CopyString(room->room->Metadata(), buffer, buffer_size) : 0;
+	});
+}
+
+int lk_room_is_recording(const lk_room_t* room) {
+	return room != nullptr && room->room->IsRecording() ? 1 : 0;
+}
+
+size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* participant = LocalParticipant(room);
+		return participant != nullptr ? CopyString(participant->Sid(), buffer, buffer_size) : 0;
+	});
+}
+
+size_t lk_local_participant_identity(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* participant = LocalParticipant(room);
+		return participant != nullptr ? CopyString(participant->Identity(), buffer, buffer_size)
+		                              : 0;
+	});
+}
+
+size_t lk_local_participant_name(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* participant = LocalParticipant(room);
+		return participant != nullptr ? CopyString(participant->Name(), buffer, buffer_size) : 0;
+	});
+}
+
+size_t lk_local_participant_metadata(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* participant = LocalParticipant(room);
+		return participant != nullptr ? CopyString(participant->Metadata(), buffer, buffer_size)
+		                              : 0;
+	});
+}
+
+lk_status_t lk_local_participant_set_metadata(lk_room_t* room, const char* metadata) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || metadata == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and metadata are required");
+		}
+		return participant->SetMetadata(metadata)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update metadata");
+	});
+}
+
+lk_status_t lk_local_participant_set_name(lk_room_t* room, const char* name) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || name == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and name are required");
+		}
+		return participant->SetName(name)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update name");
+	});
+}
+
+lk_status_t lk_local_participant_set_attributes(lk_room_t* room, const lk_attribute_t* attributes,
+                                                size_t attribute_count) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || (attributes == nullptr && attribute_count != 0)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid room or attributes");
+		}
+		std::map<std::string, std::string> values;
+		for (size_t index = 0; index < attribute_count; ++index) {
+			if (attributes[index].key == nullptr || attributes[index].value == nullptr) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "attribute key or value is null");
+			}
+			values[attributes[index].key] = attributes[index].value;
+		}
+		return participant->SetAttributes(values)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update attributes");
+	});
+}
+
+lk_status_t lk_audio_source_create(const lk_audio_source_options_t* options,
+                                   lk_audio_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		lk_audio_source_options_t values;
+		lk_audio_source_options_init(&values);
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid audio options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, sample_rate)) {
+				values.sample_rate = options->sample_rate;
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, num_channels)) {
+				values.num_channels = options->num_channels;
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, queue_size_ms)) {
+				values.queue_size_ms = options->queue_size_ms;
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, echo_cancellation)) {
+				values.echo_cancellation = options->echo_cancellation;
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, auto_gain_control)) {
+				values.auto_gain_control = options->auto_gain_control;
+			}
+			if (LKC_HAS_FIELD(options, lk_audio_source_options_t, noise_suppression)) {
+				values.noise_suppression = options->noise_suppression;
+			}
+		}
+		if (values.sample_rate == 0 || values.num_channels == 0 || values.queue_size_ms == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid audio source dimensions");
+		}
+		core::AudioSourceOptions core_options;
+		core_options.echo_cancellation = values.echo_cancellation != 0;
+		core_options.auto_gain_control = values.auto_gain_control != 0;
+		core_options.noise_suppression = values.noise_suppression != 0;
+		auto result = std::make_unique<lk_audio_source_t>();
+		result->source.reset(core::CreateAudioSource(core_options, values.sample_rate,
+		                                             values.num_channels, values.queue_size_ms));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to create audio source");
+		}
+		result->sample_rate = values.sample_rate;
+		result->num_channels = values.num_channels;
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_audio_source_destroy(lk_audio_source_t* source) {
+	if (source == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (source->track_references.load() != 0) {
+		return Failure(LK_STATUS_INVALID_STATE, "audio source is still used by a track");
+	}
+	delete source;
+	return LK_STATUS_OK;
+}
+
+lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16_t* data,
+                                          uint32_t samples_per_channel) {
+	return Guard([&] {
+		if (source == nullptr || data == nullptr || samples_per_channel == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid audio frame");
+		}
+		return source->source->CaptureFrame(const_cast<int16_t*>(data), source->sample_rate,
+		                                    source->num_channels, samples_per_channel)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture audio frame");
+	});
+}
+
+lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
+                                   lk_video_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		core::VideoSourceOptions core_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_video_source_options_t, is_screencast)) {
+				core_options.is_screencast = options->is_screencast != 0;
+			}
+		}
+		auto result = std::make_unique<lk_video_source_t>();
+		result->source.reset(core::CreateVideoSource(core_options));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to create video source");
+		}
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
+	if (source == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (source->track_references.load() != 0) {
+		return Failure(LK_STATUS_INVALID_STATE, "video source is still used by a track");
+	}
+	delete source;
+	return LK_STATUS_OK;
+}
+
+lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,
+                                         size_t data_size, uint32_t width, uint32_t height,
+                                         int64_t timestamp_us) {
+	return Guard([&] {
+		if (source == nullptr || data == nullptr || data_size == 0 || width == 0 || height == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video frame");
+		}
+		core::VideoFrame frame;
+		frame.data.assign(data, data + data_size);
+		frame.width = width;
+		frame.height = height;
+		frame.timestamp_us = timestamp_us;
+		return source->source->CaptureFrame(frame)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture video frame");
+	});
+}
+
+lk_status_t lk_room_create_audio_track(lk_room_t* room, const char* label,
+                                       lk_audio_source_t* source, lk_local_track_t** track) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "track output is null");
+		}
+		*track = nullptr;
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || label == nullptr || source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, label, and source are required");
+		}
+		auto result = std::make_unique<lk_local_track_t>();
+		result->track.reset(participant->CreateLocalAudioTrack(label, source->source.get()));
+		if (!result->track) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to create audio track");
+		}
+		result->owner = room;
+		result->room_state = room->state;
+		result->audio_source = source;
+		source->track_references.fetch_add(1);
+		*track = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_create_video_track(lk_room_t* room, const char* label,
+                                       lk_video_source_t* source, lk_local_track_t** track) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "track output is null");
+		}
+		*track = nullptr;
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || label == nullptr || source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, label, and source are required");
+		}
+		auto result = std::make_unique<lk_local_track_t>();
+		result->track.reset(participant->CreateLocalVideoTrack(label, source->source.get()));
+		if (!result->track) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to create video track");
+		}
+		result->owner = room;
+		result->room_state = room->state;
+		result->video_source = source;
+		source->track_references.fetch_add(1);
+		*track = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
+                                   const lk_track_publish_options_t* options) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || track == nullptr || track->track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and track are required");
+		}
+		if (track->owner != room) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "track belongs to a different room");
+		}
+		if (track->published) {
+			return Failure(LK_STATUS_INVALID_STATE, "track is already published");
+		}
+		core::TrackPublishOptions publish_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid publish options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, source)) {
+				publish_options.source = ToCoreTrackSource(options->source);
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, dtx)) {
+				publish_options.dtx = options->dtx != 0;
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, red)) {
+				publish_options.red = options->red != 0;
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, simulcast)) {
+				publish_options.simulcast = options->simulcast != 0;
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, stream) &&
+			    options->stream != nullptr) {
+				publish_options.stream = options->stream;
+			}
+		}
+		if (!participant->PublishTrack(track->track.get(), publish_options)) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to publish track");
+		}
+		track->published = true;
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_local_track_destroy(lk_local_track_t* track) {
+	if (track == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (track->published && track->room_state != nullptr && track->room_state->alive.load() &&
+	    track->room_state->connected.load()) {
+		return Failure(LK_STATUS_INVALID_STATE,
+		               "disconnect the room before destroying a published track");
+	}
+	if (track->audio_source != nullptr) {
+		track->audio_source->track_references.fetch_sub(1);
+	}
+	if (track->video_source != nullptr) {
+		track->video_source->track_references.fetch_sub(1);
+	}
+	delete track;
+	return LK_STATUS_OK;
+}
+
+lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
+                                 const lk_data_publish_options_t* options) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || (data == nullptr && data_size != 0)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid room or data buffer");
+		}
+		core::DataPublishOptions publish_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid data options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_data_publish_options_t, reliable)) {
+				publish_options.reliable = options->reliable != 0;
+			}
+			if (LKC_HAS_FIELD(options, lk_data_publish_options_t, topic) &&
+			    options->topic != nullptr) {
+				publish_options.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_data_publish_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 &&
+				    options->destination_identities == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				publish_options.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+		}
+		std::vector<uint8_t> payload;
+		if (data_size != 0) {
+			payload.assign(data, data + data_size);
+		}
+		return participant->PublishData(payload, std::move(publish_options))
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to publish data");
+	});
+}
+
+lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
+                              const lk_file_send_options_t* options) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || path == nullptr || *path == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and file path are required");
+		}
+		core::FileSendOptions send_options;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid file options struct size");
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, topic) &&
+			    options->topic != nullptr) {
+				send_options.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, mime_type) &&
+			    options->mime_type != nullptr) {
+				send_options.mime_type = options->mime_type;
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 &&
+				    options->destination_identities == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				send_options.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, chunk_size)) {
+				send_options.chunk_size = options->chunk_size;
+			}
+		}
+		return participant->SendFile(path, std::move(send_options))
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to send file");
+	});
+}
+
+} // extern "C"

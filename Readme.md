@@ -17,6 +17,7 @@ Because webrtc requires C++20.
 - [x] WebSocket signaling and room lifecycle
 - [x] Room and participant state, track publications, active speakers, and quality events
 - [x] Participant metadata, display name, and attribute updates
+- [x] Stable C ABI with opaque handles and callbacks
 - [x] Audio publishing and receiving (signed 16-bit PCM)
 - [x] Video publishing and receiving (I420/VP8)
 - [x] Reliable and lossy data messages
@@ -120,6 +121,13 @@ deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
 
 See the [examples guide](examples/README.md) for build commands, arguments, environment variables,
 and end-to-end audio, video, data-message, and file-transfer verification.
+
+## C API
+
+Pure C applications include `livekit/capi/livekit.h` and link the same `livekitclient` library.
+The API uses opaque handles, caller-owned output buffers, and C function-pointer callbacks; no C++
+type or exception crosses the ABI boundary. See the [`c_sample`](examples/c_sample/sample.c) example
+for room creation, callback registration, connection, string retrieval, and deterministic cleanup.
 
 ## Thanks
 
