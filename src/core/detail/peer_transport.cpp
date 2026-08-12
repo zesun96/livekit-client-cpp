@@ -180,8 +180,10 @@ PeerTransport::PeerTransport(Target target,
 
 PeerTransport::~PeerTransport() {
 	std::cout << "PeerTransport::~PeerTransport()" << std::endl;
+	RemovePeerTransportListener();
 	if (this->pc_ != nullptr) {
 		this->pc_->Close();
+		this->pc_ = nullptr;
 	}
 	if (this->worker_thread_ != nullptr) {
 		this->worker_thread_->Stop();
