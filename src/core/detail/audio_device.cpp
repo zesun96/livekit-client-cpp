@@ -226,7 +226,5 @@ int AudioDevice::GetPlayoutAudioParameters(webrtc::AudioParameters* params) cons
 int AudioDevice::GetRecordAudioParameters(webrtc::AudioParameters* params) const { return 0; }
 #endif // WEBRTC_IOS
 
-int32_t AudioDevice::SetAudioDeviceSink(webrtc::AudioDeviceSink* sink) const { return 0; }
-
 } // namespace core
 } // namespace livekit

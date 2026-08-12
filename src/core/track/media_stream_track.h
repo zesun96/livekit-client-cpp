@@ -31,7 +31,7 @@ enum class TrackState { kLive, kEnded };
 
 class MediaStreamTrack {
 protected:
-	MediaStreamTrack(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track);
+	MediaStreamTrack(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track);
 
 public:
 	virtual ~MediaStreamTrack() = default;
@@ -44,10 +44,10 @@ public:
 
 	TrackState state() const;
 
-	rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track() const { return track_; }
+	webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track() const { return track_; }
 
 protected:
-	rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track_;
+	webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track_;
 };
 
 } // namespace core

@@ -117,8 +117,6 @@ public:
 	int GetRecordAudioParameters(webrtc::AudioParameters* params) const override;
 #endif // WEBRTC_IOS
 
-	int32_t SetAudioDeviceSink(webrtc::AudioDeviceSink* sink) const override;
-
 private:
 	mutable webrtc::Mutex mutex_;
 	std::vector<int16_t> data_;

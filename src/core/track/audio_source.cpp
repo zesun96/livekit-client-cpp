@@ -27,8 +27,8 @@
 namespace livekit {
 namespace core {
 
-inline cricket::AudioOptions to_webrtc_audio_options(const AudioSourceOptions& options) {
-	cricket::AudioOptions rtc_options{};
+inline webrtc::AudioOptions to_webrtc_audio_options(const AudioSourceOptions& options) {
+	webrtc::AudioOptions rtc_options{};
 	rtc_options.echo_cancellation = options.echo_cancellation;
 	rtc_options.noise_suppression = options.noise_suppression;
 	rtc_options.auto_gain_control = options.auto_gain_control;
@@ -38,9 +38,9 @@ inline cricket::AudioOptions to_webrtc_audio_options(const AudioSourceOptions& o
 AudioSource::AudioSource(AudioSourceOptions options, uint32_t sample_rate, uint32_t num_channels,
                          uint32_t queue_size_ms, webrtc::TaskQueueFactory* task_queue_factory)
     : options_(options), sample_rate_(sample_rate), num_channels_(num_channels),
-      source_(rtc::make_ref_counted<InternalSource>(to_webrtc_audio_options(options), sample_rate,
-                                                    num_channels, queue_size_ms,
-                                                    task_queue_factory)) {
+      source_(webrtc::make_ref_counted<InternalSource>(to_webrtc_audio_options(options),
+                                                       sample_rate, num_channels, queue_size_ms,
+                                                       task_queue_factory)) {
 	queue_size_samples_ = (queue_size_ms * sample_rate / 1000) * num_channels;
 }
 
@@ -71,7 +71,7 @@ AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sam
 	return AudioSource::Create(options, sample_rate, num_channels, queue_size_ms);
 }
 
-AudioSource::InternalSource::InternalSource(const cricket::AudioOptions& options, int sample_rate,
+AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options, int sample_rate,
                                             int num_channels,
                                             int queue_size_ms, // must be a multiple of 10ms
                                             webrtc::TaskQueueFactory* task_queue_factory)
@@ -159,12 +159,12 @@ webrtc::MediaSourceInterface::SourceState AudioSource::InternalSource::state() c
 
 bool AudioSource::InternalSource::remote() const { return false; }
 
-const cricket::AudioOptions AudioSource::InternalSource::options() const {
+const webrtc::AudioOptions AudioSource::InternalSource::options() const {
 	webrtc::MutexLock lock(&mutex_);
 	return options_;
 }
 
-void AudioSource::InternalSource::set_options(const cricket::AudioOptions& options) {
+void AudioSource::InternalSource::set_options(const webrtc::AudioOptions& options) {
 	webrtc::MutexLock lock(&mutex_);
 	options_ = options;
 }
@@ -179,7 +179,7 @@ void AudioSource::InternalSource::RemoveSink(webrtc::AudioTrackSinkInterface* si
 	sinks_.erase(std::remove(sinks_.begin(), sinks_.end(), sink), sinks_.end());
 }
 
-rtc::scoped_refptr<AudioSource::InternalSource> AudioSource::Get() const { return source_; }
+webrtc::scoped_refptr<AudioSource::InternalSource> AudioSource::Get() const { return source_; }
 
 } // namespace core
 } // namespace livekit

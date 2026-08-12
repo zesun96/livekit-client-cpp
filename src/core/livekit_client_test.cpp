@@ -168,16 +168,17 @@ public:
 		emitter->emit("connection_change", new_state);
 	}
 	virtual void OnAddStream(PeerTransport::Target target,
-	                         rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {
+	                         webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {
 		emitter->emit("add_stream", stream);
 	}
-	virtual void OnRemoveStream(PeerTransport::Target target,
-	                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {
+	virtual void
+	OnRemoveStream(PeerTransport::Target target,
+	               webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {
 		emitter->emit("remove_stream", stream);
 	}
 	virtual void
 	OnDataChannel(PeerTransport::Target target,
-	              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
+	              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
 		emitter->emit("data_channel", dataChannel);
 	}
 	virtual void OnRenegotiationNeeded(PeerTransport::Target target) override {
@@ -197,9 +198,8 @@ public:
 	                            const webrtc::IceCandidateInterface* candidate) override {
 		emitter->emit("ice_candidate", candidate);
 	}
-	virtual void
-	OnIceCandidatesRemoved(PeerTransport::Target target,
-	                       const std::vector<cricket::Candidate>& candidates) override {
+	virtual void OnIceCandidatesRemoved(PeerTransport::Target target,
+	                                    const std::vector<webrtc::Candidate>& candidates) override {
 		emitter->emit("ice_candidates_removed", std::cref(candidates));
 	}
 	virtual void OnIceConnectionReceivingChange(PeerTransport::Target target,
@@ -213,16 +213,18 @@ public:
 		              std::make_tuple(address, port, url, error_code, error_text));
 	}
 	virtual void OnAddTrack(
-	    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override {
+	    PeerTransport::Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override {
 		emitter->emit("add_track", std::make_tuple(target, receiver, streams));
 	}
-	virtual void OnTrack(PeerTransport::Target target,
-	                     rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {
+	virtual void
+	OnTrack(PeerTransport::Target target,
+	        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {
 		emitter->emit("track", std::make_tuple(target, transceiver));
 	}
-	virtual void OnRemoveTrack(PeerTransport::Target target,
-	                           rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {
+	virtual void
+	OnRemoveTrack(PeerTransport::Target target,
+	              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {
 		emitter->emit("remove_track", std::make_tuple(target, receiver));
 	}
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override {
@@ -234,8 +236,8 @@ public:
 
 bool TestPeerConntion() {
 #if defined(WEBRTC_WIN)
-	std::unique_ptr<rtc::WinsockInitializer> winsock_init_ =
-	    std::make_unique<rtc::WinsockInitializer>();
+	std::unique_ptr<webrtc::WinsockInitializer> winsock_init_ =
+	    std::make_unique<webrtc::WinsockInitializer>();
 #endif
 
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
@@ -287,7 +289,7 @@ bool TestPeerConntion() {
 	    "data_channel", [alice_ptr, bob_data_channel_observer](const std::any& dataChannel) {
 		    std::cout << "alice got data channel" << std::endl;
 		    auto dataChannel_ptr =
-		        std::any_cast<rtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
+		        std::any_cast<webrtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
 		    std::cout << "Data Channel Created" << std::endl;
 		    dataChannel_ptr->RegisterObserver(bob_data_channel_observer);
 	    });
@@ -312,7 +314,7 @@ bool TestPeerConntion() {
 	alice_emitter.on("data_channel", [alice_data_channel_observer](const std::any& dataChannel) {
 		std::cout << "alice got data channel" << std::endl;
 		auto dataChannel_ptr =
-		    std::any_cast<rtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
+		    std::any_cast<webrtc::scoped_refptr<webrtc::DataChannelInterface>>(dataChannel);
 		std::cout << "Data Channel Created" << std::endl;
 		dataChannel_ptr->RegisterObserver(alice_data_channel_observer);
 	});
@@ -448,23 +450,23 @@ public:
 	OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override {
 		std::cout << "Connection State: " << static_cast<int>(new_state) << std::endl;
 	}
-	void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
-	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
-	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
+	void OnAddStream(webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
+	void OnRemoveStream(webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override {}
+	void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override {
 		std::cout << "Data Channel Created" << std::endl;
 		dataChannel->RegisterObserver(data_channel_observer);
 	}
 	void OnRenegotiationNeeded() override {}
 
-	void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override {}
+	void OnIceCandidatesRemoved(const std::vector<webrtc::Candidate>& candidates) override {}
 	void OnIceConnectionReceivingChange(bool receiving) override {}
 	void OnIceCandidateError(const std::string& address, int port, const std::string& url,
 	                         int error_code, const std::string& error_text) override {}
 	void OnAddTrack(
-	    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override {}
-	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {}
-	void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {}
+	    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override {}
+	void OnTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {}
+	void OnRemoveTrack(webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override {}
 	void OnInterestingUsage(int usagePattern) override {}
 
 	TestDataChannelObserver* data_channel_observer;
@@ -472,8 +474,8 @@ public:
 
 class DummySetSessionDescriptionObserver : public webrtc::SetSessionDescriptionObserver {
 public:
-	static rtc::scoped_refptr<DummySetSessionDescriptionObserver> Create() {
-		return rtc::make_ref_counted<DummySetSessionDescriptionObserver>();
+	static webrtc::scoped_refptr<DummySetSessionDescriptionObserver> Create() {
+		return webrtc::make_ref_counted<DummySetSessionDescriptionObserver>();
 	}
 	virtual void OnSuccess() { RTC_LOG(LS_INFO) << __FUNCTION__; }
 	virtual void OnFailure(webrtc::RTCError error) {
@@ -484,15 +486,15 @@ public:
 
 void TestIceGathering() {
 #if defined(WEBRTC_WIN)
-	std::unique_ptr<rtc::WinsockInitializer> winsock_init_ =
-	    std::make_unique<rtc::WinsockInitializer>();
+	std::unique_ptr<webrtc::WinsockInitializer> winsock_init_ =
+	    std::make_unique<webrtc::WinsockInitializer>();
 #endif
 
-	auto network_thread = rtc::Thread::CreateWithSocketServer();
+	auto network_thread = webrtc::Thread::CreateWithSocketServer();
 	network_thread->Start();
-	auto worker_thread = rtc::Thread::Create();
+	auto worker_thread = webrtc::Thread::Create();
 	worker_thread->Start();
-	auto signaling_thread = rtc::Thread::Create();
+	auto signaling_thread = webrtc::Thread::Create();
 	signaling_thread->Start();
 
 	auto factory = webrtc::CreatePeerConnectionFactory(
@@ -511,7 +513,7 @@ void TestIceGathering() {
 	TestDataChannelObserver* data_channel_observer = new TestDataChannelObserver();
 	observer->data_channel_observer = data_channel_observer;
 	webrtc::PeerConnectionDependencies pc_dependencies(observer);
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc = nullptr;
+	webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc = nullptr;
 	auto error_or_peer_connection =
 	    factory->CreatePeerConnectionOrError(config, std::move(pc_dependencies));
 	if (error_or_peer_connection.ok()) {
@@ -526,7 +528,7 @@ void TestIceGathering() {
 	TestDataChannelObserver* data_channel_observer2 = new TestDataChannelObserver();
 	observer2->data_channel_observer = data_channel_observer2;
 	webrtc::PeerConnectionDependencies pc_dependencies2(observer2);
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc2 = nullptr;
+	webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc2 = nullptr;
 	auto error_or_peer_connection2 =
 	    factory->CreatePeerConnectionOrError(config, std::move(pc_dependencies2));
 	if (error_or_peer_connection2.ok()) {
@@ -537,7 +539,7 @@ void TestIceGathering() {
 		return;
 	}
 
-	rtc::scoped_refptr<webrtc::DataChannelInterface> pc_dc = nullptr;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> pc_dc = nullptr;
 	struct webrtc::DataChannelInit reliable_init;
 	reliable_init.ordered = true;
 	reliable_init.reliable = true;
@@ -550,7 +552,7 @@ void TestIceGathering() {
 		return;
 	}
 
-	rtc::scoped_refptr<webrtc::DataChannelInterface> pc2_dc = nullptr;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> pc2_dc = nullptr;
 	struct webrtc::DataChannelInit reliable_init2;
 	reliable_init2.ordered = true;
 	reliable_init2.reliable = true;
@@ -571,7 +573,7 @@ void TestIceGathering() {
 	options.use_obsolete_sctp_sdp = true;
 	options.ice_restart = true;
 	PeerTransport::CreateSessionDescriptionObserver* offer_sessionDescriptionObserver =
-	    new rtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
+	    new webrtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
 	auto offer_future = offer_sessionDescriptionObserver->GetFuture();
 	pc->CreateOffer(offer_sessionDescriptionObserver, options);
 
@@ -588,7 +590,7 @@ void TestIceGathering() {
 	                          offer_desc2.release());
 
 	PeerTransport::CreateSessionDescriptionObserver* remote_sessionDescriptionObserver =
-	    new rtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
+	    new webrtc::RefCountedObject<PeerTransport::CreateSessionDescriptionObserver>();
 	auto future = remote_sessionDescriptionObserver->GetFuture();
 	pc2->CreateAnswer(remote_sessionDescriptionObserver, options);
 	std::string answer = future.get();
@@ -649,14 +651,14 @@ void TestIceGathering() {
 
 	std::cout << "ret2:" << ret2 << std::endl;
 
-	//   rtc::scoped_refptr<PeerTransport::SetLocalDescriptionObserver> local_observer(
-	//    new rtc::RefCountedObject<PeerTransport::SetLocalDescriptionObserver>());
+	//   webrtc::scoped_refptr<PeerTransport::SetLocalDescriptionObserver> local_observer(
+	//    new webrtc::RefCountedObject<PeerTransport::SetLocalDescriptionObserver>());
 	// auto local_future = local_observer->GetFuture();
 	// pc->SetLocalDescription(std::move(offer_desc), local_observer);
 	// local_future.get();
 
-	//   rtc::scoped_refptr<PeerTransport::SetRemoteDescriptionObserver> remote_observer(
-	//    new rtc::RefCountedObject<PeerTransport::SetRemoteDescriptionObserver>());
+	//   webrtc::scoped_refptr<PeerTransport::SetRemoteDescriptionObserver> remote_observer(
+	//    new webrtc::RefCountedObject<PeerTransport::SetRemoteDescriptionObserver>());
 	// auto remote_future = remote_observer->GetFuture();
 	// pc->SetRemoteDescription(std::move(offer_desc2), remote_observer);
 	// remote_future.get();

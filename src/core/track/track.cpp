@@ -52,7 +52,7 @@ void Track::UpdateInfo(livekit::TrackInfo info) {
 	sid_ = info_.sid();
 }
 
-void Track::SetTransceiver(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+void Track::SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
 	transceiver_ = transceiver;
 }
 

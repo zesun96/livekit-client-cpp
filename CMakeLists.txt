@@ -11,11 +11,6 @@ set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
 if(MSVC)
   cmake_policy(SET CMP0091 NEW)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-
-  add_definitions(
-    -DABSL_OPTION_USE_INLINE_NAMESPACE=0
-    -DABSL_OPTION_INLINE_NAMESPACE_NAME=
-  )
 endif()
 
 include(GNUInstallDirs)
@@ -46,23 +41,14 @@ endif()
 
 find_package(libwebsockets CONFIG REQUIRED)
 find_package(libuv CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED)
 
-if (WIN32)
-  if (DEFINED VCPKG_CMAKE_FIND_ROOT_PATH)
-    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-      list(GET VCPKG_CMAKE_FIND_ROOT_PATH 0 FIRST_VCPKG_DEBUG_ROOT)
-      list(GET VCPKG_CMAKE_FIND_ROOT_PATH 1 FIRST_VCPKG_ROOT)
-    else()
-      list(GET VCPKG_CMAKE_FIND_ROOT_PATH 0 FIRST_VCPKG_ROOT)
-      list(GET VCPKG_CMAKE_FIND_ROOT_PATH 1 FIRST_VCPKG_DEBUG_ROOT)
-    endif()
-    set(LIBWEBSOCKETS_LIBRARIES ${FIRST_VCPKG_ROOT}/lib/websockets.lib)
-    set(LK_VCPKG_LIBRARIES_DIR ${FIRST_VCPKG_ROOT}/lib)
-  else()
-    SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
-  endif()
+if(TARGET websockets_shared)
+  set(LKC_LIBWEBSOCKETS_TARGET websockets_shared)
 else()
+  set(LKC_LIBWEBSOCKETS_TARGET websockets)
+endif()
+
+if (NOT WIN32)
   pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 endif()
 
@@ -175,14 +161,11 @@ target_include_directories(
   livekitclient
   PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
 )
-target_include_directories(livekitclient PRIVATE ${LIBWEBSOCKETS_INCLUDE_DIRS}/include)
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
 target_link_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/lib)
-target_link_directories(livekitclient PRIVATE ${LK_VCPKG_LIBRARIES_DIR})
-
 target_link_libraries(livekitclient PUBLIC webrtc)
 target_link_libraries(livekitclient PRIVATE
   $<BUILD_INTERFACE:plog::plog>)
@@ -190,11 +173,10 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
-target_link_libraries(livekitclient PRIVATE ${LIBWEBSOCKETS_LIBRARIES})
-target_link_libraries(livekitclient PRIVATE libuv libssl zlib OpenSSL::SSL)
+target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32)
+  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32 Bcrypt.lib)
 endif()
 
 if (WIN32)

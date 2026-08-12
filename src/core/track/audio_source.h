@@ -36,7 +36,7 @@ class AudioSource : public AudioSourceInterface {
 public:
 	class InternalSource : public webrtc::LocalAudioSource {
 	public:
-		InternalSource(const cricket::AudioOptions& options, int sample_rate, int num_channels,
+		InternalSource(const webrtc::AudioOptions& options, int sample_rate, int num_channels,
 		               int buffer_size_ms, webrtc::TaskQueueFactory* task_queue_factory);
 
 		~InternalSource() override;
@@ -44,12 +44,12 @@ public:
 		SourceState state() const override;
 		bool remote() const override;
 
-		const cricket::AudioOptions options() const override;
+		const webrtc::AudioOptions options() const override;
 
 		void AddSink(webrtc::AudioTrackSinkInterface* sink) override;
 		void RemoveSink(webrtc::AudioTrackSinkInterface* sink) override;
 
-		void set_options(const cricket::AudioOptions& options);
+		void set_options(const webrtc::AudioOptions& options);
 
 		bool capture_frame(void* audio_data, uint32_t sample_rate, uint32_t number_of_channels,
 		                   size_t number_of_frames);
@@ -72,7 +72,7 @@ public:
 		int queue_size_samples_;
 		int notify_threshold_samples_;
 
-		cricket::AudioOptions options_{};
+		webrtc::AudioOptions options_{};
 	};
 
 	static AudioSource* Create(AudioSourceOptions options, uint32_t sample_rate,
@@ -86,7 +86,7 @@ public:
 	void SetAudioOptions(const AudioSourceOptions& options) const;
 	void ClearBuffer() const;
 
-	rtc::scoped_refptr<InternalSource> Get() const;
+	webrtc::scoped_refptr<InternalSource> Get() const;
 
 private:
 	AudioSource(AudioSourceOptions options, uint32_t sample_rate, uint32_t num_channels,
@@ -97,7 +97,7 @@ private:
 	uint32_t sample_rate_;
 	uint32_t num_channels_;
 	uint32_t queue_size_samples_;
-	rtc::scoped_refptr<InternalSource> source_;
+	webrtc::scoped_refptr<InternalSource> source_;
 };
 
 } // namespace core

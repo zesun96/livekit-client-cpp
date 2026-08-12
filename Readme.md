@@ -39,14 +39,36 @@ their own Abseil dependency, which can conflict with the Abseil headers and ABI
 embedded in the currently supported libwebrtc build.
 
 To consume a locally built libwebrtc package instead of downloading one, point
-CMake at a directory containing `include/` and `lib/`:
+CMake at a directory containing `include/` and `lib/`. The following command
+builds the SDK, examples, and local tests with Visual Studio 2022 and the same
+static MSVC runtime (`/MT`) used by the packaged libwebrtc:
 
 ```powershell
-cmake -S . -B out/build/x64-release -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DLIBWEBRTC_ROOT=E:/path/to/libwebrtc/win-x64-release
-cmake --build out/build/x64-release --config Release
+cmake -S . -B out/build/vs2022-x64-release `
+  -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+  -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release/webrtc `
+  -DBUILD_EXAMPLES=ON `
+  -DBUILD_TEST=ON `
+  -DBUILD_FUNCTIONAL_TESTS=ON `
+  -DBUILD_INTEGRATION_TESTS=OFF
+
+cmake --build out/build/vs2022-x64-release --config Release --parallel
+ctest --test-dir out/build/vs2022-x64-release -C Release --output-on-failure
 ```
+
+The resulting static library is
+`out/build/vs2022-x64-release/Release/livekitclient.lib`. On Windows,
+libwebsockets is intentionally kept in a DLL so its mbedTLS symbols remain
+isolated from the BoringSSL symbols embedded in `webrtc.lib`. CMake copies
+`websockets.dll` next to SDK executables automatically; applications consuming
+the static library must deploy that DLL with their executable.
+
+The current WebRTC package supports the SDK's signaling, data-channel, and
+audio path. It does not export the built-in video encoder/decoder factory
+symbols, so video publishing and receiving require rebuilding libwebrtc with
+those GN targets included.
 
 ## Tests
 

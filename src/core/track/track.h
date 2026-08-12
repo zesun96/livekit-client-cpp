@@ -53,7 +53,7 @@ public:
 
 	void UpdateInfo(livekit::TrackInfo info);
 
-	void SetTransceiver(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
+	void SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 
 private:
 	livekit::TrackInfo info_;
@@ -64,7 +64,7 @@ private:
 	TrackStreamState stream_state_;
 	TrackDimensions dimensions_;
 	std::atomic<bool> muted_{false};
-	rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
 };
 } // namespace core
 } // namespace livekit

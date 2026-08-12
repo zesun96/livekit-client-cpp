@@ -5,18 +5,11 @@
     "license": "Apache-2.0",
     "dependencies": [
         {
-            "name": "openssl"
-        },
-        {
             "name": "protobuf"
         },
         "libwebsockets"
     ],
     "overrides": [
-        {
-            "name": "openssl",
-            "version-string": "1.1.1n#1"
-        },
         {
             "name": "protobuf",
             "version": "3.21.12",

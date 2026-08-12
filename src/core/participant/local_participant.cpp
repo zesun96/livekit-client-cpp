@@ -23,6 +23,7 @@
 #include "../track/local_audio_track.h"
 
 #include "livekit_models.pb.h"
+#include "rtc_base/crypto_random.h"
 
 #include <utility>
 
@@ -54,12 +55,12 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 	}
 	auto peer_transport_factory_ = engine_->GetSessionPeerTransportFactory();
 	if (peer_transport_factory_) {
-		auto peer_factory_ = rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
+		auto peer_factory_ = webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
 		    peer_transport_factory_->GetPeerConnectFactory());
 		if (!peer_factory_) {
 			return nullptr;
 		}
-		auto uuid = rtc::CreateRandomUuid();
+		auto uuid = webrtc::CreateRandomUuid();
 		auto rtc_audio_track = peer_factory_->CreateAudioTrack(uuid, audio_source->Get().get());
 		if (!rtc_audio_track) {
 			return nullptr;

@@ -128,12 +128,12 @@ public:
 		OnConnectionChange(Target target,
 		                   webrtc::PeerConnectionInterface::PeerConnectionState new_state) = 0;
 		virtual void OnAddStream(Target target,
-		                         rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+		                         webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
 		virtual void OnRemoveStream(Target target,
-		                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+		                            webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
 		virtual void
 		OnDataChannel(Target target,
-		              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) = 0;
+		              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) = 0;
 		virtual void OnRenegotiationNeeded(Target target) = 0;
 		virtual void
 		OnIceConnectionChange(Target target,
@@ -144,18 +144,20 @@ public:
 		virtual void OnIceCandidate(Target target,
 		                            const webrtc::IceCandidateInterface* candidate) = 0;
 		virtual void OnIceCandidatesRemoved(Target target,
-		                                    const std::vector<cricket::Candidate>& candidates) = 0;
+		                                    const std::vector<webrtc::Candidate>& candidates) = 0;
 		virtual void OnIceConnectionReceivingChange(Target target, bool receiving) = 0;
 		virtual void OnIceCandidateError(Target target, const std::string& address, int port,
 		                                 const std::string& url, int error_code,
 		                                 const std::string& error_text) = 0;
 		virtual void OnAddTrack(
-		    Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-		    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) = 0;
-		virtual void OnTrack(Target target,
-		                     rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) = 0;
-		virtual void OnRemoveTrack(Target target,
-		                           rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) = 0;
+		    Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+		    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) = 0;
+		virtual void
+		OnTrack(Target target,
+		        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) = 0;
+		virtual void
+		OnRemoveTrack(Target target,
+		              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) = 0;
 		virtual void OnInterestingUsage(Target target, int usagePattern) = 0;
 	};
 
@@ -185,14 +187,14 @@ public:
 	const std::string GetPendingRemoteDescription();
 	const webrtc::PeerConnectionInterface::PeerConnectionState GetConnectionState();
 
-	std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
-	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
-	AddTransceiver(cricket::MediaType mediaType);
-	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
-	AddTransceiver(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+	std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	AddTransceiver(webrtc::MediaType mediaType);
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	AddTransceiver(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
 	               webrtc::RtpTransceiverInit rtpTransceiverInit);
 
-	rtc::scoped_refptr<webrtc::DataChannelInterface>
+	webrtc::scoped_refptr<webrtc::DataChannelInterface>
 	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config);
 
 	void AddIceCandidate(const std::string& candidate_json_str);
@@ -212,39 +214,39 @@ private:
 	void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
 	void
 	OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
-	void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
-	void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
-	void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+	void OnAddStream(webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	void OnRemoveStream(webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
 	void OnRenegotiationNeeded() override;
 	void
 	OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState newState) override;
 	void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState newState) override;
 	void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
-	void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates) override;
+	void OnIceCandidateRemoved(const webrtc::IceCandidate* candidate) override;
 	void OnIceConnectionReceivingChange(bool receiving) override;
 	void OnIceCandidateError(const std::string& address, int port, const std::string& url,
 	                         int error_code, const std::string& error_text) override;
 	void OnAddTrack(
-	    rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
-	void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
-	void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
+	    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
+	void OnTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+	void OnRemoveTrack(webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
 	void OnInterestingUsage(int usagePattern) override;
 
 private:
 	Target target_;
 	webrtc::PeerConnectionInterface::RTCConfiguration rtc_config_;
 	// Signaling and worker threads.
-	std::unique_ptr<rtc::Thread> network_thread_ = nullptr;
-	std::unique_ptr<rtc::Thread> signaling_thread_ = nullptr;
-	std::unique_ptr<rtc::Thread> worker_thread_ = nullptr;
-	rtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
+	std::unique_ptr<webrtc::Thread> network_thread_ = nullptr;
+	std::unique_ptr<webrtc::Thread> signaling_thread_ = nullptr;
+	std::unique_ptr<webrtc::Thread> worker_thread_ = nullptr;
+	webrtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
 	webrtc::TaskQueueFactory* task_queue_factory_ = nullptr;
 	// PeerConnection factory.
-	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
+	webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
 
 	// PeerConnection instance.
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
+	webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
 	mutable std::mutex pc_lock_;
 	mutable std::mutex pending_candidates_lock_;
 	std::vector<std::string> pending_candidates_;

@@ -45,18 +45,17 @@ public:
 
 	webrtc::PeerConnectionFactoryInterface* GetPeerConnectFactory() { return peer_factory_.get(); }
 
-	rtc::Thread* network_thread() const;
-	rtc::Thread* worker_thread() const;
-	rtc::Thread* signaling_thread() const;
+	webrtc::Thread* network_thread() const;
+	webrtc::Thread* worker_thread() const;
+	webrtc::Thread* signaling_thread() const;
 
 private:
-	rtc::scoped_refptr<AudioDevice> audio_device_;
-	rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_factory_;
-	webrtc::TaskQueueFactory* task_queue_factory_;
-
-	std::unique_ptr<rtc::Thread> network_thread_;
-	std::unique_ptr<rtc::Thread> worker_thread_;
-	std::unique_ptr<rtc::Thread> signaling_thread_;
+	std::unique_ptr<webrtc::Thread> network_thread_;
+	std::unique_ptr<webrtc::Thread> worker_thread_;
+	std::unique_ptr<webrtc::Thread> signaling_thread_;
+	std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory_;
+	webrtc::scoped_refptr<AudioDevice> audio_device_;
+	webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_factory_;
 };
 
 } // namespace core
