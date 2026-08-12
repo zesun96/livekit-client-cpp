@@ -84,6 +84,8 @@ Start this example before a publisher when verifying media or file reception.
 ### `publish_audio`
 
 Publishes a synthetic mono 440 Hz, 48 kHz signed 16-bit PCM tone for five seconds.
+The example explicitly unpublishes the track before destroying it, demonstrating the same
+publish/unpublish lifecycle exposed by the official client SDKs.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_audio/Release/publish_audio.exe" `
@@ -94,6 +96,11 @@ Publishes a synthetic mono 440 Hz, 48 kHz signed 16-bit PCM tone for five second
 
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
 The SDK encodes the frames as VP8 for transport.
+It then unpublishes the local track and renegotiates before disconnecting.
+
+Applications that need to rebuild every publisher sender after reconnecting or changing common
+publish settings can call `LocalParticipantInterface::RepublishAllTracks()`. The C API exposes the
+same operation as `lk_room_republish_all_tracks()`.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_video/Release/publish_video.exe" `

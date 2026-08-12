@@ -193,6 +193,7 @@ public:
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	AddTransceiver(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
 	               webrtc::RtpTransceiverInit rtpTransceiverInit);
+	bool RemoveTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 
 	webrtc::scoped_refptr<webrtc::DataChannelInterface>
 	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config);

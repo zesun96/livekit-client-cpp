@@ -1,5 +1,7 @@
 #include "../../src/core/participant/remote_participant.h"
 #include "../../src/core/room.h"
+#include "../../src/core/track/track.h"
+#include "../../src/core/track/track_publication.h"
 
 #include "livekit_models.pb.h"
 
@@ -115,6 +117,54 @@ TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
 	EXPECT_EQ(participant->Sid(), "PA_remote");
 	EXPECT_EQ(room.GetParticipantByIdentity("remote-identity"), participant);
 	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
+}
+
+TEST(TrackStateTest, ReportsEnabledStateChanges) {
+	Track track("TR_local", "camera", TrackKind::Video);
+	EXPECT_TRUE(track.IsEnabled());
+	track.SetEnabled(false);
+	EXPECT_FALSE(track.IsEnabled());
+	track.SetEnabled(true);
+	EXPECT_TRUE(track.IsEnabled());
+}
+
+class LocalTrackEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+
+	void OnLocalTrackUnpublished(TrackPublicationInterface* publication,
+	                             ParticipantInterface* participant) override {
+		++unpublished_count;
+		track_sid = publication != nullptr ? publication->Sid() : "";
+		participant_is_local = participant != nullptr && participant->IsLocalParticipant();
+	}
+
+	int unpublished_count = 0;
+	std::string track_sid;
+	bool participant_is_local = false;
+};
+
+TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {
+	Room room;
+	LocalTrackEvents events;
+	room.AddEventListener(&events);
+
+	livekit::TrackInfo info = MakeTrack("TR_local", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	auto publication = std::make_shared<TrackPublication>(info, nullptr);
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+	participant->AddTrackPublication(publication);
+
+	room.LocalTrackUnpublishedEvent("TR_local");
+	EXPECT_EQ(events.unpublished_count, 1);
+	EXPECT_EQ(events.track_sid, "TR_local");
+	EXPECT_TRUE(events.participant_is_local);
+	EXPECT_EQ(participant->GetTrackPublicationByName("camera"), nullptr);
+
+	room.LocalTrackUnpublishedEvent("TR_local");
+	EXPECT_EQ(events.unpublished_count, 1);
+	room.RemoveEventListener();
 }
 
 } // namespace

@@ -25,6 +25,7 @@
 #include "../track/video_source.h"
 #include "../track/video_track.h"
 
+#include "livekit/core/room_event_interface.h"
 #include "livekit_models.pb.h"
 #include "rtc_base/crypto_random.h"
 
@@ -168,13 +169,85 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 
 		this->AddTrackPublication(publication);
 
-		local_track->media_track()->set_enabled(true);
+		local_track->SetEnabled(true);
+		if (auto* listener = event_listener_.load()) {
+			listener->OnLocalTrackPublished(publication.get(), this);
+		}
 
 	} catch (const std::exception& e) {
 		std::cout << "publish track error:" << e.what() << std::endl;
 		return false;
 	}
 	return true;
+}
+
+bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) {
+	if (engine_ == nullptr || track == nullptr) {
+		return false;
+	}
+	auto* local_track = dynamic_cast<LocalTrack*>(track);
+	if (local_track == nullptr || local_track->Sid().empty() || !local_track->Transceiver()) {
+		return false;
+	}
+	auto publications = TrackPublicationsSnapshot();
+	auto publication = publications.find(local_track->Sid());
+	if (publication == publications.end() || publication->second->Track() != local_track ||
+	    !engine_->RemoveSender(local_track)) {
+		return false;
+	}
+
+	local_track->SetTransceiver(nullptr);
+	RemoveTrackPublication(local_track->Sid());
+	if (stop_on_unpublish) {
+		local_track->SetEnabled(false);
+	}
+	engine_->PublisherNegotiationNeeded();
+	if (auto* listener = event_listener_.load()) {
+		listener->OnLocalTrackUnpublished(publication->second.get(), this);
+	}
+	return true;
+}
+
+std::size_t LocalParticipant::UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
+                                              bool stop_on_unpublish) {
+	std::size_t unpublished = 0;
+	for (auto* track : tracks) {
+		if (UnpublishTrack(track, stop_on_unpublish)) {
+			++unpublished;
+		}
+	}
+	return unpublished;
+}
+
+bool LocalParticipant::RepublishAllTracks() {
+	struct PendingTrack {
+		LocalTrackInterface* track;
+		TrackPublishOptions options;
+	};
+
+	std::vector<PendingTrack> tracks;
+	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
+		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication.get());
+		auto* local_track = local_publication != nullptr
+		                        ? dynamic_cast<LocalTrackInterface*>(publication->Track())
+		                        : nullptr;
+		if (local_track != nullptr) {
+			tracks.push_back({local_track, local_publication->PublishOptions()});
+		}
+	}
+
+	bool success = true;
+	for (const auto& pending : tracks) {
+		if (!UnpublishTrack(pending.track, false) ||
+		    !PublishTrack(pending.track, pending.options)) {
+			success = false;
+		}
+	}
+	return success;
+}
+
+void LocalParticipant::SetEventListener(RoomEventInterface* listener) {
+	event_listener_.store(listener);
 }
 
 bool LocalParticipant::SetMetadata(const std::string& metadata) {

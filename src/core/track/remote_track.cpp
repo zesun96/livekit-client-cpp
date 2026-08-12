@@ -24,5 +24,16 @@ RemoteTrack::RemoteTrack(std::string sid, std::string name, TrackKind kind,
                          std::unique_ptr<MediaStreamTrack> media_track)
     : Track(std::move(sid), std::move(name), kind), media_track_(std::move(media_track)) {}
 
+void RemoteTrack::SetEnabled(bool enabled) {
+	Track::SetEnabled(enabled);
+	if (media_track_ != nullptr) {
+		media_track_->set_enabled(enabled);
+	}
+}
+
+bool RemoteTrack::IsEnabled() {
+	return Track::IsEnabled() && media_track_ != nullptr && media_track_->enabled();
+}
+
 } // namespace core
 } // namespace livekit

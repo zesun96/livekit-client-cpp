@@ -35,6 +35,8 @@ public:
 	virtual ~LocalTrack() = default;
 
 	MediaStreamTrack* media_track() const { return meida_track_.get(); }
+	void SetEnabled(bool enabled) override;
+	bool IsEnabled() override;
 
 private:
 	std::unique_ptr<MediaStreamTrack> meida_track_;

@@ -47,6 +47,8 @@ public:
 	virtual void OnParticipantDisconnected(RemoteParticipantInterface*) {}
 	virtual void OnTrackPublished(TrackPublicationInterface*, RemoteParticipantInterface*) {}
 	virtual void OnTrackUnpublished(TrackPublicationInterface*, RemoteParticipantInterface*) {}
+	virtual void OnLocalTrackPublished(TrackPublicationInterface*, ParticipantInterface*) {}
+	virtual void OnLocalTrackUnpublished(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackMuted(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackUnmuted(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackSubscribed(RemoteTrackInterface*, RemoteParticipantInterface*) {}

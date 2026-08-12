@@ -62,6 +62,13 @@ public:
 	}
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
+	// Removes a published track from the publisher PeerConnection. The track object remains owned
+	// by the caller and may be published again. When stop_on_unpublish is true its media source is
+	// disabled after the sender has been removed.
+	virtual bool UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish = true) = 0;
+	virtual std::size_t UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
+	                                    bool stop_on_unpublish = true) = 0;
+	virtual bool RepublishAllTracks() = 0;
 	virtual bool SetMetadata(const std::string&) { return false; }
 	virtual bool SetName(const std::string&) { return false; }
 	virtual bool SetAttributes(const std::map<std::string, std::string>&) { return false; }

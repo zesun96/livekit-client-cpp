@@ -36,8 +36,10 @@ public:
 	virtual ~LocalTrackPublication() override = default;
 
 	void UpdatePublishOptions(TrackPublishOptions option);
+	TrackPublishOptions PublishOptions() const;
 
 private:
+	mutable std::mutex option_mutex_;
 	TrackPublishOptions option_;
 };
 

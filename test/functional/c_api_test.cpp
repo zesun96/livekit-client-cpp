@@ -48,6 +48,8 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_audio_source_capture_frame(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_capture_i420(nullptr, nullptr, 0, 0, 0, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_track_unpublish(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_republish_all_tracks(nullptr), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -62,6 +64,8 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);
+	EXPECT_EQ(callbacks.on_local_track_published, nullptr);
+	EXPECT_EQ(callbacks.on_local_track_unpublished, nullptr);
 	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_callbacks(room, nullptr), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_remote_track_subscribed(room, "missing", "missing", 1),

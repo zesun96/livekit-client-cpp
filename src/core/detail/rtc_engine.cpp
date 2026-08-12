@@ -169,6 +169,11 @@ RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	return nullptr;
 }
 
+bool RtcEngine::RemoveSender(LocalTrack* track) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	return rtc_session_ != nullptr && rtc_session_->RemoveSender(track);
+}
+
 void RtcEngine::PublisherNegotiationNeeded() {
 	std::lock_guard<std::mutex> guard(session_lock_);
 	if (rtc_session_) {
@@ -280,7 +285,9 @@ void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& res
 }
 
 void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) {
-	return;
+	if (auto* listener = room_listener_.load()) {
+		listener->LocalTrackUnpublishedEvent(response.track_sid());
+	}
 }
 
 void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {

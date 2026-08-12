@@ -75,6 +75,14 @@ public:
 		}
 	}
 
+	void OnLocalTrackPublished(TrackPublicationInterface*, ParticipantInterface*) override {
+		local_tracks_published_.fetch_add(1);
+	}
+
+	void OnLocalTrackUnpublished(TrackPublicationInterface*, ParticipantInterface*) override {
+		local_tracks_unpublished_.fetch_add(1);
+	}
+
 	void OnAudioFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
 	                  const AudioFrame& frame) override {
 		if (!frame.data.empty() && frame.sample_rate > 0 && frame.num_channels > 0) {
@@ -113,6 +121,8 @@ public:
 	uint64_t video_frame_count() const { return video_frames_.load(); }
 	uint32_t last_video_width() const { return last_video_width_.load(); }
 	uint32_t last_video_height() const { return last_video_height_.load(); }
+	uint64_t local_tracks_published() const { return local_tracks_published_.load(); }
+	uint64_t local_tracks_unpublished() const { return local_tracks_unpublished_.load(); }
 	bool received_data(const std::string& topic, const std::vector<uint8_t>& expected,
 	                   bool reliable) {
 		std::lock_guard<std::mutex> guard(lock_);
@@ -132,6 +142,8 @@ private:
 	std::atomic<uint64_t> video_frames_{0};
 	std::atomic<uint32_t> last_video_width_{0};
 	std::atomic<uint32_t> last_video_height_{0};
+	std::atomic<uint64_t> local_tracks_published_{0};
+	std::atomic<uint64_t> local_tracks_unpublished_{0};
 	std::mutex lock_;
 	std::string data_topic_;
 	std::vector<uint8_t> data_;
@@ -336,6 +348,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	auto receiver = CreateRoomUnique();
 	auto sender = CreateRoomUnique();
 	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
 	ASSERT_TRUE(receiver->Connect(url, receiver_token));
 	ASSERT_TRUE(sender->Connect(url, sender_token));
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
@@ -423,11 +436,29 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());
 
+	std::vector<LocalTrackInterface*> video_tracks{video_track.get()};
+	ASSERT_EQ(sender->GetLocalParticipant()->UnpublishTracks(video_tracks, false), 1u);
+	EXPECT_TRUE(video_track->IsEnabled());
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return sender_participant->GetTrackPublication(TrackSource::Camera) == nullptr; }));
+	ASSERT_TRUE(sender->GetLocalParticipant()->RepublishAllTracks());
+	ASSERT_TRUE(WaitUntil([&] {
+		return sender_participant->GetTrackPublication(TrackSource::Microphone) != nullptr;
+	}));
+	EXPECT_GE(events.local_tracks_published(), 3u);
+	EXPECT_GE(events.local_tracks_unpublished(), 2u);
+	ASSERT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
+	EXPECT_FALSE(audio_track->IsEnabled());
+	ASSERT_TRUE(WaitUntil([&] {
+		return sender_participant->GetTrackPublication(TrackSource::Microphone) == nullptr;
+	}));
+
 	video_track.reset();
 	video_source.reset();
 	audio_track.reset();
 	audio_source.reset();
 	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
 }
