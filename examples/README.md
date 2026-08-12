@@ -48,6 +48,19 @@ repository configuration.
 
 ## Examples
 
+### `c_sample`
+
+A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It registers room,
+participant, and track callbacks, connects, reads the local identity into a caller-owned buffer,
+and cleans up the room and runtime.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
+```
+
+The example source is compiled as C11; only its final link step uses the C++ linker because the SDK
+implementation and libwebrtc are C++ libraries.
+
 ### `cpp_sample`
 
 Connects to a room, prints the local participant identity and SID, and disconnects.
