@@ -53,6 +53,11 @@ public:
 		virtual void
 		MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
+		virtual void RemoteMuteChangedEvent(const std::string& sid, bool muted) = 0;
+		virtual void SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) = 0;
+		virtual void RoomUpdateEvent(const livekit::Room& update) = 0;
+		virtual void
+		ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) = 0;
 	};
 
 	RtcEngine();
@@ -73,6 +78,8 @@ public:
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);
+	bool UpdateLocalMetadata(const std::string& metadata, const std::string& name,
+	                         const std::map<std::string, std::string>& attributes);
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:

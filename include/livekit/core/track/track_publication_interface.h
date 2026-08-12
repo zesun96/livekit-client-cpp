@@ -20,16 +20,28 @@
 #ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 #define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 
+#include "livekit/core/option/media_option.h"
+
 #include <string>
 
 namespace livekit {
 namespace core {
 
+class TrackInterface;
+
 class TrackPublicationInterface {
 public:
-	virtual ~TrackPublicationInterface() {}
+	virtual ~TrackPublicationInterface() = default;
 
 	virtual std::string Sid() = 0;
+	virtual std::string Name() { return {}; }
+	virtual TrackKind Kind() { return TrackKind::Unknown; }
+	virtual TrackSource Source() { return TrackSource::Unknown; }
+	virtual TrackDimensions Dimensions() { return {}; }
+	virtual std::string MimeType() { return {}; }
+	virtual bool IsMuted() { return false; }
+	virtual bool IsSimulcasted() { return false; }
+	virtual TrackInterface* Track() { return nullptr; }
 };
 
 } // namespace core

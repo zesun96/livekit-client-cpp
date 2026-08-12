@@ -47,6 +47,9 @@ public:
 	                                           VideoSourceInterface* source) override;
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
+	bool SetMetadata(const std::string& metadata) override;
+	bool SetName(const std::string& name) override;
+	bool SetAttributes(const std::map<std::string, std::string>& attributes) override;
 	bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
 

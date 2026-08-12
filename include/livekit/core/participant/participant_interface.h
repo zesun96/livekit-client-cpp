@@ -25,6 +25,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace livekit {
 namespace core {
@@ -37,8 +38,11 @@ public:
 	virtual bool IsSpeaking() = 0;
 	virtual std::string Metadata() = 0;
 	virtual std::map<std::string, std::string> Attributes() = 0;
+	virtual float AudioLevel() { return 0.0f; }
+	virtual ConnectionQuality GetConnectionQuality() { return ConnectionQuality::Unknown; }
 	virtual bool IsLocalParticipant() = 0;
 
+	virtual std::vector<TrackPublicationInterface*> GetTrackPublications() { return {}; }
 	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) = 0;
 	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) = 0;
 	virtual bool IsCameraEnabled() = 0;

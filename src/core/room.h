@@ -47,6 +47,10 @@ public:
 	virtual void RemoveEventListener() override;
 	virtual bool IsConnected() override;
 	virtual bool Disconnect() override;
+	std::string Sid() override;
+	std::string Name() override;
+	std::string Metadata() override;
+	bool IsRecording() override;
 	virtual LocalParticipantInterface* GetLocalParticipant() override;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() override;
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
@@ -62,9 +66,15 @@ public:
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
 	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
+	void RemoteMuteChangedEvent(const std::string& sid, bool muted) override;
+	void SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) override;
+	void RoomUpdateEvent(const livekit::Room& update) override;
+	void
+	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
 
 private:
-	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates);
+	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates,
+	                             bool emit_events = true);
 	std::shared_ptr<RemoteParticipant> FindRemoteParticipantForTrack(const std::string& track_sid);
 	void NotifyAudioFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const AudioFrame& frame);
@@ -89,6 +99,8 @@ private:
 	std::mutex incoming_files_mutex_;
 	std::map<std::string, IncomingFile> incoming_files_;
 	ServerInfo server_info_;
+	mutable std::mutex room_info_mutex_;
+	livekit::Room room_info_;
 
 	std::atomic<RoomEventInterface*> event_listener_{nullptr};
 };

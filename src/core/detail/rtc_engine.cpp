@@ -218,6 +218,15 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 	    webrtc::DataBuffer(webrtc::CopyOnWriteBuffer(serialized.data(), serialized.size()), true));
 }
 
+bool RtcEngine::UpdateLocalMetadata(const std::string& metadata, const std::string& name,
+                                    const std::map<std::string, std::string>& attributes) {
+	if (!signal_client_) {
+		return false;
+	}
+	signal_client_->SendUpdateLocalMetadata(metadata, name, attributes);
+	return true;
+}
+
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
 
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) {
@@ -253,7 +262,11 @@ void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> off
 	}
 	return;
 }
-void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) { return; }
+void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) {
+	if (auto* listener = room_listener_.load()) {
+		listener->RemoteMuteChangedEvent(sid, muted);
+	}
+}
 void RtcEngine::OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) {
 	return;
 }
@@ -272,10 +285,20 @@ void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>&
 		listener->ParticipantUpdateEvent(updates);
 	}
 }
-void RtcEngine::OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) { return; }
-void RtcEngine::OnRoomUpdate(const livekit::Room& update) { return; }
+void RtcEngine::OnSpeakersChanged(std::vector<livekit::SpeakerInfo>& update) {
+	if (auto* listener = room_listener_.load()) {
+		listener->SpeakersChangedEvent(update);
+	}
+}
+void RtcEngine::OnRoomUpdate(const livekit::Room& update) {
+	if (auto* listener = room_listener_.load()) {
+		listener->RoomUpdateEvent(update);
+	}
+}
 void RtcEngine::OnConnectionQuality(const std::vector<livekit::ConnectionQualityInfo>& update) {
-	return;
+	if (auto* listener = room_listener_.load()) {
+		listener->ConnectionQualityEvent(update);
+	}
 }
 void RtcEngine::OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) { return; }
 void RtcEngine::OnSubscriptionPermissionUpdate(

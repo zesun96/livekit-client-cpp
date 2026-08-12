@@ -20,23 +20,81 @@
 
 namespace livekit {
 namespace core {
-TrackPublication::TrackPublication(livekit::TrackInfo info, Track* track)
-    : info_(info), track_(track), kind_(from_proto(info.type())),
-      source_(from_proto(info_.source())), dimensions_{info.width(), info_.height()},
-      track_sid_(info.sid()), simulcasted_(info.simulcast()), mime_type_(info.mime_type()),
-      muted_(info_.muted()) {}
+TrackPublication::TrackPublication(livekit::TrackInfo info, ::livekit::core::Track* track)
+    : track_(track) {
+	UpdateInfo(std::move(info));
+}
 
-std::string TrackPublication::Sid() { return track_sid_; }
+std::string TrackPublication::Sid() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return track_sid_;
+}
+
+std::string TrackPublication::Name() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return track_name_;
+}
+
+TrackKind TrackPublication::Kind() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return kind_;
+}
+
+TrackSource TrackPublication::Source() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return source_;
+}
+
+TrackDimensions TrackPublication::Dimensions() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return dimensions_;
+}
+
+std::string TrackPublication::MimeType() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return mime_type_;
+}
+
+bool TrackPublication::IsMuted() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return muted_;
+}
+
+bool TrackPublication::IsSimulcasted() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return simulcasted_;
+}
+
+TrackInterface* TrackPublication::Track() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return track_;
+}
 
 void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
+	std::lock_guard<std::mutex> guard(mutex_);
 	info_ = info;
 	kind_ = from_proto(info.type());
 	source_ = from_proto(info_.source());
 	dimensions_ = {info.width(), info.height()};
 	track_sid_ = info.sid();
+	track_name_ = info.name();
 	simulcasted_ = info.simulcast();
 	mime_type_ = info.mime_type();
 	muted_ = info_.muted();
+}
+
+void TrackPublication::SetTrack(::livekit::core::Track* track) {
+	std::lock_guard<std::mutex> guard(mutex_);
+	track_ = track;
+}
+
+void TrackPublication::SetMuted(bool muted) {
+	std::lock_guard<std::mutex> guard(mutex_);
+	muted_ = muted;
+	info_.set_muted(muted);
+	if (track_ != nullptr) {
+		track_->SetMuted(muted);
+	}
 }
 
 } // namespace core

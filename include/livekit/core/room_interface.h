@@ -52,6 +52,10 @@ public:
 
 	virtual bool IsConnected() = 0;
 	virtual bool Disconnect() = 0;
+	virtual std::string Sid() { return {}; }
+	virtual std::string Name() { return {}; }
+	virtual std::string Metadata() { return {}; }
+	virtual bool IsRecording() { return false; }
 
 	virtual LocalParticipantInterface* GetLocalParticipant() = 0;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;

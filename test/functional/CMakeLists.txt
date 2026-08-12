@@ -1,4 +1,4 @@
-add_executable(livekit_public_api_tests public_api_test.cpp)
+add_executable(livekit_public_api_tests participant_state_test.cpp public_api_test.cpp)
 target_compile_features(livekit_public_api_tests PRIVATE cxx_std_20)
 target_link_libraries(livekit_public_api_tests PRIVATE livekitclient GTest::gtest_main)
 

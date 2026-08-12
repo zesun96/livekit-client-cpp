@@ -25,19 +25,32 @@
 
 #include "livekit_models.pb.h"
 
+#include <mutex>
+
 namespace livekit {
 namespace core {
 
 class TrackPublication : public TrackPublicationInterface {
 public:
-	TrackPublication(livekit::TrackInfo info, Track* track);
+	TrackPublication(livekit::TrackInfo info, ::livekit::core::Track* track);
 	virtual ~TrackPublication() = default;
 
 	virtual std::string Sid() override;
+	std::string Name() override;
+	TrackKind Kind() override;
+	TrackSource Source() override;
+	TrackDimensions Dimensions() override;
+	std::string MimeType() override;
+	bool IsMuted() override;
+	bool IsSimulcasted() override;
+	TrackInterface* Track() override;
 
 	void UpdateInfo(livekit::TrackInfo info);
+	void SetTrack(::livekit::core::Track* track);
+	void SetMuted(bool muted);
 
 private:
+	mutable std::mutex mutex_;
 	livekit::TrackInfo info_;
 	TrackKind kind_;
 	TrackSource source_;
@@ -48,7 +61,7 @@ private:
 	bool simulcasted_;
 	bool muted_;
 
-	Track* track_;
+	::livekit::core::Track* track_;
 };
 } // namespace core
 } // namespace livekit

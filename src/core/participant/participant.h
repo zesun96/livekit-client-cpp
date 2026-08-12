@@ -42,26 +42,26 @@ public:
 	virtual bool IsSpeaking() override;
 	virtual std::string Metadata() override;
 	virtual std::map<std::string, std::string> Attributes() override;
+	float AudioLevel() override;
+	ConnectionQuality GetConnectionQuality() override;
 	virtual bool IsLocalParticipant() override;
 
-	virtual TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override {
-		return nullptr;
-	};
-	virtual TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) override {
-		return nullptr;
-	};
-	virtual bool IsCameraEnabled() override { return false; };
-	virtual bool IsMicrophoneEnabled() override { return false; };
-	virtual bool IsScreenShareEnabled() override { return false; };
-	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) override {
-		return false;
-	};
+	std::vector<TrackPublicationInterface*> GetTrackPublications() override;
+	TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override;
+	TrackPublicationInterface* GetTrackPublicationByName(const std::string& name) override;
+	bool IsCameraEnabled() override;
+	bool IsMicrophoneEnabled() override;
+	bool IsScreenShareEnabled() override;
+	bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) override;
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info);
 
 	void AddTrackPublication(std::shared_ptr<TrackPublicationInterface> publication);
 	void RemoveTrackPublication(std::string track_sid);
+	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> TrackPublicationsSnapshot();
 	bool HasTrackSid(const std::string& track_sid);
+	void SetSpeakerInfo(float audio_level, bool is_speaking);
+	void SetConnectionQuality(ConnectionQuality quality);
 
 protected:
 	bool is_local_participant_ = false;
@@ -81,7 +81,7 @@ protected:
 	int64_t last_spoke_at_ = 0;
 	livekit::ParticipantPermission permissions_;
 	livekit::ParticipantInfo_Kind kind_{};
-	livekit::ConnectionQuality connection_quality_{};
+	ConnectionQuality connection_quality_ = ConnectionQuality::Unknown;
 };
 
 } // namespace core

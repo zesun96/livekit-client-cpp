@@ -21,9 +21,12 @@
 #include "track/audio_track.h"
 #include "track/remote_audio_track.h"
 #include "track/remote_video_track.h"
+#include "track/track_publication.h"
 #include "track/video_track.h"
 
+#include <algorithm>
 #include <limits>
+#include <tuple>
 
 namespace {
 static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOptions room_options) {
@@ -40,6 +43,22 @@ static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOption
 	engine_options.signal_options.sdk_options.sdk = room_options.sdk_options.sdk;
 	engine_options.signal_options.sdk_options.sdk_version = room_options.sdk_options.sdk_version;
 	return engine_options;
+}
+
+static livekit::core::ConnectionQuality
+from_connection_quality(livekit::ConnectionQuality quality) {
+	switch (quality) {
+	case livekit::ConnectionQuality::POOR:
+		return livekit::core::ConnectionQuality::Poor;
+	case livekit::ConnectionQuality::GOOD:
+		return livekit::core::ConnectionQuality::Good;
+	case livekit::ConnectionQuality::EXCELLENT:
+		return livekit::core::ConnectionQuality::Excellent;
+	case livekit::ConnectionQuality::LOST:
+		return livekit::core::ConnectionQuality::Lost;
+	default:
+		return livekit::core::ConnectionQuality::Unknown;
+	}
 }
 } // namespace
 
@@ -98,7 +117,11 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 		for (const auto& participant : join_response.other_participants()) {
 			participants.push_back(participant);
 		}
-		ApplyParticipantUpdates(participants);
+		{
+			std::lock_guard<std::mutex> guard(room_info_mutex_);
+			room_info_ = join_response.room();
+		}
+		ApplyParticipantUpdates(participants, false);
 	} catch (...) {
 		state_ = RoomState::Failed;
 		throw;
@@ -112,6 +135,26 @@ void Room::AddEventListener(RoomEventInterface* listener) { event_listener_.stor
 void Room::RemoveEventListener() { event_listener_.store(nullptr); }
 
 bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
+
+std::string Room::Sid() {
+	std::lock_guard<std::mutex> guard(room_info_mutex_);
+	return room_info_.sid();
+}
+
+std::string Room::Name() {
+	std::lock_guard<std::mutex> guard(room_info_mutex_);
+	return room_info_.name();
+}
+
+std::string Room::Metadata() {
+	std::lock_guard<std::mutex> guard(room_info_mutex_);
+	return room_info_.metadata();
+}
+
+bool Room::IsRecording() {
+	std::lock_guard<std::mutex> guard(room_info_mutex_);
+	return room_info_.active_recording();
+}
 
 bool Room::Disconnect() {
 	auto state = state_.load();
@@ -205,6 +248,125 @@ void Room::ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& u
 	ApplyParticipantUpdates(updates);
 }
 
+void Room::RemoteMuteChangedEvent(const std::string& sid, bool muted) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participant = FindRemoteParticipantForTrack(sid);
+		if (!participant) {
+			return;
+		}
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found = publications.find(sid);
+		if (found == publications.end()) {
+			return;
+		}
+		publication = found->second;
+		if (publication->IsMuted() == muted) {
+			return;
+		}
+		if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+			concrete->SetMuted(muted);
+		}
+	}
+	if (auto* listener = event_listener_.load()) {
+		if (muted) {
+			listener->OnTrackMuted(publication.get(), participant.get());
+		} else {
+			listener->OnTrackUnmuted(publication.get(), participant.get());
+		}
+	}
+}
+
+void Room::SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) {
+	std::vector<ParticipantInterface*> active_speakers;
+	std::vector<std::shared_ptr<RemoteParticipant>> retained_participants;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& update : updates) {
+			Participant* participant = nullptr;
+			if (update.sid() == local_participant_->Sid()) {
+				participant = local_participant_.get();
+			} else {
+				auto found = remote_participants_.find(update.sid());
+				if (found != remote_participants_.end()) {
+					retained_participants.push_back(found->second);
+					participant = found->second.get();
+				}
+			}
+			if (participant == nullptr) {
+				continue;
+			}
+			participant->SetSpeakerInfo(update.level(), update.active());
+		}
+		if (local_participant_->IsSpeaking()) {
+			active_speakers.push_back(local_participant_.get());
+		}
+		retained_participants.clear();
+		for (const auto& [sid, participant] : remote_participants_) {
+			if (participant->IsSpeaking()) {
+				retained_participants.push_back(participant);
+				active_speakers.push_back(participant.get());
+			}
+		}
+	}
+	std::sort(active_speakers.begin(), active_speakers.end(),
+	          [](ParticipantInterface* left, ParticipantInterface* right) {
+		          return left->AudioLevel() > right->AudioLevel();
+	          });
+	if (auto* listener = event_listener_.load()) {
+		listener->OnActiveSpeakersChanged(active_speakers);
+	}
+}
+
+void Room::RoomUpdateEvent(const livekit::Room& update) {
+	bool metadata_changed = false;
+	{
+		std::lock_guard<std::mutex> guard(room_info_mutex_);
+		metadata_changed = room_info_.metadata() != update.metadata();
+		room_info_ = update;
+	}
+	if (metadata_changed) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnRoomMetadataChanged(update.metadata());
+		}
+	}
+}
+
+void Room::ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) {
+	struct QualityEvent {
+		ConnectionQuality quality;
+		ParticipantInterface* participant;
+		std::shared_ptr<RemoteParticipant> retained_participant;
+	};
+	std::vector<QualityEvent> events;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& update : updates) {
+			const auto quality = from_connection_quality(update.quality());
+			if (update.participant_sid() == local_participant_->Sid()) {
+				if (local_participant_->GetConnectionQuality() != quality) {
+					local_participant_->SetConnectionQuality(quality);
+					events.push_back({quality, local_participant_.get(), nullptr});
+				}
+				continue;
+			}
+			auto found = remote_participants_.find(update.participant_sid());
+			if (found != remote_participants_.end() &&
+			    found->second->GetConnectionQuality() != quality) {
+				found->second->SetConnectionQuality(quality);
+				events.push_back({quality, found->second.get(), found->second});
+			}
+		}
+	}
+	if (auto* listener = event_listener_.load()) {
+		for (const auto& event : events) {
+			listener->OnConnectionQualityChanged(event.quality, event.participant);
+		}
+	}
+}
+
 void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track) {
 	if (!rtc_track) {
 		return;
@@ -246,6 +408,16 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			    });
 			subscribed_track = std::move(remote);
 			remote_tracks_.emplace(track_sid, subscribed_track);
+		}
+		if (subscribed_track) {
+			for (auto* candidate : participant->GetTrackPublications()) {
+				if (candidate->Sid() == track_sid) {
+					if (auto* concrete = dynamic_cast<TrackPublication*>(candidate)) {
+						concrete->SetTrack(subscribed_track.get());
+					}
+					break;
+				}
+			}
 		}
 	}
 	if (subscribed_track) {
@@ -382,8 +554,56 @@ void Room::NotifyVideoFrame(const std::string& participant_sid, const std::strin
 	}
 }
 
-void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates) {
+void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates,
+                                   bool emit_events) {
+	struct PublicationEvent {
+		std::shared_ptr<TrackPublicationInterface> publication;
+		std::shared_ptr<RemoteParticipant> participant;
+	};
+	struct ParticipantValueEvent {
+		std::string value;
+		ParticipantInterface* participant;
+		std::shared_ptr<RemoteParticipant> retained_participant;
+	};
+	struct AttributesEvent {
+		std::map<std::string, std::string> changes;
+		ParticipantInterface* participant;
+		std::shared_ptr<RemoteParticipant> retained_participant;
+	};
+	struct MuteEvent {
+		std::shared_ptr<TrackPublicationInterface> publication;
+		ParticipantInterface* participant;
+		std::shared_ptr<RemoteParticipant> retained_participant;
+		bool muted;
+	};
+
 	std::vector<webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>> ready_tracks;
+	std::vector<std::shared_ptr<RemoteParticipant>> connected;
+	std::vector<std::shared_ptr<RemoteParticipant>> disconnected;
+	std::vector<PublicationEvent> published;
+	std::vector<PublicationEvent> unpublished;
+	std::vector<ParticipantValueEvent> metadata_changed;
+	std::vector<ParticipantValueEvent> name_changed;
+	std::vector<AttributesEvent> attributes_changed;
+	std::vector<MuteEvent> mute_changed;
+
+	auto attribute_changes = [](const std::map<std::string, std::string>& old_attributes,
+	                            const std::map<std::string, std::string>& new_attributes) {
+		std::map<std::string, std::string> changes;
+		for (const auto& [key, value] : new_attributes) {
+			auto old = old_attributes.find(key);
+			if (old == old_attributes.end() || old->second != value) {
+				changes[key] = value;
+			}
+		}
+		for (const auto& [key, value] : old_attributes) {
+			if (new_attributes.count(key) == 0) {
+				changes[key] = "";
+			}
+		}
+		return changes;
+	};
+
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		for (const auto& info : updates) {
@@ -392,22 +612,120 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			}
 			if (info.sid() == local_participant_->Sid() ||
 			    (!info.identity().empty() && info.identity() == local_participant_->Identity())) {
+				const auto old_metadata = local_participant_->Metadata();
+				const auto old_name = local_participant_->Name();
+				const auto old_attributes = local_participant_->Attributes();
+				const auto old_publications = local_participant_->TrackPublicationsSnapshot();
+				std::map<std::string, bool> old_mutes;
+				for (const auto& [sid, publication] : old_publications) {
+					old_mutes[sid] = publication->IsMuted();
+				}
 				local_participant_->UpdateFromInfo(info);
-				continue;
-			}
-			auto participant = remote_participants_.find(info.sid());
-			if (info.state() == livekit::ParticipantInfo_State_DISCONNECTED) {
-				if (participant != remote_participants_.end()) {
-					remote_participants_.erase(participant);
+				if (emit_events && old_metadata != local_participant_->Metadata()) {
+					metadata_changed.push_back({old_metadata, local_participant_.get(), nullptr});
+				}
+				if (emit_events && old_name != local_participant_->Name()) {
+					name_changed.push_back(
+					    {local_participant_->Name(), local_participant_.get(), nullptr});
+				}
+				if (emit_events) {
+					auto changes =
+					    attribute_changes(old_attributes, local_participant_->Attributes());
+					if (!changes.empty()) {
+						attributes_changed.push_back(
+						    {std::move(changes), local_participant_.get(), nullptr});
+					}
+					auto new_publications = local_participant_->TrackPublicationsSnapshot();
+					for (const auto& [sid, publication] : new_publications) {
+						auto old = old_mutes.find(sid);
+						if (old != old_mutes.end() && old->second != publication->IsMuted()) {
+							mute_changed.push_back({publication, local_participant_.get(), nullptr,
+							                        publication->IsMuted()});
+						}
+					}
 				}
 				continue;
 			}
+
+			auto participant = remote_participants_.find(info.sid());
+			if (info.state() == livekit::ParticipantInfo_State_DISCONNECTED) {
+				if (participant != remote_participants_.end()) {
+					auto retained = participant->second;
+					for (const auto& [sid, publication] : retained->TrackPublicationsSnapshot()) {
+						if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+							concrete->SetTrack(nullptr);
+						}
+						remote_tracks_.erase(sid);
+						pending_media_tracks_.erase(sid);
+						if (emit_events) {
+							unpublished.push_back({publication, retained});
+						}
+					}
+					remote_participants_.erase(participant);
+					if (emit_events) {
+						disconnected.push_back(std::move(retained));
+					}
+				}
+				continue;
+			}
+
 			if (participant == remote_participants_.end()) {
-				remote_participants_.emplace(info.sid(), std::make_shared<RemoteParticipant>(info));
-			} else {
-				participant->second->UpdateFromInfo(info);
+				auto added = std::make_shared<RemoteParticipant>(info);
+				remote_participants_.emplace(info.sid(), added);
+				if (emit_events) {
+					connected.push_back(added);
+					for (const auto& [sid, publication] : added->TrackPublicationsSnapshot()) {
+						published.push_back({publication, added});
+					}
+				}
+				continue;
+			}
+
+			auto retained = participant->second;
+			const auto old_metadata = retained->Metadata();
+			const auto old_name = retained->Name();
+			const auto old_attributes = retained->Attributes();
+			const auto old_publications = retained->TrackPublicationsSnapshot();
+			std::map<std::string, bool> old_mutes;
+			for (const auto& [sid, publication] : old_publications) {
+				old_mutes[sid] = publication->IsMuted();
+			}
+			retained->UpdateFromInfo(info);
+			const auto new_publications = retained->TrackPublicationsSnapshot();
+			if (!emit_events) {
+				continue;
+			}
+			if (old_metadata != retained->Metadata()) {
+				metadata_changed.push_back({old_metadata, retained.get(), retained});
+			}
+			if (old_name != retained->Name()) {
+				name_changed.push_back({retained->Name(), retained.get(), retained});
+			}
+			auto changes = attribute_changes(old_attributes, retained->Attributes());
+			if (!changes.empty()) {
+				attributes_changed.push_back({std::move(changes), retained.get(), retained});
+			}
+			for (const auto& [sid, publication] : new_publications) {
+				auto old = old_publications.find(sid);
+				if (old == old_publications.end()) {
+					published.push_back({publication, retained});
+				} else if (old_mutes[sid] != publication->IsMuted()) {
+					mute_changed.push_back(
+					    {publication, retained.get(), retained, publication->IsMuted()});
+				}
+			}
+			for (const auto& [sid, publication] : old_publications) {
+				if (new_publications.count(sid) == 0) {
+					if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+						concrete->SetTrack(nullptr);
+					}
+					remote_tracks_.erase(sid);
+					pending_media_tracks_.erase(sid);
+					unpublished.push_back({publication, retained});
+				}
 			}
 		}
+
 		for (auto it = pending_media_tracks_.begin(); it != pending_media_tracks_.end();) {
 			if (FindRemoteParticipantForTrack(it->first)) {
 				ready_tracks.push_back(it->second);
@@ -417,6 +735,38 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			}
 		}
 	}
+
+	if (auto* listener = event_listener_.load()) {
+		for (const auto& participant : connected) {
+			listener->OnParticipantConnected(participant.get());
+		}
+		for (const auto& event : published) {
+			listener->OnTrackPublished(event.publication.get(), event.participant.get());
+		}
+		for (const auto& event : mute_changed) {
+			if (event.muted) {
+				listener->OnTrackMuted(event.publication.get(), event.participant);
+			} else {
+				listener->OnTrackUnmuted(event.publication.get(), event.participant);
+			}
+		}
+		for (const auto& event : unpublished) {
+			listener->OnTrackUnpublished(event.publication.get(), event.participant.get());
+		}
+		for (const auto& event : metadata_changed) {
+			listener->OnParticipantMetadataChanged(event.value, event.participant);
+		}
+		for (const auto& event : name_changed) {
+			listener->OnParticipantNameChanged(event.value, event.participant);
+		}
+		for (const auto& event : attributes_changed) {
+			listener->OnParticipantAttributesChanged(event.changes, event.participant);
+		}
+		for (const auto& participant : disconnected) {
+			listener->OnParticipantDisconnected(participant.get());
+		}
+	}
+
 	for (auto& track : ready_tracks) {
 		MediaTrackEvent(std::move(track));
 	}

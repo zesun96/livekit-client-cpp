@@ -62,6 +62,9 @@ public:
 	}
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
+	virtual bool SetMetadata(const std::string&) { return false; }
+	virtual bool SetName(const std::string&) { return false; }
+	virtual bool SetAttributes(const std::map<std::string, std::string>&) { return false; }
 	virtual bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options = {}) = 0;
 	virtual bool SendFile(const std::string& path, FileSendOptions options = {}) = 0;
 };

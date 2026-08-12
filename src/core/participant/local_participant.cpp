@@ -177,6 +177,18 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	return true;
 }
 
+bool LocalParticipant::SetMetadata(const std::string& metadata) {
+	return engine_ != nullptr && engine_->UpdateLocalMetadata(metadata, Name(), {});
+}
+
+bool LocalParticipant::SetName(const std::string& name) {
+	return engine_ != nullptr && engine_->UpdateLocalMetadata(Metadata(), name, {});
+}
+
+bool LocalParticipant::SetAttributes(const std::map<std::string, std::string>& attributes) {
+	return engine_ != nullptr && engine_->UpdateLocalMetadata(Metadata(), Name(), attributes);
+}
+
 bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) {
 	if (engine_ == nullptr) {
 		return false;
