@@ -1,0 +1,14 @@
+diff --git a/lib/tls/mbedtls/mbedtls-extensions.c b/lib/tls/mbedtls/mbedtls-extensions.c
+index 7ea58f50..18554b6d 100644
+--- a/lib/tls/mbedtls/mbedtls-extensions.c
++++ b/lib/tls/mbedtls/mbedtls-extensions.c
+@@ -53,6 +53,9 @@
+ #include <mbedtls/oid.h>
+ #include <mbedtls/x509.h>
+ 
++int mbedtls_x509_get_name(unsigned char **p, const unsigned char *end,
++                          mbedtls_x509_name *cur);
++
+ /*
+  * This section from mbedtls oid.c
+  */

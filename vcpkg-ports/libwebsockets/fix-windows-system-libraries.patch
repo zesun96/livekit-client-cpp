@@ -1,0 +1,12 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a2e27dab..9c1709e8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -848,5 +848,6 @@
+ if (WINCE)
+ 	list(APPEND LIB_LIST_AT_END ws2.lib)
+ elseif (WIN32)
+-	list(APPEND LIB_LIST_AT_END ws2_32.lib userenv.lib psapi.lib iphlpapi.lib crypt32.lib)
++	list(APPEND LIB_LIST_AT_END ws2_32.lib userenv.lib psapi.lib iphlpapi.lib crypt32.lib
++		bcrypt.lib dbghelp.lib)
+ endif()

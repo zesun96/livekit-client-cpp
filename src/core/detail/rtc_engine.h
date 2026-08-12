@@ -58,7 +58,7 @@ public:
 
 	std::optional<livekit::TrackInfo> AddTrack(const livekit::AddTrackRequest& req);
 
-	rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	CreateSender(LocalTrack* track, TrackPublishOptions options,
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
 
@@ -106,12 +106,13 @@ public:
 	OnConnectionChange(PeerTransport::Target target,
 	                   webrtc::PeerConnectionInterface::PeerConnectionState new_state) override;
 	virtual void OnAddStream(PeerTransport::Target target,
-	                         rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
-	virtual void OnRemoveStream(PeerTransport::Target target,
-	                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	                         webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
+	virtual void
+	OnRemoveStream(PeerTransport::Target target,
+	               webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) override;
 	virtual void
 	OnDataChannel(PeerTransport::Target target,
-	              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
+	              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) override;
 	virtual void OnRenegotiationNeeded(PeerTransport::Target target) override;
 	virtual void
 	OnIceConnectionChange(PeerTransport::Target target,
@@ -122,19 +123,21 @@ public:
 	virtual void OnIceCandidate(PeerTransport::Target target,
 	                            const webrtc::IceCandidateInterface* candidate) override;
 	virtual void OnIceCandidatesRemoved(PeerTransport::Target target,
-	                                    const std::vector<cricket::Candidate>& candidates) override;
+	                                    const std::vector<webrtc::Candidate>& candidates) override;
 	virtual void OnIceConnectionReceivingChange(PeerTransport::Target target,
 	                                            bool receiving) override;
 	virtual void OnIceCandidateError(PeerTransport::Target target, const std::string& address,
 	                                 int port, const std::string& url, int error_code,
 	                                 const std::string& error_text) override;
 	virtual void OnAddTrack(
-	    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-	    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
-	virtual void OnTrack(PeerTransport::Target target,
-	                     rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
-	virtual void OnRemoveTrack(PeerTransport::Target target,
-	                           rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
+	    PeerTransport::Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
+	virtual void
+	OnTrack(PeerTransport::Target target,
+	        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+	virtual void
+	OnRemoveTrack(PeerTransport::Target target,
+	              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override;
 
 private:
@@ -147,8 +150,8 @@ private:
 	std::unique_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
 	bool is_subscriber_primary_;
-	rtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
-	rtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
 
 	livekit::JoinResponse join_resp_;
 	mutable std::mutex pending_track_resolvers_lock_;

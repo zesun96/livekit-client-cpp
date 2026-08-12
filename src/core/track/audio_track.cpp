@@ -36,11 +36,12 @@ void AudioSink::OnData(const void* audio_data, int bits_per_sample, int sample_r
 
 	if (sample_rate_ != sample_rate || num_channels_ != number_of_channels) {
 		// resample/remix before capturing
-		webrtc::voe::RemixAndResample(data, number_of_frames, number_of_channels, sample_rate,
-		                              &resampler_, &frame_);
+		webrtc::voe::RemixAndResample(
+		    webrtc::InterleavedView<const int16_t>(data, number_of_frames, number_of_channels),
+		    sample_rate, &resampler_, &frame_);
 
-		observer_->on_data(frame_.data(), frame_.sample_rate_hz(), frame_.samples_per_channel(),
-		                   frame_.num_channels(), number_of_frames);
+		observer_->on_data(frame_.data(), 16, frame_.sample_rate_hz(), frame_.num_channels(),
+		                   frame_.samples_per_channel());
 
 	} else {
 
@@ -49,7 +50,7 @@ void AudioSink::OnData(const void* audio_data, int bits_per_sample, int sample_r
 	}
 }
 
-AudioTrack::AudioTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface> track)
+AudioTrack::AudioTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface> track)
     : MediaStreamTrack(std::move(track)) {}
 
 AudioTrack::~AudioTrack() {

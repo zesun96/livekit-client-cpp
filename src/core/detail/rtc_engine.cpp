@@ -118,7 +118,7 @@ std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackReq
 	}
 }
 
-rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
                         std::vector<webrtc::RtpEncodingParameters> send_encodings) {
 	std::lock_guard<std::mutex> guard(session_lock_);
@@ -225,13 +225,13 @@ void RtcEngine::OnConnectionChange(PeerTransport::Target target,
 }
 
 void RtcEngine::OnAddStream(PeerTransport::Target target,
-                            rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+                            webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcEngine::OnRemoveStream(PeerTransport::Target target,
-                               rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+                               webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcEngine::OnDataChannel(PeerTransport::Target target,
-                              rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+                              webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
 
 void RtcEngine::OnRenegotiationNeeded(PeerTransport::Target target) {}
 
@@ -264,7 +264,7 @@ void RtcEngine::OnIceCandidate(PeerTransport::Target target,
 }
 
 void RtcEngine::OnIceCandidatesRemoved(PeerTransport::Target target,
-                                       const std::vector<cricket::Candidate>& candidates) {}
+                                       const std::vector<webrtc::Candidate>& candidates) {}
 
 void RtcEngine::OnIceConnectionReceivingChange(PeerTransport::Target target, bool receiving) {}
 
@@ -273,14 +273,14 @@ void RtcEngine::OnIceCandidateError(PeerTransport::Target target, const std::str
                                     const std::string& error_text) {}
 
 void RtcEngine::OnAddTrack(
-    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
+    PeerTransport::Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
 
 void RtcEngine::OnTrack(PeerTransport::Target target,
-                        rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
 
 void RtcEngine::OnRemoveTrack(PeerTransport::Target target,
-                              rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+                              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
 
 void RtcEngine::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 

@@ -19,7 +19,7 @@
 namespace livekit {
 namespace core {
 
-MediaStreamTrack::MediaStreamTrack(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track)
+MediaStreamTrack::MediaStreamTrack(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track)
     : track_(std::move(track)) {}
 
 std::string MediaStreamTrack::kind() const { return track_->kind(); }

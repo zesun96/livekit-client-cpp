@@ -135,7 +135,7 @@ void RtcSession::AddObserver(RtcSession::RtcSessionListener* observer) {
 
 void RtcSession::RemoveObserver() { this->observer_ = nullptr; }
 
-rtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
                          std::vector<webrtc::RtpEncodingParameters> send_encodings) {
 
@@ -202,7 +202,7 @@ void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::Si
 
 bool RtcSession::Negotiate() { return this->publisher_pc_->Negotiate(); }
 
-rtc::scoped_refptr<webrtc::DataChannelInterface>
+webrtc::scoped_refptr<webrtc::DataChannelInterface>
 RtcSession::CreateDataChannel(const std::string& label,
                               const webrtc::DataChannelInit* dataChannelDict) {
 	return this->publisher_pc_->CreateDataChannel(label, dataChannelDict);
@@ -312,13 +312,13 @@ void RtcSession::OnConnectionChange(
 }
 
 void RtcSession::OnAddStream(PeerTransport::Target target,
-                             rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+                             webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcSession::OnRemoveStream(PeerTransport::Target target,
-                                rtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
+                                webrtc::scoped_refptr<webrtc::MediaStreamInterface> stream) {}
 
 void RtcSession::OnDataChannel(PeerTransport::Target target,
-                               rtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
+                               webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel) {}
 
 void RtcSession::OnRenegotiationNeeded(PeerTransport::Target target) {}
 
@@ -341,7 +341,7 @@ void RtcSession::OnIceCandidate(PeerTransport::Target target,
 }
 
 void RtcSession::OnIceCandidatesRemoved(PeerTransport::Target target,
-                                        const std::vector<cricket::Candidate>& candidates) {}
+                                        const std::vector<webrtc::Candidate>& candidates) {}
 
 void RtcSession::OnIceConnectionReceivingChange(PeerTransport::Target target, bool receiving) {}
 
@@ -350,14 +350,14 @@ void RtcSession::OnIceCandidateError(PeerTransport::Target target, const std::st
                                      const std::string& error_text) {}
 
 void RtcSession::OnAddTrack(
-    PeerTransport::Target target, rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-    const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
+    PeerTransport::Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
 
 void RtcSession::OnTrack(PeerTransport::Target target,
-                         rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
+                         webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {}
 
 void RtcSession::OnRemoveTrack(PeerTransport::Target target,
-                               rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+                               webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
 
 void RtcSession::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 

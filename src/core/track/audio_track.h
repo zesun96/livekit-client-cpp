@@ -56,7 +56,7 @@ private:
 
 class AudioTrack : public MediaStreamTrack {
 public:
-	AudioTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface> track);
+	AudioTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface> track);
 
 	virtual ~AudioTrack();
 

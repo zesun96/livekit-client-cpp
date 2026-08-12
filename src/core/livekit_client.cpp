@@ -18,7 +18,7 @@
 #include "livekit/core/livekit_client.h"
 #include "version/version.h"
 
-#include <rtc_base/helpers.h>
+#include <rtc_base/crypto_random.h>
 #include <rtc_base/logging.h>
 #include <rtc_base/ssl_adapter.h>
 #include <rtc_base/time_utils.h>
@@ -43,24 +43,21 @@ bool Init() {
 
 	std::cout << "livekit_client version: " << Version() << std::endl;
 
-	if (!rtc::InitializeSSL()) {
+	if (!webrtc::InitializeSSL()) {
 		return false;
 	}
-	if (!rtc::InitRandom(rtc::Time())) {
-		rtc::CleanupSSL();
-		return false;
-	}
+	webrtc::SetDefaultRandomGenerator();
 #if _DEBUG
-	rtc::LogMessage::LogToDebug(rtc::LS_INFO);
-	rtc::LogMessage::LogTimestamps(true);
+	webrtc::LogMessage::LogToDebug(webrtc::LS_INFO);
+	webrtc::LogMessage::LogTimestamps(true);
 #else
-	rtc::LogMessage::LogToDebug(rtc::LS_ERROR);
+	webrtc::LogMessage::LogToDebug(webrtc::LS_ERROR);
 #endif
 
 #ifdef WEBRTC_WIN
 	WSADATA data;
 	if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
-		rtc::CleanupSSL();
+		webrtc::CleanupSSL();
 		return false;
 	}
 #endif
@@ -80,7 +77,7 @@ bool Destroy() {
 #ifdef WEBRTC_WIN
 	WSACleanup();
 #endif
-	return rtc::CleanupSSL();
+	return webrtc::CleanupSSL();
 }
 
 std::string Version() {
