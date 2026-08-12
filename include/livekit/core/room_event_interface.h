@@ -21,14 +21,21 @@
 #define _LKC_CORE_ROOM_EVENT_INTERFACE_H_
 
 #include "data_packet.h"
+#include "option/media_option.h"
 #include "track/audio_frame.h"
 #include "track/video_frame.h"
+
+#include <map>
+#include <string>
+#include <vector>
 
 namespace livekit {
 namespace core {
 
 class RemoteParticipantInterface;
 class RemoteTrackInterface;
+class ParticipantInterface;
+class TrackPublicationInterface;
 
 class RoomEventInterface {
 public:
@@ -36,7 +43,20 @@ public:
 
 	virtual void OnConnected() = 0;
 	virtual void OnDisconnected() {}
+	virtual void OnParticipantConnected(RemoteParticipantInterface*) {}
+	virtual void OnParticipantDisconnected(RemoteParticipantInterface*) {}
+	virtual void OnTrackPublished(TrackPublicationInterface*, RemoteParticipantInterface*) {}
+	virtual void OnTrackUnpublished(TrackPublicationInterface*, RemoteParticipantInterface*) {}
+	virtual void OnTrackMuted(TrackPublicationInterface*, ParticipantInterface*) {}
+	virtual void OnTrackUnmuted(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackSubscribed(RemoteTrackInterface*, RemoteParticipantInterface*) {}
+	virtual void OnActiveSpeakersChanged(const std::vector<ParticipantInterface*>&) {}
+	virtual void OnParticipantMetadataChanged(const std::string&, ParticipantInterface*) {}
+	virtual void OnParticipantNameChanged(const std::string&, ParticipantInterface*) {}
+	virtual void OnParticipantAttributesChanged(const std::map<std::string, std::string>&,
+	                                            ParticipantInterface*) {}
+	virtual void OnConnectionQualityChanged(ConnectionQuality, ParticipantInterface*) {}
+	virtual void OnRoomMetadataChanged(const std::string&) {}
 	virtual void OnAudioFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
 	                          const AudioFrame&) {}
 	virtual void OnVideoFrame(RemoteTrackInterface*, RemoteParticipantInterface*,

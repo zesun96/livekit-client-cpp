@@ -22,6 +22,10 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	ASSERT_NE(room, nullptr);
 	EXPECT_FALSE(room->IsConnected());
 	EXPECT_NE(room->GetLocalParticipant(), nullptr);
+	EXPECT_TRUE(room->Sid().empty());
+	EXPECT_TRUE(room->Name().empty());
+	EXPECT_TRUE(room->Metadata().empty());
+	EXPECT_FALSE(room->IsRecording());
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }

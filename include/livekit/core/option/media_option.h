@@ -46,6 +46,14 @@ enum class TrackStreamState {
 	Paused = 2,
 };
 
+enum class ConnectionQuality {
+	Unknown = 0,
+	Poor,
+	Good,
+	Excellent,
+	Lost,
+};
+
 struct TrackDimensions {
 	uint32_t width = 0;
 	uint32_t height = 0;

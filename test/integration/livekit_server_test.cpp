@@ -15,6 +15,7 @@
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -46,6 +47,20 @@ bool WaitUntil(const std::function<bool()>& predicate,
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	} while (std::chrono::steady_clock::now() < deadline);
 	return predicate();
+}
+
+std::string PublicationSummary(ParticipantInterface* participant) {
+	if (participant == nullptr) {
+		return "participant is null";
+	}
+	std::ostringstream summary;
+	for (auto* publication : participant->GetTrackPublications()) {
+		summary << "[sid=" << publication->Sid() << ", name=" << publication->Name()
+		        << ", kind=" << static_cast<int>(publication->Kind())
+		        << ", source=" << static_cast<int>(publication->Source())
+		        << ", muted=" << publication->IsMuted() << "]";
+	}
+	return summary.str();
 }
 
 class MediaEvents final : public RoomEventInterface {
@@ -127,6 +142,72 @@ private:
 	std::vector<uint8_t> file_data_;
 };
 
+class ParticipantEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnParticipantConnected(RemoteParticipantInterface* participant) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		connected_identity_ = participant->Identity();
+	}
+	void OnParticipantDisconnected(RemoteParticipantInterface* participant) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		disconnected_identity_ = participant->Identity();
+	}
+	void OnParticipantMetadataChanged(const std::string& previous,
+	                                  ParticipantInterface* participant) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		previous_metadata_ = previous;
+		metadata_identity_ = participant->Identity();
+	}
+	void OnParticipantNameChanged(const std::string& name,
+	                              ParticipantInterface* participant) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		name_ = name;
+		name_identity_ = participant->Identity();
+	}
+	void OnParticipantAttributesChanged(const std::map<std::string, std::string>& changes,
+	                                    ParticipantInterface* participant) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		attribute_changes_ = changes;
+		attributes_identity_ = participant->Identity();
+	}
+
+	bool connected(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return connected_identity_ == identity;
+	}
+	bool disconnected(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return disconnected_identity_ == identity;
+	}
+	bool metadata_changed(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return metadata_identity_ == identity;
+	}
+	bool name_changed(const std::string& identity, const std::string& name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return name_identity_ == identity && name_ == name;
+	}
+	bool attributes_changed(const std::string& identity, const std::string& key,
+	                        const std::string& value) {
+		std::lock_guard<std::mutex> guard(lock_);
+		auto found = attribute_changes_.find(key);
+		return attributes_identity_ == identity && found != attribute_changes_.end() &&
+		       found->second == value;
+	}
+
+private:
+	std::mutex lock_;
+	std::string connected_identity_;
+	std::string disconnected_identity_;
+	std::string previous_metadata_;
+	std::string metadata_identity_;
+	std::string name_;
+	std::string name_identity_;
+	std::map<std::string, std::string> attribute_changes_;
+	std::string attributes_identity_;
+};
+
 class TemporaryFile {
 public:
 	explicit TemporaryFile(const std::vector<uint8_t>& data) {
@@ -164,6 +245,8 @@ TEST(LiveKitServerTest, ConnectsWithEnvironmentCredentials) {
 	ASSERT_NE(room, nullptr);
 	ASSERT_TRUE(room->Connect(url, token));
 	ASSERT_NE(room->GetLocalParticipant(), nullptr);
+	EXPECT_FALSE(room->Sid().empty());
+	EXPECT_FALSE(room->Name().empty());
 	EXPECT_FALSE(room->GetLocalParticipant()->Sid().empty());
 	EXPECT_FALSE(room->GetLocalParticipant()->Identity().empty());
 	EXPECT_TRUE(room->Disconnect());
@@ -173,7 +256,10 @@ TEST(LiveKitServerTest, ConnectsWithEnvironmentCredentials) {
 TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	const char* url = std::getenv("LIVEKIT_URL");
 	const char* first_token = std::getenv("LIVEKIT_TOKEN");
-	const char* second_token = std::getenv("LIVEKIT_TOKEN_2");
+	const char* metadata_token = std::getenv("LIVEKIT_TOKEN_2_UPDATE");
+	const char* second_token = metadata_token != nullptr && *metadata_token != '\0'
+	                               ? metadata_token
+	                               : std::getenv("LIVEKIT_TOKEN_2");
 	if (url == nullptr || first_token == nullptr || second_token == nullptr || *url == '\0' ||
 	    *first_token == '\0' || *second_token == '\0') {
 		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the "
@@ -184,7 +270,10 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	ASSERT_TRUE(runtime.initialized());
 	auto first_room = CreateRoomUnique();
 	auto second_room = CreateRoomUnique();
+	ParticipantEvents events;
+	first_room->AddEventListener(&events);
 	ASSERT_TRUE(first_room->Connect(url, first_token));
+	ASSERT_TRUE(WaitUntil([&] { return first_room->IsConnected(); }, std::chrono::seconds(10)));
 	ASSERT_TRUE(second_room->Connect(url, second_token));
 
 	auto* first_local = first_room->GetLocalParticipant();
@@ -194,19 +283,40 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	ASSERT_FALSE(first_local->Sid().empty());
 	ASSERT_FALSE(second_local->Sid().empty());
 	ASSERT_NE(first_local->Identity(), second_local->Identity());
+	ASSERT_TRUE(WaitUntil([&] { return events.connected(second_local->Identity()); }));
 
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return first_room->GetRemoteParticipantBySid(second_local->Sid()) != nullptr; }));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return second_room->GetRemoteParticipantBySid(first_local->Sid()) != nullptr; }));
 	EXPECT_EQ(first_room->GetRemoteParticipantBySid(second_local->Sid())->Identity(),
 	          second_local->Identity());
-	EXPECT_EQ(second_room->GetRemoteParticipantBySid(first_local->Sid())->Identity(),
-	          first_local->Identity());
+
+	if (metadata_token != nullptr && *metadata_token != '\0') {
+		ASSERT_TRUE(second_local->SetMetadata("cpp-integration-metadata"));
+		ASSERT_TRUE(WaitUntil([&] {
+			auto* participant = first_room->GetRemoteParticipantBySid(second_local->Sid());
+			return participant != nullptr &&
+			       participant->Metadata() == "cpp-integration-metadata" &&
+			       events.metadata_changed(second_local->Identity());
+		}));
+		ASSERT_TRUE(second_local->SetName("cpp-integration-name"));
+		ASSERT_TRUE(WaitUntil([&] {
+			auto* participant = first_room->GetRemoteParticipantBySid(second_local->Sid());
+			return participant != nullptr && participant->Name() == "cpp-integration-name" &&
+			       events.name_changed(second_local->Identity(), "cpp-integration-name");
+		}));
+		ASSERT_TRUE(second_local->SetAttributes({{"client", "cpp"}}));
+		ASSERT_TRUE(WaitUntil([&] {
+			auto* participant = first_room->GetRemoteParticipantBySid(second_local->Sid());
+			return participant != nullptr && participant->Attributes()["client"] == "cpp" &&
+			       events.attributes_changed(second_local->Identity(), "client", "cpp");
+		}));
+	}
 
 	ASSERT_TRUE(second_room->Disconnect());
 	EXPECT_TRUE(WaitUntil(
 	    [&] { return first_room->GetRemoteParticipantBySid(second_local->Sid()) == nullptr; }));
+	EXPECT_TRUE(WaitUntil([&] { return events.disconnected(second_local->Identity()); }));
+	first_room->RemoveEventListener();
 	EXPECT_TRUE(first_room->Disconnect());
 }
 
@@ -238,6 +348,19 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	TrackPublishOptions audio_options;
 	audio_options.source = TrackSource::Microphone;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), audio_options));
+	ASSERT_TRUE(WaitUntil([&] {
+		auto* participant =
+		    receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+		return participant != nullptr && participant->IsMicrophoneEnabled();
+	}));
+	auto* sender_participant =
+	    receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+	ASSERT_NE(sender_participant, nullptr);
+	auto* audio_publication = sender_participant->GetTrackPublication(TrackSource::Microphone);
+	ASSERT_NE(audio_publication, nullptr);
+	EXPECT_EQ(audio_publication->Name(), "integration-audio");
+	EXPECT_EQ(audio_publication->Kind(), TrackKind::Audio);
+	EXPECT_FALSE(audio_publication->IsMuted());
 
 	std::vector<int16_t> audio_samples(480, 1500);
 	const auto audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -278,6 +401,15 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(events.video_received())
 	    << "subscribed=" << events.video_subscribed() << ", frames=" << events.video_frame_count()
 	    << ", last_size=" << events.last_video_width() << 'x' << events.last_video_height();
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return sender_participant->GetTrackPublication(TrackSource::Camera) != nullptr; },
+	    std::chrono::seconds(10)))
+	    << PublicationSummary(sender_participant);
+	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
+	ASSERT_NE(video_publication, nullptr);
+	EXPECT_EQ(video_publication->Name(), "integration-video");
+	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
+	EXPECT_TRUE(sender_participant->IsCameraEnabled());
 
 	video_track.reset();
 	video_source.reset();
