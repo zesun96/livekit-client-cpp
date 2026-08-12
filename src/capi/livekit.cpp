@@ -166,6 +166,21 @@ lk_connection_quality_t ToCConnectionQuality(core::ConnectionQuality quality) {
 	}
 }
 
+lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
+	switch (state) {
+	case core::RoomInterface::RoomState::Connecting:
+		return LK_ROOM_STATE_CONNECTING;
+	case core::RoomInterface::RoomState::Connected:
+		return LK_ROOM_STATE_CONNECTED;
+	case core::RoomInterface::RoomState::Disconnecting:
+		return LK_ROOM_STATE_DISCONNECTING;
+	case core::RoomInterface::RoomState::Failed:
+		return LK_ROOM_STATE_FAILED;
+	default:
+		return LK_ROOM_STATE_DISCONNECTED;
+	}
+}
+
 struct OwnedParticipantInfo {
 	explicit OwnedParticipantInfo(core::ParticipantInterface* participant) {
 		if (participant == nullptr) {
@@ -641,6 +656,13 @@ lk_status_t lk_room_disconnect(lk_room_t* room) {
 	});
 }
 
+lk_room_state_t lk_room_state(const lk_room_t* room) {
+	if (room == nullptr || room->room == nullptr) {
+		return LK_ROOM_STATE_DISCONNECTED;
+	}
+	return ToCRoomState(room->room->State());
+}
+
 int lk_room_is_connected(const lk_room_t* room) {
 	return room != nullptr && room->room != nullptr && room->room->IsConnected() ? 1 : 0;
 }
@@ -963,6 +985,21 @@ lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
 	});
 }
 
+lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted) {
+	return Guard([&] {
+		if (track == nullptr || track->track == nullptr || track->owner == nullptr ||
+		    track->room_state == nullptr || !track->room_state->alive.load()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "live local track is required");
+		}
+		if (!track->published) {
+			return Failure(LK_STATUS_INVALID_STATE, "track is not published");
+		}
+		return track->owner->room->SetLocalTrackMuted(track->track->Sid(), muted != 0)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update track mute state");
+	});
+}
+
 lk_status_t lk_local_track_destroy(lk_local_track_t* track) {
 	if (track == nullptr) {
 		return LK_STATUS_OK;
@@ -980,6 +1017,20 @@ lk_status_t lk_local_track_destroy(lk_local_track_t* track) {
 	}
 	delete track;
 	return LK_STATUS_OK;
+}
+
+lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room, const char* participant_sid,
+                                                const char* track_sid, int subscribed) {
+	return Guard([&] {
+		if (room == nullptr || participant_sid == nullptr || track_sid == nullptr ||
+		    *participant_sid == '\0' || *track_sid == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room, participant SID, and track SID are required");
+		}
+		return room->room->SetRemoteTrackSubscribed(participant_sid, track_sid, subscribed != 0)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update track subscription");
+	});
 }
 
 lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,

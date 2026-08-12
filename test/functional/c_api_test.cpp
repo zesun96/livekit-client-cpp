@@ -56,6 +56,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	lk_room_t* room = nullptr;
 	ASSERT_EQ(lk_room_create(&room), LK_STATUS_OK) << lk_last_error();
 	ASSERT_NE(room, nullptr);
+	EXPECT_EQ(lk_room_state(room), LK_ROOM_STATE_DISCONNECTED);
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
 
@@ -63,6 +64,8 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	lk_room_callbacks_init(&callbacks);
 	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_callbacks(room, nullptr), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_set_remote_track_subscribed(room, "missing", "missing", 1),
+	          LK_STATUS_OPERATION_FAILED);
 
 	lk_audio_source_options_t audio_options;
 	lk_audio_source_options_init(&audio_options);

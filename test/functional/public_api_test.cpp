@@ -20,12 +20,16 @@ TEST(ClientLifecycleTest, InitAndDestroyAreReferenceCounted) {
 TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	auto room = CreateRoomUnique();
 	ASSERT_NE(room, nullptr);
+	EXPECT_EQ(room->State(), RoomInterface::RoomState::Disconnected);
 	EXPECT_FALSE(room->IsConnected());
 	EXPECT_NE(room->GetLocalParticipant(), nullptr);
 	EXPECT_TRUE(room->Sid().empty());
 	EXPECT_TRUE(room->Name().empty());
 	EXPECT_TRUE(room->Metadata().empty());
 	EXPECT_FALSE(room->IsRecording());
+	EXPECT_EQ(room->GetRemoteParticipantByIdentity("missing"), nullptr);
+	EXPECT_FALSE(room->SetLocalTrackMuted("missing", true));
+	EXPECT_FALSE(room->SetRemoteTrackSubscribed("missing", "missing", true));
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }

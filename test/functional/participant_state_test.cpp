@@ -1,4 +1,5 @@
 #include "../../src/core/participant/remote_participant.h"
+#include "../../src/core/room.h"
 
 #include "livekit_models.pb.h"
 
@@ -99,6 +100,21 @@ TEST(ParticipantStateTest, IgnoresOutOfOrderParticipantSnapshots) {
 
 	EXPECT_EQ(participant.Metadata(), "new");
 	EXPECT_NE(participant.GetTrackPublication(TrackSource::Camera), nullptr);
+}
+
+TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
+	Room room;
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_remote");
+	info.set_identity("remote-identity");
+	info.set_name("Remote User");
+	room.ParticipantUpdateEvent({info});
+
+	auto* participant = room.GetRemoteParticipantByIdentity("remote-identity");
+	ASSERT_NE(participant, nullptr);
+	EXPECT_EQ(participant->Sid(), "PA_remote");
+	EXPECT_EQ(room.GetParticipantByIdentity("remote-identity"), participant);
+	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
 }
 
 } // namespace

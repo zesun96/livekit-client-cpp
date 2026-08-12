@@ -46,6 +46,14 @@ typedef enum lk_status {
 	LK_STATUS_EXCEPTION = 4
 } lk_status_t;
 
+typedef enum lk_room_state {
+	LK_ROOM_STATE_CONNECTING = 0,
+	LK_ROOM_STATE_CONNECTED = 1,
+	LK_ROOM_STATE_DISCONNECTING = 2,
+	LK_ROOM_STATE_DISCONNECTED = 3,
+	LK_ROOM_STATE_FAILED = 4
+} lk_room_state_t;
+
 typedef enum lk_track_kind {
 	LK_TRACK_KIND_UNKNOWN = 0,
 	LK_TRACK_KIND_AUDIO = 1,
@@ -235,6 +243,7 @@ LKC_API void lk_room_destroy(lk_room_t* room);
 LKC_API lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbacks_t* callbacks);
 LKC_API lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token);
 LKC_API lk_status_t lk_room_disconnect(lk_room_t* room);
+LKC_API lk_room_state_t lk_room_state(const lk_room_t* room);
 LKC_API int lk_room_is_connected(const lk_room_t* room);
 LKC_API size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size);
@@ -271,7 +280,12 @@ LKC_API lk_status_t lk_room_create_video_track(lk_room_t* room, const char* labe
                                                lk_video_source_t* source, lk_local_track_t** track);
 LKC_API lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
                                            const lk_track_publish_options_t* options);
+LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
+
+LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,
+                                                        const char* participant_sid,
+                                                        const char* track_sid, int subscribed);
 
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);

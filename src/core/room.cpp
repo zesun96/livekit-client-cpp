@@ -136,6 +136,8 @@ void Room::RemoveEventListener() { event_listener_.store(nullptr); }
 
 bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
 
+RoomInterface::RoomState Room::State() const { return state_.load(); }
+
 std::string Room::Sid() {
 	std::lock_guard<std::mutex> guard(room_info_mutex_);
 	return room_info_.sid();
@@ -235,6 +237,87 @@ ParticipantInterface* Room::GetParticipantByName(std::string name) {
 		return this->local_participant_.get();
 	}
 	return GetRemoteParticipantByName(std::move(name));
+}
+
+bool Room::SetLocalTrackMutedInternal(std::string track_sid, bool muted) {
+	if (track_sid.empty()) {
+		return false;
+	}
+	auto publications = local_participant_->TrackPublicationsSnapshot();
+	auto found = publications.find(track_sid);
+	if (found == publications.end() || !rtc_engine_->SetTrackMuted(track_sid, muted)) {
+		return false;
+	}
+	if (auto* local_track = dynamic_cast<LocalTrack*>(found->second->Track())) {
+		if (local_track->media_track() != nullptr) {
+			local_track->media_track()->set_enabled(!muted);
+		}
+	}
+	if (auto* publication = dynamic_cast<TrackPublication*>(found->second.get())) {
+		publication->SetMuted(muted);
+	}
+	if (auto* listener = event_listener_.load()) {
+		if (muted) {
+			listener->OnTrackMuted(found->second.get(), local_participant_.get());
+		} else {
+			listener->OnTrackUnmuted(found->second.get(), local_participant_.get());
+		}
+	}
+	return true;
+}
+
+bool Room::SetRemoteTrackSubscribedInternal(std::string participant_sid, std::string track_sid,
+                                            bool subscribed) {
+	if (participant_sid.empty() || track_sid.empty()) {
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto participant = remote_participants_.find(participant_sid);
+		if (participant == remote_participants_.end() ||
+		    !participant->second->HasTrackSid(track_sid)) {
+			return false;
+		}
+	}
+	return rtc_engine_->SetTrackSubscribed(participant_sid, track_sid, subscribed);
+}
+
+RoomInterface::RoomState RoomInterface::State() const {
+	auto* room = dynamic_cast<const Room*>(this);
+	if (room != nullptr) {
+		return room->State();
+	}
+	return const_cast<RoomInterface*>(this)->IsConnected() ? RoomState::Connected
+	                                                       : RoomState::Disconnected;
+}
+
+RemoteParticipantInterface* RoomInterface::GetRemoteParticipantByIdentity(std::string identity) {
+	for (auto* participant : GetRemoteParticipants()) {
+		if (participant != nullptr && participant->Identity() == identity) {
+			return participant;
+		}
+	}
+	return nullptr;
+}
+
+ParticipantInterface* RoomInterface::GetParticipantByIdentity(std::string identity) {
+	auto* local = GetLocalParticipant();
+	if (local != nullptr && local->Identity() == identity) {
+		return local;
+	}
+	return GetRemoteParticipantByIdentity(std::move(identity));
+}
+
+bool RoomInterface::SetLocalTrackMuted(std::string track_sid, bool muted) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr && room->SetLocalTrackMutedInternal(std::move(track_sid), muted);
+}
+
+bool RoomInterface::SetRemoteTrackSubscribed(std::string participant_sid, std::string track_sid,
+                                             bool subscribed) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr && room->SetRemoteTrackSubscribedInternal(
+	                              std::move(participant_sid), std::move(track_sid), subscribed);
 }
 
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {

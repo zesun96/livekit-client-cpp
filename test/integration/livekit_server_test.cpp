@@ -340,6 +340,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(sender->Connect(url, sender_token));
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(10)));
+	EXPECT_EQ(receiver->State(), RoomInterface::RoomState::Connected);
+	EXPECT_EQ(sender->State(), RoomInterface::RoomState::Connected);
 
 	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
 	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
@@ -358,9 +360,15 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_NE(sender_participant, nullptr);
 	auto* audio_publication = sender_participant->GetTrackPublication(TrackSource::Microphone);
 	ASSERT_NE(audio_publication, nullptr);
+	EXPECT_EQ(receiver->GetRemoteParticipantByIdentity(sender->GetLocalParticipant()->Identity()),
+	          sender_participant);
 	EXPECT_EQ(audio_publication->Name(), "integration-audio");
 	EXPECT_EQ(audio_publication->Kind(), TrackKind::Audio);
 	EXPECT_FALSE(audio_publication->IsMuted());
+	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), true));
+	ASSERT_TRUE(WaitUntil([&] { return audio_publication->IsMuted(); }));
+	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), false));
+	ASSERT_TRUE(WaitUntil([&] { return !audio_publication->IsMuted(); }));
 
 	std::vector<int16_t> audio_samples(480, 1500);
 	const auto audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -407,6 +415,10 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    << PublicationSummary(sender_participant);
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
+	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
+	                                               video_publication->Sid(), false));
+	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
+	                                               video_publication->Sid(), true));
 	EXPECT_EQ(video_publication->Name(), "integration-video");
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());

@@ -113,7 +113,7 @@ public:
 
 	void SendIceCandidate(std::string& candidate, livekit::SignalTarget target);
 
-	void SendMuteTrack(std::string& track_sid, bool muted);
+	void SendMuteTrack(const std::string& track_sid, bool muted);
 
 	void SendAddTrack(const livekit::AddTrackRequest& request);
 
