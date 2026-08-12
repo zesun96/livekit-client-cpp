@@ -78,6 +78,9 @@ public:
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);
+	bool SetTrackMuted(const std::string& track_sid, bool muted);
+	bool SetTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
+	                        bool subscribed);
 	bool UpdateLocalMetadata(const std::string& metadata, const std::string& name,
 	                         const std::map<std::string, std::string>& attributes);
 

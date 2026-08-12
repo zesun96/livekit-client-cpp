@@ -182,7 +182,7 @@ void SignalClient::SendIceCandidate(std::string& candidate, livekit::SignalTarge
 	return;
 }
 
-void SignalClient::SendMuteTrack(std::string& track_sid, bool muted) {
+void SignalClient::SendMuteTrack(const std::string& track_sid, bool muted) {
 	livekit::SignalRequest request;
 	auto* mute_msg = request.mutable_mute();
 	mute_msg->set_sid(track_sid);

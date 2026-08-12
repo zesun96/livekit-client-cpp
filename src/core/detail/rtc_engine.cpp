@@ -218,6 +218,37 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 	    webrtc::DataBuffer(webrtc::CopyOnWriteBuffer(serialized.data(), serialized.size()), true));
 }
 
+bool RtcEngine::SetTrackMuted(const std::string& track_sid, bool muted) {
+	if (track_sid.empty()) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (!signal_client_) {
+		return false;
+	}
+	signal_client_->SendMuteTrack(track_sid, muted);
+	return true;
+}
+
+bool RtcEngine::SetTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
+                                   bool subscribed) {
+	if (participant_sid.empty() || track_sid.empty()) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(session_lock_);
+	if (!signal_client_) {
+		return false;
+	}
+	livekit::UpdateSubscription update;
+	update.set_subscribe(subscribed);
+	update.add_track_sids(track_sid);
+	auto* participant_tracks = update.add_participant_tracks();
+	participant_tracks->set_participant_sid(participant_sid);
+	participant_tracks->add_track_sids(track_sid);
+	signal_client_->SendUpdateSubscription(update);
+	return true;
+}
+
 bool RtcEngine::UpdateLocalMetadata(const std::string& metadata, const std::string& name,
                                     const std::map<std::string, std::string>& attributes) {
 	if (!signal_client_) {

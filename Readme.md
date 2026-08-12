@@ -17,6 +17,7 @@ Because webrtc requires C++20.
 - [x] WebSocket signaling and room lifecycle
 - [x] Room and participant state, track publications, active speakers, and quality events
 - [x] Participant metadata, display name, and attribute updates
+- [x] Connection state, identity lookup, local track mute, and remote subscription controls
 - [x] Stable C ABI with opaque handles and callbacks
 - [x] Audio publishing and receiving (signed 16-bit PCM)
 - [x] Video publishing and receiving (I420/VP8)

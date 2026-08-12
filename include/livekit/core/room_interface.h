@@ -50,6 +50,9 @@ public:
 	virtual void AddEventListener(RoomEventInterface* listener) = 0;
 	virtual void RemoveEventListener() = 0;
 
+	// Returns the full connection lifecycle state. Unlike IsConnected(), this distinguishes
+	// connecting, disconnecting, and failed rooms.
+	RoomState State() const;
 	virtual bool IsConnected() = 0;
 	virtual bool Disconnect() = 0;
 	virtual std::string Sid() { return {}; }
@@ -60,10 +63,20 @@ public:
 	virtual LocalParticipantInterface* GetLocalParticipant() = 0;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
+	// LiveKit identity is stable for a participant session and should normally be preferred over
+	// the mutable display name.
+	RemoteParticipantInterface* GetRemoteParticipantByIdentity(std::string identity);
 	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) = 0;
 	virtual std::vector<ParticipantInterface*> Participants() = 0;
 	virtual ParticipantInterface* GetParticipantBySid(std::string sid) = 0;
+	ParticipantInterface* GetParticipantByIdentity(std::string identity);
 	virtual ParticipantInterface* GetParticipantByName(std::string name) = 0;
+
+	// These controls return false when the room is disconnected or the participant/track SID does
+	// not belong to the room.
+	bool SetLocalTrackMuted(std::string track_sid, bool muted);
+	bool SetRemoteTrackSubscribed(std::string participant_sid, std::string track_sid,
+	                              bool subscribed);
 };
 
 RoomInterface* CreateRoom();

@@ -45,6 +45,7 @@ public:
 	                     RoomConnectOptions opts = default_room_connect_options()) override;
 	virtual void AddEventListener(RoomEventInterface* listener) override;
 	virtual void RemoveEventListener() override;
+	RoomState State() const;
 	virtual bool IsConnected() override;
 	virtual bool Disconnect() override;
 	std::string Sid() override;
@@ -58,6 +59,9 @@ public:
 	virtual std::vector<ParticipantInterface*> Participants() override;
 	virtual ParticipantInterface* GetParticipantBySid(std::string sid) override;
 	virtual ParticipantInterface* GetParticipantByName(std::string name) override;
+	bool SetLocalTrackMutedInternal(std::string track_sid, bool muted);
+	bool SetRemoteTrackSubscribedInternal(std::string participant_sid, std::string track_sid,
+	                                      bool subscribed);
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:
