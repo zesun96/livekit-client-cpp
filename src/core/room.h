@@ -24,6 +24,7 @@
 
 #include "participant/local_participant.h"
 #include "participant/remote_participant.h"
+#include "track/remote_track.h"
 
 #include <atomic>
 #include <map>
@@ -59,16 +60,34 @@ public:
 	virtual void ConnectedEvent(livekit::JoinResponse join_resp) override;
 	virtual void
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
+	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) override;
+	void DataPacketEvent(const livekit::DataPacket& packet) override;
 
 private:
 	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates);
+	std::shared_ptr<RemoteParticipant> FindRemoteParticipantForTrack(const std::string& track_sid);
+	void NotifyAudioFrame(const std::string& participant_sid, const std::string& track_sid,
+	                      const AudioFrame& frame);
+	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
+	                      const VideoFrame& frame);
+
+	struct IncomingFile {
+		FileReceivedEvent event;
+		uint64_t expected_length = 0;
+		uint64_t next_chunk = 0;
+	};
 
 	RoomOptions options_;
 	std::atomic<RoomState> state_{RoomState::Disconnected};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	mutable std::mutex participants_mutex_;
-	std::map<std::string, std::unique_ptr<RemoteParticipant>> remote_participants_;
+	std::map<std::string, std::shared_ptr<RemoteParticipant>> remote_participants_;
+	std::map<std::string, std::shared_ptr<RemoteTrack>> remote_tracks_;
+	std::map<std::string, webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
+	    pending_media_tracks_;
+	std::mutex incoming_files_mutex_;
+	std::map<std::string, IncomingFile> incoming_files_;
 	ServerInfo server_info_;
 
 	std::atomic<RoomEventInterface*> event_listener_{nullptr};

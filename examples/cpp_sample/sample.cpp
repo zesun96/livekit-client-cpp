@@ -1,22 +1,28 @@
-#include "livekit/core/livekit_client.h"
-#include <thread>
+#include "example_utils.h"
 
-static void start() {
-	std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-	                    "eyJleHAiOjE3NTAxNzE3OTMsImlzcyI6ImtleTEiLCJuYW1lIjoidXNlcjEiLCJuYmYiOjE3NT"
-	                    "AwODUzOTMsInN1YiI6InVzZXIxIiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJyb29tSm9pbiI6"
-	                    "dHJ1ZX19.cRQx6rxKooOt9dbqz1WgEfen0A4VDlsfMNTRDJE3mZM";
-	auto room_options = livekit::core::default_room_connect_options();
-	auto room = livekit::core::CreateRoomUnique();
-	room->Connect("http://localhost:7880/rtc", token, room_options);
-	while (true) {
-	}
-	return;
-}
+#include <iostream>
 
 int main(int argc, char* argv[]) {
-	livekit::core::Init();
-	start();
-	livekit::core::Destroy();
+	const auto arguments = livekit::examples::ReadConnectionArguments(argc, argv);
+	if (!livekit::examples::ValidateConnectionArguments(arguments, argv[0])) {
+		return 2;
+	}
+
+	livekit::examples::ClientRuntime runtime;
+	if (!runtime.initialized()) {
+		std::cerr << "Failed to initialize LiveKit" << std::endl;
+		return 1;
+	}
+	auto room = livekit::core::CreateRoomUnique();
+	if (!room->Connect(arguments.url, arguments.token) ||
+	    !livekit::examples::WaitUntil([&] { return room->IsConnected(); })) {
+		std::cerr << "Failed to connect to LiveKit" << std::endl;
+		return 1;
+	}
+
+	auto* participant = room->GetLocalParticipant();
+	std::cout << "Connected as " << participant->Identity() << " (" << participant->Sid() << ')'
+	          << std::endl;
+	room->Disconnect();
 	return 0;
 }

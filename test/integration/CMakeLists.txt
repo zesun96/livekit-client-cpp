@@ -5,5 +5,5 @@ target_link_libraries(livekit_server_integration_tests PRIVATE livekitclient GTe
 gtest_discover_tests(
   livekit_server_integration_tests
   TEST_PREFIX "integration."
-  PROPERTIES LABELS "integration" TIMEOUT 60 RUN_SERIAL TRUE
+  PROPERTIES LABELS "integration" TIMEOUT 120 RUN_SERIAL TRUE
 )

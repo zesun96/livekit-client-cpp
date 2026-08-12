@@ -88,5 +88,15 @@ void Participant::RemoveTrackPublication(std::string track_sid) {
 	track_publications_.erase(track_sid);
 }
 
+bool Participant::HasTrackSid(const std::string& track_sid) {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	for (const auto& track : info_.tracks()) {
+		if (track.sid() == track_sid) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace core
 } // namespace livekit

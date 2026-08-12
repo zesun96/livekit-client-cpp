@@ -20,13 +20,30 @@
 #ifndef _LKC_CORE_TRACK_VIDEO_TRACK_H_
 #define _LKC_CORE_TRACK_VIDEO_TRACK_H_
 
+#include "media_stream_track.h"
+
+#include "api/video/video_sink_interface.h"
+
+#include <memory>
+#include <mutex>
+#include <vector>
+
 namespace livekit {
 namespace core {
 
-class VideoTrack {
+class VideoTrack : public MediaStreamTrack {
 public:
-	VideoTrack() = default;
-	virtual ~VideoTrack() = default;
+	explicit VideoTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface> track);
+	~VideoTrack() override;
+
+	void AddSink(webrtc::VideoSinkInterface<webrtc::VideoFrame>* sink);
+	void RemoveSink(webrtc::VideoSinkInterface<webrtc::VideoFrame>* sink);
+
+private:
+	webrtc::VideoTrackInterface* track() const;
+
+	std::mutex sinks_mutex_;
+	std::vector<webrtc::VideoSinkInterface<webrtc::VideoFrame>*> sinks_;
 };
 
 } // namespace core

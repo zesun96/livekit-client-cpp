@@ -20,4 +20,21 @@
 #ifndef _LKC_CORE_TRACK_AUDIO_FRAME_INTERFACE_H_
 #define _LKC_CORE_TRACK_AUDIO_FRAME_INTERFACE_H_
 
-#endif // _LKC_CORE_TRACK_AUDIO_STREAM_INTERFACE_H_
+#include <cstdint>
+#include <vector>
+
+namespace livekit {
+namespace core {
+
+// Interleaved signed 16-bit PCM samples.
+struct AudioFrame {
+	std::vector<int16_t> data;
+	uint32_t sample_rate = 0;
+	uint32_t num_channels = 0;
+	uint32_t samples_per_channel = 0;
+};
+
+} // namespace core
+} // namespace livekit
+
+#endif // _LKC_CORE_TRACK_AUDIO_FRAME_INTERFACE_H_

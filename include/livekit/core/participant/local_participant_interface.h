@@ -20,12 +20,14 @@
 #ifndef _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
 #define _LKC_CORE_PARTICIPANT_LOCAL_PARTICIPANT_INTERFACE_H_
 
+#include "livekit/core/data_packet.h"
 #include "livekit/core/option/option.h"
 #include "livekit/core/participant/participant_interface.h"
 
 #include "../track/audio_source_interface.h"
 #include "../track/local_track_interface.h"
 #include "../track/track_interface.h"
+#include "../track/video_source_interface.h"
 
 #include <map>
 #include <memory>
@@ -51,7 +53,17 @@ public:
 		    CreateLocalAudioTreack(std::move(label), source));
 	}
 
+	virtual LocalTrackInterface* CreateLocalVideoTrack(std::string label,
+	                                                   VideoSourceInterface* source) = 0;
+	std::unique_ptr<LocalTrackInterface> CreateLocalVideoTrackUnique(std::string label,
+	                                                                 VideoSourceInterface* source) {
+		return std::unique_ptr<LocalTrackInterface>(
+		    CreateLocalVideoTrack(std::move(label), source));
+	}
+
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
+	virtual bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options = {}) = 0;
+	virtual bool SendFile(const std::string& path, FileSendOptions options = {}) = 0;
 };
 
 } // namespace core

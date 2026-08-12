@@ -43,8 +43,12 @@ public:
 
 	virtual LocalTrackInterface* CreateLocalAudioTreack(std::string label,
 	                                                    AudioSourceInterface* source) override;
+	LocalTrackInterface* CreateLocalVideoTrack(std::string label,
+	                                           VideoSourceInterface* source) override;
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
+	bool PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) override;
+	bool SendFile(const std::string& path, FileSendOptions options) override;
 
 private:
 	RtcEngine* engine_;

@@ -21,10 +21,16 @@
 #include "../track/audio_source.h"
 #include "../track/audio_track.h"
 #include "../track/local_audio_track.h"
+#include "../track/local_video_track.h"
+#include "../track/video_source.h"
+#include "../track/video_track.h"
 
 #include "livekit_models.pb.h"
 #include "rtc_base/crypto_random.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
 namespace livekit {
@@ -72,6 +78,33 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 	return nullptr;
 }
 
+LocalTrackInterface* LocalParticipant::CreateLocalVideoTrack(std::string label,
+                                                             VideoSourceInterface* source) {
+	if (engine_ == nullptr || source == nullptr) {
+		return nullptr;
+	}
+	auto* video_source = dynamic_cast<VideoSource*>(source);
+	if (video_source == nullptr) {
+		return nullptr;
+	}
+	auto peer_transport_factory = engine_->GetSessionPeerTransportFactory();
+	if (!peer_transport_factory) {
+		return nullptr;
+	}
+	auto peer_factory = webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
+	    peer_transport_factory->GetPeerConnectFactory());
+	if (!peer_factory) {
+		return nullptr;
+	}
+	auto rtc_video_track =
+	    peer_factory->CreateVideoTrack(video_source->Get(), webrtc::CreateRandomUuid());
+	if (!rtc_video_track) {
+		return nullptr;
+	}
+	auto video_track = std::make_unique<VideoTrack>(std::move(rtc_video_track));
+	return new LocalVideoTrack(std::move(label), std::move(video_track), source);
+}
+
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
 	if (engine_ == nullptr || track == nullptr) {
 		return false;
@@ -93,6 +126,15 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	req.set_disable_red(!option.red);
 	req.set_encryption(to_proto(encryption_type_));
 	req.set_stream(option.stream);
+	if (kind == TrackKind::Video) {
+		auto* video_track = dynamic_cast<LocalVideoTrack*>(local_track);
+		if (video_track == nullptr || video_track->source() == nullptr ||
+		    video_track->source()->Width() == 0 || video_track->source()->Height() == 0) {
+			return false;
+		}
+		req.set_width(video_track->source()->Width());
+		req.set_height(video_track->source()->Height());
+	}
 
 	try {
 		std::cout << "PublishTrack,name" << req.name() << ",kind" << req.type() << std::endl;
@@ -133,6 +175,87 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		return false;
 	}
 	return true;
+}
+
+bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublishOptions options) {
+	if (engine_ == nullptr) {
+		return false;
+	}
+	livekit::DataPacket packet;
+	packet.set_kind(options.reliable ? livekit::DataPacket_Kind_RELIABLE
+	                                 : livekit::DataPacket_Kind_LOSSY);
+	for (const auto& identity : options.destination_identities) {
+		packet.add_destination_identities(identity);
+	}
+	auto* user = packet.mutable_user();
+	user->set_participant_identity(Identity());
+	user->set_payload(data.data(), data.size());
+	if (!options.topic.empty()) {
+		user->set_topic(std::move(options.topic));
+	}
+	return engine_->SendDataPacket(packet, options.reliable);
+}
+
+bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options) {
+	if (engine_ == nullptr || options.chunk_size == 0 || options.chunk_size > 15'000) {
+		return false;
+	}
+	std::ifstream input(path, std::ios::binary | std::ios::ate);
+	if (!input) {
+		return false;
+	}
+	const auto end = input.tellg();
+	if (end < 0) {
+		return false;
+	}
+	const auto file_size = static_cast<uint64_t>(end);
+	input.seekg(0, std::ios::beg);
+
+	const std::string stream_id = webrtc::CreateRandomUuid();
+	auto add_destinations = [&options](livekit::DataPacket& packet) {
+		for (const auto& identity : options.destination_identities) {
+			packet.add_destination_identities(identity);
+		}
+	};
+
+	livekit::DataPacket header_packet;
+	add_destinations(header_packet);
+	auto* header = header_packet.mutable_stream_header();
+	header->set_stream_id(stream_id);
+	header->set_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
+	                          std::chrono::system_clock::now().time_since_epoch())
+	                          .count());
+	header->set_topic(options.topic);
+	header->set_mime_type(options.mime_type);
+	header->set_total_length(file_size);
+	header->mutable_byte_header()->set_name(std::filesystem::path(path).filename().string());
+	if (!engine_->SendDataPacket(header_packet, true)) {
+		return false;
+	}
+
+	std::vector<char> buffer(options.chunk_size);
+	uint64_t chunk_index = 0;
+	while (input) {
+		input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+		const auto count = input.gcount();
+		if (count <= 0) {
+			break;
+		}
+		livekit::DataPacket chunk_packet;
+		add_destinations(chunk_packet);
+		auto* chunk = chunk_packet.mutable_stream_chunk();
+		chunk->set_stream_id(stream_id);
+		chunk->set_chunk_index(chunk_index++);
+		chunk->set_content(buffer.data(), static_cast<std::size_t>(count));
+		if (!engine_->SendDataPacket(chunk_packet, true)) {
+			return false;
+		}
+	}
+
+	livekit::DataPacket trailer_packet;
+	add_destinations(trailer_packet);
+	trailer_packet.mutable_stream_trailer()->set_stream_id(stream_id);
+	return engine_->SendDataPacket(trailer_packet, true);
 }
 
 } // namespace core

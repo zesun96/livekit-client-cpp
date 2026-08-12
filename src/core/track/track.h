@@ -30,8 +30,7 @@
 
 namespace livekit {
 namespace core {
-class Track : public TrackInterface {
-public:
+class Track : public virtual TrackInterface {
 public:
 	Track(std::string sid, std::string name, TrackKind kind);
 	virtual ~Track() = default;

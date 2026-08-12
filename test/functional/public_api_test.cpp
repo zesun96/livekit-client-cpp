@@ -1,6 +1,10 @@
 #include "livekit/core/livekit_client.h"
+#include "livekit/core/track/audio_source_interface.h"
+#include "livekit/core/track/video_source_interface.h"
 
 #include <gtest/gtest.h>
+
+#include <vector>
 
 namespace livekit::core {
 namespace {
@@ -21,6 +25,39 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }
+
+TEST(MediaSourceTest, ValidatesI420VideoFrames) {
+	ASSERT_TRUE(Init());
+	auto source = CreateVideoSourceUnique();
+	ASSERT_NE(source, nullptr);
+
+	VideoFrame valid;
+	valid.width = 4;
+	valid.height = 2;
+	valid.data.resize(12, 128);
+	EXPECT_TRUE(source->CaptureFrame(valid));
+
+	auto invalid_size = valid;
+	invalid_size.data.pop_back();
+	EXPECT_FALSE(source->CaptureFrame(invalid_size));
+	auto invalid_dimensions = valid;
+	invalid_dimensions.width = 3;
+	EXPECT_FALSE(source->CaptureFrame(invalid_dimensions));
+	source.reset();
+	EXPECT_TRUE(Destroy());
+}
+
+TEST(MediaSourceTest, AcceptsConsecutiveAudioFrames) {
+	ASSERT_TRUE(Init());
+	auto source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	ASSERT_NE(source, nullptr);
+	std::vector<int16_t> samples(480, 100);
+	EXPECT_FALSE(source->CaptureFrame(nullptr, 48000, 1, 480));
+	EXPECT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
+	EXPECT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
+	source.reset();
+	EXPECT_TRUE(Destroy());
+}
 
 } // namespace
 } // namespace livekit::core

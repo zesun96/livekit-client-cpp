@@ -20,10 +20,12 @@
 #ifndef _LKC_CORE_TRACK_REMOTE_TRACK_INTERFACE_H_
 #define _LKC_CORE_TRACK_REMOTE_TRACK_INTERFACE_H_
 
+#include "track_interface.h"
+
 namespace livekit {
 namespace core {
 
-class RemoteTrackInterface {
+class RemoteTrackInterface : public virtual TrackInterface {
 public:
 	virtual ~RemoteTrackInterface() = default;
 };

@@ -22,13 +22,21 @@
 
 #include "local_track.h"
 
+#include "video_source.h"
+#include "video_track.h"
+
 namespace livekit {
 namespace core {
 
 class LocalVideoTrack : public LocalTrack {
 public:
-	LocalVideoTrack() = default;
-	virtual ~LocalVideoTrack() = default;
+	LocalVideoTrack(std::string name, std::unique_ptr<VideoTrack> video_track,
+	                VideoSourceInterface* source);
+	~LocalVideoTrack() override = default;
+	VideoSourceInterface* source() const { return source_; }
+
+private:
+	VideoSourceInterface* source_;
 };
 
 } // namespace core

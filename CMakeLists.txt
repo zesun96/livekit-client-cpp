@@ -79,9 +79,10 @@ message(STATUS "nlohmann_json source dir: ${nlohmann_json_SOURCE_DIR}")
 
 set(LK_PROTO_PATH "${livekit_protocol_SOURCE_DIR}/protobufs")
 set(LK_PROTO_FILES
-    ${LK_PROTO_PATH}/livekit_models.proto
-    ${LK_PROTO_PATH}/livekit_metrics.proto
-    ${LK_PROTO_PATH}/livekit_rtc.proto
+  ${LK_PROTO_PATH}/livekit_models.proto
+  ${LK_PROTO_PATH}/livekit_metrics.proto
+  ${LK_PROTO_PATH}/livekit_rtc.proto
+  ${LK_PROTO_PATH}/logger/options.proto
 )
 set(PROTO_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${PROTO_BINARY_DIR})
@@ -104,7 +105,7 @@ set(
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
-   src/core/track/media_stream_track.cpp
+  src/core/track/media_stream_track.cpp
   src/core/track/remote_audio_track.cpp
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
@@ -113,6 +114,7 @@ set(
   src/core/track/track.cpp
   src/core/track/track_publication.cpp
   src/core/track/video_track.cpp
+  src/core/track/video_source.cpp
 
   src/core/option/defalut_option.cpp
 
