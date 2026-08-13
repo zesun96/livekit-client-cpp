@@ -42,6 +42,8 @@ public:
 	virtual bool IsMuted() { return false; }
 	virtual bool IsSimulcasted() { return false; }
 	virtual TrackInterface* Track() { return nullptr; }
+	// For remote publications, reports the publisher's permission for this local participant.
+	virtual bool IsSubscriptionAllowed() { return true; }
 };
 
 } // namespace core

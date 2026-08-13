@@ -59,6 +59,11 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_rpc_perform_options_init(&rpc);
 	EXPECT_EQ(rpc.struct_size, sizeof(rpc));
 	EXPECT_EQ(rpc.response_timeout_ms, 15000u);
+
+	lk_participant_track_permission_t permission;
+	lk_participant_track_permission_init(&permission);
+	EXPECT_EQ(permission.struct_size, sizeof(permission));
+	EXPECT_EQ(permission.allow_all, 0);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -75,6 +80,8 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_register_rpc_method(nullptr, nullptr, nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_set_track_subscription_permissions(nullptr, 1, nullptr, 0),
+	          LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -105,6 +112,13 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_register_rpc_method(room, "echo", EchoRpc, nullptr), LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_INVALID_STATE);
+	lk_participant_track_permission_t permission;
+	lk_participant_track_permission_init(&permission);
+	EXPECT_EQ(lk_room_set_track_subscription_permissions(room, 0, &permission, 1),
+	          LK_STATUS_INVALID_ARGUMENT);
+	permission.participant_identity = "viewer";
+	EXPECT_EQ(lk_room_set_track_subscription_permissions(room, 0, &permission, 1), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_set_track_subscription_permissions(room, 1, nullptr, 0), LK_STATUS_OK);
 
 	lk_audio_source_options_t audio_options;
 	lk_audio_source_options_init(&audio_options);

@@ -23,6 +23,15 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	auto room = livekit::core::CreateRoomUnique();
+	if (argc >= 4) {
+		livekit::core::ParticipantTrackPermission permission;
+		permission.participant_identity = argv[3];
+		permission.allow_all = true;
+		if (!room->GetLocalParticipant()->SetTrackSubscriptionPermissions(false, {permission})) {
+			std::cerr << "Invalid subscriber permission" << std::endl;
+			return 2;
+		}
+	}
 	if (!room->Connect(arguments.url, arguments.token) ||
 	    !livekit::examples::WaitUntil([&] { return room->IsConnected(); })) {
 		std::cerr << "Failed to connect to LiveKit" << std::endl;
@@ -57,7 +66,11 @@ int main(int argc, char* argv[]) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 
-	std::cout << "Published a 440 Hz audio tone for 5 seconds" << std::endl;
+	std::cout << "Published a 440 Hz audio tone for 5 seconds";
+	if (argc >= 4) {
+		std::cout << " for subscriber " << argv[3] << " only";
+	}
+	std::cout << std::endl;
 	if (!room->GetLocalParticipant()->UnpublishTrack(track.get())) {
 		std::cerr << "Failed to unpublish audio track" << std::endl;
 		return 1;

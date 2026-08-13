@@ -237,7 +237,8 @@ struct OwnedTrackInfo {
 		        dimensions.width,
 		        dimensions.height,
 		        publication->IsMuted() ? 1 : 0,
-		        publication->IsSimulcasted() ? 1 : 0};
+		        publication->IsSimulcasted() ? 1 : 0,
+		        publication->IsSubscriptionAllowed() ? 1 : 0};
 	}
 
 	OwnedTrackInfo(core::RemoteTrackInterface* track,
@@ -264,7 +265,8 @@ struct OwnedTrackInfo {
 			        dimensions.width,
 			        dimensions.height,
 			        publication->IsMuted() ? 1 : 0,
-			        publication->IsSimulcasted() ? 1 : 0};
+			        publication->IsSimulcasted() ? 1 : 0,
+			        publication->IsSubscriptionAllowed() ? 1 : 0};
 			return;
 		}
 		if (track == nullptr) {
@@ -281,7 +283,8 @@ struct OwnedTrackInfo {
 		        dimensions.width,
 		        dimensions.height,
 		        0,
-		        0};
+		        0,
+		        1};
 	}
 
 	std::string sid;
@@ -433,6 +436,20 @@ public:
 			if (callbacks.on_track_subscribed != nullptr) {
 				callbacks.on_track_subscribed(callbacks.user_data, owner_, &owned_track.info,
 				                              &owned_participant.info);
+			}
+		});
+	}
+
+	void OnTrackSubscriptionPermissionChanged(core::TrackPublicationInterface* track,
+	                                          core::RemoteParticipantInterface* participant,
+	                                          bool allowed) override {
+		OwnedTrackInfo owned_track(track);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_track_subscription_permission_changed != nullptr) {
+				callbacks.on_track_subscription_permission_changed(
+				    callbacks.user_data, owner_, &owned_track.info, &owned_participant.info,
+				    allowed ? 1 : 0);
 			}
 		});
 	}
@@ -699,6 +716,13 @@ void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options) {
 		*options = {};
 		options->struct_size = sizeof(*options);
 		options->response_timeout_ms = 15000;
+	}
+}
+
+void lk_participant_track_permission_init(lk_participant_track_permission_t* permission) {
+	if (permission != nullptr) {
+		*permission = {};
+		permission->struct_size = sizeof(*permission);
 	}
 }
 
@@ -1219,6 +1243,61 @@ lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room, const char* par
 		return room->room->SetRemoteTrackSubscribed(participant_sid, track_sid, subscribed != 0)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update track subscription");
+	});
+}
+
+lk_status_t
+lk_room_set_track_subscription_permissions(lk_room_t* room, int all_participants_allowed,
+                                           const lk_participant_track_permission_t* permissions,
+                                           size_t permission_count) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || (permission_count != 0 && permissions == nullptr)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid room or permission array");
+		}
+		std::vector<core::ParticipantTrackPermission> converted;
+		converted.reserve(permission_count);
+		for (size_t index = 0; index < permission_count; ++index) {
+			const auto& permission = permissions[index];
+			if (permission.struct_size < sizeof(permission.struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid permission struct size");
+			}
+			core::ParticipantTrackPermission value;
+			if (LKC_HAS_FIELD(&permission, lk_participant_track_permission_t, participant_sid) &&
+			    permission.participant_sid != nullptr) {
+				value.participant_sid = permission.participant_sid;
+			}
+			if (LKC_HAS_FIELD(&permission, lk_participant_track_permission_t,
+			                  participant_identity) &&
+			    permission.participant_identity != nullptr) {
+				value.participant_identity = permission.participant_identity;
+			}
+			if (value.participant_sid.empty() && value.participant_identity.empty()) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "permission participant SID or identity is required");
+			}
+			if (LKC_HAS_FIELD(&permission, lk_participant_track_permission_t, allow_all)) {
+				value.allow_all = permission.allow_all != 0;
+			}
+			if (LKC_HAS_FIELD(&permission, lk_participant_track_permission_t,
+			                  allowed_track_sid_count)) {
+				if (permission.allowed_track_sid_count != 0 &&
+				    permission.allowed_track_sids == nullptr) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "allowed track SIDs are null");
+				}
+				value.allowed_track_sids = DestinationIdentities(
+				    permission.allowed_track_sids, permission.allowed_track_sid_count);
+				if (value.allowed_track_sids.size() != permission.allowed_track_sid_count) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "allowed track SID is null");
+				}
+			}
+			converted.push_back(std::move(value));
+		}
+		return participant->SetTrackSubscriptionPermissions(all_participants_allowed != 0,
+		                                                    converted)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED,
+		                     "failed to update track subscription permissions");
 	});
 }
 

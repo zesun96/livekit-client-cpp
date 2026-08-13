@@ -78,6 +78,14 @@ public:
 		}
 	}
 
+	void OnTrackSubscriptionPermissionChanged(TrackPublicationInterface* track,
+	                                          RemoteParticipantInterface*, bool allowed) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		permission_track_sid_ = track != nullptr ? track->Sid() : "";
+		permission_allowed_ = allowed;
+		++permission_change_count_;
+	}
+
 	void OnLocalTrackPublished(TrackPublicationInterface*, ParticipantInterface*) override {
 		local_tracks_published_.fetch_add(1);
 	}
@@ -162,6 +170,12 @@ public:
 		std::lock_guard<std::mutex> guard(lock_);
 		return byte_topic_ == topic && byte_data_ == data;
 	}
+	bool permission_changed(const std::string& track_sid, bool allowed,
+	                        uint64_t minimum_count = 1) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return permission_track_sid_ == track_sid && permission_allowed_ == allowed &&
+		       permission_change_count_ >= minimum_count;
+	}
 
 private:
 	std::atomic<bool> audio_subscribed_{false};
@@ -186,6 +200,9 @@ private:
 	std::string text_;
 	std::string byte_topic_;
 	std::vector<uint8_t> byte_data_;
+	std::string permission_track_sid_;
+	bool permission_allowed_ = true;
+	uint64_t permission_change_count_ = 0;
 };
 
 class ParticipantEvents final : public RoomEventInterface {
@@ -764,6 +781,82 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	    },
 	    std::chrono::seconds(10)));
 
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, EnforcesTrackSubscriptionPermissions) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the "
+		                "subscription permission integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	auto source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique("permission-audio",
+	                                                                        source.get());
+	ASSERT_NE(track, nullptr);
+	TrackPublishOptions options;
+	options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(track.get(), options));
+	auto* publication = sender->GetLocalParticipant()->GetTrackPublication(TrackSource::Microphone);
+	ASSERT_NE(publication, nullptr);
+	const auto track_sid = publication->Sid();
+	ASSERT_FALSE(track_sid.empty());
+
+	std::vector<int16_t> samples(480, 1200);
+	const auto initial_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < 3 && std::chrono::steady_clock::now() < initial_deadline) {
+		ASSERT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_GE(events.audio_frame_count(), 3u);
+
+	ParticipantTrackPermission receiver_permission;
+	receiver_permission.participant_identity = receiver->GetLocalParticipant()->Identity();
+	ASSERT_TRUE(sender->GetLocalParticipant()->SetTrackSubscriptionPermissions(
+	    false, {receiver_permission}));
+	ASSERT_TRUE(WaitUntil([&] { return events.permission_changed(track_sid, false); }));
+	auto* remote_sender =
+	    receiver->GetRemoteParticipantByIdentity(sender->GetLocalParticipant()->Identity());
+	ASSERT_NE(remote_sender, nullptr);
+	auto* remote_publication = remote_sender->GetTrackPublication(TrackSource::Microphone);
+	ASSERT_NE(remote_publication, nullptr);
+	EXPECT_FALSE(remote_publication->IsSubscriptionAllowed());
+
+	receiver_permission.allow_all = true;
+	ASSERT_TRUE(sender->GetLocalParticipant()->SetTrackSubscriptionPermissions(
+	    false, {receiver_permission}));
+	ASSERT_TRUE(WaitUntil([&] { return events.permission_changed(track_sid, true, 2); }));
+	EXPECT_TRUE(remote_publication->IsSubscriptionAllowed());
+	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(remote_sender->Sid(), track_sid, true));
+	const auto frames_before_grant = events.audio_frame_count();
+	const auto grant_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < frames_before_grant + 3 &&
+	       std::chrono::steady_clock::now() < grant_deadline) {
+		ASSERT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	EXPECT_GE(events.audio_frame_count(), frames_before_grant + 3);
+
+	ASSERT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(track.get()));
+	track.reset();
+	source.reset();
 	receiver->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());

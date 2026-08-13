@@ -70,6 +70,11 @@ TrackInterface* TrackPublication::Track() {
 	return track_;
 }
 
+bool TrackPublication::IsSubscriptionAllowed() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return subscription_allowed_;
+}
+
 void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
 	std::lock_guard<std::mutex> guard(mutex_);
 	info_ = info;
@@ -100,6 +105,15 @@ void TrackPublication::SetMuted(bool muted) {
 	if (track_ != nullptr) {
 		track_->SetMuted(muted);
 	}
+}
+
+bool TrackPublication::SetSubscriptionAllowed(bool allowed) {
+	std::lock_guard<std::mutex> guard(mutex_);
+	if (subscription_allowed_ == allowed) {
+		return false;
+	}
+	subscription_allowed_ = allowed;
+	return true;
 }
 
 } // namespace core

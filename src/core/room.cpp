@@ -349,6 +349,7 @@ bool RoomInterface::SetRemoteTrackSubscribed(std::string participant_sid, std::s
 
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 	state_ = RoomState::Connected;
+	local_participant_->ResendTrackSubscriptionPermissions();
 	if (auto* listener = event_listener_.load()) {
 		listener->OnConnected();
 	}
@@ -386,6 +387,7 @@ void Room::SignalResumedEvent() {
 }
 
 void Room::ResumedEvent() {
+	local_participant_->ResendTrackSubscriptionPermissions();
 	if (state_.load() != RoomState::Reconnecting) {
 		return;
 	}
@@ -400,6 +402,7 @@ void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
 		return;
 	}
 	ApplyJoinResponse(join_resp, true);
+	local_participant_->ResendTrackSubscriptionPermissions();
 	local_participant_->RepublishAllTracksAfterReconnect();
 	full_reconnect_prepared_ = false;
 	state_ = RoomState::Connected;
@@ -630,6 +633,35 @@ void Room::ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityIn
 	if (auto* listener = event_listener_.load()) {
 		for (const auto& event : events) {
 			listener->OnConnectionQualityChanged(event.quality, event.participant);
+		}
+	}
+}
+
+void Room::SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	bool changed = false;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto found = remote_participants_.find(update.participant_sid());
+		if (found == remote_participants_.end()) {
+			return;
+		}
+		participant = found->second;
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto track = publications.find(update.track_sid());
+		if (track == publications.end()) {
+			return;
+		}
+		publication = track->second;
+		if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+			changed = concrete->SetSubscriptionAllowed(update.allowed());
+		}
+	}
+	if (changed) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnTrackSubscriptionPermissionChanged(publication.get(), participant.get(),
+			                                               update.allowed());
 		}
 	}
 }

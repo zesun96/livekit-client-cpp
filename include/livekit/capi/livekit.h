@@ -133,6 +133,7 @@ typedef struct lk_track_publication_info {
 	uint32_t height;
 	int is_muted;
 	int is_simulcasted;
+	int subscription_allowed;
 } lk_track_publication_info_t;
 
 typedef struct lk_audio_frame {
@@ -229,6 +230,10 @@ typedef void (*lk_connection_quality_callback)(void* user_data, lk_room_t* room,
 typedef void (*lk_active_speakers_callback)(void* user_data, lk_room_t* room,
                                             const lk_participant_info_t* participants,
                                             size_t participant_count);
+typedef void (*lk_track_subscription_permission_callback)(void* user_data, lk_room_t* room,
+                                                          const lk_track_publication_info_t* track,
+                                                          const lk_participant_info_t* participant,
+                                                          int allowed);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -256,6 +261,7 @@ typedef struct lk_room_callbacks {
 	lk_room_event_callback on_reconnecting;
 	lk_room_event_callback on_reconnected;
 	lk_room_disconnected_callback on_disconnected_with_reason;
+	lk_track_subscription_permission_callback on_track_subscription_permission_changed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -334,6 +340,15 @@ typedef struct lk_rpc_perform_options {
 	uint32_t response_timeout_ms;
 } lk_rpc_perform_options_t;
 
+typedef struct lk_participant_track_permission {
+	size_t struct_size;
+	const char* participant_sid;
+	const char* participant_identity;
+	int allow_all;
+	const char* const* allowed_track_sids;
+	size_t allowed_track_sid_count;
+} lk_participant_track_permission_t;
+
 LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
@@ -348,6 +363,7 @@ LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
 LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
 LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
+LKC_API void lk_participant_track_permission_init(lk_participant_track_permission_t* permission);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
@@ -400,6 +416,9 @@ LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
 LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,
                                                         const char* participant_sid,
                                                         const char* track_sid, int subscribed);
+LKC_API lk_status_t lk_room_set_track_subscription_permissions(
+    lk_room_t* room, int all_participants_allowed,
+    const lk_participant_track_permission_t* permissions, size_t permission_count);
 
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);

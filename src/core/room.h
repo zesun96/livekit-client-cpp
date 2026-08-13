@@ -82,6 +82,8 @@ public:
 	void RoomUpdateEvent(const livekit::Room& update) override;
 	void
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
+	void
+	SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;

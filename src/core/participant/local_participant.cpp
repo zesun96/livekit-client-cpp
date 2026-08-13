@@ -406,6 +406,43 @@ RpcResult LocalParticipant::PerformRpc(const PerformRpcParams& params) {
 	return engine_->PerformRpc(params);
 }
 
+bool LocalParticipant::SetTrackSubscriptionPermissions(
+    bool all_participants_allowed,
+    const std::vector<ParticipantTrackPermission>& participant_permissions) {
+	for (const auto& permission : participant_permissions) {
+		if (permission.participant_sid.empty() && permission.participant_identity.empty()) {
+			return false;
+		}
+		if (std::any_of(permission.allowed_track_sids.begin(), permission.allowed_track_sids.end(),
+		                [](const std::string& sid) { return sid.empty(); })) {
+			return false;
+		}
+	}
+	{
+		std::lock_guard<std::mutex> guard(subscription_permissions_mutex_);
+		all_participants_allowed_to_subscribe_ = all_participants_allowed;
+		participant_track_permissions_ = participant_permissions;
+	}
+	// Matching the official clients, permissions may be configured before Connect(). They are
+	// retained and sent by ResendTrackSubscriptionPermissions() once signaling is available.
+	if (engine_ != nullptr) {
+		engine_->UpdateSubscriptionPermissions(all_participants_allowed, participant_permissions);
+	}
+	return true;
+}
+
+bool LocalParticipant::ResendTrackSubscriptionPermissions() {
+	bool all_participants_allowed = true;
+	std::vector<ParticipantTrackPermission> permissions;
+	{
+		std::lock_guard<std::mutex> guard(subscription_permissions_mutex_);
+		all_participants_allowed = all_participants_allowed_to_subscribe_;
+		permissions = participant_track_permissions_;
+	}
+	return engine_ != nullptr &&
+	       engine_->UpdateSubscriptionPermissions(all_participants_allowed, permissions);
+}
+
 bool LocalParticipant::SendText(const std::string& text, TextSendOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize) {
