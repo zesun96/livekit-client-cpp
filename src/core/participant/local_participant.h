@@ -83,6 +83,7 @@ public:
 	bool ResendTrackSubscriptionPermissions();
 	void SetEventListener(RoomEventInterface* listener);
 	void LocalTrackSubscribed(const std::string& track_sid);
+	void SubscribedQualityUpdate(core::SubscribedQualityUpdate update);
 
 private:
 	RtcEngine* engine_;

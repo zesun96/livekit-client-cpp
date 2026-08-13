@@ -1008,7 +1008,12 @@ void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) {
 	}
 }
 void RtcEngine::OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) {
-	return;
+	if (update.track_sid().empty()) {
+		return;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->SubscribedQualityUpdateEvent(update);
+	}
 }
 void RtcEngine::OnTokenRefresh(const std::string& token) {
 	if (token.empty()) {

@@ -83,7 +83,8 @@ Receives room events, subscribed and unsubscribed tracks, SFU pause/resume state
 frames, data messages, structured chat messages, SIP DTMF events, and completed files. It also
 reports transcription segments, metrics batches, recording and connection state changes,
 participant permission changes, `OnReconnecting`, and `OnReconnected`
-It also reports when a published local track gains its first remote subscriber.
+It also reports when a published local track gains its first remote subscriber and prints
+server-provided subscribed codec/quality feedback used by dynacast publishers.
 while the SDK first attempts a
 protocol-level signal resume and falls back to a full reconnect when required, and prints the
 protocol-level reason when the room disconnects. Applications can query the same value later with

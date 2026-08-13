@@ -72,6 +72,20 @@ from_connection_quality(livekit::ConnectionQuality quality) {
 	}
 }
 
+static livekit::core::VideoQuality from_video_quality(livekit::VideoQuality quality) {
+	switch (quality) {
+	case livekit::VideoQuality::LOW:
+		return livekit::core::VideoQuality::Low;
+	case livekit::VideoQuality::MEDIUM:
+		return livekit::core::VideoQuality::Medium;
+	case livekit::VideoQuality::HIGH:
+		return livekit::core::VideoQuality::High;
+	case livekit::VideoQuality::OFF:
+	default:
+		return livekit::core::VideoQuality::Off;
+	}
+}
+
 static livekit::core::DisconnectReason from_disconnect_reason(livekit::DisconnectReason reason) {
 	const auto value = static_cast<int>(reason);
 	if (value < static_cast<int>(livekit::DisconnectReason::UNKNOWN_REASON) ||
@@ -1071,6 +1085,26 @@ void Room::DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) {
 
 void Room::LocalTrackSubscribedEvent(const std::string& track_sid) {
 	local_participant_->LocalTrackSubscribed(track_sid);
+}
+
+void Room::SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate& update) {
+	SubscribedQualityUpdate converted;
+	converted.track_sid = update.track_sid();
+	converted.qualities.reserve(update.subscribed_qualities_size());
+	for (const auto& quality : update.subscribed_qualities()) {
+		converted.qualities.push_back({from_video_quality(quality.quality()), quality.enabled()});
+	}
+	converted.codecs.reserve(update.subscribed_codecs_size());
+	for (const auto& codec : update.subscribed_codecs()) {
+		auto& converted_codec = converted.codecs.emplace_back();
+		converted_codec.codec = codec.codec();
+		converted_codec.qualities.reserve(codec.qualities_size());
+		for (const auto& quality : codec.qualities()) {
+			converted_codec.qualities.push_back(
+			    {from_video_quality(quality.quality()), quality.enabled()});
+		}
+	}
+	local_participant_->SubscribedQualityUpdate(std::move(converted));
 }
 
 void Room::DataPacketEvent(const livekit::DataPacket& packet) {

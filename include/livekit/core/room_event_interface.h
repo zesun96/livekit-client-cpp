@@ -24,6 +24,7 @@
 #include "option/media_option.h"
 #include "participant/participant_interface.h"
 #include "track/audio_frame.h"
+#include "track/subscribed_quality.h"
 #include "track/subscription_error.h"
 #include "track/video_frame.h"
 
@@ -126,6 +127,8 @@ public:
 	virtual void OnParticipantPermissionsChanged(const ParticipantPermissions&,
 	                                             ParticipantInterface*) {}
 	virtual void OnLocalTrackSubscribed(TrackPublicationInterface*, ParticipantInterface*) {}
+	virtual void OnSubscribedQualityUpdate(TrackPublicationInterface*, ParticipantInterface*,
+	                                       const SubscribedQualityUpdate&) {}
 };
 
 } // namespace core

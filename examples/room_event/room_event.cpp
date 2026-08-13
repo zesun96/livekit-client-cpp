@@ -43,6 +43,14 @@ public:
 		          << participant->Identity() << std::endl;
 	}
 
+	void OnSubscribedQualityUpdate(livekit::core::TrackPublicationInterface* publication,
+	                               livekit::core::ParticipantInterface*,
+	                               const livekit::core::SubscribedQualityUpdate& update) override {
+		std::cout << "Subscribed quality update for local track " << publication->Sid()
+		          << ": codecs=" << update.codecs.size()
+		          << ", legacy-qualities=" << update.qualities.size() << std::endl;
+	}
+
 	void
 	OnParticipantPermissionsChanged(const livekit::core::ParticipantPermissions& previous,
 	                                livekit::core::ParticipantInterface* participant) override {

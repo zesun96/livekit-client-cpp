@@ -20,12 +20,19 @@
 #ifndef _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_INTERFACE_H_
 #define _LKC_CORE_TRACK_LOCAL_TRACK_PUBLICATION_INTERFACE_H_
 
+#include "subscribed_quality.h"
+
+#include <optional>
+
 namespace livekit {
 namespace core {
 
 class LocalTrackPublicationInterface {
 public:
 	virtual ~LocalTrackPublicationInterface() = default;
+	virtual std::optional<SubscribedQualityUpdate> LastSubscribedQualityUpdate() const {
+		return std::nullopt;
+	}
 };
 
 } // namespace core

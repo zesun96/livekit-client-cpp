@@ -107,7 +107,8 @@ typedef enum lk_track_subscription_status {
 typedef enum lk_video_quality {
 	LK_VIDEO_QUALITY_LOW = 0,
 	LK_VIDEO_QUALITY_MEDIUM = 1,
-	LK_VIDEO_QUALITY_HIGH = 2
+	LK_VIDEO_QUALITY_HIGH = 2,
+	LK_VIDEO_QUALITY_OFF = 3
 } lk_video_quality_t;
 
 typedef enum lk_connection_quality {
@@ -182,6 +183,25 @@ typedef struct lk_track_publication_info {
 	int is_simulcasted;
 	int subscription_allowed;
 } lk_track_publication_info_t;
+
+typedef struct lk_subscribed_quality {
+	lk_video_quality_t quality;
+	int enabled;
+} lk_subscribed_quality_t;
+
+typedef struct lk_subscribed_codec {
+	const char* codec;
+	const lk_subscribed_quality_t* qualities;
+	size_t quality_count;
+} lk_subscribed_codec_t;
+
+typedef struct lk_subscribed_quality_update {
+	const char* track_sid;
+	const lk_subscribed_quality_t* qualities;
+	size_t quality_count;
+	const lk_subscribed_codec_t* codecs;
+	size_t codec_count;
+} lk_subscribed_quality_update_t;
 
 typedef struct lk_audio_frame {
 	const int16_t* data;
@@ -437,6 +457,10 @@ typedef void (*lk_track_subscription_status_callback)(void* user_data, lk_room_t
                                                       const lk_track_publication_info_t* track,
                                                       const lk_participant_info_t* participant,
                                                       lk_track_subscription_status_t status);
+typedef void (*lk_subscribed_quality_update_callback)(void* user_data, lk_room_t* room,
+                                                      const lk_track_publication_info_t* track,
+                                                      const lk_participant_info_t* participant,
+                                                      const lk_subscribed_quality_update_t* update);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -478,6 +502,7 @@ typedef struct lk_room_callbacks {
 	lk_connection_state_callback on_connection_state_changed;
 	lk_participant_permissions_callback on_participant_permissions_changed;
 	lk_track_event_callback on_local_track_subscribed;
+	lk_subscribed_quality_update_callback on_subscribed_quality_update;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
