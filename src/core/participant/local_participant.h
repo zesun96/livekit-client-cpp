@@ -44,6 +44,7 @@ public:
 	virtual ~LocalParticipant() = default;
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info) override;
+	void UpdateFromInfoPreservingTracks(const livekit::ParticipantInfo& info);
 
 	virtual LocalTrackInterface* CreateLocalAudioTreack(std::string label,
 	                                                    AudioSourceInterface* source) override;
@@ -55,6 +56,10 @@ public:
 	std::size_t UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
 	                            bool stop_on_unpublish) override;
 	bool RepublishAllTracks() override;
+	// Recreates publications after the underlying PeerConnection has been replaced during a full
+	// reconnect. Unlike RepublishAllTracks(), this does not try to remove senders from the old PC.
+	void DetachTrackTransceiversForReconnect();
+	bool RepublishAllTracksAfterReconnect();
 	bool SetMetadata(const std::string& metadata) override;
 	bool SetName(const std::string& name) override;
 	bool SetAttributes(const std::map<std::string, std::string>& attributes) override;

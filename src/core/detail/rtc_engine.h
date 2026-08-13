@@ -26,6 +26,7 @@
 #include "signal_client.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -59,6 +60,9 @@ public:
 		virtual void RoomUpdateEvent(const livekit::Room& update) = 0;
 		virtual void
 		ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) = 0;
+		virtual void SignalDisconnectedEvent() = 0;
+		virtual void ReconnectingEvent() = 0;
+		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
 	};
 
 	RtcEngine();
@@ -85,6 +89,10 @@ public:
 	                        bool subscribed);
 	bool UpdateLocalMetadata(const std::string& metadata, const std::string& name,
 	                         const std::map<std::string, std::string>& attributes);
+	// Retained internally so connection recovery can authenticate with the newest server-issued
+	// token instead of the token used for the initial join.
+	std::string AccessTokenForReconnect() const;
+	bool SimulateSignalDisconnectForTesting();
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
@@ -168,6 +176,13 @@ public:
 	void OnBufferedAmountChange(uint64_t sent_data_size) override;
 
 private:
+	livekit::JoinResponse ConnectTransport(const std::string& url, const std::string& token,
+	                                       const EngineOptions& options);
+	void ResetTransport(bool send_leave);
+	std::shared_ptr<SignalClient> SignalClientSnapshot() const;
+	void StartRecovery();
+	void RunRecovery();
+	void StopRecovery();
 	void negotiate();
 	void createDataChannels();
 	void registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
@@ -177,8 +192,12 @@ private:
 private:
 	std::atomic<RtcEngineListener*> room_listener_{nullptr};
 	mutable std::mutex session_lock_;
-	std::unique_ptr<SignalClient> signal_client_;
+	mutable std::mutex signal_client_lock_;
+	std::shared_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
+	// Local media tracks are created by this factory. Keep it stable while replacing peer
+	// connections so those tracks can be republished safely after a full reconnect.
+	std::shared_ptr<PeerTransportFactory> peer_factory_;
 	bool is_subscriber_primary_;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
@@ -190,6 +209,20 @@ private:
 	std::map<std::string, std::promise<livekit::TrackInfo>> pending_track_resolvers_;
 	std::mutex initial_negotiation_mutex_;
 	std::thread initial_negotiation_thread_;
+	mutable std::mutex access_token_mutex_;
+	std::string access_token_;
+	mutable std::mutex connection_params_mutex_;
+	std::string connection_url_;
+	EngineOptions connection_options_;
+	std::atomic<bool> recovery_allowed_{false};
+	std::atomic<bool> recovery_stop_{false};
+	std::atomic<bool> recovery_in_progress_{false};
+	std::atomic<bool> recovering_connection_{false};
+	std::mutex recovery_thread_mutex_;
+	std::thread recovery_thread_;
+	std::mutex rtc_connected_mutex_;
+	std::condition_variable rtc_connected_cv_;
+	bool rtc_connected_ = false;
 };
 
 } // namespace core

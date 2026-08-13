@@ -23,6 +23,18 @@ static void on_connected(void* user_data, lk_room_t* room) {
 	puts("Connected event received");
 }
 
+static void on_reconnecting(void* user_data, lk_room_t* room) {
+	(void)user_data;
+	(void)room;
+	puts("Reconnecting event received");
+}
+
+static void on_reconnected(void* user_data, lk_room_t* room) {
+	(void)user_data;
+	(void)room;
+	puts("Reconnected event received");
+}
+
 static void on_participant_connected(void* user_data, lk_room_t* room,
                                      const lk_participant_info_t* participant) {
 	(void)user_data;
@@ -75,6 +87,8 @@ int main(int argc, char** argv) {
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);
 	callbacks.on_connected = on_connected;
+	callbacks.on_reconnecting = on_reconnecting;
+	callbacks.on_reconnected = on_reconnected;
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;
 	lk_room_set_callbacks(room, &callbacks);

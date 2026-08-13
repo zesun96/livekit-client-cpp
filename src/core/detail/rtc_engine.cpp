@@ -20,6 +20,7 @@
 #include "rtc_session.h"
 #include "signal_client.h"
 
+#include <algorithm>
 #include <future>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -27,6 +28,7 @@
 namespace {
 constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
+constexpr auto kRecoveryRtcTimeout = std::chrono::seconds(15);
 } // namespace
 
 namespace livekit {
@@ -43,21 +45,57 @@ RtcEngine::~RtcEngine() {
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
 	Disconnect();
+	{
+		std::lock_guard<std::mutex> guard(access_token_mutex_);
+		access_token_ = token;
+	}
+	{
+		std::lock_guard<std::mutex> guard(connection_params_mutex_);
+		connection_url_ = url;
+		connection_options_ = options;
+	}
+	recovery_stop_ = false;
+	recovering_connection_ = false;
+	{
+		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
+		rtc_connected_ = false;
+	}
 
-	signal_client_ = SignalClient::Create(url, token, options.signal_options);
-	signal_client_->AddObserver(this);
-
-	livekit::JoinResponse response = signal_client_->Connect();
+	livekit::JoinResponse response = ConnectTransport(url, token, options);
 	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
 	if (!response.has_room()) {
-		Disconnect();
+		ResetTransport(false);
 		return response;
+	}
+	recovery_allowed_ = true;
+	return response;
+}
+
+livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const std::string& token,
+                                                  const EngineOptions& options) {
+	auto created = SignalClient::Create(url, token, options.signal_options);
+	if (!created) {
+		return {};
+	}
+	auto signal_client = std::shared_ptr<SignalClient>(std::move(created));
+	signal_client->AddObserver(this);
+	{
+		std::lock_guard<std::mutex> guard(signal_client_lock_);
+		signal_client_ = signal_client;
+	}
+
+	livekit::JoinResponse response = signal_client->Connect();
+	if (!response.has_room() || recovery_stop_) {
+		return {};
 	}
 
 	std::lock_guard<std::mutex> guard(session_lock_);
 	join_resp_ = response;
 	is_subscriber_primary_ = response.subscriber_primary();
-	rtc_session_ = RtcSession::Create(response, options);
+	if (!peer_factory_) {
+		peer_factory_ = PeerTransportFactory::Create();
+	}
+	rtc_session_ = RtcSession::Create(response, options, peer_factory_);
 	if (!rtc_session_) {
 		join_resp_.Clear();
 		return livekit::JoinResponse();
@@ -71,12 +109,37 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 }
 
 void RtcEngine::Disconnect() {
+	recovery_allowed_ = false;
+	recovery_stop_ = true;
+	rtc_connected_cv_.notify_all();
+	ResetTransport(true);
+	StopRecovery();
+	ResetTransport(false);
+	{
+		std::lock_guard<std::mutex> guard(access_token_mutex_);
+		access_token_.clear();
+	}
+	{
+		std::lock_guard<std::mutex> guard(connection_params_mutex_);
+		connection_url_.clear();
+		connection_options_ = {};
+	}
+}
+
+void RtcEngine::ResetTransport(bool send_leave) {
 	// Signal callbacks run on the WebSocket service thread. Detach and stop that thread before
 	// releasing the RTC session it may call into.
-	if (signal_client_) {
-		signal_client_->RemoveObserver();
-		signal_client_->SendLeave();
-		signal_client_->Close();
+	std::shared_ptr<SignalClient> signal_client;
+	{
+		std::lock_guard<std::mutex> guard(signal_client_lock_);
+		signal_client.swap(signal_client_);
+	}
+	if (signal_client) {
+		signal_client->RemoveObserver();
+		if (send_leave) {
+			signal_client->SendLeave();
+		}
+		signal_client->Close();
 	}
 
 	{
@@ -102,9 +165,125 @@ void RtcEngine::Disconnect() {
 		join_resp_.Clear();
 	}
 
-	signal_client_.reset();
-	std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
-	pending_track_resolvers_.clear();
+	{
+		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
+		pending_track_resolvers_.clear();
+	}
+}
+
+std::shared_ptr<SignalClient> RtcEngine::SignalClientSnapshot() const {
+	std::lock_guard<std::mutex> guard(signal_client_lock_);
+	return signal_client_;
+}
+
+void RtcEngine::StopRecovery() {
+	recovery_stop_ = true;
+	rtc_connected_cv_.notify_all();
+	std::thread recovery_thread;
+	{
+		std::lock_guard<std::mutex> guard(recovery_thread_mutex_);
+		if (recovery_thread_.joinable() &&
+		    recovery_thread_.get_id() != std::this_thread::get_id()) {
+			recovery_thread = std::move(recovery_thread_);
+		}
+	}
+	if (recovery_thread.joinable()) {
+		recovery_thread.join();
+	}
+	recovery_in_progress_ = false;
+	recovering_connection_ = false;
+}
+
+void RtcEngine::StartRecovery() {
+	if (!recovery_allowed_ || recovery_stop_) {
+		return;
+	}
+	bool expected = false;
+	if (!recovery_in_progress_.compare_exchange_strong(expected, true)) {
+		return;
+	}
+	recovering_connection_ = true;
+	{
+		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
+		rtc_connected_ = false;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->ReconnectingEvent();
+	}
+
+	std::thread completed_thread;
+	{
+		std::lock_guard<std::mutex> guard(recovery_thread_mutex_);
+		if (recovery_thread_.joinable()) {
+			completed_thread = std::move(recovery_thread_);
+		}
+	}
+	if (completed_thread.joinable()) {
+		completed_thread.join();
+	}
+	std::lock_guard<std::mutex> guard(recovery_thread_mutex_);
+	recovery_thread_ = std::thread([this]() { RunRecovery(); });
+}
+
+void RtcEngine::RunRecovery() {
+	std::string url;
+	EngineOptions options;
+	{
+		std::lock_guard<std::mutex> guard(connection_params_mutex_);
+		url = connection_url_;
+		options = connection_options_;
+	}
+	const auto attempts = (std::max)(uint32_t{1}, options.join_retries);
+	livekit::JoinResponse recovered_response;
+	bool recovered = false;
+
+	for (uint32_t attempt = 0; attempt < attempts && !recovery_stop_; ++attempt) {
+		{
+			std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
+			rtc_connected_ = false;
+		}
+		ResetTransport(false);
+		std::string token;
+		{
+			std::lock_guard<std::mutex> guard(access_token_mutex_);
+			token = access_token_;
+		}
+		if (url.empty() || token.empty()) {
+			break;
+		}
+
+		options.signal_options.reconnect = false;
+		recovered_response = ConnectTransport(url, token, options);
+		if (recovered_response.has_room()) {
+			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
+			recovered = rtc_connected_cv_.wait_for(guard, kRecoveryRtcTimeout, [this]() {
+				return rtc_connected_ || recovery_stop_.load();
+			});
+			recovered = recovered && rtc_connected_ && !recovery_stop_;
+		}
+		if (recovered) {
+			break;
+		}
+		if (attempt + 1 < attempts && !recovery_stop_) {
+			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
+			rtc_connected_cv_.wait_for(guard, std::chrono::seconds(attempt + 1),
+			                           [this]() { return recovery_stop_.load(); });
+		}
+	}
+
+	if (recovered) {
+		if (auto* listener = room_listener_.load()) {
+			listener->ReconnectedEvent(std::move(recovered_response));
+		}
+	} else if (!recovery_stop_) {
+		ResetTransport(false);
+		recovery_allowed_ = false;
+		if (auto* listener = room_listener_.load()) {
+			listener->SignalDisconnectedEvent();
+		}
+	}
+	recovering_connection_ = false;
+	recovery_in_progress_ = false;
 }
 
 void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_.store(listener); }
@@ -129,7 +308,8 @@ std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackReq
 	if (req.cid().empty()) {
 		throw std::runtime_error("cid is empty");
 	}
-	if (!signal_client_) {
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
 		throw std::runtime_error("signal client is not connected");
 	}
 
@@ -144,7 +324,7 @@ std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackReq
 	}
 
 	try {
-		signal_client_->SendAddTrack(req);
+		signal_client->SendAddTrack(req);
 		auto status = future.wait_for(kAddTrackTimeout);
 		if (status == std::future_status::timeout) {
 			std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
@@ -227,11 +407,11 @@ bool RtcEngine::SetTrackMuted(const std::string& track_sid, bool muted) {
 	if (track_sid.empty()) {
 		return false;
 	}
-	std::lock_guard<std::mutex> guard(session_lock_);
-	if (!signal_client_) {
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
 		return false;
 	}
-	signal_client_->SendMuteTrack(track_sid, muted);
+	signal_client->SendMuteTrack(track_sid, muted);
 	return true;
 }
 
@@ -240,8 +420,8 @@ bool RtcEngine::SetTrackSubscribed(const std::string& participant_sid, const std
 	if (participant_sid.empty() || track_sid.empty()) {
 		return false;
 	}
-	std::lock_guard<std::mutex> guard(session_lock_);
-	if (!signal_client_) {
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
 		return false;
 	}
 	livekit::UpdateSubscription update;
@@ -250,20 +430,44 @@ bool RtcEngine::SetTrackSubscribed(const std::string& participant_sid, const std
 	auto* participant_tracks = update.add_participant_tracks();
 	participant_tracks->set_participant_sid(participant_sid);
 	participant_tracks->add_track_sids(track_sid);
-	signal_client_->SendUpdateSubscription(update);
+	signal_client->SendUpdateSubscription(update);
 	return true;
 }
 
 bool RtcEngine::UpdateLocalMetadata(const std::string& metadata, const std::string& name,
                                     const std::map<std::string, std::string>& attributes) {
-	if (!signal_client_) {
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
 		return false;
 	}
-	signal_client_->SendUpdateLocalMetadata(metadata, name, attributes);
+	signal_client->SendUpdateLocalMetadata(metadata, name, attributes);
 	return true;
 }
 
-void RtcEngine::OnLeave(const livekit::LeaveRequest leave) { return; }
+std::string RtcEngine::AccessTokenForReconnect() const {
+	std::lock_guard<std::mutex> guard(access_token_mutex_);
+	return access_token_;
+}
+
+bool RtcEngine::SimulateSignalDisconnectForTesting() {
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client || !recovery_allowed_) {
+		return false;
+	}
+	signal_client->SimulateDisconnectForTesting();
+	return true;
+}
+
+void RtcEngine::OnLeave(const livekit::LeaveRequest leave) {
+	if (leave.action() == livekit::LeaveRequest::DISCONNECT) {
+		recovery_allowed_ = false;
+		if (auto* listener = room_listener_.load()) {
+			listener->SignalDisconnectedEvent();
+		}
+		return;
+	}
+	StartRecovery();
+}
 
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) {
 	std::cout << "received trackPublishedResponse:" << response.cid() << "; "
@@ -295,7 +499,9 @@ void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> off
 	if (rtc_session_) {
 		auto answer = rtc_session_->CreateSubscriberAnswerFromOffer(std::move(offer));
 		if (answer) {
-			this->signal_client_->SendAnswer(std::move(answer));
+			if (auto signal_client = SignalClientSnapshot()) {
+				signal_client->SendAnswer(std::move(answer));
+			}
 		}
 	}
 	return;
@@ -308,7 +514,13 @@ void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) {
 void RtcEngine::OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) {
 	return;
 }
-void RtcEngine::OnTokenRefresh(const std::string& token) { return; }
+void RtcEngine::OnTokenRefresh(const std::string& token) {
+	if (token.empty()) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(access_token_mutex_);
+	access_token_ = token;
+}
 
 void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) {
 	std::lock_guard<std::mutex> guard(session_lock_);
@@ -317,7 +529,15 @@ void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) 
 	}
 	return;
 }
-void RtcEngine::OnClose() { return; }
+void RtcEngine::OnClose() {
+	if (recovery_allowed_ && !recovery_stop_) {
+		StartRecovery();
+	} else if (!recovery_in_progress_ && !recovery_stop_) {
+		if (auto* listener = room_listener_.load()) {
+			listener->SignalDisconnectedEvent();
+		}
+	}
+}
 void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) {
 	if (auto* listener = room_listener_.load()) {
 		listener->ParticipantUpdateEvent(updates);
@@ -349,7 +569,9 @@ void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
 
 void RtcEngine::OnLocalOffer(PeerTransport::Target target,
                              std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
-	this->signal_client_->SendOffer(std::move(offer));
+	if (auto signal_client = SignalClientSnapshot()) {
+		signal_client->SendOffer(std::move(offer));
+	}
 }
 
 void RtcEngine::OnStateChange(RtcSession::State connection_state,
@@ -357,9 +579,19 @@ void RtcEngine::OnStateChange(RtcSession::State connection_state,
                               webrtc::PeerConnectionInterface::PeerConnectionState sub_state) {
 	std::cout << "RtcEngine::OnStateChange()" << int(connection_state) << std::endl;
 	if (connection_state == RtcSession::State::kConnected) {
-		if (auto* listener = room_listener_.load()) {
-			listener->ConnectedEvent(this->join_resp_);
+		{
+			std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
+			rtc_connected_ = true;
 		}
+		rtc_connected_cv_.notify_all();
+		if (!recovering_connection_) {
+			if (auto* listener = room_listener_.load()) {
+				listener->ConnectedEvent(this->join_resp_);
+			}
+		}
+	} else if (connection_state == RtcSession::State::kFailed && recovery_allowed_ &&
+	           !recovery_stop_) {
+		StartRecovery();
 	}
 }
 
@@ -401,11 +633,15 @@ void RtcEngine::OnIceCandidate(PeerTransport::Target target,
 	candidate_json["sdpMLineIndex"] = candidate->sdp_mline_index();
 
 	auto candidate_json_str = candidate_json.dump();
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return;
+	}
 
 	if (target == PeerTransport::Target::PUBLISHER) {
-		signal_client_->SendIceCandidate(candidate_json_str, livekit::SignalTarget::PUBLISHER);
+		signal_client->SendIceCandidate(candidate_json_str, livekit::SignalTarget::PUBLISHER);
 	} else if (target == PeerTransport::Target::SUBSCRIBER) {
-		signal_client_->SendIceCandidate(candidate_json_str, livekit::SignalTarget::SUBSCRIBER);
+		signal_client->SendIceCandidate(candidate_json_str, livekit::SignalTarget::SUBSCRIBER);
 	}
 
 	return;

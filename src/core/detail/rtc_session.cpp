@@ -97,15 +97,14 @@ make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineO
 namespace livekit {
 namespace core {
 
-RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options)
-    : join_response_(join_response), options_(options) {
+RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions options,
+                       std::shared_ptr<PeerTransportFactory> peer_factory)
+    : peer_factory_(std::move(peer_factory)), join_response_(join_response), options_(options) {
 
 	bool subscriber_primary = join_response.subscriber_primary();
 	is_publisher_connection_required_ = !subscriber_primary;
 	is_subscriber_connection_required_ = subscriber_primary;
 	publisher_negotiation_debouncer_ = std::move(Debouncer::Create(std::chrono::milliseconds(150)));
-
-	peer_factory_ = PeerTransportFactory::Create();
 }
 
 RtcSession::~RtcSession() {
@@ -298,8 +297,13 @@ void RtcSession::update_state() {
 }
 
 std::unique_ptr<RtcSession> RtcSession::Create(livekit::JoinResponse join_response,
-                                               EngineOptions options) {
-	auto rtc_session = std::make_unique<RtcSession>(join_response, options);
+                                               EngineOptions options,
+                                               std::shared_ptr<PeerTransportFactory> peer_factory) {
+	if (!peer_factory) {
+		return nullptr;
+	}
+	auto rtc_session =
+	    std::make_unique<RtcSession>(join_response, options, std::move(peer_factory));
 	if (!rtc_session->Init()) {
 		return nullptr;
 	}

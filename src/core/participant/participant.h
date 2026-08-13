@@ -64,6 +64,11 @@ public:
 	void SetConnectionQuality(ConnectionQuality quality);
 
 protected:
+	// Updates participant identity and metadata without reconciling track publications. A full
+	// reconnect needs this split so locally owned tracks survive the replacement JoinResponse and
+	// can be published on the new PeerConnection.
+	bool UpdateInfoFields(const livekit::ParticipantInfo& info);
+
 	bool is_local_participant_ = false;
 	mutable std::mutex participant_mutex_;
 	std::string sid_;

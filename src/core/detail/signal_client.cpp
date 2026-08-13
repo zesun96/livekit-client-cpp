@@ -155,6 +155,14 @@ void SignalClient::Close(bool update_state) {
 	}
 }
 
+void SignalClient::SimulateDisconnectForTesting() {
+	clearPingInterval();
+	if (wsc_) {
+		wsc_->disconnect();
+	}
+	handleOnClose("simulated signal disconnect");
+}
+
 void SignalClient::SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
 	livekit::SignalRequest request;
 	auto* offer_msg = request.mutable_offer();
@@ -528,9 +536,12 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		break;
 	}
 	case livekit::SignalResponse::MessageCase::kRefreshToken: {
-		if (observer_) {
-			auto& refresh_token = resp.refresh_token();
-			observer_->OnTokenRefresh(refresh_token);
+		const auto& refresh_token = resp.refresh_token();
+		if (!refresh_token.empty()) {
+			token_ = refresh_token;
+			if (observer_) {
+				observer_->OnTokenRefresh(token_);
+			}
 		}
 		break;
 	}

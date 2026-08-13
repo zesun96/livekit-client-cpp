@@ -18,6 +18,8 @@ public:
 	}
 
 	void OnDisconnected() override { std::cout << "Room disconnected" << std::endl; }
+	void OnReconnecting() override { std::cout << "Room reconnecting" << std::endl; }
+	void OnReconnected() override { std::cout << "Room reconnected" << std::endl; }
 
 	void OnTrackSubscribed(livekit::core::RemoteTrackInterface* track,
 	                       livekit::core::RemoteParticipantInterface* participant) override {

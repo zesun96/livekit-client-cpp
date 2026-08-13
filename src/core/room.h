@@ -63,6 +63,7 @@ public:
 	bool SetLocalTrackMutedInternal(std::string track_sid, bool muted);
 	bool SetRemoteTrackSubscribedInternal(std::string participant_sid, std::string track_sid,
 	                                      bool subscribed);
+	bool SimulateSignalDisconnectForTesting();
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:
@@ -77,15 +78,20 @@ public:
 	void RoomUpdateEvent(const livekit::Room& update) override;
 	void
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
+	void SignalDisconnectedEvent() override;
+	void ReconnectingEvent() override;
+	void ReconnectedEvent(livekit::JoinResponse join_resp) override;
 
 private:
 	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates,
 	                             bool emit_events = true);
+	void ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting);
 	std::shared_ptr<RemoteParticipant> FindRemoteParticipantForTrack(const std::string& track_sid);
 	void NotifyAudioFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const AudioFrame& frame);
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const VideoFrame& frame);
+	void NotifyDisconnectedOnce();
 
 	struct IncomingFile {
 		FileReceivedEvent event;
@@ -100,6 +106,7 @@ private:
 
 	RoomOptions options_;
 	std::atomic<RoomState> state_{RoomState::Disconnected};
+	std::atomic<bool> disconnected_event_emitted_{false};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	mutable std::mutex participants_mutex_;

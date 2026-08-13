@@ -77,6 +77,8 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);
+	EXPECT_EQ(callbacks.on_reconnecting, nullptr);
+	EXPECT_EQ(callbacks.on_reconnected, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_published, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_unpublished, nullptr);
 	EXPECT_EQ(callbacks.on_text_received, nullptr);

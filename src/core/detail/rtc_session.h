@@ -93,11 +93,13 @@ public:
 	};
 
 public:
-	RtcSession(livekit::JoinResponse join_response, EngineOptions options);
+	RtcSession(livekit::JoinResponse join_response, EngineOptions options,
+	           std::shared_ptr<PeerTransportFactory> peer_factory);
 	virtual ~RtcSession();
 
 	static std::unique_ptr<RtcSession> Create(livekit::JoinResponse join_response,
-	                                          EngineOptions options);
+	                                          EngineOptions options,
+	                                          std::shared_ptr<PeerTransportFactory> peer_factory);
 
 	bool Init();
 

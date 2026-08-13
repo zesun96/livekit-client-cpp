@@ -178,6 +178,8 @@ lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
 		return LK_ROOM_STATE_DISCONNECTING;
 	case core::RoomInterface::RoomState::Failed:
 		return LK_ROOM_STATE_FAILED;
+	case core::RoomInterface::RoomState::Reconnecting:
+		return LK_ROOM_STATE_RECONNECTING;
 	default:
 		return LK_ROOM_STATE_DISCONNECTED;
 	}
@@ -344,6 +346,24 @@ public:
 		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_disconnected != nullptr) {
 				callbacks.on_disconnected(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void OnReconnecting() override {
+		owner_->state->connected.store(false);
+		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_reconnecting != nullptr) {
+				callbacks.on_reconnecting(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void OnReconnected() override {
+		owner_->state->connected.store(true);
+		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_reconnected != nullptr) {
+				callbacks.on_reconnected(callbacks.user_data, owner_);
 			}
 		});
 	}

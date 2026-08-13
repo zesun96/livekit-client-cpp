@@ -106,7 +106,22 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity,
 }
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
+	const auto owned_publications = TrackPublicationsSnapshot();
 	Participant::UpdateFromInfo(info);
+	// Participant snapshots can briefly omit a newly published local track while negotiation is
+	// settling. Keep client-owned publications (and their LocalTrack pointers) until an explicit
+	// unpublish operation or TrackUnpublishedResponse removes them.
+	for (const auto& [sid, publication] : owned_publications) {
+		if (dynamic_cast<LocalTrackPublication*>(publication.get()) != nullptr) {
+			AddTrackPublication(publication);
+		}
+	}
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	is_local_participant_ = true;
+}
+
+void LocalParticipant::UpdateFromInfoPreservingTracks(const livekit::ParticipantInfo& info) {
+	UpdateInfoFields(info);
 	std::lock_guard<std::mutex> guard(participant_mutex_);
 	is_local_participant_ = true;
 }
@@ -300,6 +315,49 @@ bool LocalParticipant::RepublishAllTracks() {
 	for (const auto& pending : tracks) {
 		if (!UnpublishTrack(pending.track, false) ||
 		    !PublishTrack(pending.track, pending.options)) {
+			success = false;
+		}
+	}
+	return success;
+}
+
+void LocalParticipant::DetachTrackTransceiversForReconnect() {
+	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
+		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication.get());
+		auto* local_track = local_publication != nullptr
+		                        ? dynamic_cast<LocalTrack*>(publication->Track())
+		                        : nullptr;
+		if (local_track != nullptr) {
+			local_track->SetTransceiver(nullptr);
+		}
+	}
+}
+
+bool LocalParticipant::RepublishAllTracksAfterReconnect() {
+	struct PendingTrack {
+		std::string publication_sid;
+		LocalTrack* track;
+		TrackPublishOptions options;
+	};
+
+	std::vector<PendingTrack> tracks;
+	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
+		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication.get());
+		auto* local_track = local_publication != nullptr
+		                        ? dynamic_cast<LocalTrack*>(publication->Track())
+		                        : nullptr;
+		if (local_track != nullptr) {
+			tracks.push_back({sid, local_track, local_publication->PublishOptions()});
+		}
+	}
+
+	for (const auto& pending : tracks) {
+		RemoveTrackPublication(pending.publication_sid);
+	}
+
+	bool success = true;
+	for (const auto& pending : tracks) {
+		if (!PublishTrack(pending.track, pending.options)) {
 			success = false;
 		}
 	}

@@ -1,3 +1,4 @@
+#include "../../src/core/room.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/participant/remote_participant_interface.h"
@@ -66,6 +67,8 @@ std::string PublicationSummary(ParticipantInterface* participant) {
 class MediaEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}
+	void OnReconnecting() override { reconnecting_.fetch_add(1); }
+	void OnReconnected() override { reconnected_.fetch_add(1); }
 
 	void OnTrackSubscribed(RemoteTrackInterface* track, RemoteParticipantInterface*) override {
 		if (track->Kind() == TrackKind::Audio) {
@@ -130,6 +133,11 @@ public:
 	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
 	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
 	bool video_subscribed() const { return video_subscribed_.load(); }
+	bool reconnecting() const { return reconnecting_.load() > 0; }
+	bool reconnected() const { return reconnected_.load() > 0; }
+	uint64_t reconnecting_count() const { return reconnecting_.load(); }
+	uint64_t reconnected_count() const { return reconnected_.load(); }
+	uint64_t audio_frame_count() const { return audio_frames_.load(); }
 	uint64_t video_frame_count() const { return video_frames_.load(); }
 	uint32_t last_video_width() const { return last_video_width_.load(); }
 	uint32_t last_video_height() const { return last_video_height_.load(); }
@@ -158,6 +166,8 @@ public:
 private:
 	std::atomic<bool> audio_subscribed_{false};
 	std::atomic<bool> video_subscribed_{false};
+	std::atomic<uint64_t> reconnecting_{0};
+	std::atomic<uint64_t> reconnected_{0};
 	std::atomic<uint64_t> audio_frames_{0};
 	std::atomic<uint64_t> video_frames_{0};
 	std::atomic<uint32_t> last_video_width_{0};
@@ -244,6 +254,23 @@ private:
 	std::string attributes_identity_;
 };
 
+class ReconnectEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnReconnecting() override { reconnecting_.store(true); }
+	void OnReconnected() override { reconnected_.store(true); }
+	void OnDisconnected() override { disconnected_.store(true); }
+
+	bool reconnecting() const { return reconnecting_.load(); }
+	bool reconnected() const { return reconnected_.load(); }
+	bool disconnected() const { return disconnected_.load(); }
+
+private:
+	std::atomic<bool> reconnecting_{false};
+	std::atomic<bool> reconnected_{false};
+	std::atomic<bool> disconnected_{false};
+};
+
 class TemporaryFile {
 public:
 	explicit TemporaryFile(const std::vector<uint8_t>& data) {
@@ -287,6 +314,152 @@ TEST(LiveKitServerTest, ConnectsWithEnvironmentCredentials) {
 	EXPECT_FALSE(room->GetLocalParticipant()->Identity().empty());
 	EXPECT_TRUE(room->Disconnect());
 	EXPECT_FALSE(room->IsConnected());
+}
+
+TEST(LiveKitServerTest, RecoversAfterSignalTransportDisconnect) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* token = std::getenv("LIVEKIT_TOKEN_SINGLE");
+	if (url == nullptr || token == nullptr || *url == '\0' || *token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL and LIVEKIT_TOKEN_SINGLE to run the reconnect "
+		                "integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	auto room = CreateRoomUnique();
+	ASSERT_NE(room, nullptr);
+	ReconnectEvents events;
+	room->AddEventListener(&events);
+	ASSERT_TRUE(room->Connect(url, token));
+	ASSERT_TRUE(WaitUntil([&] { return room->IsConnected(); }, std::chrono::seconds(10)));
+	auto* concrete_room = dynamic_cast<Room*>(room.get());
+	ASSERT_NE(concrete_room, nullptr);
+	ASSERT_TRUE(concrete_room->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting(); }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && room->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	EXPECT_FALSE(events.disconnected());
+	EXPECT_FALSE(room->Sid().empty());
+	EXPECT_FALSE(room->GetLocalParticipant()->Sid().empty());
+
+	room->RemoveEventListener();
+	EXPECT_TRUE(room->Disconnect());
+}
+
+TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the media "
+		                "reconnect integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+	const auto sender_identity = sender->GetLocalParticipant()->Identity();
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "reconnect-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions options;
+	options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), options));
+	std::vector<int16_t> samples(480, 1500);
+	const auto initial_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < 3 && std::chrono::steady_clock::now() < initial_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_GE(events.audio_frame_count(), 3u);
+	const auto frames_before_reconnect = events.audio_frame_count();
+
+	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
+	ASSERT_NE(concrete_sender, nullptr);
+	ASSERT_TRUE(concrete_sender->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting(); }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    auto* participant = receiver->GetRemoteParticipantByIdentity(sender_identity);
+		    return participant != nullptr &&
+		           participant->GetTrackPublication(TrackSource::Microphone) != nullptr;
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_GE(events.local_tracks_published(), 2u);
+
+	const auto recovered_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < frames_before_reconnect + 3 &&
+	       std::chrono::steady_clock::now() < recovered_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	EXPECT_GE(events.audio_frame_count(), frames_before_reconnect + 3);
+	const std::vector<uint8_t> publisher_recovered_data{1, 3, 5, 7};
+	DataPublishOptions data_options;
+	data_options.reliable = true;
+	data_options.topic = "publisher-recovered";
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(publisher_recovered_data, data_options));
+	ASSERT_TRUE(WaitUntil([&] {
+		return events.received_data("publisher-recovered", publisher_recovered_data, true);
+	}));
+
+	const auto reconnecting_before_receiver = events.reconnecting_count();
+	const auto reconnected_before_receiver = events.reconnected_count();
+	const auto frames_before_receiver_reconnect = events.audio_frame_count();
+	auto* concrete_receiver = dynamic_cast<Room*>(receiver.get());
+	ASSERT_NE(concrete_receiver, nullptr);
+	ASSERT_TRUE(concrete_receiver->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.reconnecting_count() > reconnecting_before_receiver; },
+	              std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return events.reconnected_count() > reconnected_before_receiver &&
+		           receiver->IsConnected();
+	    },
+	    std::chrono::seconds(30)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    auto* participant = receiver->GetRemoteParticipantByIdentity(sender_identity);
+		    return participant != nullptr &&
+		           participant->GetTrackPublication(TrackSource::Microphone) != nullptr;
+	    },
+	    std::chrono::seconds(10)));
+	const auto receiver_recovered_deadline =
+	    std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < frames_before_receiver_reconnect + 3 &&
+	       std::chrono::steady_clock::now() < receiver_recovered_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	EXPECT_GE(events.audio_frame_count(), frames_before_receiver_reconnect + 3);
+
+	const std::vector<uint8_t> receiver_recovered_data{2, 4, 6, 8};
+	data_options.topic = "receiver-recovered";
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(receiver_recovered_data, data_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_data("receiver-recovered", receiver_recovered_data, true); }));
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
+	audio_track.reset();
+	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
 }
 
 TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {

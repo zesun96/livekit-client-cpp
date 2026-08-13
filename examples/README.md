@@ -72,7 +72,8 @@ Connects to a room, prints the local participant identity and SID, and disconnec
 ### `room_event`
 
 Receives room events, subscribed tracks, decoded PCM/I420 frames, data messages, and completed
-files. The optional third argument controls how many seconds to listen and defaults to 30.
+files. It also reports `OnReconnecting` and `OnReconnected` while the SDK restores an interrupted
+session. The optional third argument controls how many seconds to listen and defaults to 30.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/room_event/Release/room_event.exe" `
@@ -98,9 +99,10 @@ Publishes synthetic 640x360 I420 video at approximately 30 frames per second for
 The SDK encodes the frames as VP8 for transport.
 It then unpublishes the local track and renegotiates before disconnecting.
 
-Applications that need to rebuild every publisher sender after reconnecting or changing common
-publish settings can call `LocalParticipantInterface::RepublishAllTracks()`. The C API exposes the
-same operation as `lk_room_republish_all_tracks()`.
+The SDK automatically republishes local tracks after a full reconnect. Applications that change
+common publish settings and intentionally want to rebuild every publisher sender can call
+`LocalParticipantInterface::RepublishAllTracks()`. The C API exposes the same manual operation as
+`lk_room_republish_all_tracks()`.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_video/Release/publish_video.exe" `

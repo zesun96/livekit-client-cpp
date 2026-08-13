@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <tuple>
 
 namespace {
@@ -95,6 +96,7 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	if (!state_.compare_exchange_strong(expected, RoomState::Connecting)) {
 		return false;
 	}
+	disconnected_event_emitted_ = false;
 
 	try {
 		EngineOptions engine_options = make_engine_config(opts);
@@ -104,26 +106,7 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 			state_ = RoomState::Failed;
 			return false;
 		}
-		if (join_response.has_server_info()) {
-			server_info_ = from_proto(join_response.server_info());
-		} else {
-			server_info_.region = join_response.server_region();
-			server_info_.version = join_response.server_version();
-		}
-
-		std::vector<livekit::ParticipantInfo> participants;
-		participants.reserve(static_cast<std::size_t>(join_response.other_participants_size()));
-		if (join_response.has_participant()) {
-			local_participant_->UpdateFromInfo(join_response.participant());
-		}
-		for (const auto& participant : join_response.other_participants()) {
-			participants.push_back(participant);
-		}
-		{
-			std::lock_guard<std::mutex> guard(room_info_mutex_);
-			room_info_ = join_response.room();
-		}
-		ApplyParticipantUpdates(participants, false);
+		ApplyJoinResponse(join_response, false);
 	} catch (...) {
 		state_ = RoomState::Failed;
 		throw;
@@ -188,9 +171,7 @@ bool Room::Disconnect() {
 		incoming_texts_.clear();
 	}
 	state_ = RoomState::Disconnected;
-	if (auto* listener = event_listener_.load()) {
-		listener->OnDisconnected();
-	}
+	NotifyDisconnectedOnce();
 	return true;
 }
 
@@ -291,6 +272,10 @@ bool Room::SetRemoteTrackSubscribedInternal(std::string participant_sid, std::st
 	return rtc_engine_->SetTrackSubscribed(participant_sid, track_sid, subscribed);
 }
 
+bool Room::SimulateSignalDisconnectForTesting() {
+	return rtc_engine_ != nullptr && rtc_engine_->SimulateSignalDisconnectForTesting();
+}
+
 RoomInterface::RoomState RoomInterface::State() const {
 	auto* room = dynamic_cast<const Room*>(this);
 	if (room != nullptr) {
@@ -334,6 +319,111 @@ void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 	if (auto* listener = event_listener_.load()) {
 		listener->OnConnected();
 	}
+}
+
+void Room::ReconnectingEvent() {
+	auto expected = RoomState::Connected;
+	if (!state_.compare_exchange_strong(expected, RoomState::Reconnecting)) {
+		return;
+	}
+	local_participant_->DetachTrackTransceiversForReconnect();
+	if (auto* listener = event_listener_.load()) {
+		listener->OnReconnecting();
+	}
+}
+
+void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
+	if (state_.load() != RoomState::Reconnecting || !join_resp.has_room()) {
+		return;
+	}
+	ApplyJoinResponse(join_resp, true);
+	local_participant_->RepublishAllTracksAfterReconnect();
+	state_ = RoomState::Connected;
+	if (auto* listener = event_listener_.load()) {
+		listener->OnReconnected();
+	}
+}
+
+void Room::SignalDisconnectedEvent() {
+	auto current = state_.load();
+	while (current != RoomState::Disconnecting && current != RoomState::Disconnected &&
+	       current != RoomState::Failed) {
+		if (state_.compare_exchange_weak(current, RoomState::Failed)) {
+			break;
+		}
+	}
+	if (current != RoomState::Disconnecting && current != RoomState::Disconnected) {
+		NotifyDisconnectedOnce();
+	}
+}
+
+void Room::NotifyDisconnectedOnce() {
+	if (!disconnected_event_emitted_.exchange(true)) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnDisconnected();
+		}
+	}
+}
+
+void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting) {
+	if (join_response.has_server_info()) {
+		server_info_ = from_proto(join_response.server_info());
+	} else {
+		server_info_.region = join_response.server_region();
+		server_info_.version = join_response.server_version();
+	}
+	if (join_response.has_participant()) {
+		if (reconnecting) {
+			local_participant_->UpdateFromInfoPreservingTracks(join_response.participant());
+		} else {
+			local_participant_->UpdateFromInfo(join_response.participant());
+		}
+	}
+	{
+		std::lock_guard<std::mutex> guard(room_info_mutex_);
+		room_info_ = join_response.room();
+	}
+
+	std::vector<livekit::ParticipantInfo> participants;
+	participants.reserve(static_cast<std::size_t>(join_response.other_participants_size()));
+	std::set<std::string> participant_sids;
+	for (const auto& participant : join_response.other_participants()) {
+		participants.push_back(participant);
+		participant_sids.insert(participant.sid());
+	}
+
+	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
+	if (reconnecting) {
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& [sid, track] : remote_tracks_) {
+			auto participant = FindRemoteParticipantForTrack(sid);
+			if (participant) {
+				for (auto* publication : participant->GetTrackPublications()) {
+					if (publication->Sid() == sid) {
+						if (auto* concrete = dynamic_cast<TrackPublication*>(publication)) {
+							concrete->SetTrack(nullptr);
+						}
+						break;
+					}
+				}
+			}
+		}
+		detached_tracks.swap(remote_tracks_);
+		pending_media_tracks_.clear();
+		for (auto participant = remote_participants_.begin();
+		     participant != remote_participants_.end();) {
+			if (participant_sids.count(participant->first) == 0) {
+				participant = remote_participants_.erase(participant);
+			} else {
+				++participant;
+			}
+		}
+	}
+	// A media track can wait for an in-flight frame callback while being destroyed. Those callbacks
+	// also take participants_mutex_, so release track ownership only after leaving the critical
+	// section above.
+	detached_tracks.clear();
+	ApplyParticipantUpdates(participants, false);
 }
 
 void Room::ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) {

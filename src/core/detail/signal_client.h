@@ -106,6 +106,7 @@ public:
 	void RemoveObserver();
 
 	void Close(bool update_state = true);
+	void SimulateDisconnectForTesting();
 
 	void SendOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
 
