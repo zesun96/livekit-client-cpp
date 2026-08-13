@@ -148,6 +148,9 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	if (!state_.compare_exchange_strong(expected, RoomState::Connecting)) {
 		return false;
 	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnConnectionStateChanged(RoomState::Connecting);
+	}
 	disconnected_event_emitted_ = false;
 	full_reconnect_prepared_ = false;
 	disconnect_reason_ = DisconnectReason::Unknown;
@@ -157,13 +160,13 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 		livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
 		if (!join_response.has_room()) {
 			rtc_engine_->Disconnect();
-			state_ = RoomState::Failed;
+			SetState(RoomState::Failed);
 			disconnect_reason_ = DisconnectReason::JoinFailure;
 			return false;
 		}
 		ApplyJoinResponse(join_response, false);
 	} catch (...) {
-		state_ = RoomState::Failed;
+		SetState(RoomState::Failed);
 		disconnect_reason_ = DisconnectReason::JoinFailure;
 		throw;
 	}
@@ -212,7 +215,7 @@ bool Room::Disconnect() {
 	if (state == RoomState::Disconnecting || state == RoomState::Disconnected) {
 		return false;
 	}
-	state_ = RoomState::Disconnecting;
+	SetState(RoomState::Disconnecting);
 
 	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
 	{
@@ -224,7 +227,7 @@ bool Room::Disconnect() {
 	detached_tracks.clear();
 	rtc_engine_->Disconnect();
 	FailIncomingDataStreams("room disconnected");
-	state_ = RoomState::Disconnected;
+	SetState(RoomState::Disconnected);
 	NotifyDisconnectedOnce(DisconnectReason::ClientInitiated);
 	return true;
 }
@@ -500,7 +503,7 @@ bool RoomInterface::UpdateRemoteTrackSettings(std::string participant_sid, std::
 }
 
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
-	state_ = RoomState::Connected;
+	SetState(RoomState::Connected);
 	local_participant_->ResendTrackSubscriptionPermissions();
 	if (auto* listener = event_listener_.load()) {
 		listener->OnConnected();
@@ -511,8 +514,7 @@ void Room::ReconnectingEvent(bool full_reconnect) {
 	if (full_reconnect && !full_reconnect_prepared_.exchange(true)) {
 		local_participant_->DetachTrackTransceiversForReconnect();
 	}
-	auto expected = RoomState::Connected;
-	if (!state_.compare_exchange_strong(expected, RoomState::Reconnecting)) {
+	if (!TransitionState(RoomState::Connected, RoomState::Reconnecting)) {
 		return;
 	}
 	if (auto* listener = event_listener_.load()) {
@@ -541,10 +543,9 @@ void Room::SignalResumedEvent() {
 void Room::ResumedEvent() {
 	local_participant_->ResendTrackSubscriptionPermissions();
 	ResendRemoteTrackPreferences();
-	if (state_.load() != RoomState::Reconnecting) {
+	if (!TransitionState(RoomState::Reconnecting, RoomState::Connected)) {
 		return;
 	}
-	state_ = RoomState::Connected;
 	if (auto* listener = event_listener_.load()) {
 		listener->OnReconnected();
 	}
@@ -559,7 +560,7 @@ void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
 	ResendRemoteTrackPreferences();
 	local_participant_->RepublishAllTracksAfterReconnect();
 	full_reconnect_prepared_ = false;
-	state_ = RoomState::Connected;
+	SetState(RoomState::Connected);
 	if (auto* listener = event_listener_.load()) {
 		listener->OnReconnected();
 	}
@@ -570,6 +571,9 @@ void Room::SignalDisconnectedEvent(livekit::DisconnectReason reason) {
 	while (current != RoomState::Disconnecting && current != RoomState::Disconnected &&
 	       current != RoomState::Failed) {
 		if (state_.compare_exchange_weak(current, RoomState::Failed)) {
+			if (auto* listener = event_listener_.load()) {
+				listener->OnConnectionStateChanged(RoomState::Failed);
+			}
 			break;
 		}
 	}
@@ -620,6 +624,26 @@ void Room::NotifyDisconnectedOnce(DisconnectReason reason) {
 			listener->OnDisconnected(reason);
 		}
 	}
+}
+
+bool Room::SetState(RoomState state) {
+	if (state_.exchange(state) == state) {
+		return false;
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnConnectionStateChanged(state);
+	}
+	return true;
+}
+
+bool Room::TransitionState(RoomState expected, RoomState state) {
+	if (!state_.compare_exchange_strong(expected, state)) {
+		return false;
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnConnectionStateChanged(state);
+	}
+	return true;
 }
 
 void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting) {

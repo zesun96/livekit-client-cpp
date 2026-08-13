@@ -22,6 +22,9 @@ public:
 	}
 	void OnReconnecting() override { std::cout << "Room reconnecting" << std::endl; }
 	void OnReconnected() override { std::cout << "Room reconnected" << std::endl; }
+	void OnConnectionStateChanged(livekit::core::RoomState state) override {
+		std::cout << "Connection state changed: " << static_cast<int>(state) << std::endl;
+	}
 	void OnRecordingStatusChanged(bool recording) override {
 		std::cout << "Recording status changed: " << (recording ? "active" : "inactive")
 		          << std::endl;

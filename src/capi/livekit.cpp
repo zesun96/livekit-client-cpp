@@ -456,6 +456,15 @@ public:
 		});
 	}
 
+	void OnConnectionStateChanged(core::RoomState state) override {
+		InvokeRoomCallback(owner_, [this, state](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_connection_state_changed != nullptr) {
+				callbacks.on_connection_state_changed(callbacks.user_data, owner_,
+				                                      ToCRoomState(state));
+			}
+		});
+	}
+
 	void OnParticipantConnected(core::RemoteParticipantInterface* participant) override {
 		Participant(callbacks_member(&lk_room_callbacks_t::on_participant_connected), participant);
 	}

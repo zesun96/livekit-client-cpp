@@ -35,6 +35,12 @@ static void on_reconnected(void* user_data, lk_room_t* room) {
 	puts("Reconnected event received");
 }
 
+static void on_connection_state(void* user_data, lk_room_t* room, lk_room_state_t state) {
+	(void)user_data;
+	(void)room;
+	printf("Connection state changed: %d\n", (int)state);
+}
+
 static void on_disconnected(void* user_data, lk_room_t* room, lk_disconnect_reason_t reason) {
 	(void)user_data;
 	(void)room;
@@ -207,6 +213,7 @@ int main(int argc, char** argv) {
 	callbacks.on_connected = on_connected;
 	callbacks.on_reconnecting = on_reconnecting;
 	callbacks.on_reconnected = on_reconnected;
+	callbacks.on_connection_state_changed = on_connection_state;
 	callbacks.on_disconnected_with_reason = on_disconnected;
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;

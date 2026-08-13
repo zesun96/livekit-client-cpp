@@ -389,11 +389,13 @@ public:
 	void OnReconnecting() override { ++reconnecting_count; }
 	void OnReconnected() override { ++reconnected_count; }
 	void OnDisconnected() override { ++disconnected_count; }
+	void OnConnectionStateChanged(RoomState state) override { states.push_back(state); }
 
 	int connected_count = 0;
 	int reconnecting_count = 0;
 	int reconnected_count = 0;
 	int disconnected_count = 0;
+	std::vector<RoomState> states;
 };
 
 class DetailedConnectionEvents final : public RoomEventInterface {
@@ -414,19 +416,28 @@ TEST(RoomConnectionStateTest, TransitionsThroughSuccessfulReconnect) {
 	room.AddEventListener(&events);
 	room.ConnectedEvent({});
 	ASSERT_EQ(room.State(), RoomInterface::RoomState::Connected);
+	ASSERT_EQ(events.states.size(), 1u);
+	EXPECT_EQ(events.states[0], RoomState::Connected);
 
 	room.ReconnectingEvent(false);
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Reconnecting);
 	EXPECT_FALSE(room.IsConnected());
 	EXPECT_EQ(events.reconnecting_count, 1);
+	ASSERT_EQ(events.states.size(), 2u);
+	EXPECT_EQ(events.states[1], RoomState::Reconnecting);
 
 	room.ResumedEvent();
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Connected);
 	EXPECT_TRUE(room.IsConnected());
 	EXPECT_EQ(events.reconnected_count, 1);
+	ASSERT_EQ(events.states.size(), 3u);
+	EXPECT_EQ(events.states[2], RoomState::Connected);
 
 	EXPECT_TRUE(room.Disconnect());
 	EXPECT_EQ(room.LastDisconnectReason(), DisconnectReason::ClientInitiated);
+	ASSERT_EQ(events.states.size(), 5u);
+	EXPECT_EQ(events.states[3], RoomState::Disconnecting);
+	EXPECT_EQ(events.states[4], RoomState::Disconnected);
 	room.RemoveEventListener();
 }
 
@@ -442,12 +453,18 @@ TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
 	EXPECT_FALSE(room.IsConnected());
 	EXPECT_EQ(events.disconnected_count, 1);
 	EXPECT_EQ(room.LastDisconnectReason(), DisconnectReason::SignalClose);
+	ASSERT_EQ(events.states.size(), 2u);
+	EXPECT_EQ(events.states[0], RoomState::Connected);
+	EXPECT_EQ(events.states[1], RoomState::Failed);
 
 	room.SignalDisconnectedEvent(livekit::DisconnectReason::SIGNAL_CLOSE);
 	EXPECT_EQ(events.disconnected_count, 1);
 	EXPECT_TRUE(room.Disconnect());
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Disconnected);
 	EXPECT_EQ(events.disconnected_count, 1);
+	ASSERT_EQ(events.states.size(), 4u);
+	EXPECT_EQ(events.states[2], RoomState::Disconnecting);
+	EXPECT_EQ(events.states[3], RoomState::Disconnected);
 	room.RemoveEventListener();
 }
 

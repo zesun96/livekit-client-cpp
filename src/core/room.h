@@ -110,6 +110,8 @@ private:
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const VideoFrame& frame);
 	void NotifyDisconnectedOnce(DisconnectReason reason);
+	bool SetState(RoomState state);
+	bool TransitionState(RoomState expected, RoomState state);
 	bool SendRemoteTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
 	                               bool subscribed);
 	bool SendRemoteTrackSettings(const std::string& participant_sid, const std::string& track_sid,

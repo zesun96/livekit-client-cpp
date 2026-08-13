@@ -60,6 +60,15 @@ enum class DisconnectReason : int {
 	AgentError = 16,
 };
 
+enum class RoomState {
+	Connecting,
+	Connected,
+	Disconnecting,
+	Disconnected,
+	Failed,
+	Reconnecting,
+};
+
 class RoomEventInterface {
 public:
 	virtual ~RoomEventInterface() {}
@@ -112,6 +121,7 @@ public:
 	virtual void OnTranscriptionReceived(const TranscriptionReceivedEvent&) {}
 	virtual void OnRecordingStatusChanged(bool) {}
 	virtual void OnMetricsReceived(const MetricsReceivedEvent&) {}
+	virtual void OnConnectionStateChanged(RoomState) {}
 };
 
 } // namespace core
