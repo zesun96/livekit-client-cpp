@@ -72,6 +72,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	ASSERT_EQ(lk_room_create(&room), LK_STATUS_OK) << lk_last_error();
 	ASSERT_NE(room, nullptr);
 	EXPECT_EQ(lk_room_state(room), LK_ROOM_STATE_DISCONNECTED);
+	EXPECT_EQ(lk_room_disconnect_reason(room), LK_DISCONNECT_REASON_UNKNOWN);
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
 
@@ -79,6 +80,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	lk_room_callbacks_init(&callbacks);
 	EXPECT_EQ(callbacks.on_reconnecting, nullptr);
 	EXPECT_EQ(callbacks.on_reconnected, nullptr);
+	EXPECT_EQ(callbacks.on_disconnected_with_reason, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_published, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_unpublished, nullptr);
 	EXPECT_EQ(callbacks.on_text_received, nullptr);

@@ -83,6 +83,11 @@ void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
 	muted_ = info_.muted();
 }
 
+livekit::TrackInfo TrackPublication::Info() const {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return info_;
+}
+
 void TrackPublication::SetTrack(::livekit::core::Track* track) {
 	std::lock_guard<std::mutex> guard(mutex_);
 	track_ = track;

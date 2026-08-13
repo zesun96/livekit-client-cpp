@@ -17,7 +17,9 @@ public:
 		std::cout << "Room connected" << std::endl;
 	}
 
-	void OnDisconnected() override { std::cout << "Room disconnected" << std::endl; }
+	void OnDisconnected(livekit::core::DisconnectReason reason) override {
+		std::cout << "Room disconnected, reason=" << static_cast<int>(reason) << std::endl;
+	}
 	void OnReconnecting() override { std::cout << "Room reconnecting" << std::endl; }
 	void OnReconnected() override { std::cout << "Room reconnected" << std::endl; }
 

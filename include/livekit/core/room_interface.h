@@ -54,6 +54,7 @@ public:
 	// Returns the full connection lifecycle state. Unlike IsConnected(), this distinguishes
 	// connecting, disconnecting, and failed rooms.
 	RoomState State() const;
+	DisconnectReason LastDisconnectReason() const;
 	virtual bool IsConnected() = 0;
 	virtual bool Disconnect() = 0;
 	virtual std::string Sid() { return {}; }

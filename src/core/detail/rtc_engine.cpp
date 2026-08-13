@@ -29,6 +29,16 @@ namespace {
 constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
 constexpr auto kRecoveryRtcTimeout = std::chrono::seconds(15);
+
+livekit::ReconnectReason ToReconnectReason(livekit::DisconnectReason reason) {
+	if (reason == livekit::DisconnectReason::MEDIA_FAILURE) {
+		return livekit::ReconnectReason::RR_PUBLISHER_FAILED;
+	}
+	if (reason == livekit::DisconnectReason::SIGNAL_CLOSE) {
+		return livekit::ReconnectReason::RR_SIGNAL_DISCONNECTED;
+	}
+	return livekit::ReconnectReason::RR_UNKNOWN;
+}
 } // namespace
 
 namespace livekit {
@@ -56,6 +66,8 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 	}
 	recovery_stop_ = false;
 	recovering_connection_ = false;
+	force_full_reconnect_ = false;
+	recovery_failure_reason_ = livekit::DisconnectReason::UNKNOWN_REASON;
 	{
 		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
 		rtc_connected_ = false;
@@ -106,6 +118,103 @@ livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const 
 	}
 
 	return response;
+}
+
+bool RtcEngine::ResumeTransport(const std::string& url, const std::string& token,
+                                const EngineOptions& options, livekit::DisconnectReason reason) {
+	SignalOptions signal_options = options.signal_options;
+	int ping_timeout = 0;
+	int ping_interval = 0;
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (!rtc_session_ || !join_resp_.has_participant()) {
+			return false;
+		}
+		signal_options.participant_sid = join_resp_.participant().sid();
+		ping_timeout = join_resp_.ping_timeout();
+		ping_interval = join_resp_.ping_interval();
+	}
+	signal_options.reconnect = true;
+	signal_options.reconnect_reason = static_cast<int>(ToReconnectReason(reason));
+
+	auto created = SignalClient::Create(url, token, signal_options);
+	if (!created) {
+		return false;
+	}
+	auto resumed_signal = std::shared_ptr<SignalClient>(std::move(created));
+	resumed_signal->SetPingConfig(ping_timeout, ping_interval);
+	resumed_signal->AddObserver(this);
+
+	std::shared_ptr<SignalClient> previous_signal;
+	{
+		std::lock_guard<std::mutex> guard(signal_client_lock_);
+		previous_signal.swap(signal_client_);
+		signal_client_ = resumed_signal;
+	}
+	if (previous_signal) {
+		previous_signal->RemoveObserver();
+		previous_signal->Close();
+	}
+
+	if (!resumed_signal->Resume() || recovery_stop_ || force_full_reconnect_) {
+		return false;
+	}
+	const auto reconnect_response = resumed_signal->ReconnectResponseSnapshot();
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (!rtc_session_ || !rtc_session_->UpdateConfiguration(reconnect_response)) {
+			return false;
+		}
+		if (reconnect_response.has_server_info()) {
+			join_resp_.mutable_server_info()->CopyFrom(reconnect_response.server_info());
+		}
+		if (reconnect_response.has_client_configuration()) {
+			join_resp_.mutable_client_configuration()->CopyFrom(
+			    reconnect_response.client_configuration());
+		}
+		if (reconnect_response.ice_servers_size() > 0) {
+			join_resp_.clear_ice_servers();
+			for (const auto& ice_server : reconnect_response.ice_servers()) {
+				join_resp_.add_ice_servers()->CopyFrom(ice_server);
+			}
+		}
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->SignalResumedEvent();
+	}
+
+	bool restart_publisher = false;
+	{
+		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
+		rtc_connected_ = false;
+	}
+	publisher_answer_received_ = false;
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (!rtc_session_) {
+			return false;
+		}
+		restart_publisher = rtc_session_->ShouldRestartPublisherIce();
+		if (!rtc_session_->RestartPublisherIce()) {
+			return false;
+		}
+	}
+	if (!restart_publisher) {
+		return !recovery_stop_ && !force_full_reconnect_;
+	}
+
+	std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
+	const bool connected = rtc_connected_cv_.wait_for(guard, kRecoveryRtcTimeout, [this]() {
+		if (recovery_stop_.load() || force_full_reconnect_.load()) {
+			return true;
+		}
+		if (!publisher_answer_received_.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> session_guard(session_lock_);
+		return rtc_session_ != nullptr && rtc_session_->IsConnected();
+	});
+	return connected && !recovery_stop_ && !force_full_reconnect_;
 }
 
 void RtcEngine::Disconnect() {
@@ -192,14 +301,25 @@ void RtcEngine::StopRecovery() {
 	}
 	recovery_in_progress_ = false;
 	recovering_connection_ = false;
+	force_full_reconnect_ = false;
 }
 
-void RtcEngine::StartRecovery() {
+void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_reconnect) {
 	if (!recovery_allowed_ || recovery_stop_) {
 		return;
 	}
+	recovery_failure_reason_ = reason;
+	if (force_full_reconnect) {
+		force_full_reconnect_ = true;
+	}
 	bool expected = false;
 	if (!recovery_in_progress_.compare_exchange_strong(expected, true)) {
+		if (force_full_reconnect) {
+			rtc_connected_cv_.notify_all();
+			if (auto* listener = room_listener_.load()) {
+				listener->ReconnectingEvent(true);
+			}
+		}
 		return;
 	}
 	recovering_connection_ = true;
@@ -208,7 +328,7 @@ void RtcEngine::StartRecovery() {
 		rtc_connected_ = false;
 	}
 	if (auto* listener = room_listener_.load()) {
-		listener->ReconnectingEvent();
+		listener->ReconnectingEvent(force_full_reconnect);
 	}
 
 	std::thread completed_thread;
@@ -236,6 +356,33 @@ void RtcEngine::RunRecovery() {
 	const auto attempts = (std::max)(uint32_t{1}, options.join_retries);
 	livekit::JoinResponse recovered_response;
 	bool recovered = false;
+
+	if (!force_full_reconnect_ && !recovery_stop_) {
+		std::string token;
+		{
+			std::lock_guard<std::mutex> guard(access_token_mutex_);
+			token = access_token_;
+		}
+		if (!url.empty() && !token.empty()) {
+			recovered = ResumeTransport(url, token, options, recovery_failure_reason_.load());
+		}
+		if (recovered && !force_full_reconnect_) {
+			if (auto* listener = room_listener_.load()) {
+				listener->ResumedEvent();
+			}
+			recovering_connection_ = false;
+			recovery_in_progress_ = false;
+			return;
+		}
+	}
+
+	force_full_reconnect_ = true;
+	if (!recovery_stop_) {
+		if (auto* listener = room_listener_.load()) {
+			listener->ReconnectingEvent(true);
+		}
+	}
+	recovered = false;
 
 	for (uint32_t attempt = 0; attempt < attempts && !recovery_stop_; ++attempt) {
 		{
@@ -279,9 +426,10 @@ void RtcEngine::RunRecovery() {
 		ResetTransport(false);
 		recovery_allowed_ = false;
 		if (auto* listener = room_listener_.load()) {
-			listener->SignalDisconnectedEvent();
+			listener->SignalDisconnectedEvent(recovery_failure_reason_.load());
 		}
 	}
+	force_full_reconnect_ = false;
 	recovering_connection_ = false;
 	recovery_in_progress_ = false;
 }
@@ -289,9 +437,15 @@ void RtcEngine::RunRecovery() {
 void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_.store(listener); }
 
 void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
-	std::lock_guard<std::mutex> guard(session_lock_);
-	if (rtc_session_) {
-		rtc_session_->SetPublisherAnswer(std::move(answer));
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (rtc_session_) {
+			rtc_session_->SetPublisherAnswer(std::move(answer));
+		}
+	}
+	if (recovering_connection_) {
+		publisher_answer_received_ = true;
+		rtc_connected_cv_.notify_all();
 	}
 	return;
 }
@@ -449,6 +603,41 @@ std::string RtcEngine::AccessTokenForReconnect() const {
 	return access_token_;
 }
 
+void RtcEngine::SendSyncState(
+    const std::vector<livekit::TrackPublishedResponse>& published_tracks) {
+	livekit::SyncState sync;
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (!rtc_session_) {
+			return;
+		}
+		rtc_session_->PopulateSyncState(sync);
+	}
+	{
+		std::lock_guard<std::mutex> guard(connection_params_mutex_);
+		sync.mutable_subscription()->set_subscribe(
+		    !connection_options_.signal_options.auto_subscribe);
+	}
+	for (const auto& track : published_tracks) {
+		sync.add_publish_tracks()->CopyFrom(track);
+	}
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		for (const auto& channel : {lossyDC_, reliableDC_}) {
+			if (!channel || channel->id() < 0) {
+				continue;
+			}
+			auto* info = sync.add_data_channels();
+			info->set_label(channel->label());
+			info->set_id(static_cast<uint32_t>(channel->id()));
+			info->set_target(livekit::SignalTarget::PUBLISHER);
+		}
+	}
+	if (auto signal_client = SignalClientSnapshot()) {
+		signal_client->SendSyncState(sync);
+	}
+}
+
 bool RtcEngine::SimulateSignalDisconnectForTesting() {
 	auto signal_client = SignalClientSnapshot();
 	if (!signal_client || !recovery_allowed_) {
@@ -458,15 +647,26 @@ bool RtcEngine::SimulateSignalDisconnectForTesting() {
 	return true;
 }
 
+bool RtcEngine::SimulateFullReconnectForTesting() {
+	if (!recovery_allowed_ || recovery_stop_) {
+		return false;
+	}
+	StartRecovery(livekit::DisconnectReason::SIGNAL_CLOSE, true);
+	return true;
+}
+
 void RtcEngine::OnLeave(const livekit::LeaveRequest leave) {
 	if (leave.action() == livekit::LeaveRequest::DISCONNECT) {
 		recovery_allowed_ = false;
 		if (auto* listener = room_listener_.load()) {
-			listener->SignalDisconnectedEvent();
+			listener->SignalDisconnectedEvent(leave.reason());
 		}
 		return;
 	}
-	StartRecovery();
+	const auto reason = leave.reason() == livekit::DisconnectReason::UNKNOWN_REASON
+	                        ? livekit::DisconnectReason::SIGNAL_CLOSE
+	                        : leave.reason();
+	StartRecovery(reason, leave.action() == livekit::LeaveRequest::RECONNECT);
 }
 
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) {
@@ -531,10 +731,10 @@ void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) 
 }
 void RtcEngine::OnClose() {
 	if (recovery_allowed_ && !recovery_stop_) {
-		StartRecovery();
+		StartRecovery(livekit::DisconnectReason::SIGNAL_CLOSE);
 	} else if (!recovery_in_progress_ && !recovery_stop_) {
 		if (auto* listener = room_listener_.load()) {
-			listener->SignalDisconnectedEvent();
+			listener->SignalDisconnectedEvent(livekit::DisconnectReason::SIGNAL_CLOSE);
 		}
 	}
 }
@@ -591,7 +791,7 @@ void RtcEngine::OnStateChange(RtcSession::State connection_state,
 		}
 	} else if (connection_state == RtcSession::State::kFailed && recovery_allowed_ &&
 	           !recovery_stop_) {
-		StartRecovery();
+		StartRecovery(livekit::DisconnectReason::MEDIA_FAILURE, true);
 	}
 }
 

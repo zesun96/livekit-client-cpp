@@ -12,6 +12,7 @@ TEST(SignalUrlTest, AppliesConfiguredConnectionParameters) {
 	options.adaptive_stream = true;
 	options.reconnect = true;
 	options.reconnect_reason = 3;
+	options.participant_sid = "PA_test+sid";
 	options.sdk_options.sdk = "cpp test";
 	options.sdk_options.sdk_version = "1.2.3+dev";
 
@@ -27,6 +28,7 @@ TEST(SignalUrlTest, AppliesConfiguredConnectionParameters) {
 	EXPECT_EQ(parameters.at("adaptive_stream"), "1");
 	EXPECT_EQ(parameters.at("reconnect"), "1");
 	EXPECT_EQ(parameters.at("reconnect_reason"), "3");
+	EXPECT_EQ(parameters.at("sid"), "PA_test%2Bsid");
 	EXPECT_EQ(parameters.at("sdk"), "cpp%20test");
 	EXPECT_EQ(parameters.at("version"), "1.2.3%2Bdev");
 	EXPECT_EQ(parameters.at("protocol"), "15");
@@ -42,6 +44,7 @@ TEST(SignalUrlTest, OmitsDisabledOptionalParametersAndUsesSdkDefaults) {
 	EXPECT_FALSE(parameters.contains("adaptive_stream"));
 	EXPECT_FALSE(parameters.contains("reconnect"));
 	EXPECT_FALSE(parameters.contains("reconnect_reason"));
+	EXPECT_FALSE(parameters.contains("sid"));
 }
 
 } // namespace

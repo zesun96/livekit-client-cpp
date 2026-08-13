@@ -387,7 +387,7 @@ TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
 
 	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
 	ASSERT_NE(concrete_sender, nullptr);
-	ASSERT_TRUE(concrete_sender->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(concrete_sender->SimulateFullReconnectForTesting());
 	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting(); }, std::chrono::seconds(10)));
 	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(30)));
@@ -453,6 +453,35 @@ TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return events.received_data("receiver-recovered", receiver_recovered_data, true); }));
 
+	const auto reconnecting_before_sender_resume = events.reconnecting_count();
+	const auto reconnected_before_sender_resume = events.reconnected_count();
+	const auto published_before_sender_resume = events.local_tracks_published();
+	const auto frames_before_sender_resume = events.audio_frame_count();
+	ASSERT_TRUE(concrete_sender->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.reconnecting_count() > reconnecting_before_sender_resume; },
+	              std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return events.reconnected_count() > reconnected_before_sender_resume &&
+		           sender->IsConnected();
+	    },
+	    std::chrono::seconds(30)));
+	EXPECT_EQ(events.local_tracks_published(), published_before_sender_resume);
+	const auto sender_resumed_deadline =
+	    std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < frames_before_sender_resume + 3 &&
+	       std::chrono::steady_clock::now() < sender_resumed_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	EXPECT_GE(events.audio_frame_count(), frames_before_sender_resume + 3);
+	const std::vector<uint8_t> sender_resumed_data{9, 7, 5, 3};
+	data_options.topic = "publisher-resumed";
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(sender_resumed_data, data_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_data("publisher-resumed", sender_resumed_data, true); }));
+
 	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
 	audio_track.reset();
 	audio_source.reset();
@@ -492,7 +521,13 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	ASSERT_FALSE(first_local->Sid().empty());
 	ASSERT_FALSE(second_local->Sid().empty());
 	ASSERT_NE(first_local->Identity(), second_local->Identity());
-	ASSERT_TRUE(WaitUntil([&] { return events.connected(second_local->Identity()); }));
+	// A preceding integration process may still be inside LiveKit's reconnect grace period for the
+	// same token identity. In that case the server reconciles the existing participant instead of
+	// emitting a second joined transition, but the room snapshot must still converge.
+	ASSERT_TRUE(WaitUntil([&] {
+		return events.connected(second_local->Identity()) ||
+		       first_room->GetRemoteParticipantByIdentity(second_local->Identity()) != nullptr;
+	}));
 
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return first_room->GetRemoteParticipantBySid(second_local->Sid()) != nullptr; }));

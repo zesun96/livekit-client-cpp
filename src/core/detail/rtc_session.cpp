@@ -153,6 +153,7 @@ RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	auto init = webrtc::RtpTransceiverInit();
 	init.direction = webrtc::RtpTransceiverDirection::kSendOnly;
 	init.send_encodings = send_encodings;
+	is_publisher_connection_required_.store(true);
 	auto transceiver = publisher_pc_->AddTransceiver(track->media_track()->rtc_track(), init);
 	return transceiver;
 }
@@ -213,6 +214,56 @@ void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::Si
 }
 
 bool RtcSession::Negotiate() { return this->publisher_pc_->Negotiate(); }
+
+bool RtcSession::ShouldRestartPublisherIce() const {
+	return is_publisher_connection_required_.load() || has_published_.load();
+}
+
+bool RtcSession::RestartPublisherIce() {
+	if (!ShouldRestartPublisherIce()) {
+		return true;
+	}
+	return publisher_pc_ != nullptr && publisher_pc_->Negotiate(true);
+}
+
+bool RtcSession::IsConnected() const { return state_.load() == State::kConnected; }
+
+bool RtcSession::UpdateConfiguration(const livekit::ReconnectResponse& response) {
+	if (response.ice_servers_size() > 0) {
+		join_response_.clear_ice_servers();
+		for (const auto& ice_server : response.ice_servers()) {
+			join_response_.add_ice_servers()->CopyFrom(ice_server);
+		}
+	}
+	if (response.has_client_configuration()) {
+		join_response_.mutable_client_configuration()->CopyFrom(response.client_configuration());
+	}
+	if (response.has_server_info()) {
+		join_response_.mutable_server_info()->CopyFrom(response.server_info());
+	}
+	const auto config = make_rtc_config_join(join_response_, options_);
+	return publisher_pc_->SetConfiguration(config) && subscriber_pc_->SetConfiguration(config);
+}
+
+void RtcSession::PopulateSyncState(livekit::SyncState& sync) {
+	std::string offer;
+	std::string answer;
+	if (is_subscriber_connection_required_.load()) {
+		offer = subscriber_pc_->GetCurrentRemoteDescription();
+		answer = subscriber_pc_->GetCurrentLocalDescription();
+	} else {
+		offer = publisher_pc_->GetCurrentLocalDescription();
+		answer = publisher_pc_->GetCurrentRemoteDescription();
+	}
+	if (!offer.empty()) {
+		sync.mutable_offer()->set_type("offer");
+		sync.mutable_offer()->set_sdp(std::move(offer));
+	}
+	if (!answer.empty()) {
+		sync.mutable_answer()->set_type("answer");
+		sync.mutable_answer()->set_sdp(std::move(answer));
+	}
+}
 
 webrtc::scoped_refptr<webrtc::DataChannelInterface>
 RtcSession::CreateDataChannel(const std::string& label,

@@ -37,6 +37,28 @@ class RemoteTrackInterface;
 class ParticipantInterface;
 class TrackPublicationInterface;
 
+// Values intentionally match livekit.protocol.DisconnectReason so applications can preserve the
+// full server-provided reason without depending on generated protobuf headers.
+enum class DisconnectReason : int {
+	Unknown = 0,
+	ClientInitiated = 1,
+	DuplicateIdentity = 2,
+	ServerShutdown = 3,
+	ParticipantRemoved = 4,
+	RoomDeleted = 5,
+	StateMismatch = 6,
+	JoinFailure = 7,
+	Migration = 8,
+	SignalClose = 9,
+	RoomClosed = 10,
+	UserUnavailable = 11,
+	UserRejected = 12,
+	SipTrunkFailure = 13,
+	ConnectionTimeout = 14,
+	MediaFailure = 15,
+	AgentError = 16,
+};
+
 class RoomEventInterface {
 public:
 	virtual ~RoomEventInterface() {}
@@ -45,6 +67,8 @@ public:
 	virtual void OnReconnecting() {}
 	virtual void OnReconnected() {}
 	virtual void OnDisconnected() {}
+	// The default forwards to the legacy no-argument callback, preserving existing listeners.
+	virtual void OnDisconnected(DisconnectReason) { OnDisconnected(); }
 	virtual void OnParticipantConnected(RemoteParticipantInterface*) {}
 	virtual void OnParticipantDisconnected(RemoteParticipantInterface*) {}
 	virtual void OnTrackPublished(TrackPublicationInterface*, RemoteParticipantInterface*) {}

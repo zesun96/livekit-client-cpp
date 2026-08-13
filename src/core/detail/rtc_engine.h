@@ -60,8 +60,10 @@ public:
 		virtual void RoomUpdateEvent(const livekit::Room& update) = 0;
 		virtual void
 		ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) = 0;
-		virtual void SignalDisconnectedEvent() = 0;
-		virtual void ReconnectingEvent() = 0;
+		virtual void SignalDisconnectedEvent(livekit::DisconnectReason reason) = 0;
+		virtual void ReconnectingEvent(bool full_reconnect) = 0;
+		virtual void SignalResumedEvent() = 0;
+		virtual void ResumedEvent() = 0;
 		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
 	};
 
@@ -92,7 +94,9 @@ public:
 	// Retained internally so connection recovery can authenticate with the newest server-issued
 	// token instead of the token used for the initial join.
 	std::string AccessTokenForReconnect() const;
+	void SendSyncState(const std::vector<livekit::TrackPublishedResponse>& published_tracks);
 	bool SimulateSignalDisconnectForTesting();
+	bool SimulateFullReconnectForTesting();
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:
@@ -178,9 +182,11 @@ public:
 private:
 	livekit::JoinResponse ConnectTransport(const std::string& url, const std::string& token,
 	                                       const EngineOptions& options);
+	bool ResumeTransport(const std::string& url, const std::string& token,
+	                     const EngineOptions& options, livekit::DisconnectReason reason);
 	void ResetTransport(bool send_leave);
 	std::shared_ptr<SignalClient> SignalClientSnapshot() const;
-	void StartRecovery();
+	void StartRecovery(livekit::DisconnectReason reason, bool force_full_reconnect = false);
 	void RunRecovery();
 	void StopRecovery();
 	void negotiate();
@@ -218,11 +224,15 @@ private:
 	std::atomic<bool> recovery_stop_{false};
 	std::atomic<bool> recovery_in_progress_{false};
 	std::atomic<bool> recovering_connection_{false};
+	std::atomic<bool> force_full_reconnect_{false};
+	std::atomic<livekit::DisconnectReason> recovery_failure_reason_{
+	    livekit::DisconnectReason::UNKNOWN_REASON};
 	std::mutex recovery_thread_mutex_;
 	std::thread recovery_thread_;
 	std::mutex rtc_connected_mutex_;
 	std::condition_variable rtc_connected_cv_;
 	bool rtc_connected_ = false;
+	std::atomic<bool> publisher_answer_received_{false};
 };
 
 } // namespace core
