@@ -32,6 +32,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <set>
 
 namespace livekit {
 namespace core {
@@ -81,6 +82,7 @@ public:
 	    const std::vector<ParticipantTrackPermission>& participant_permissions) override;
 	bool ResendTrackSubscriptionPermissions();
 	void SetEventListener(RoomEventInterface* listener);
+	void LocalTrackSubscribed(const std::string& track_sid);
 
 private:
 	RtcEngine* engine_;
@@ -91,6 +93,9 @@ private:
 	bool all_participants_allowed_to_subscribe_ = true;
 	std::vector<ParticipantTrackPermission> participant_track_permissions_;
 	std::shared_ptr<OutgoingDataStreamState> outgoing_stream_state_;
+	std::mutex local_track_subscriptions_mutex_;
+	std::set<std::string> subscribed_local_track_sids_;
+	std::set<std::string> emitted_local_track_subscriptions_;
 
 	// AudioSourceInterface* source_;
 };

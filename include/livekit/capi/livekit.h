@@ -477,6 +477,7 @@ typedef struct lk_room_callbacks {
 	lk_metrics_received_callback on_metrics_received;
 	lk_connection_state_callback on_connection_state_changed;
 	lk_participant_permissions_callback on_participant_permissions_changed;
+	lk_track_event_callback on_local_track_subscribed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

@@ -125,6 +125,7 @@ public:
 	virtual void OnConnectionStateChanged(RoomState) {}
 	virtual void OnParticipantPermissionsChanged(const ParticipantPermissions&,
 	                                             ParticipantInterface*) {}
+	virtual void OnLocalTrackSubscribed(TrackPublicationInterface*, ParticipantInterface*) {}
 };
 
 } // namespace core

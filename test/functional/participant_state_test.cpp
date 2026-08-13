@@ -449,10 +449,19 @@ public:
 		track_sid = publication != nullptr ? publication->Sid() : "";
 		participant_is_local = participant != nullptr && participant->IsLocalParticipant();
 	}
+	void OnLocalTrackSubscribed(TrackPublicationInterface* publication,
+	                            ParticipantInterface* participant) override {
+		++subscribed_count;
+		subscribed_track_sid = publication != nullptr ? publication->Sid() : "";
+		subscriber_event_is_local = participant != nullptr && participant->IsLocalParticipant();
+	}
 
 	int unpublished_count = 0;
 	std::string track_sid;
 	bool participant_is_local = false;
+	int subscribed_count = 0;
+	std::string subscribed_track_sid;
+	bool subscriber_event_is_local = false;
 };
 
 class ConnectionEvents final : public RoomEventInterface {
@@ -938,6 +947,29 @@ TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {
 
 	room.LocalTrackUnpublishedEvent("TR_local");
 	EXPECT_EQ(events.unpublished_count, 1);
+	room.RemoveEventListener();
+}
+
+TEST(LocalTrackStateTest, ForwardsFirstRemoteSubscriptionOnce) {
+	Room room;
+	LocalTrackEvents events;
+	room.AddEventListener(&events);
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+
+	room.LocalTrackSubscribedEvent("TR_pending");
+	EXPECT_EQ(events.subscribed_count, 0);
+	livekit::TrackInfo info = MakeTrack("TR_local", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	auto publication = std::make_shared<TrackPublication>(info, nullptr);
+	participant->AddTrackPublication(publication);
+
+	room.LocalTrackSubscribedEvent("TR_local");
+	EXPECT_EQ(events.subscribed_count, 1);
+	EXPECT_EQ(events.subscribed_track_sid, "TR_local");
+	EXPECT_TRUE(events.subscriber_event_is_local);
+	room.LocalTrackSubscribedEvent("TR_local");
+	EXPECT_EQ(events.subscribed_count, 1);
 	room.RemoveEventListener();
 }
 
