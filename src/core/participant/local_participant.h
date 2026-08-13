@@ -82,11 +82,13 @@ public:
 	    const std::vector<ParticipantTrackPermission>& participant_permissions) override;
 	bool ResendTrackSubscriptionPermissions();
 	void SetEventListener(RoomEventInterface* listener);
+	void UpdateRoomOptions(RoomOptions options);
 	void LocalTrackSubscribed(const std::string& track_sid);
 	void SubscribedQualityUpdate(core::SubscribedQualityUpdate update);
 
 private:
 	RtcEngine* engine_;
+	std::mutex room_options_mutex_;
 	RoomOptions options_;
 	EncryptionType encryption_type_;
 	std::atomic<RoomEventInterface*> event_listener_{nullptr};
