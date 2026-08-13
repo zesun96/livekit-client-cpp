@@ -92,6 +92,10 @@ public:
 		return nullptr;
 	}
 	virtual bool PublishDtmf(uint32_t, std::string) { return false; }
+	virtual std::optional<ChatMessage> SendChatMessage(std::string) { return std::nullopt; }
+	virtual std::optional<ChatMessage> EditChatMessage(std::string, const ChatMessage&) {
+		return std::nullopt;
+	}
 };
 
 } // namespace core

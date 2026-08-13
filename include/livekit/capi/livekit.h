@@ -199,6 +199,19 @@ typedef struct lk_sip_dtmf {
 	const char* participant_identity;
 } lk_sip_dtmf_t;
 
+#define LK_CHAT_MESSAGE_ID_BUFFER_SIZE 37
+
+typedef struct lk_chat_message {
+	const char* id;
+	int64_t timestamp;
+	int has_edit_timestamp;
+	int64_t edit_timestamp;
+	const char* message;
+	int deleted;
+	int generated;
+	const char* participant_identity;
+} lk_chat_message_t;
+
 typedef struct lk_file_received {
 	const uint8_t* data;
 	size_t data_size;
@@ -304,6 +317,8 @@ typedef void (*lk_video_frame_callback)(void* user_data, lk_room_t* room,
 typedef void (*lk_data_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_data_received_t* event);
 typedef void (*lk_sip_dtmf_callback)(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* event);
+typedef void (*lk_chat_message_callback)(void* user_data, lk_room_t* room,
+                                         const lk_chat_message_t* event);
 typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_file_received_t* event);
 typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
@@ -365,6 +380,7 @@ typedef struct lk_room_callbacks {
 	lk_track_subscription_status_callback on_track_subscription_status_changed;
 	lk_data_channel_buffer_status_callback on_data_channel_buffer_status_changed;
 	lk_sip_dtmf_callback on_sip_dtmf_received;
+	lk_chat_message_callback on_chat_message_received;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -580,6 +596,11 @@ LKC_API lk_status_t lk_room_set_track_subscription_permissions(
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);
 LKC_API lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit);
+LKC_API lk_status_t lk_room_send_chat_message(lk_room_t* room, const char* message,
+                                              char* message_id, size_t message_id_size,
+                                              int64_t* timestamp);
+LKC_API lk_status_t lk_room_edit_chat_message(lk_room_t* room, const char* message_id,
+                                              int64_t original_timestamp, const char* message);
 LKC_API lk_status_t lk_room_send_text(lk_room_t* room, const char* text,
                                       const lk_text_send_options_t* options);
 LKC_API lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, size_t data_size,

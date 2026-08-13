@@ -108,6 +108,7 @@ public:
 	                                              TrackSubscriptionStatus) {}
 	virtual void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus&) {}
 	virtual void OnSipDtmfReceived(const SipDtmfEvent&) {}
+	virtual void OnChatMessageReceived(const ChatMessage&) {}
 };
 
 } // namespace core

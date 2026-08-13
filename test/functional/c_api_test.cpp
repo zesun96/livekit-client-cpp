@@ -140,7 +140,15 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_track_subscription_status_changed, nullptr);
 	EXPECT_EQ(callbacks.on_data_channel_buffer_status_changed, nullptr);
 	EXPECT_EQ(callbacks.on_sip_dtmf_received, nullptr);
+	EXPECT_EQ(callbacks.on_chat_message_received, nullptr);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	char undersized_id[LK_CHAT_MESSAGE_ID_BUFFER_SIZE - 1];
+	EXPECT_EQ(
+	    lk_room_send_chat_message(room, "chat", undersized_id, sizeof(undersized_id), nullptr),
+	    LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_edit_chat_message(room, nullptr, 0, "edit"), LK_STATUS_INVALID_ARGUMENT);
 	const auto current_callbacks_size = callbacks.struct_size;
 	callbacks.struct_size = offsetof(lk_room_callbacks_t, on_sip_dtmf_received);
 	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);

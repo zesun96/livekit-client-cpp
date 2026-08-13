@@ -1051,6 +1051,23 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		}
 		return;
 	}
+	if (packet.has_chat_message()) {
+		const auto& chat = packet.chat_message();
+		ChatMessage event;
+		event.id = chat.id();
+		event.timestamp = chat.timestamp();
+		if (chat.has_edit_timestamp()) {
+			event.edit_timestamp = chat.edit_timestamp();
+		}
+		event.message = chat.message();
+		event.deleted = chat.deleted();
+		event.generated = chat.generated();
+		event.participant_identity = packet.participant_identity();
+		if (auto* listener = event_listener_.load()) {
+			listener->OnChatMessageReceived(event);
+		}
+		return;
+	}
 	if (packet.has_stream_header() && packet.stream_header().has_text_header()) {
 		const auto& header = packet.stream_header();
 		if (header.stream_id().empty() ||
