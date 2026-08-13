@@ -27,6 +27,7 @@ Because webrtc requires C++20.
 - [x] Audio publishing and receiving (signed 16-bit PCM)
 - [x] Video publishing and receiving (I420/VP8)
 - [x] Reliable and lossy data messages
+- [x] SIP DTMF publishing and receiving
 - [x] Chunked file transfer over LiveKit data streams
 - [x] Incremental text/byte stream writers and topic-scoped chunk handlers
 - [x] Bounded DataChannel backpressure with high/low-water events

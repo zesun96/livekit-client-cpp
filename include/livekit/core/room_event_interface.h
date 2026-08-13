@@ -107,6 +107,7 @@ public:
 	                                              RemoteParticipantInterface*,
 	                                              TrackSubscriptionStatus) {}
 	virtual void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus&) {}
+	virtual void OnSipDtmfReceived(const SipDtmfEvent&) {}
 };
 
 } // namespace core

@@ -64,6 +64,9 @@ incremental text-stream writer and topic handler C APIs.
 The example source is compiled as C11; only its final link step uses the C++ linker because the SDK
 implementation and libwebrtc are C++ libraries.
 
+Set `LIVEKIT_DTMF_DIGIT` and optionally `LIVEKIT_DTMF_CODE` to publish a reliable SIP DTMF packet
+after connecting. The C sample and `room_event` both print received SIP DTMF events.
+
 ### `cpp_sample`
 
 Connects to a room, prints the local participant identity and SID, and disconnects.
@@ -75,7 +78,8 @@ Connects to a room, prints the local participant identity and SID, and disconnec
 ### `room_event`
 
 Receives room events, subscribed and unsubscribed tracks, SFU pause/resume state, decoded PCM/I420
-frames, data messages, and completed files. It also reports `OnReconnecting` and `OnReconnected`
+frames, data messages, SIP DTMF events, and completed files. It also reports `OnReconnecting` and
+`OnReconnected`
 while the SDK first attempts a
 protocol-level signal resume and falls back to a full reconnect when required, and prints the
 protocol-level reason when the room disconnects. Applications can query the same value later with

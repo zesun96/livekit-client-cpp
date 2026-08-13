@@ -111,6 +111,11 @@ public:
 		          << ", buffered=" << status.buffered_amount << std::endl;
 	}
 
+	void OnSipDtmfReceived(const livekit::core::SipDtmfEvent& event) override {
+		std::cout << "SIP DTMF received: code=" << event.code << ", digit=" << event.digit
+		          << ", from=" << event.participant_identity << std::endl;
+	}
+
 	bool connected() const { return connected_.load(); }
 
 private:

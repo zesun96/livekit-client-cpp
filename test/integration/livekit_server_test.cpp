@@ -159,6 +159,13 @@ public:
 		byte_data_ = event.data;
 	}
 
+	void OnSipDtmfReceived(const SipDtmfEvent& event) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		dtmf_code_ = event.code;
+		dtmf_digit_ = event.digit;
+		dtmf_identity_ = event.participant_identity;
+	}
+
 	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
 	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
 	bool video_subscribed() const { return video_subscribed_.load(); }
@@ -193,6 +200,10 @@ public:
 	bool received_bytes(const std::string& topic, const std::vector<uint8_t>& data) {
 		std::lock_guard<std::mutex> guard(lock_);
 		return byte_topic_ == topic && byte_data_ == data;
+	}
+	bool received_dtmf(uint32_t code, const std::string& digit, const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return dtmf_code_ == code && dtmf_digit_ == digit && dtmf_identity_ == identity;
 	}
 	bool permission_changed(const std::string& track_sid, bool allowed,
 	                        uint64_t minimum_count = 1) {
@@ -233,6 +244,9 @@ private:
 	std::string text_;
 	std::string byte_topic_;
 	std::vector<uint8_t> byte_data_;
+	uint32_t dtmf_code_ = 0;
+	std::string dtmf_digit_;
+	std::string dtmf_identity_;
 	std::string permission_track_sid_;
 	bool permission_allowed_ = true;
 	uint64_t permission_change_count_ = 0;
@@ -795,6 +809,9 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(data_payload, data_options));
 	ASSERT_TRUE(
 	    WaitUntil([&] { return events.received_data("integration-data", data_payload, true); }));
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishDtmf(11, "#"));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_dtmf(11, "#", sender->GetLocalParticipant()->Identity()); }));
 
 	const std::vector<uint8_t> lossy_payload{'l', 'o', 's', 's', 'y'};
 	data_options.reliable = false;

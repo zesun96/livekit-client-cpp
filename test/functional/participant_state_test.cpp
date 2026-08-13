@@ -433,11 +433,13 @@ public:
 	void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus& status) override {
 		buffer_statuses.push_back(status);
 	}
+	void OnSipDtmfReceived(const SipDtmfEvent& event) override { dtmf_events.push_back(event); }
 
 	std::vector<TextReceivedEvent> texts;
 	std::vector<ByteReceivedEvent> bytes;
 	std::vector<FileReceivedEvent> files;
 	std::vector<DataChannelBufferStatus> buffer_statuses;
+	std::vector<SipDtmfEvent> dtmf_events;
 };
 
 livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
@@ -613,6 +615,22 @@ TEST(DataStreamStateTest, ForwardsDataChannelBackpressureTransitions) {
 	EXPECT_TRUE(events.buffer_statuses[0].reliable);
 	EXPECT_TRUE(events.buffer_statuses[0].backpressured);
 	EXPECT_EQ(events.buffer_statuses[0].high_water_mark, 4u * 1024 * 1024);
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, ForwardsSipDtmfPackets) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	livekit::DataPacket packet;
+	packet.set_participant_identity("sip-participant");
+	packet.mutable_sip_dtmf()->set_code(11);
+	packet.mutable_sip_dtmf()->set_digit("#");
+	room.DataPacketEvent(packet);
+	ASSERT_EQ(events.dtmf_events.size(), 1u);
+	EXPECT_EQ(events.dtmf_events[0].code, 11u);
+	EXPECT_EQ(events.dtmf_events[0].digit, "#");
+	EXPECT_EQ(events.dtmf_events[0].participant_identity, "sip-participant");
 	room.RemoveEventListener();
 }
 

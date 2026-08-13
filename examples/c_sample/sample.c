@@ -128,6 +128,13 @@ static void on_data_channel_buffer_status(void* user_data, lk_room_t* room,
 	       status->backpressured, (unsigned long long)status->buffered_amount);
 }
 
+static void on_sip_dtmf(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* event) {
+	(void)user_data;
+	(void)room;
+	printf("SIP DTMF received: code=%u, digit=%s, from=%s\n", event->code, event->digit,
+	       event->participant_identity);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -175,6 +182,7 @@ int main(int argc, char** argv) {
 	callbacks.on_track_stream_state_changed = on_track_stream_state_changed;
 	callbacks.on_track_subscription_status_changed = on_track_subscription_status_changed;
 	callbacks.on_data_channel_buffer_status_changed = on_data_channel_buffer_status;
+	callbacks.on_sip_dtmf_received = on_sip_dtmf;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");
@@ -218,6 +226,15 @@ int main(int argc, char** argv) {
 	if (read_string(lk_local_participant_identity, room, &identity)) {
 		printf("Connected as %s\n", identity);
 		free(identity);
+	}
+	{
+		const char* digit = getenv("LIVEKIT_DTMF_DIGIT");
+		const char* code = getenv("LIVEKIT_DTMF_CODE");
+		if (digit != NULL && digit[0] != '\0' &&
+		    lk_room_publish_dtmf(room, code != NULL ? (uint32_t)strtoul(code, NULL, 10) : 0,
+		                         digit) != LK_STATUS_OK) {
+			fprintf(stderr, "SIP DTMF publish failed: %s\n", lk_last_error());
+		}
 	}
 	{
 		const char* first = "incremental ";

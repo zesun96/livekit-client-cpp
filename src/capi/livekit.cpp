@@ -635,6 +635,16 @@ public:
 		});
 	}
 
+	void OnSipDtmfReceived(const core::SipDtmfEvent& event) override {
+		const lk_sip_dtmf_t c_event{event.code, event.digit.c_str(),
+		                            event.participant_identity.c_str()};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_sip_dtmf_received != nullptr) {
+				callbacks.on_sip_dtmf_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
 	void OnTextReceived(const core::TextReceivedEvent& event) override {
 		const lk_text_received_t c_event{event.stream_id.c_str(),
 		                                 event.text.c_str(),
@@ -1557,6 +1567,18 @@ lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t da
 		return participant->PublishData(payload, std::move(publish_options))
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to publish data");
+	});
+}
+
+lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || digit == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and DTMF digit are required");
+		}
+		return participant->PublishDtmf(code, digit)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to publish SIP DTMF");
 	});
 }
 

@@ -193,6 +193,12 @@ typedef struct lk_data_received {
 	int reliable;
 } lk_data_received_t;
 
+typedef struct lk_sip_dtmf {
+	uint32_t code;
+	const char* digit;
+	const char* participant_identity;
+} lk_sip_dtmf_t;
+
 typedef struct lk_file_received {
 	const uint8_t* data;
 	size_t data_size;
@@ -297,6 +303,7 @@ typedef void (*lk_video_frame_callback)(void* user_data, lk_room_t* room,
                                         const lk_video_frame_t* frame);
 typedef void (*lk_data_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_data_received_t* event);
+typedef void (*lk_sip_dtmf_callback)(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* event);
 typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_file_received_t* event);
 typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
@@ -357,6 +364,7 @@ typedef struct lk_room_callbacks {
 	lk_track_stream_state_callback on_track_stream_state_changed;
 	lk_track_subscription_status_callback on_track_subscription_status_changed;
 	lk_data_channel_buffer_status_callback on_data_channel_buffer_status_changed;
+	lk_sip_dtmf_callback on_sip_dtmf_received;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -571,6 +579,7 @@ LKC_API lk_status_t lk_room_set_track_subscription_permissions(
 
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);
+LKC_API lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit);
 LKC_API lk_status_t lk_room_send_text(lk_room_t* room, const char* text,
                                       const lk_text_send_options_t* options);
 LKC_API lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, size_t data_size,
