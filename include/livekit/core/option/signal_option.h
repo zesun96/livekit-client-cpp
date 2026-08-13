@@ -35,6 +35,7 @@ struct SignalOptions {
 	bool adaptive_stream = false;
 	bool reconnect = false;
 	int reconnect_reason = 0;
+	std::string participant_sid;
 	SignalSdkOptions sdk_options;
 };
 

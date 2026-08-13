@@ -392,6 +392,20 @@ const webrtc::PeerConnectionInterface::PeerConnectionState PeerTransport::GetCon
 	return webrtc::PeerConnectionInterface::PeerConnectionState::kClosed;
 }
 
+bool PeerTransport::SetConfiguration(
+    const webrtc::PeerConnectionInterface::RTCConfiguration& config) {
+	std::lock_guard<std::mutex> guard(pc_lock_);
+	if (!pc_) {
+		return false;
+	}
+	const auto result = pc_->SetConfiguration(config);
+	if (!result.ok()) {
+		return false;
+	}
+	rtc_config_ = config;
+	return true;
+}
+
 std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
 PeerTransport::GetTransceivers() const {
 	std::lock_guard<std::mutex> guard(pc_lock_);
@@ -502,7 +516,7 @@ void PeerTransport::AddIceCandidate(const std::string& candidate_json_str) {
 	return;
 }
 
-bool PeerTransport::Negotiate() {
+bool PeerTransport::Negotiate(bool ice_restart) {
 	// May throw.
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
 	options.offer_to_receive_video = 0;
@@ -510,6 +524,7 @@ bool PeerTransport::Negotiate() {
 	options.voice_activity_detection = true;
 	options.use_rtp_mux = true;
 	options.use_obsolete_sctp_sdp = true;
+	options.ice_restart = ice_restart;
 
 	try {
 		createAndSendPublisherOffer(options);

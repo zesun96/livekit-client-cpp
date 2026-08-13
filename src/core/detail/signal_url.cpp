@@ -38,15 +38,18 @@ std::string BuildSignalUrl(const std::string& url, const std::string& token,
 	SetParameter(request, "auto_subscribe", options.auto_subscribe ? "1" : "0");
 	SetParameter(request, "sdk",
 	             options.sdk_options.sdk.empty() ? kDefaultSdk : options.sdk_options.sdk);
-	SetParameter(request, "version", options.sdk_options.sdk_version.empty()
-	                                     ? kDefaultSdkVersion
-	                                     : options.sdk_options.sdk_version);
+	SetParameter(request, "version",
+	             options.sdk_options.sdk_version.empty() ? kDefaultSdkVersion
+	                                                     : options.sdk_options.sdk_version);
 	SetParameter(request, "protocol", kProtocolVersion);
 	if (options.adaptive_stream) {
 		SetParameter(request, "adaptive_stream", "1");
 	}
 	if (options.reconnect) {
 		SetParameter(request, "reconnect", "1");
+		if (!options.participant_sid.empty()) {
+			SetParameter(request, "sid", options.participant_sid);
+		}
 		if (options.reconnect_reason != 0) {
 			SetParameter(request, "reconnect_reason", std::to_string(options.reconnect_reason));
 		}

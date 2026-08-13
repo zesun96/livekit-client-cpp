@@ -121,6 +121,11 @@ public:
 	CreateSubscriberAnswerFromOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer);
 	void AddIceCandidate(const std::string& candidate, const livekit::SignalTarget target);
 	bool Negotiate();
+	bool ShouldRestartPublisherIce() const;
+	bool RestartPublisherIce();
+	bool IsConnected() const;
+	bool UpdateConfiguration(const livekit::ReconnectResponse& response);
+	void PopulateSyncState(livekit::SyncState& sync);
 	webrtc::scoped_refptr<webrtc::DataChannelInterface>
 	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* dataChannelDict);
 
@@ -180,8 +185,8 @@ private:
 	std::unique_ptr<PeerTransport> publisher_pc_;
 	std::unique_ptr<PeerTransport> subscriber_pc_;
 	EngineOptions options_;
-	bool is_publisher_connection_required_;
-	bool is_subscriber_connection_required_;
+	std::atomic<bool> is_publisher_connection_required_;
+	std::atomic<bool> is_subscriber_connection_required_;
 	std::atomic<State> state_ = State::kNew;
 	std::atomic<bool> has_published_ = false;
 	std::unique_ptr<Debouncer> publisher_negotiation_debouncer_ = nullptr;

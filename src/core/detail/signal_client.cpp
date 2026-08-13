@@ -142,6 +142,37 @@ livekit::JoinResponse SignalClient::Connect() {
 	return livekit::JoinResponse();
 }
 
+bool SignalClient::Resume() {
+	{
+		std::lock_guard<std::mutex> guard(lock_);
+		if (resume_resolved_) {
+			resume_promise_ = std::promise<bool>();
+			resume_resolved_ = false;
+		}
+		state_ = SignalConnectionState::RECONNECTING;
+	}
+
+	auto future = resume_promise_.get_future();
+	wsc_->connect();
+	wsc_->service();
+	try {
+		return future.get();
+	} catch (const std::exception& e) {
+		std::cerr << "Signal resume error: " << e.what() << std::endl;
+	}
+	return false;
+}
+
+void SignalClient::SetPingConfig(int timeout_seconds, int interval_seconds) {
+	ping_timeout_duration_ = timeout_seconds;
+	ping_interval_duration_ = interval_seconds;
+}
+
+livekit::ReconnectResponse SignalClient::ReconnectResponseSnapshot() const {
+	std::lock_guard<std::mutex> guard(lock_);
+	return reconnect_response_;
+}
+
 void SignalClient::Close(bool update_state) {
 	if (update_state) {
 		state_ = SignalConnectionState::DISCONNECTING;
@@ -372,7 +403,12 @@ void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 				break;
 			case livekit::SignalResponse::MessageCase::kLeave:
 				if (isEstablishingConnection()) {
-					resolveJoinResponse(livekit::JoinResponse());
+					if (state_ == SignalConnectionState::RECONNECTING) {
+						resolveResume(false);
+					} else {
+						resolveJoinResponse(livekit::JoinResponse());
+					}
+					should_process_message = true;
 				}
 				break;
 			default:
@@ -380,9 +416,10 @@ void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 					state_ = SignalConnectionState::CONNECTED;
 					this->startPingInterval();
 					if (resp.message_case() == livekit::SignalResponse::MessageCase::kReconnect) {
-						resolveJoinResponse(resp.join());
+						reconnect_response_.CopyFrom(resp.reconnect());
+						resolveResume(true);
 					} else {
-						resolveJoinResponse(livekit::JoinResponse());
+						resolveResume(false);
 						should_process_message = true;
 					}
 				} else if (!option_.reconnect) {
@@ -606,7 +643,11 @@ void SignalClient::handleOnClose(std::string reason) {
 		notify_observer = previous_state != SignalConnectionState::DISCONNECTED;
 		if (previous_state == SignalConnectionState::CONNECTING ||
 		    previous_state == SignalConnectionState::RECONNECTING) {
-			resolveJoinResponse(livekit::JoinResponse());
+			if (previous_state == SignalConnectionState::RECONNECTING) {
+				resolveResume(false);
+			} else {
+				resolveJoinResponse(livekit::JoinResponse());
+			}
 		}
 		observer = observer_;
 	}
@@ -623,6 +664,14 @@ void SignalClient::resolveJoinResponse(const livekit::JoinResponse& response) {
 	}
 	join_response_resolved_ = true;
 	promise_.set_value(response);
+}
+
+void SignalClient::resolveResume(bool connected) {
+	if (resume_resolved_) {
+		return;
+	}
+	resume_resolved_ = true;
+	resume_promise_.set_value(connected);
 }
 
 void SignalClient::resetPingTimeout() {

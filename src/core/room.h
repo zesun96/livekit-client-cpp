@@ -47,6 +47,7 @@ public:
 	virtual void AddEventListener(RoomEventInterface* listener) override;
 	virtual void RemoveEventListener() override;
 	RoomState State() const;
+	DisconnectReason LastDisconnectReason() const;
 	virtual bool IsConnected() override;
 	virtual bool Disconnect() override;
 	std::string Sid() override;
@@ -64,6 +65,7 @@ public:
 	bool SetRemoteTrackSubscribedInternal(std::string participant_sid, std::string track_sid,
 	                                      bool subscribed);
 	bool SimulateSignalDisconnectForTesting();
+	bool SimulateFullReconnectForTesting();
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:
@@ -78,8 +80,10 @@ public:
 	void RoomUpdateEvent(const livekit::Room& update) override;
 	void
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
-	void SignalDisconnectedEvent() override;
-	void ReconnectingEvent() override;
+	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
+	void ReconnectingEvent(bool full_reconnect) override;
+	void SignalResumedEvent() override;
+	void ResumedEvent() override;
 	void ReconnectedEvent(livekit::JoinResponse join_resp) override;
 
 private:
@@ -91,7 +95,7 @@ private:
 	                      const AudioFrame& frame);
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const VideoFrame& frame);
-	void NotifyDisconnectedOnce();
+	void NotifyDisconnectedOnce(DisconnectReason reason);
 
 	struct IncomingFile {
 		FileReceivedEvent event;
@@ -107,6 +111,8 @@ private:
 	RoomOptions options_;
 	std::atomic<RoomState> state_{RoomState::Disconnected};
 	std::atomic<bool> disconnected_event_emitted_{false};
+	std::atomic<bool> full_reconnect_prepared_{false};
+	std::atomic<DisconnectReason> disconnect_reason_{DisconnectReason::Unknown};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	mutable std::mutex participants_mutex_;

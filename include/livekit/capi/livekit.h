@@ -55,6 +55,26 @@ typedef enum lk_room_state {
 	LK_ROOM_STATE_RECONNECTING = 5
 } lk_room_state_t;
 
+typedef enum lk_disconnect_reason {
+	LK_DISCONNECT_REASON_UNKNOWN = 0,
+	LK_DISCONNECT_REASON_CLIENT_INITIATED = 1,
+	LK_DISCONNECT_REASON_DUPLICATE_IDENTITY = 2,
+	LK_DISCONNECT_REASON_SERVER_SHUTDOWN = 3,
+	LK_DISCONNECT_REASON_PARTICIPANT_REMOVED = 4,
+	LK_DISCONNECT_REASON_ROOM_DELETED = 5,
+	LK_DISCONNECT_REASON_STATE_MISMATCH = 6,
+	LK_DISCONNECT_REASON_JOIN_FAILURE = 7,
+	LK_DISCONNECT_REASON_MIGRATION = 8,
+	LK_DISCONNECT_REASON_SIGNAL_CLOSE = 9,
+	LK_DISCONNECT_REASON_ROOM_CLOSED = 10,
+	LK_DISCONNECT_REASON_USER_UNAVAILABLE = 11,
+	LK_DISCONNECT_REASON_USER_REJECTED = 12,
+	LK_DISCONNECT_REASON_SIP_TRUNK_FAILURE = 13,
+	LK_DISCONNECT_REASON_CONNECTION_TIMEOUT = 14,
+	LK_DISCONNECT_REASON_MEDIA_FAILURE = 15,
+	LK_DISCONNECT_REASON_AGENT_ERROR = 16
+} lk_disconnect_reason_t;
+
 typedef enum lk_track_kind {
 	LK_TRACK_KIND_UNKNOWN = 0,
 	LK_TRACK_KIND_AUDIO = 1,
@@ -149,6 +169,8 @@ typedef struct lk_attribute {
 } lk_attribute_t;
 
 typedef void (*lk_room_event_callback)(void* user_data, lk_room_t* room);
+typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
+                                              lk_disconnect_reason_t reason);
 typedef void (*lk_participant_event_callback)(void* user_data, lk_room_t* room,
                                               const lk_participant_info_t* participant);
 typedef void (*lk_track_event_callback)(void* user_data, lk_room_t* room,
@@ -201,6 +223,7 @@ typedef struct lk_room_callbacks {
 	lk_file_received_callback on_byte_received;
 	lk_room_event_callback on_reconnecting;
 	lk_room_event_callback on_reconnected;
+	lk_room_disconnected_callback on_disconnected_with_reason;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -291,6 +314,7 @@ LKC_API lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbac
 LKC_API lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token);
 LKC_API lk_status_t lk_room_disconnect(lk_room_t* room);
 LKC_API lk_room_state_t lk_room_state(const lk_room_t* room);
+LKC_API lk_disconnect_reason_t lk_room_disconnect_reason(const lk_room_t* room);
 LKC_API int lk_room_is_connected(const lk_room_t* room);
 LKC_API size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size);

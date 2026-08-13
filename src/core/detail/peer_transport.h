@@ -186,6 +186,7 @@ public:
 	const std::string GetPendingLocalDescription();
 	const std::string GetPendingRemoteDescription();
 	const webrtc::PeerConnectionInterface::PeerConnectionState GetConnectionState();
+	bool SetConfiguration(const webrtc::PeerConnectionInterface::RTCConfiguration& config);
 
 	std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>> GetTransceivers() const;
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
@@ -200,7 +201,7 @@ public:
 
 	void AddIceCandidate(const std::string& candidate_json_str);
 
-	bool Negotiate();
+	bool Negotiate(bool ice_restart = false);
 
 	bool TestFlushIceCandidate();
 

@@ -63,6 +63,15 @@ from_connection_quality(livekit::ConnectionQuality quality) {
 		return livekit::core::ConnectionQuality::Unknown;
 	}
 }
+
+static livekit::core::DisconnectReason from_disconnect_reason(livekit::DisconnectReason reason) {
+	const auto value = static_cast<int>(reason);
+	if (value < static_cast<int>(livekit::DisconnectReason::UNKNOWN_REASON) ||
+	    value > static_cast<int>(livekit::DisconnectReason::AGENT_ERROR)) {
+		return livekit::core::DisconnectReason::Unknown;
+	}
+	return static_cast<livekit::core::DisconnectReason>(value);
+}
 } // namespace
 
 namespace livekit {
@@ -97,6 +106,8 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 		return false;
 	}
 	disconnected_event_emitted_ = false;
+	full_reconnect_prepared_ = false;
+	disconnect_reason_ = DisconnectReason::Unknown;
 
 	try {
 		EngineOptions engine_options = make_engine_config(opts);
@@ -104,11 +115,13 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 		if (!join_response.has_room()) {
 			rtc_engine_->Disconnect();
 			state_ = RoomState::Failed;
+			disconnect_reason_ = DisconnectReason::JoinFailure;
 			return false;
 		}
 		ApplyJoinResponse(join_response, false);
 	} catch (...) {
 		state_ = RoomState::Failed;
+		disconnect_reason_ = DisconnectReason::JoinFailure;
 		throw;
 	}
 
@@ -128,6 +141,8 @@ void Room::RemoveEventListener() {
 bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
 
 RoomInterface::RoomState Room::State() const { return state_.load(); }
+
+DisconnectReason Room::LastDisconnectReason() const { return disconnect_reason_.load(); }
 
 std::string Room::Sid() {
 	std::lock_guard<std::mutex> guard(room_info_mutex_);
@@ -171,7 +186,7 @@ bool Room::Disconnect() {
 		incoming_texts_.clear();
 	}
 	state_ = RoomState::Disconnected;
-	NotifyDisconnectedOnce();
+	NotifyDisconnectedOnce(DisconnectReason::ClientInitiated);
 	return true;
 }
 
@@ -276,6 +291,10 @@ bool Room::SimulateSignalDisconnectForTesting() {
 	return rtc_engine_ != nullptr && rtc_engine_->SimulateSignalDisconnectForTesting();
 }
 
+bool Room::SimulateFullReconnectForTesting() {
+	return rtc_engine_ != nullptr && rtc_engine_->SimulateFullReconnectForTesting();
+}
+
 RoomInterface::RoomState RoomInterface::State() const {
 	auto* room = dynamic_cast<const Room*>(this);
 	if (room != nullptr) {
@@ -283,6 +302,11 @@ RoomInterface::RoomState RoomInterface::State() const {
 	}
 	return const_cast<RoomInterface*>(this)->IsConnected() ? RoomState::Connected
 	                                                       : RoomState::Disconnected;
+}
+
+DisconnectReason RoomInterface::LastDisconnectReason() const {
+	auto* room = dynamic_cast<const Room*>(this);
+	return room != nullptr ? room->LastDisconnectReason() : DisconnectReason::Unknown;
 }
 
 RemoteParticipantInterface* RoomInterface::GetRemoteParticipantByIdentity(std::string identity) {
@@ -321,14 +345,44 @@ void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 	}
 }
 
-void Room::ReconnectingEvent() {
+void Room::ReconnectingEvent(bool full_reconnect) {
+	if (full_reconnect && !full_reconnect_prepared_.exchange(true)) {
+		local_participant_->DetachTrackTransceiversForReconnect();
+	}
 	auto expected = RoomState::Connected;
 	if (!state_.compare_exchange_strong(expected, RoomState::Reconnecting)) {
 		return;
 	}
-	local_participant_->DetachTrackTransceiversForReconnect();
 	if (auto* listener = event_listener_.load()) {
 		listener->OnReconnecting();
+	}
+}
+
+void Room::SignalResumedEvent() {
+	std::vector<livekit::TrackPublishedResponse> published_tracks;
+	for (auto* publication : local_participant_->GetTrackPublications()) {
+		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication);
+		auto* local_track = local_publication != nullptr
+		                        ? dynamic_cast<LocalTrack*>(local_publication->Track())
+		                        : nullptr;
+		if (local_track == nullptr || local_track->media_track() == nullptr ||
+		    local_track->media_track()->rtc_track() == nullptr) {
+			continue;
+		}
+		auto* response = &published_tracks.emplace_back();
+		response->set_cid(local_track->media_track()->rtc_track()->id());
+		response->mutable_track()->CopyFrom(local_publication->Info());
+	}
+	rtc_engine_->SendSyncState(published_tracks);
+}
+
+void Room::ResumedEvent() {
+	if (state_.load() != RoomState::Reconnecting) {
+		return;
+	}
+	state_ = RoomState::Connected;
+	if (auto* listener = event_listener_.load()) {
+		listener->OnReconnected();
 	}
 }
 
@@ -338,13 +392,14 @@ void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
 	}
 	ApplyJoinResponse(join_resp, true);
 	local_participant_->RepublishAllTracksAfterReconnect();
+	full_reconnect_prepared_ = false;
 	state_ = RoomState::Connected;
 	if (auto* listener = event_listener_.load()) {
 		listener->OnReconnected();
 	}
 }
 
-void Room::SignalDisconnectedEvent() {
+void Room::SignalDisconnectedEvent(livekit::DisconnectReason reason) {
 	auto current = state_.load();
 	while (current != RoomState::Disconnecting && current != RoomState::Disconnected &&
 	       current != RoomState::Failed) {
@@ -353,14 +408,15 @@ void Room::SignalDisconnectedEvent() {
 		}
 	}
 	if (current != RoomState::Disconnecting && current != RoomState::Disconnected) {
-		NotifyDisconnectedOnce();
+		NotifyDisconnectedOnce(from_disconnect_reason(reason));
 	}
 }
 
-void Room::NotifyDisconnectedOnce() {
+void Room::NotifyDisconnectedOnce(DisconnectReason reason) {
 	if (!disconnected_event_emitted_.exchange(true)) {
+		disconnect_reason_ = reason;
 		if (auto* listener = event_listener_.load()) {
-			listener->OnDisconnected();
+			listener->OnDisconnected(reason);
 		}
 	}
 }

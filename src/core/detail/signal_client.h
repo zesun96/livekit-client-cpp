@@ -101,6 +101,9 @@ public:
 	~SignalClient();
 
 	livekit::JoinResponse Connect();
+	bool Resume();
+	void SetPingConfig(int timeout_seconds, int interval_seconds);
+	livekit::ReconnectResponse ReconnectResponseSnapshot() const;
 
 	void AddObserver(SignalClientObserver* observer);
 	void RemoveObserver();
@@ -156,6 +159,7 @@ private:
 	void clearPingInterval();
 	void handleOnClose(std::string reason);
 	void resolveJoinResponse(const livekit::JoinResponse& response);
+	void resolveResume(bool connected);
 	uint64_t getNextRequestId();
 
 	int64_t rtt() const;
@@ -169,6 +173,9 @@ private:
 	std::atomic<SignalConnectionState> state_;
 	std::promise<livekit::JoinResponse> promise_;
 	bool join_response_resolved_ = false;
+	std::promise<bool> resume_promise_;
+	bool resume_resolved_ = false;
+	livekit::ReconnectResponse reconnect_response_;
 	int ping_timeout_duration_ = 0;
 	int ping_interval_duration_ = 0;
 	mutable std::mutex ping_timeout_timer_lock_;
@@ -178,7 +185,7 @@ private:
 	std::shared_ptr<Timer> ping_interval_timer_ = nullptr;
 	SignalClientObserver* observer_ = nullptr;
 	std::atomic<int64_t> rtt_;
-	std::atomic<uint64_t> request_id_;
+	std::atomic<uint64_t> request_id_{0};
 };
 
 } // namespace core

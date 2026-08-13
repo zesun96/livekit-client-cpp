@@ -72,8 +72,11 @@ Connects to a room, prints the local participant identity and SID, and disconnec
 ### `room_event`
 
 Receives room events, subscribed tracks, decoded PCM/I420 frames, data messages, and completed
-files. It also reports `OnReconnecting` and `OnReconnected` while the SDK restores an interrupted
-session. The optional third argument controls how many seconds to listen and defaults to 30.
+files. It also reports `OnReconnecting` and `OnReconnected` while the SDK first attempts a
+protocol-level signal resume and falls back to a full reconnect when required, and prints the
+protocol-level reason when the room disconnects. Applications can query the same value later with
+`RoomInterface::LastDisconnectReason()`. The optional third argument controls how many seconds to
+listen and defaults to 30.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/room_event/Release/room_event.exe" `

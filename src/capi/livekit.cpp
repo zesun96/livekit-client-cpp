@@ -185,6 +185,10 @@ lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
 	}
 }
 
+lk_disconnect_reason_t ToCDisconnectReason(core::DisconnectReason reason) {
+	return static_cast<lk_disconnect_reason_t>(reason);
+}
+
 struct OwnedParticipantInfo {
 	explicit OwnedParticipantInfo(core::ParticipantInterface* participant) {
 		if (participant == nullptr) {
@@ -341,11 +345,17 @@ public:
 		});
 	}
 
-	void OnDisconnected() override {
+	void OnDisconnected() override { OnDisconnected(core::DisconnectReason::Unknown); }
+
+	void OnDisconnected(core::DisconnectReason reason) override {
 		owner_->state->connected.store(false);
-		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+		InvokeRoomCallback(owner_, [this, reason](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_disconnected != nullptr) {
 				callbacks.on_disconnected(callbacks.user_data, owner_);
+			}
+			if (callbacks.on_disconnected_with_reason != nullptr) {
+				callbacks.on_disconnected_with_reason(callbacks.user_data, owner_,
+				                                      ToCDisconnectReason(reason));
 			}
 		});
 	}
@@ -775,6 +785,13 @@ lk_room_state_t lk_room_state(const lk_room_t* room) {
 		return LK_ROOM_STATE_DISCONNECTED;
 	}
 	return ToCRoomState(room->room->State());
+}
+
+lk_disconnect_reason_t lk_room_disconnect_reason(const lk_room_t* room) {
+	if (room == nullptr || room->room == nullptr) {
+		return LK_DISCONNECT_REASON_UNKNOWN;
+	}
+	return ToCDisconnectReason(room->room->LastDisconnectReason());
 }
 
 int lk_room_is_connected(const lk_room_t* room) {

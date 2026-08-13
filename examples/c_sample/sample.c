@@ -35,6 +35,12 @@ static void on_reconnected(void* user_data, lk_room_t* room) {
 	puts("Reconnected event received");
 }
 
+static void on_disconnected(void* user_data, lk_room_t* room, lk_disconnect_reason_t reason) {
+	(void)user_data;
+	(void)room;
+	printf("Disconnected event received, reason=%d\n", (int)reason);
+}
+
 static void on_participant_connected(void* user_data, lk_room_t* room,
                                      const lk_participant_info_t* participant) {
 	(void)user_data;
@@ -89,6 +95,7 @@ int main(int argc, char** argv) {
 	callbacks.on_connected = on_connected;
 	callbacks.on_reconnecting = on_reconnecting;
 	callbacks.on_reconnected = on_reconnected;
+	callbacks.on_disconnected_with_reason = on_disconnected;
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;
 	lk_room_set_callbacks(room, &callbacks);

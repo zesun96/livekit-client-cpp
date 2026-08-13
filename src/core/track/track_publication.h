@@ -46,6 +46,7 @@ public:
 	TrackInterface* Track() override;
 
 	void UpdateInfo(livekit::TrackInfo info);
+	livekit::TrackInfo Info() const;
 	void SetTrack(::livekit::core::Track* track);
 	void SetMuted(bool muted);
 
