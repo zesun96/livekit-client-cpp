@@ -21,6 +21,7 @@
 #define _LKC_CORE_OPTION_MEDIA_OPTION_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace livekit {
@@ -46,6 +47,19 @@ enum class TrackStreamState {
 	Paused = 2,
 };
 
+enum class TrackSubscriptionStatus {
+	Unsubscribed = 0,
+	Desired = 1,
+	Subscribed = 2,
+};
+
+// Values intentionally match livekit.protocol.VideoQuality.
+enum class VideoQuality {
+	Low = 0,
+	Medium = 1,
+	High = 2,
+};
+
 enum class ConnectionQuality {
 	Unknown = 0,
 	Poor,
@@ -57,6 +71,14 @@ enum class ConnectionQuality {
 struct TrackDimensions {
 	uint32_t width = 0;
 	uint32_t height = 0;
+};
+
+struct RemoteTrackSettings {
+	bool enabled = true;
+	std::optional<VideoQuality> video_quality;
+	std::optional<TrackDimensions> video_dimensions;
+	uint32_t video_fps = 0;
+	uint32_t priority = 0;
 };
 
 enum class VideoCodec {

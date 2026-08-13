@@ -52,8 +52,18 @@ static void on_track_published(void* user_data, lk_room_t* room,
                                const lk_track_publication_info_t* track,
                                const lk_participant_info_t* participant) {
 	(void)user_data;
-	(void)room;
 	printf("Track published by %s: %s (%s)\n", participant->identity, track->name, track->sid);
+	if (track->kind == LK_TRACK_KIND_VIDEO) {
+		lk_remote_track_settings_t settings;
+		lk_remote_track_settings_init(&settings);
+		settings.has_video_quality = 1;
+		settings.video_quality = LK_VIDEO_QUALITY_MEDIUM;
+		settings.video_fps = 24;
+		if (lk_room_update_remote_track_settings(room, participant->sid, track->sid, &settings) !=
+		    LK_STATUS_OK) {
+			fprintf(stderr, "Remote video settings failed: %s\n", lk_last_error());
+		}
+	}
 }
 
 static void on_track_subscription_failed(void* user_data, lk_room_t* room,
@@ -64,6 +74,34 @@ static void on_track_subscription_failed(void* user_data, lk_room_t* room,
 	(void)room;
 	printf("Track subscription failed for %s from %s: error=%d\n", track->sid,
 	       participant->identity, (int)error);
+}
+
+static void on_track_unsubscribed(void* user_data, lk_room_t* room,
+                                  const lk_track_publication_info_t* track,
+                                  const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("Track unsubscribed: %s from %s\n", track->sid, participant->identity);
+}
+
+static void on_track_stream_state_changed(void* user_data, lk_room_t* room,
+                                          const lk_track_publication_info_t* track,
+                                          const lk_participant_info_t* participant,
+                                          lk_track_stream_state_t state) {
+	(void)user_data;
+	(void)room;
+	printf("Track stream state changed: %s from %s, state=%d\n", track->sid, participant->identity,
+	       (int)state);
+}
+
+static void on_track_subscription_status_changed(void* user_data, lk_room_t* room,
+                                                 const lk_track_publication_info_t* track,
+                                                 const lk_participant_info_t* participant,
+                                                 lk_track_subscription_status_t status) {
+	(void)user_data;
+	(void)room;
+	printf("Track subscription status changed: %s from %s, status=%d\n", track->sid,
+	       participant->identity, (int)status);
 }
 
 static lk_rpc_handler_result_t on_echo_rpc(void* user_data, const lk_rpc_invocation_t* invocation) {
@@ -117,6 +155,9 @@ int main(int argc, char** argv) {
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;
 	callbacks.on_track_subscription_failed = on_track_subscription_failed;
+	callbacks.on_track_unsubscribed = on_track_unsubscribed;
+	callbacks.on_track_stream_state_changed = on_track_stream_state_changed;
+	callbacks.on_track_subscription_status_changed = on_track_subscription_status_changed;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

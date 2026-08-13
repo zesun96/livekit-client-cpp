@@ -90,8 +90,7 @@ void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 		current_sids.insert(track_info.sid());
 		auto publication = track_publications_.find(track_info.sid());
 		if (publication == track_publications_.end()) {
-			track_publications_.emplace(track_info.sid(),
-			                            std::make_shared<TrackPublication>(track_info, nullptr));
+			track_publications_.emplace(track_info.sid(), CreateTrackPublication(track_info));
 		} else if (auto* concrete = dynamic_cast<TrackPublication*>(publication->second.get())) {
 			concrete->UpdateInfo(track_info);
 		}
@@ -104,6 +103,11 @@ void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 			++publication;
 		}
 	}
+}
+
+std::shared_ptr<TrackPublicationInterface>
+Participant::CreateTrackPublication(const livekit::TrackInfo& info) {
+	return std::make_shared<TrackPublication>(info, nullptr);
 }
 
 bool Participant::UpdateInfoFields(const livekit::ParticipantInfo& info) {

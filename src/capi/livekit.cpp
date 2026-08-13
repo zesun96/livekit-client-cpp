@@ -184,6 +184,44 @@ lk_subscription_error_t ToCSubscriptionError(core::SubscriptionError error) {
 	}
 }
 
+lk_track_stream_state_t ToCTrackStreamState(core::TrackStreamState state) {
+	switch (state) {
+	case core::TrackStreamState::Active:
+		return LK_TRACK_STREAM_STATE_ACTIVE;
+	case core::TrackStreamState::Paused:
+		return LK_TRACK_STREAM_STATE_PAUSED;
+	default:
+		return LK_TRACK_STREAM_STATE_UNKNOWN;
+	}
+}
+
+lk_track_subscription_status_t ToCTrackSubscriptionStatus(core::TrackSubscriptionStatus status) {
+	switch (status) {
+	case core::TrackSubscriptionStatus::Desired:
+		return LK_TRACK_SUBSCRIPTION_STATUS_DESIRED;
+	case core::TrackSubscriptionStatus::Subscribed:
+		return LK_TRACK_SUBSCRIPTION_STATUS_SUBSCRIBED;
+	default:
+		return LK_TRACK_SUBSCRIPTION_STATUS_UNSUBSCRIBED;
+	}
+}
+
+bool ToCoreVideoQuality(lk_video_quality_t quality, core::VideoQuality& result) {
+	switch (quality) {
+	case LK_VIDEO_QUALITY_LOW:
+		result = core::VideoQuality::Low;
+		return true;
+	case LK_VIDEO_QUALITY_MEDIUM:
+		result = core::VideoQuality::Medium;
+		return true;
+	case LK_VIDEO_QUALITY_HIGH:
+		result = core::VideoQuality::High;
+		return true;
+	default:
+		return false;
+	}
+}
+
 lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
 	switch (state) {
 	case core::RoomInterface::RoomState::Connecting:
@@ -474,6 +512,41 @@ public:
 		});
 	}
 
+	void OnTrackUnsubscribed(core::RemoteTrackInterface*,
+	                         core::TrackPublicationInterface* publication,
+	                         core::RemoteParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_track_unsubscribed), publication,
+		      participant);
+	}
+
+	void OnTrackStreamStateChanged(core::TrackPublicationInterface* publication,
+	                               core::RemoteParticipantInterface* participant,
+	                               core::TrackStreamState state) override {
+		OwnedTrackInfo owned_track(publication);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_track_stream_state_changed != nullptr) {
+				callbacks.on_track_stream_state_changed(callbacks.user_data, owner_,
+				                                        &owned_track.info, &owned_participant.info,
+				                                        ToCTrackStreamState(state));
+			}
+		});
+	}
+
+	void OnTrackSubscriptionStatusChanged(core::TrackPublicationInterface* publication,
+	                                      core::RemoteParticipantInterface* participant,
+	                                      core::TrackSubscriptionStatus status) override {
+		OwnedTrackInfo owned_track(publication);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_track_subscription_status_changed != nullptr) {
+				callbacks.on_track_subscription_status_changed(
+				    callbacks.user_data, owner_, &owned_track.info, &owned_participant.info,
+				    ToCTrackSubscriptionStatus(status));
+			}
+		});
+	}
+
 	void OnTrackSubscriptionPermissionChanged(core::TrackPublicationInterface* track,
 	                                          core::RemoteParticipantInterface* participant,
 	                                          bool allowed) override {
@@ -757,6 +830,14 @@ void lk_participant_track_permission_init(lk_participant_track_permission_t* per
 	if (permission != nullptr) {
 		*permission = {};
 		permission->struct_size = sizeof(*permission);
+	}
+}
+
+void lk_remote_track_settings_init(lk_remote_track_settings_t* settings) {
+	if (settings != nullptr) {
+		*settings = {};
+		settings->struct_size = sizeof(*settings);
+		settings->enabled = 1;
 	}
 }
 
@@ -1277,6 +1358,61 @@ lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room, const char* par
 		return room->room->SetRemoteTrackSubscribed(participant_sid, track_sid, subscribed != 0)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update track subscription");
+	});
+}
+
+lk_status_t lk_room_update_remote_track_settings(lk_room_t* room, const char* participant_sid,
+                                                 const char* track_sid,
+                                                 const lk_remote_track_settings_t* settings) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || participant_sid == nullptr ||
+		    *participant_sid == '\0' || track_sid == nullptr || *track_sid == '\0' ||
+		    settings == nullptr || settings->struct_size < sizeof(settings->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room, participant SID, track SID, and settings are required");
+		}
+		core::RemoteTrackSettings converted;
+		if (LKC_HAS_FIELD(settings, lk_remote_track_settings_t, enabled)) {
+			converted.enabled = settings->enabled != 0;
+		}
+		if (LKC_HAS_FIELD(settings, lk_remote_track_settings_t, has_video_quality) &&
+		    settings->has_video_quality != 0) {
+			if (!LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_quality) ||
+			    !ToCoreVideoQuality(settings->video_quality, converted.video_quality.emplace())) {
+				converted.video_quality.reset();
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video quality");
+			}
+		}
+		if (LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_width) ||
+		    LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_height)) {
+			const uint32_t width = LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_width)
+			                           ? settings->video_width
+			                           : 0;
+			const uint32_t height =
+			    LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_height)
+			        ? settings->video_height
+			        : 0;
+			if ((width == 0) != (height == 0)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "video width and height must both be zero or non-zero");
+			}
+			if (width != 0) {
+				converted.video_dimensions = core::TrackDimensions{width, height};
+			}
+		}
+		if (converted.video_quality.has_value() && converted.video_dimensions.has_value()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "video quality and dimensions are mutually exclusive");
+		}
+		if (LKC_HAS_FIELD(settings, lk_remote_track_settings_t, video_fps)) {
+			converted.video_fps = settings->video_fps;
+		}
+		if (LKC_HAS_FIELD(settings, lk_remote_track_settings_t, priority)) {
+			converted.priority = settings->priority;
+		}
+		return room->room->UpdateRemoteTrackSettings(participant_sid, track_sid, converted)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "remote track settings update failed");
 	});
 }
 

@@ -37,6 +37,27 @@ public:
 		          << participant->Identity() << ", error=" << static_cast<int>(error) << std::endl;
 	}
 
+	void OnTrackUnsubscribed(livekit::core::RemoteTrackInterface* track,
+	                         livekit::core::TrackPublicationInterface*,
+	                         livekit::core::RemoteParticipantInterface* participant) override {
+		std::cout << "Unsubscribed track " << track->Sid() << " from " << participant->Identity()
+		          << std::endl;
+	}
+
+	void OnTrackStreamStateChanged(livekit::core::TrackPublicationInterface* publication,
+	                               livekit::core::RemoteParticipantInterface* participant,
+	                               livekit::core::TrackStreamState state) override {
+		std::cout << "Track " << publication->Sid() << " from " << participant->Identity()
+		          << " stream state=" << static_cast<int>(state) << std::endl;
+	}
+
+	void OnTrackSubscriptionStatusChanged(livekit::core::TrackPublicationInterface* publication,
+	                                      livekit::core::RemoteParticipantInterface* participant,
+	                                      livekit::core::TrackSubscriptionStatus status) override {
+		std::cout << "Track " << publication->Sid() << " from " << participant->Identity()
+		          << " subscription status=" << static_cast<int>(status) << std::endl;
+	}
+
 	void
 	OnTrackSubscriptionPermissionChanged(livekit::core::TrackPublicationInterface* track,
 	                                     livekit::core::RemoteParticipantInterface* participant,

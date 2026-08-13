@@ -33,12 +33,17 @@ std::string Track::Sid() { return sid_; };
 std::string Track::Name() { return name_; };
 TrackKind Track::Kind() { return kind_; };
 TrackSource Track::Source() { return source_; };
-TrackStreamState Track::StreamState() { return stream_state_; };
+TrackStreamState Track::StreamState() { return stream_state_.load(); };
 TrackDimensions Track::Dimensions() { return dimensions_; };
 
 bool Track::Muted() { return muted_.load(); };
 
 void Track::SetMuted(bool muted) { muted_.store(muted); };
+
+bool Track::SetStreamState(TrackStreamState state) {
+	auto previous = stream_state_.exchange(state);
+	return previous != state;
+}
 
 std::string Track::GetRTCStats() { return ""; };
 void Track::SetEnabled(bool enabled) { enabled_.store(enabled); };

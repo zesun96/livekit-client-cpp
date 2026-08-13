@@ -90,6 +90,24 @@ typedef enum lk_track_source {
 	LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO = 4
 } lk_track_source_t;
 
+typedef enum lk_track_stream_state {
+	LK_TRACK_STREAM_STATE_UNKNOWN = 0,
+	LK_TRACK_STREAM_STATE_ACTIVE = 1,
+	LK_TRACK_STREAM_STATE_PAUSED = 2
+} lk_track_stream_state_t;
+
+typedef enum lk_track_subscription_status {
+	LK_TRACK_SUBSCRIPTION_STATUS_UNSUBSCRIBED = 0,
+	LK_TRACK_SUBSCRIPTION_STATUS_DESIRED = 1,
+	LK_TRACK_SUBSCRIPTION_STATUS_SUBSCRIBED = 2
+} lk_track_subscription_status_t;
+
+typedef enum lk_video_quality {
+	LK_VIDEO_QUALITY_LOW = 0,
+	LK_VIDEO_QUALITY_MEDIUM = 1,
+	LK_VIDEO_QUALITY_HIGH = 2
+} lk_video_quality_t;
+
 typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_UNKNOWN = 0,
 	LK_CONNECTION_QUALITY_POOR = 1,
@@ -244,6 +262,14 @@ typedef void (*lk_track_subscription_failed_callback)(void* user_data, lk_room_t
                                                       const lk_track_publication_info_t* track,
                                                       const lk_participant_info_t* participant,
                                                       lk_subscription_error_t error);
+typedef void (*lk_track_stream_state_callback)(void* user_data, lk_room_t* room,
+                                               const lk_track_publication_info_t* track,
+                                               const lk_participant_info_t* participant,
+                                               lk_track_stream_state_t state);
+typedef void (*lk_track_subscription_status_callback)(void* user_data, lk_room_t* room,
+                                                      const lk_track_publication_info_t* track,
+                                                      const lk_participant_info_t* participant,
+                                                      lk_track_subscription_status_t status);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -273,6 +299,9 @@ typedef struct lk_room_callbacks {
 	lk_room_disconnected_callback on_disconnected_with_reason;
 	lk_track_subscription_permission_callback on_track_subscription_permission_changed;
 	lk_track_subscription_failed_callback on_track_subscription_failed;
+	lk_track_event_callback on_track_unsubscribed;
+	lk_track_stream_state_callback on_track_stream_state_changed;
+	lk_track_subscription_status_callback on_track_subscription_status_changed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -360,6 +389,17 @@ typedef struct lk_participant_track_permission {
 	size_t allowed_track_sid_count;
 } lk_participant_track_permission_t;
 
+typedef struct lk_remote_track_settings {
+	size_t struct_size;
+	int enabled;
+	int has_video_quality;
+	lk_video_quality_t video_quality;
+	uint32_t video_width;
+	uint32_t video_height;
+	uint32_t video_fps;
+	uint32_t priority;
+} lk_remote_track_settings_t;
+
 LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
@@ -375,6 +415,7 @@ LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
 LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
 LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
 LKC_API void lk_participant_track_permission_init(lk_participant_track_permission_t* permission);
+LKC_API void lk_remote_track_settings_init(lk_remote_track_settings_t* settings);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
@@ -427,6 +468,9 @@ LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
 LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,
                                                         const char* participant_sid,
                                                         const char* track_sid, int subscribed);
+LKC_API lk_status_t lk_room_update_remote_track_settings(
+    lk_room_t* room, const char* participant_sid, const char* track_sid,
+    const lk_remote_track_settings_t* settings);
 LKC_API lk_status_t lk_room_set_track_subscription_permissions(
     lk_room_t* room, int all_participants_allowed,
     const lk_participant_track_permission_t* permissions, size_t permission_count);

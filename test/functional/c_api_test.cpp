@@ -64,6 +64,12 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_participant_track_permission_init(&permission);
 	EXPECT_EQ(permission.struct_size, sizeof(permission));
 	EXPECT_EQ(permission.allow_all, 0);
+
+	lk_remote_track_settings_t remote_settings;
+	lk_remote_track_settings_init(&remote_settings);
+	EXPECT_EQ(remote_settings.struct_size, sizeof(remote_settings));
+	EXPECT_EQ(remote_settings.enabled, 1);
+	EXPECT_EQ(remote_settings.has_video_quality, 0);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -103,6 +109,15 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_local_track_published, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_unpublished, nullptr);
 	EXPECT_EQ(callbacks.on_track_subscription_failed, nullptr);
+	EXPECT_EQ(callbacks.on_track_unsubscribed, nullptr);
+	EXPECT_EQ(callbacks.on_track_stream_state_changed, nullptr);
+	EXPECT_EQ(callbacks.on_track_subscription_status_changed, nullptr);
+
+	lk_remote_track_settings_t settings;
+	lk_remote_track_settings_init(&settings);
+	settings.video_width = 640;
+	EXPECT_EQ(lk_room_update_remote_track_settings(room, "PA_remote", "TR_video", &settings),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(callbacks.on_text_received, nullptr);
 	EXPECT_EQ(callbacks.on_byte_received, nullptr);
 	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);

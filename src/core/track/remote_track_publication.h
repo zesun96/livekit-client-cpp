@@ -23,13 +23,45 @@
 #include "livekit/core/track/remote_track_publication_interface.h"
 #include "track_publication.h"
 
+#include <functional>
+#include <mutex>
+
 namespace livekit {
 namespace core {
 
 class RemoteTrackPublication : public TrackPublication, public RemoteTrackPublicationInterface {
 public:
-	RemoteTrackPublication() = default;
+	using SubscriptionHandler = std::function<bool(const std::string&, bool)>;
+	using SettingsHandler = std::function<bool(const std::string&, const RemoteTrackSettings&)>;
+	using StatusHandler =
+	    std::function<void(const std::string&, TrackSubscriptionStatus, TrackSubscriptionStatus)>;
+
+	RemoteTrackPublication(livekit::TrackInfo info, bool auto_subscribe,
+	                       SubscriptionHandler subscription_handler = {},
+	                       SettingsHandler settings_handler = {},
+	                       StatusHandler status_handler = {});
 	virtual ~RemoteTrackPublication() override = default;
+
+	TrackSubscriptionStatus SubscriptionStatus() override;
+	bool SetSubscribed(bool subscribed) override;
+	RemoteTrackSettings GetRemoteTrackSettings() override;
+	bool UpdateRemoteTrackSettings(const RemoteTrackSettings& settings) override;
+
+	bool SetTrackAttached(bool attached);
+	bool ResendPreferences();
+
+private:
+	static bool IsValidSettings(TrackKind kind, const RemoteTrackSettings& settings);
+
+	mutable std::mutex remote_mutex_;
+	bool subscription_desired_ = true;
+	bool subscription_overridden_ = false;
+	bool track_attached_ = false;
+	bool settings_overridden_ = false;
+	RemoteTrackSettings settings_;
+	SubscriptionHandler subscription_handler_;
+	SettingsHandler settings_handler_;
+	StatusHandler status_handler_;
 };
 
 } // namespace core

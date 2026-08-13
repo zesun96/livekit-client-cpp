@@ -20,6 +20,7 @@
 #include "detail/rtc_engine.h"
 #include "track/audio_track.h"
 #include "track/remote_audio_track.h"
+#include "track/remote_track_publication.h"
 #include "track/remote_video_track.h"
 #include "track/track_publication.h"
 #include "track/video_track.h"
@@ -285,6 +286,61 @@ bool Room::SetRemoteTrackSubscribedInternal(std::string participant_sid, std::st
 	if (participant_sid.empty() || track_sid.empty()) {
 		return false;
 	}
+	std::shared_ptr<TrackPublicationInterface> publication;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto participant = remote_participants_.find(participant_sid);
+		if (participant == remote_participants_.end()) {
+			return false;
+		}
+		auto publications = participant->second->TrackPublicationsSnapshot();
+		auto found = publications.find(track_sid);
+		if (found == publications.end()) {
+			return false;
+		}
+		publication = found->second;
+	}
+	auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get());
+	if (remote == nullptr || !remote->SetSubscribed(subscribed)) {
+		return false;
+	}
+	return true;
+}
+
+bool Room::UpdateRemoteTrackSettingsInternal(std::string participant_sid, std::string track_sid,
+                                             const RemoteTrackSettings& settings) {
+	if (participant_sid.empty() || track_sid.empty()) {
+		return false;
+	}
+	std::shared_ptr<TrackPublicationInterface> publication;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto participant = remote_participants_.find(participant_sid);
+		if (participant == remote_participants_.end()) {
+			return false;
+		}
+		auto publications = participant->second->TrackPublicationsSnapshot();
+		auto found = publications.find(track_sid);
+		if (found == publications.end()) {
+			return false;
+		}
+		publication = found->second;
+	}
+	auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get());
+	return remote != nullptr && remote->UpdateRemoteTrackSettings(settings);
+}
+
+bool Room::SendRemoteTrackSubscribed(const std::string& participant_sid,
+                                     const std::string& track_sid, bool subscribed) {
+	return rtc_engine_ != nullptr &&
+	       rtc_engine_->SetTrackSubscribed(participant_sid, track_sid, subscribed);
+}
+
+bool Room::SendRemoteTrackSettings(const std::string& participant_sid, const std::string& track_sid,
+                                   const RemoteTrackSettings& settings) {
+	if (rtc_engine_ == nullptr) {
+		return false;
+	}
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		auto participant = remote_participants_.find(participant_sid);
@@ -293,7 +349,67 @@ bool Room::SetRemoteTrackSubscribedInternal(std::string participant_sid, std::st
 			return false;
 		}
 	}
-	return rtc_engine_->SetTrackSubscribed(participant_sid, track_sid, subscribed);
+	return rtc_engine_->UpdateTrackSettings(track_sid, settings);
+}
+
+void Room::RemoteSubscriptionStatusChanged(const std::string& participant_sid,
+                                           const std::string& track_sid,
+                                           TrackSubscriptionStatus status) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto found_participant = remote_participants_.find(participant_sid);
+		if (found_participant == remote_participants_.end()) {
+			return;
+		}
+		participant = found_participant->second;
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found_publication = publications.find(track_sid);
+		if (found_publication == publications.end()) {
+			return;
+		}
+		publication = found_publication->second;
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnTrackSubscriptionStatusChanged(publication.get(), participant.get(), status);
+	}
+}
+
+RemoteParticipant::PublicationHandlers
+Room::CreateRemotePublicationHandlers(const std::string& participant_sid) {
+	RemoteParticipant::PublicationHandlers handlers;
+	handlers.subscription = [this, participant_sid](const std::string& track_sid, bool subscribed) {
+		return SendRemoteTrackSubscribed(participant_sid, track_sid, subscribed);
+	};
+	handlers.settings = [this, participant_sid](const std::string& track_sid,
+	                                            const RemoteTrackSettings& settings) {
+		return SendRemoteTrackSettings(participant_sid, track_sid, settings);
+	};
+	handlers.status = [this, participant_sid](const std::string& track_sid,
+	                                          TrackSubscriptionStatus status,
+	                                          TrackSubscriptionStatus) {
+		RemoteSubscriptionStatusChanged(participant_sid, track_sid, status);
+	};
+	return handlers;
+}
+
+void Room::ResendRemoteTrackPreferences() {
+	std::vector<std::shared_ptr<TrackPublicationInterface>> publications;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& [sid, participant] : remote_participants_) {
+			auto snapshot = participant->TrackPublicationsSnapshot();
+			for (auto& [track_sid, publication] : snapshot) {
+				publications.push_back(std::move(publication));
+			}
+		}
+	}
+	for (const auto& publication : publications) {
+		if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+			remote->ResendPreferences();
+		}
+	}
 }
 
 bool Room::SimulateSignalDisconnectForTesting() {
@@ -347,6 +463,13 @@ bool RoomInterface::SetRemoteTrackSubscribed(std::string participant_sid, std::s
 	                              std::move(participant_sid), std::move(track_sid), subscribed);
 }
 
+bool RoomInterface::UpdateRemoteTrackSettings(std::string participant_sid, std::string track_sid,
+                                              const RemoteTrackSettings& settings) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr && room->UpdateRemoteTrackSettingsInternal(
+	                              std::move(participant_sid), std::move(track_sid), settings);
+}
+
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 	state_ = RoomState::Connected;
 	local_participant_->ResendTrackSubscriptionPermissions();
@@ -388,6 +511,7 @@ void Room::SignalResumedEvent() {
 
 void Room::ResumedEvent() {
 	local_participant_->ResendTrackSubscriptionPermissions();
+	ResendRemoteTrackPreferences();
 	if (state_.load() != RoomState::Reconnecting) {
 		return;
 	}
@@ -403,6 +527,7 @@ void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
 	}
 	ApplyJoinResponse(join_resp, true);
 	local_participant_->ResendTrackSubscriptionPermissions();
+	ResendRemoteTrackPreferences();
 	local_participant_->RepublishAllTracksAfterReconnect();
 	full_reconnect_prepared_ = false;
 	state_ = RoomState::Connected;
@@ -470,6 +595,9 @@ void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool re
 					if (publication->Sid() == sid) {
 						if (auto* concrete = dynamic_cast<TrackPublication*>(publication)) {
 							concrete->SetTrack(nullptr);
+						}
+						if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication)) {
+							remote->SetTrackAttached(false);
 						}
 						break;
 					}
@@ -701,6 +829,9 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 	std::string participant_sid;
 	std::shared_ptr<RemoteParticipant> participant;
 	std::shared_ptr<RemoteTrack> subscribed_track;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	TrackSubscriptionStatus previous_status = TrackSubscriptionStatus::Desired;
+	TrackSubscriptionStatus current_status = TrackSubscriptionStatus::Desired;
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		participant = FindRemoteParticipantForTrack(track_sid);
@@ -736,13 +867,19 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			remote_tracks_.emplace(track_sid, subscribed_track);
 		}
 		if (subscribed_track) {
-			for (auto* candidate : participant->GetTrackPublications()) {
-				if (candidate->Sid() == track_sid) {
-					if (auto* concrete = dynamic_cast<TrackPublication*>(candidate)) {
-						concrete->SetTrack(subscribed_track.get());
-						concrete->SetSubscriptionError(std::nullopt);
-					}
-					break;
+			subscribed_track->SetStreamState(TrackStreamState::Active);
+			auto publications = participant->TrackPublicationsSnapshot();
+			auto found = publications.find(track_sid);
+			if (found != publications.end()) {
+				publication = found->second;
+				if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+					previous_status = remote->SubscriptionStatus();
+					remote->SetTrackAttached(true);
+					current_status = remote->SubscriptionStatus();
+				}
+				if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+					concrete->SetTrack(subscribed_track.get());
+					concrete->SetSubscriptionError(std::nullopt);
 				}
 			}
 		}
@@ -750,6 +887,85 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 	if (subscribed_track) {
 		if (auto* listener = event_listener_.load()) {
 			listener->OnTrackSubscribed(subscribed_track.get(), participant.get());
+			if (publication && current_status != previous_status) {
+				listener->OnTrackSubscriptionStatusChanged(publication.get(), participant.get(),
+				                                           current_status);
+			}
+		}
+	}
+}
+
+void Room::MediaTrackRemovedEvent(const std::string& track_sid) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<RemoteTrack> track;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	TrackSubscriptionStatus previous_status = TrackSubscriptionStatus::Unsubscribed;
+	TrackSubscriptionStatus current_status = TrackSubscriptionStatus::Unsubscribed;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participant = FindRemoteParticipantForTrack(track_sid);
+		auto found_track = remote_tracks_.find(track_sid);
+		if (!participant || found_track == remote_tracks_.end()) {
+			return;
+		}
+		track = found_track->second;
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found_publication = publications.find(track_sid);
+		if (found_publication == publications.end()) {
+			return;
+		}
+		publication = found_publication->second;
+		if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+			previous_status = remote->SubscriptionStatus();
+			remote->SetTrackAttached(false);
+			current_status = remote->SubscriptionStatus();
+		}
+		if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+			concrete->SetTrack(nullptr);
+		}
+		remote_tracks_.erase(found_track);
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnTrackUnsubscribed(track.get(), publication.get(), participant.get());
+		if (current_status != previous_status) {
+			listener->OnTrackSubscriptionStatusChanged(publication.get(), participant.get(),
+			                                           current_status);
+		}
+	}
+}
+
+void Room::StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& updates) {
+	struct StreamEvent {
+		std::shared_ptr<TrackPublicationInterface> publication;
+		std::shared_ptr<RemoteParticipant> participant;
+		TrackStreamState state;
+	};
+	std::vector<StreamEvent> events;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& update : updates) {
+			auto participant = remote_participants_.find(update.participant_sid());
+			auto track = remote_tracks_.find(update.track_sid());
+			if (participant == remote_participants_.end() || track == remote_tracks_.end()) {
+				continue;
+			}
+			auto publications = participant->second->TrackPublicationsSnapshot();
+			auto publication = publications.find(update.track_sid());
+			if (publication == publications.end()) {
+				continue;
+			}
+			const auto state = update.state() == livekit::StreamState::PAUSED
+			                       ? TrackStreamState::Paused
+			                       : TrackStreamState::Active;
+			if (track->second->SetStreamState(state)) {
+				events.push_back({publication->second, participant->second, state});
+			}
+		}
+	}
+	if (auto* listener = event_listener_.load()) {
+		for (const auto& event : events) {
+			listener->OnTrackStreamStateChanged(event.publication.get(), event.participant.get(),
+			                                    event.state);
 		}
 	}
 }
@@ -1023,12 +1239,20 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		std::shared_ptr<RemoteParticipant> retained_participant;
 		bool muted;
 	};
+	struct UnsubscriptionEvent {
+		std::shared_ptr<RemoteTrack> track;
+		std::shared_ptr<TrackPublicationInterface> publication;
+		std::shared_ptr<RemoteParticipant> participant;
+		bool status_changed = false;
+		TrackSubscriptionStatus status = TrackSubscriptionStatus::Unsubscribed;
+	};
 
 	std::vector<webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>> ready_tracks;
 	std::vector<std::shared_ptr<RemoteParticipant>> connected;
 	std::vector<std::shared_ptr<RemoteParticipant>> disconnected;
 	std::vector<PublicationEvent> published;
 	std::vector<PublicationEvent> unpublished;
+	std::vector<UnsubscriptionEvent> unsubscribed;
 	std::vector<ParticipantValueEvent> metadata_changed;
 	std::vector<ParticipantValueEvent> name_changed;
 	std::vector<AttributesEvent> attributes_changed;
@@ -1099,6 +1323,18 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				if (participant != remote_participants_.end()) {
 					auto retained = participant->second;
 					for (const auto& [sid, publication] : retained->TrackPublicationsSnapshot()) {
+						auto track = remote_tracks_.find(sid);
+						if (track != remote_tracks_.end() && emit_events) {
+							UnsubscriptionEvent event{track->second, publication, retained};
+							if (auto* remote =
+							        dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+								const auto previous = remote->SubscriptionStatus();
+								remote->SetTrackAttached(false);
+								event.status = remote->SubscriptionStatus();
+								event.status_changed = event.status != previous;
+							}
+							unsubscribed.push_back(std::move(event));
+						}
 						if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
 							concrete->SetTrack(nullptr);
 						}
@@ -1117,7 +1353,8 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			}
 
 			if (participant == remote_participants_.end()) {
-				auto added = std::make_shared<RemoteParticipant>(info);
+				auto added = std::make_shared<RemoteParticipant>(
+				    info, options_.auto_subscribe, CreateRemotePublicationHandlers(info.sid()));
 				remote_participants_.emplace(info.sid(), added);
 				if (emit_events) {
 					connected.push_back(added);
@@ -1163,6 +1400,18 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			}
 			for (const auto& [sid, publication] : old_publications) {
 				if (new_publications.count(sid) == 0) {
+					auto track = remote_tracks_.find(sid);
+					if (track != remote_tracks_.end()) {
+						UnsubscriptionEvent event{track->second, publication, retained};
+						if (auto* remote =
+						        dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+							const auto previous = remote->SubscriptionStatus();
+							remote->SetTrackAttached(false);
+							event.status = remote->SubscriptionStatus();
+							event.status_changed = event.status != previous;
+						}
+						unsubscribed.push_back(std::move(event));
+					}
 					if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
 						concrete->SetTrack(nullptr);
 					}
@@ -1195,6 +1444,14 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				listener->OnTrackMuted(event.publication.get(), event.participant);
 			} else {
 				listener->OnTrackUnmuted(event.publication.get(), event.participant);
+			}
+		}
+		for (const auto& event : unsubscribed) {
+			listener->OnTrackUnsubscribed(event.track.get(), event.publication.get(),
+			                              event.participant.get());
+			if (event.status_changed) {
+				listener->OnTrackSubscriptionStatusChanged(event.publication.get(),
+				                                           event.participant.get(), event.status);
 			}
 		}
 		for (const auto& event : unpublished) {

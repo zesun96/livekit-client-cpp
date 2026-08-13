@@ -19,10 +19,24 @@
 
 namespace livekit {
 namespace core {
-RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info) : Participant(info) {}
+RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info)
+    : RemoteParticipant(info, true, {}) {}
+
+RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info, bool auto_subscribe,
+                                     PublicationHandlers handlers)
+    : Participant("", "", "", "", {}), auto_subscribe_(auto_subscribe),
+      handlers_(std::move(handlers)) {
+	Participant::UpdateFromInfo(info);
+}
 
 void RemoteParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 	Participant::UpdateFromInfo(info);
+}
+
+std::shared_ptr<TrackPublicationInterface>
+RemoteParticipant::CreateTrackPublication(const livekit::TrackInfo& info) {
+	return std::make_shared<RemoteTrackPublication>(info, auto_subscribe_, handlers_.subscription,
+	                                                handlers_.settings, handlers_.status);
 }
 } // namespace core
 } // namespace livekit

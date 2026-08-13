@@ -22,6 +22,7 @@ Because webrtc requires C++20.
 - [x] Connection state, identity lookup, local track mute, and remote subscription controls
 - [x] Publisher track subscription permissions with reconnect restoration
 - [x] Track subscription failure events and retained protocol error details
+- [x] Remote video quality/dimensions/FPS preferences and subscription/stream state events
 - [x] Stable C ABI with opaque handles and callbacks
 - [x] Audio publishing and receiving (signed 16-bit PCM)
 - [x] Video publishing and receiving (I420/VP8)
