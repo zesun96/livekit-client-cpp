@@ -155,6 +155,12 @@ static void on_transcription(void* user_data, lk_room_t* room,
 	}
 }
 
+static void on_recording_status(void* user_data, lk_room_t* room, int recording) {
+	(void)user_data;
+	(void)room;
+	printf("Recording status changed: %s\n", recording ? "active" : "inactive");
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -205,6 +211,7 @@ int main(int argc, char** argv) {
 	callbacks.on_sip_dtmf_received = on_sip_dtmf;
 	callbacks.on_chat_message_received = on_chat_message;
 	callbacks.on_transcription_received = on_transcription;
+	callbacks.on_recording_status_changed = on_recording_status;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

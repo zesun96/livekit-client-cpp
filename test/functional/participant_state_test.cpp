@@ -121,6 +121,50 @@ TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
 	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
 }
 
+class RoomStateEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnRoomMetadataChanged(const std::string& metadata) override {
+		++metadata_change_count;
+		last_metadata = metadata;
+	}
+	void OnRecordingStatusChanged(bool recording) override {
+		recording_states.push_back(recording);
+	}
+
+	int metadata_change_count = 0;
+	std::string last_metadata;
+	std::vector<bool> recording_states;
+};
+
+TEST(RoomStateTest, ReportsRecordingChangesOnlyWhenStateTransitions) {
+	Room room;
+	RoomStateEvents events;
+	room.AddEventListener(&events);
+	livekit::Room update;
+	update.set_metadata("room metadata");
+	room.RoomUpdateEvent(update);
+	EXPECT_EQ(events.metadata_change_count, 1);
+	EXPECT_EQ(events.last_metadata, "room metadata");
+	EXPECT_TRUE(events.recording_states.empty());
+	EXPECT_FALSE(room.IsRecording());
+
+	update.set_active_recording(true);
+	room.RoomUpdateEvent(update);
+	ASSERT_EQ(events.recording_states.size(), 1u);
+	EXPECT_TRUE(events.recording_states[0]);
+	EXPECT_TRUE(room.IsRecording());
+
+	room.RoomUpdateEvent(update);
+	EXPECT_EQ(events.recording_states.size(), 1u);
+	update.set_active_recording(false);
+	room.RoomUpdateEvent(update);
+	ASSERT_EQ(events.recording_states.size(), 2u);
+	EXPECT_FALSE(events.recording_states[1]);
+	EXPECT_FALSE(room.IsRecording());
+	room.RemoveEventListener();
+}
+
 class SubscriptionPermissionEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}

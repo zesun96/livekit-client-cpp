@@ -784,14 +784,19 @@ void Room::SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates
 
 void Room::RoomUpdateEvent(const livekit::Room& update) {
 	bool metadata_changed = false;
+	bool recording_changed = false;
 	{
 		std::lock_guard<std::mutex> guard(room_info_mutex_);
 		metadata_changed = room_info_.metadata() != update.metadata();
+		recording_changed = room_info_.active_recording() != update.active_recording();
 		room_info_ = update;
 	}
-	if (metadata_changed) {
-		if (auto* listener = event_listener_.load()) {
+	if (auto* listener = event_listener_.load()) {
+		if (metadata_changed) {
 			listener->OnRoomMetadataChanged(update.metadata());
+		}
+		if (recording_changed) {
+			listener->OnRecordingStatusChanged(update.active_recording());
 		}
 	}
 }

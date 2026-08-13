@@ -18,6 +18,7 @@ Because webrtc requires C++20.
 - [x] Protocol-level signal resume with SyncState/ICE restart and automatic full-reconnect fallback
 - [x] Structured LiveKit disconnect reasons in C++ and C APIs
 - [x] Room and participant state, track publications, active speakers, and quality events
+- [x] Room metadata and recording status change events
 - [x] Participant metadata, display name, and attribute updates
 - [x] Connection state, identity lookup, local track mute, and remote subscription controls
 - [x] Publisher track subscription permissions with reconnect restoration

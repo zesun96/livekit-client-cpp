@@ -729,6 +729,15 @@ public:
 		});
 	}
 
+	void OnRecordingStatusChanged(bool recording) override {
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_recording_status_changed != nullptr) {
+				callbacks.on_recording_status_changed(callbacks.user_data, owner_,
+				                                      recording ? 1 : 0);
+			}
+		});
+	}
+
 	void OnConnectionQualityChanged(core::ConnectionQuality quality,
 	                                core::ParticipantInterface* participant) override {
 		OwnedParticipantInfo owned_participant(participant);
