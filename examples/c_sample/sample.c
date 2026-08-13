@@ -161,6 +161,13 @@ static void on_recording_status(void* user_data, lk_room_t* room, int recording)
 	printf("Recording status changed: %s\n", recording ? "active" : "inactive");
 }
 
+static void on_metrics(void* user_data, lk_room_t* room, const lk_metrics_received_t* event) {
+	(void)user_data;
+	(void)room;
+	printf("Metrics received: series=%zu, events=%zu, from=%s\n", event->time_series_count,
+	       event->event_count, event->participant_identity);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -212,6 +219,7 @@ int main(int argc, char** argv) {
 	callbacks.on_chat_message_received = on_chat_message;
 	callbacks.on_transcription_received = on_transcription;
 	callbacks.on_recording_status_changed = on_recording_status;
+	callbacks.on_metrics_received = on_metrics;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

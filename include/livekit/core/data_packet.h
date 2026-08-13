@@ -61,6 +61,46 @@ struct TranscriptionReceivedEvent {
 	std::vector<TranscriptionSegment> segments;
 };
 
+struct MetricTimestamp {
+	int64_t seconds = 0;
+	int32_t nanos = 0;
+};
+
+struct MetricSample {
+	int64_t timestamp_ms = 0;
+	std::optional<MetricTimestamp> normalized_timestamp;
+	float value = 0.0f;
+};
+
+struct TimeSeriesMetric {
+	uint32_t label = 0;
+	uint32_t participant_identity = 0;
+	uint32_t track_sid = 0;
+	uint32_t rid = 0;
+	std::vector<MetricSample> samples;
+};
+
+struct EventMetric {
+	uint32_t label = 0;
+	uint32_t participant_identity = 0;
+	uint32_t track_sid = 0;
+	uint32_t rid = 0;
+	int64_t start_timestamp_ms = 0;
+	std::optional<int64_t> end_timestamp_ms;
+	std::optional<MetricTimestamp> normalized_start_timestamp;
+	std::optional<MetricTimestamp> normalized_end_timestamp;
+	std::string metadata;
+};
+
+struct MetricsReceivedEvent {
+	int64_t timestamp_ms = 0;
+	std::optional<MetricTimestamp> normalized_timestamp;
+	std::vector<std::string> string_data;
+	std::vector<TimeSeriesMetric> time_series;
+	std::vector<EventMetric> events;
+	std::string participant_identity;
+};
+
 struct FileSendOptions {
 	std::string topic = "files";
 	std::string mime_type = "application/octet-stream";

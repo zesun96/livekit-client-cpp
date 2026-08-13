@@ -230,6 +230,55 @@ typedef struct lk_transcription_received {
 	size_t segment_count;
 } lk_transcription_received_t;
 
+typedef struct lk_metric_timestamp {
+	int64_t seconds;
+	int32_t nanos;
+} lk_metric_timestamp_t;
+
+typedef struct lk_metric_sample {
+	int64_t timestamp_ms;
+	int has_normalized_timestamp;
+	lk_metric_timestamp_t normalized_timestamp;
+	float value;
+} lk_metric_sample_t;
+
+typedef struct lk_time_series_metric {
+	uint32_t label;
+	uint32_t participant_identity;
+	uint32_t track_sid;
+	uint32_t rid;
+	const lk_metric_sample_t* samples;
+	size_t sample_count;
+} lk_time_series_metric_t;
+
+typedef struct lk_event_metric {
+	uint32_t label;
+	uint32_t participant_identity;
+	uint32_t track_sid;
+	uint32_t rid;
+	int64_t start_timestamp_ms;
+	int has_end_timestamp_ms;
+	int64_t end_timestamp_ms;
+	int has_normalized_start_timestamp;
+	lk_metric_timestamp_t normalized_start_timestamp;
+	int has_normalized_end_timestamp;
+	lk_metric_timestamp_t normalized_end_timestamp;
+	const char* metadata;
+} lk_event_metric_t;
+
+typedef struct lk_metrics_received {
+	int64_t timestamp_ms;
+	int has_normalized_timestamp;
+	lk_metric_timestamp_t normalized_timestamp;
+	const char* const* string_data;
+	size_t string_data_count;
+	const lk_time_series_metric_t* time_series;
+	size_t time_series_count;
+	const lk_event_metric_t* events;
+	size_t event_count;
+	const char* participant_identity;
+} lk_metrics_received_t;
+
 typedef struct lk_file_received {
 	const uint8_t* data;
 	size_t data_size;
@@ -339,6 +388,8 @@ typedef void (*lk_chat_message_callback)(void* user_data, lk_room_t* room,
                                          const lk_chat_message_t* event);
 typedef void (*lk_transcription_received_callback)(void* user_data, lk_room_t* room,
                                                    const lk_transcription_received_t* event);
+typedef void (*lk_metrics_received_callback)(void* user_data, lk_room_t* room,
+                                             const lk_metrics_received_t* event);
 typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_file_received_t* event);
 typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
@@ -404,6 +455,7 @@ typedef struct lk_room_callbacks {
 	lk_chat_message_callback on_chat_message_received;
 	lk_transcription_received_callback on_transcription_received;
 	lk_recording_status_callback on_recording_status_changed;
+	lk_metrics_received_callback on_metrics_received;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

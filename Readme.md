@@ -31,6 +31,7 @@ Because webrtc requires C++20.
 - [x] SIP DTMF publishing and receiving
 - [x] Structured chat messages with stable IDs and edits
 - [x] Transcription segment events with language and timing metadata
+- [x] Metrics batches with time-series and event samples
 - [x] Chunked file transfer over LiveKit data streams
 - [x] Incremental text/byte stream writers and topic-scoped chunk handlers
 - [x] Bounded DataChannel backpressure with high/low-water events
