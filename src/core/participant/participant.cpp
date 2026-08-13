@@ -77,22 +77,8 @@ bool Participant::IsLocalParticipant() {
 }
 
 void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
-	{
-		std::lock_guard<std::mutex> guard(participant_mutex_);
-		if (!info_.sid().empty() && info_.sid() == info.sid() && info_.version() > info.version()) {
-			return;
-		}
-		info_ = info;
-		sid_ = info.sid();
-		identity_ = info.identity();
-		name_ = info.name();
-		metadata_ = info.metadata();
-		attributes_.clear();
-		for (const auto& [key, value] : info.attributes()) {
-			attributes_.emplace(key, value);
-		}
-		permissions_ = info.permission();
-		kind_ = info.kind();
+	if (!UpdateInfoFields(info)) {
+		return;
 	}
 
 	std::lock_guard<std::mutex> guard(track_publications_mutex_);
@@ -118,6 +104,25 @@ void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 			++publication;
 		}
 	}
+}
+
+bool Participant::UpdateInfoFields(const livekit::ParticipantInfo& info) {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	if (!info_.sid().empty() && info_.sid() == info.sid() && info_.version() > info.version()) {
+		return false;
+	}
+	info_ = info;
+	sid_ = info.sid();
+	identity_ = info.identity();
+	name_ = info.name();
+	metadata_ = info.metadata();
+	attributes_.clear();
+	for (const auto& [key, value] : info.attributes()) {
+		attributes_.emplace(key, value);
+	}
+	permissions_ = info.permission();
+	kind_ = info.kind();
+	return true;
 }
 
 std::vector<TrackPublicationInterface*> Participant::GetTrackPublications() {

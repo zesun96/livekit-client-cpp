@@ -42,6 +42,8 @@ public:
 	virtual ~RoomEventInterface() {}
 
 	virtual void OnConnected() = 0;
+	virtual void OnReconnecting() {}
+	virtual void OnReconnected() {}
 	virtual void OnDisconnected() {}
 	virtual void OnParticipantConnected(RemoteParticipantInterface*) {}
 	virtual void OnParticipantDisconnected(RemoteParticipantInterface*) {}

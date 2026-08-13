@@ -1,3 +1,4 @@
+#include "../../src/core/detail/rtc_engine.h"
 #include "../../src/core/participant/remote_participant.h"
 #include "../../src/core/room.h"
 #include "../../src/core/track/track.h"
@@ -128,6 +129,20 @@ TEST(TrackStateTest, ReportsEnabledStateChanges) {
 	EXPECT_TRUE(track.IsEnabled());
 }
 
+TEST(RtcEngineStateTest, RetainsNewestTokenForReconnect) {
+	RtcEngine engine;
+	EXPECT_TRUE(engine.AccessTokenForReconnect().empty());
+
+	engine.OnTokenRefresh("refreshed-token");
+	EXPECT_EQ(engine.AccessTokenForReconnect(), "refreshed-token");
+
+	engine.OnTokenRefresh("");
+	EXPECT_EQ(engine.AccessTokenForReconnect(), "refreshed-token");
+
+	engine.Disconnect();
+	EXPECT_TRUE(engine.AccessTokenForReconnect().empty());
+}
+
 class LocalTrackEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}
@@ -143,6 +158,66 @@ public:
 	std::string track_sid;
 	bool participant_is_local = false;
 };
+
+class ConnectionEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override { ++connected_count; }
+	void OnReconnecting() override { ++reconnecting_count; }
+	void OnReconnected() override { ++reconnected_count; }
+	void OnDisconnected() override { ++disconnected_count; }
+
+	int connected_count = 0;
+	int reconnecting_count = 0;
+	int reconnected_count = 0;
+	int disconnected_count = 0;
+};
+
+TEST(RoomConnectionStateTest, TransitionsThroughSuccessfulReconnect) {
+	Room room;
+	ConnectionEvents events;
+	room.AddEventListener(&events);
+	room.ConnectedEvent({});
+	ASSERT_EQ(room.State(), RoomInterface::RoomState::Connected);
+
+	room.ReconnectingEvent();
+	EXPECT_EQ(room.State(), RoomInterface::RoomState::Reconnecting);
+	EXPECT_FALSE(room.IsConnected());
+	EXPECT_EQ(events.reconnecting_count, 1);
+
+	livekit::JoinResponse response;
+	response.mutable_room()->set_sid("RM_reconnected");
+	response.mutable_room()->set_name("reconnected-room");
+	response.mutable_participant()->set_sid("PA_local");
+	response.mutable_participant()->set_identity("local");
+	room.ReconnectedEvent(response);
+	EXPECT_EQ(room.State(), RoomInterface::RoomState::Connected);
+	EXPECT_TRUE(room.IsConnected());
+	EXPECT_EQ(room.Sid(), "RM_reconnected");
+	EXPECT_EQ(events.reconnected_count, 1);
+
+	EXPECT_TRUE(room.Disconnect());
+	room.RemoveEventListener();
+}
+
+TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
+	Room room;
+	ConnectionEvents events;
+	room.AddEventListener(&events);
+	room.ConnectedEvent({});
+	ASSERT_EQ(room.State(), RoomInterface::RoomState::Connected);
+
+	room.SignalDisconnectedEvent();
+	EXPECT_EQ(room.State(), RoomInterface::RoomState::Failed);
+	EXPECT_FALSE(room.IsConnected());
+	EXPECT_EQ(events.disconnected_count, 1);
+
+	room.SignalDisconnectedEvent();
+	EXPECT_EQ(events.disconnected_count, 1);
+	EXPECT_TRUE(room.Disconnect());
+	EXPECT_EQ(room.State(), RoomInterface::RoomState::Disconnected);
+	EXPECT_EQ(events.disconnected_count, 1);
+	room.RemoveEventListener();
+}
 
 class DataStreamEvents final : public RoomEventInterface {
 public:

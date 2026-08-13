@@ -51,7 +51,8 @@ typedef enum lk_room_state {
 	LK_ROOM_STATE_CONNECTED = 1,
 	LK_ROOM_STATE_DISCONNECTING = 2,
 	LK_ROOM_STATE_DISCONNECTED = 3,
-	LK_ROOM_STATE_FAILED = 4
+	LK_ROOM_STATE_FAILED = 4,
+	LK_ROOM_STATE_RECONNECTING = 5
 } lk_room_state_t;
 
 typedef enum lk_track_kind {
@@ -198,6 +199,8 @@ typedef struct lk_room_callbacks {
 	lk_track_event_callback on_local_track_unpublished;
 	lk_text_received_callback on_text_received;
 	lk_file_received_callback on_byte_received;
+	lk_room_event_callback on_reconnecting;
+	lk_room_event_callback on_reconnected;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

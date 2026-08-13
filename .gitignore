@@ -12,3 +12,5 @@ deps/libwebrtc
 /deps/nlohmann_json/
 /deps/plog/
 /protocol/
+
+/docs/ROADMAP.md

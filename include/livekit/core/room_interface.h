@@ -40,6 +40,7 @@ public:
 		Disconnecting,
 		Disconnected,
 		Failed,
+		Reconnecting,
 	};
 
 	virtual ~RoomInterface() = default;
