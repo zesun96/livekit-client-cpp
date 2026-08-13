@@ -15,6 +15,7 @@ Because webrtc requires C++20.
 ## Features
 
 - [x] WebSocket signaling and room lifecycle
+- [x] Unified connection state change events across the full room lifecycle
 - [x] Protocol-level signal resume with SyncState/ICE restart and automatic full-reconnect fallback
 - [x] Structured LiveKit disconnect reasons in C++ and C APIs
 - [x] Room and participant state, track publications, active speakers, and quality events

@@ -366,6 +366,8 @@ typedef void (*lk_data_channel_buffer_status_callback)(
     void* user_data, lk_room_t* room, const lk_data_channel_buffer_status_t* status);
 
 typedef void (*lk_room_event_callback)(void* user_data, lk_room_t* room);
+typedef void (*lk_connection_state_callback)(void* user_data, lk_room_t* room,
+                                             lk_room_state_t state);
 typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
                                               lk_disconnect_reason_t reason);
 typedef void (*lk_participant_event_callback)(void* user_data, lk_room_t* room,
@@ -456,6 +458,7 @@ typedef struct lk_room_callbacks {
 	lk_transcription_received_callback on_transcription_received;
 	lk_recording_status_callback on_recording_status_changed;
 	lk_metrics_received_callback on_metrics_received;
+	lk_connection_state_callback on_connection_state_changed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

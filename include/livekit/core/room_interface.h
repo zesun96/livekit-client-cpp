@@ -35,14 +35,7 @@ namespace core {
 
 class RoomInterface {
 public:
-	enum class RoomState {
-		Connecting,
-		Connected,
-		Disconnecting,
-		Disconnected,
-		Failed,
-		Reconnecting,
-	};
+	using RoomState = core::RoomState;
 
 	virtual ~RoomInterface() = default;
 
