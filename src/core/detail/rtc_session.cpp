@@ -433,7 +433,11 @@ void RtcSession::OnTrack(PeerTransport::Target target,
 }
 
 void RtcSession::OnRemoveTrack(PeerTransport::Target target,
-                               webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+                               webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
+	if (observer_) {
+		observer_->OnRemoveTrack(target, std::move(receiver));
+	}
+}
 
 void RtcSession::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 
