@@ -1044,6 +1044,13 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		}
 		return;
 	}
+	if (packet.has_sip_dtmf()) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnSipDtmfReceived({packet.sip_dtmf().code(), packet.sip_dtmf().digit(),
+			                             packet.participant_identity()});
+		}
+		return;
+	}
 	if (packet.has_stream_header() && packet.stream_header().has_text_header()) {
 		const auto& header = packet.stream_header();
 		if (header.stream_id().empty() ||

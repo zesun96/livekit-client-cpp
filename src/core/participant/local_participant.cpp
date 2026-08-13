@@ -605,6 +605,18 @@ bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublish
 	return engine_->SendDataPacket(packet, options.reliable);
 }
 
+bool LocalParticipant::PublishDtmf(uint32_t code, std::string digit) {
+	if (engine_ == nullptr) {
+		return false;
+	}
+	livekit::DataPacket packet;
+	packet.set_kind(livekit::DataPacket_Kind_RELIABLE);
+	auto* dtmf = packet.mutable_sip_dtmf();
+	dtmf->set_code(code);
+	dtmf->set_digit(std::move(digit));
+	return engine_->SendDataPacket(packet, true);
+}
+
 RpcResult LocalParticipant::PerformRpc(const PerformRpcParams& params) {
 	if (engine_ == nullptr) {
 		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::SendFailed));

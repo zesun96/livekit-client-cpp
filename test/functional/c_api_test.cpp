@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <vector>
 
@@ -138,6 +139,12 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_track_stream_state_changed, nullptr);
 	EXPECT_EQ(callbacks.on_track_subscription_status_changed, nullptr);
 	EXPECT_EQ(callbacks.on_data_channel_buffer_status_changed, nullptr);
+	EXPECT_EQ(callbacks.on_sip_dtmf_received, nullptr);
+	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	const auto current_callbacks_size = callbacks.struct_size;
+	callbacks.struct_size = offsetof(lk_room_callbacks_t, on_sip_dtmf_received);
+	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);
+	callbacks.struct_size = current_callbacks_size;
 
 	lk_remote_track_settings_t settings;
 	lk_remote_track_settings_init(&settings);

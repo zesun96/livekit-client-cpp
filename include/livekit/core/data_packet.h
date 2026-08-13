@@ -28,6 +28,12 @@ struct DataReceivedEvent {
 	bool reliable = true;
 };
 
+struct SipDtmfEvent {
+	uint32_t code = 0;
+	std::string digit;
+	std::string participant_identity;
+};
+
 struct FileSendOptions {
 	std::string topic = "files";
 	std::string mime_type = "application/octet-stream";

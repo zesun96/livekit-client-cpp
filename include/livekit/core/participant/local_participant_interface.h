@@ -91,6 +91,7 @@ public:
 	virtual std::unique_ptr<ByteStreamWriterInterface> StreamBytes(StreamBytesOptions = {}) {
 		return nullptr;
 	}
+	virtual bool PublishDtmf(uint32_t, std::string) { return false; }
 };
 
 } // namespace core
