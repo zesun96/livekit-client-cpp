@@ -437,6 +437,9 @@ public:
 	void OnChatMessageReceived(const ChatMessage& message) override {
 		chat_messages.push_back(message);
 	}
+	void OnTranscriptionReceived(const TranscriptionReceivedEvent& event) override {
+		transcriptions.push_back(event);
+	}
 
 	std::vector<TextReceivedEvent> texts;
 	std::vector<ByteReceivedEvent> bytes;
@@ -444,6 +447,7 @@ public:
 	std::vector<DataChannelBufferStatus> buffer_statuses;
 	std::vector<SipDtmfEvent> dtmf_events;
 	std::vector<ChatMessage> chat_messages;
+	std::vector<TranscriptionReceivedEvent> transcriptions;
 };
 
 livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
@@ -659,6 +663,58 @@ TEST(DataStreamStateTest, ForwardsStructuredChatMessages) {
 	EXPECT_EQ(events.chat_messages[0].message, "edited text");
 	EXPECT_TRUE(events.chat_messages[0].generated);
 	EXPECT_EQ(events.chat_messages[0].participant_identity, "chat-participant");
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, TracksIncrementalTranscriptionSegments) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	livekit::DataPacket partial_packet;
+	auto* partial = partial_packet.mutable_transcription();
+	partial->set_transcribed_participant_identity("speaker");
+	partial->set_track_id("TR_audio");
+	auto* partial_segment = partial->add_segments();
+	partial_segment->set_id("segment-id");
+	partial_segment->set_text("partial text");
+	partial_segment->set_language("en");
+	partial_segment->set_start_time(100);
+	partial_segment->set_end_time(200);
+	room.DataPacketEvent(partial_packet);
+
+	ASSERT_EQ(events.transcriptions.size(), 1u);
+	ASSERT_EQ(events.transcriptions[0].segments.size(), 1u);
+	const auto first_received_time = events.transcriptions[0].segments[0].first_received_time;
+	EXPECT_EQ(events.transcriptions[0].transcribed_participant_identity, "speaker");
+	EXPECT_EQ(events.transcriptions[0].track_id, "TR_audio");
+	EXPECT_EQ(events.transcriptions[0].segments[0].id, "segment-id");
+	EXPECT_EQ(events.transcriptions[0].segments[0].text, "partial text");
+	EXPECT_EQ(events.transcriptions[0].segments[0].language, "en");
+	EXPECT_EQ(events.transcriptions[0].segments[0].start_time, 100u);
+	EXPECT_EQ(events.transcriptions[0].segments[0].end_time, 200u);
+	EXPECT_FALSE(events.transcriptions[0].segments[0].final);
+	EXPECT_GT(first_received_time, 0);
+	EXPECT_EQ(events.transcriptions[0].segments[0].last_received_time, first_received_time);
+
+	livekit::DataPacket final_packet;
+	auto* final_transcription = final_packet.mutable_transcription();
+	final_transcription->set_transcribed_participant_identity("speaker");
+	final_transcription->set_track_id("TR_audio");
+	auto* final_segment = final_transcription->add_segments();
+	final_segment->set_id("segment-id");
+	final_segment->set_text("final text");
+	final_segment->set_language("en");
+	final_segment->set_start_time(100);
+	final_segment->set_end_time(250);
+	final_segment->set_final(true);
+	room.DataPacketEvent(final_packet);
+
+	ASSERT_EQ(events.transcriptions.size(), 2u);
+	ASSERT_EQ(events.transcriptions[1].segments.size(), 1u);
+	EXPECT_EQ(events.transcriptions[1].segments[0].text, "final text");
+	EXPECT_TRUE(events.transcriptions[1].segments[0].final);
+	EXPECT_EQ(events.transcriptions[1].segments[0].first_received_time, first_received_time);
+	EXPECT_GE(events.transcriptions[1].segments[0].last_received_time, first_received_time);
 	room.RemoveEventListener();
 }
 

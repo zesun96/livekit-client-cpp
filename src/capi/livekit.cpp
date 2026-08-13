@@ -663,6 +663,24 @@ public:
 		});
 	}
 
+	void OnTranscriptionReceived(const core::TranscriptionReceivedEvent& event) override {
+		std::vector<lk_transcription_segment_t> segments;
+		segments.reserve(event.segments.size());
+		for (const auto& segment : event.segments) {
+			segments.push_back({segment.id.c_str(), segment.text.c_str(), segment.language.c_str(),
+			                    segment.start_time, segment.end_time, segment.final ? 1 : 0,
+			                    segment.first_received_time, segment.last_received_time});
+		}
+		const lk_transcription_received_t c_event{event.transcribed_participant_identity.c_str(),
+		                                          event.track_id.c_str(), segments.data(),
+		                                          segments.size()};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_transcription_received != nullptr) {
+				callbacks.on_transcription_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
 	void OnTextReceived(const core::TextReceivedEvent& event) override {
 		const lk_text_received_t c_event{event.stream_id.c_str(),
 		                                 event.text.c_str(),

@@ -212,6 +212,24 @@ typedef struct lk_chat_message {
 	const char* participant_identity;
 } lk_chat_message_t;
 
+typedef struct lk_transcription_segment {
+	const char* id;
+	const char* text;
+	const char* language;
+	uint64_t start_time;
+	uint64_t end_time;
+	int is_final;
+	int64_t first_received_time;
+	int64_t last_received_time;
+} lk_transcription_segment_t;
+
+typedef struct lk_transcription_received {
+	const char* transcribed_participant_identity;
+	const char* track_id;
+	const lk_transcription_segment_t* segments;
+	size_t segment_count;
+} lk_transcription_received_t;
+
 typedef struct lk_file_received {
 	const uint8_t* data;
 	size_t data_size;
@@ -319,6 +337,8 @@ typedef void (*lk_data_received_callback)(void* user_data, lk_room_t* room,
 typedef void (*lk_sip_dtmf_callback)(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* event);
 typedef void (*lk_chat_message_callback)(void* user_data, lk_room_t* room,
                                          const lk_chat_message_t* event);
+typedef void (*lk_transcription_received_callback)(void* user_data, lk_room_t* room,
+                                                   const lk_transcription_received_t* event);
 typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_file_received_t* event);
 typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
@@ -381,6 +401,7 @@ typedef struct lk_room_callbacks {
 	lk_data_channel_buffer_status_callback on_data_channel_buffer_status_changed;
 	lk_sip_dtmf_callback on_sip_dtmf_received;
 	lk_chat_message_callback on_chat_message_received;
+	lk_transcription_received_callback on_transcription_received;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

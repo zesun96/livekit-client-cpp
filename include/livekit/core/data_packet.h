@@ -44,6 +44,23 @@ struct ChatMessage {
 	std::string participant_identity;
 };
 
+struct TranscriptionSegment {
+	std::string id;
+	std::string text;
+	std::string language;
+	uint64_t start_time = 0;
+	uint64_t end_time = 0;
+	bool final = false;
+	int64_t first_received_time = 0;
+	int64_t last_received_time = 0;
+};
+
+struct TranscriptionReceivedEvent {
+	std::string transcribed_participant_identity;
+	std::string track_id;
+	std::vector<TranscriptionSegment> segments;
+};
+
 struct FileSendOptions {
 	std::string topic = "files";
 	std::string mime_type = "application/octet-stream";

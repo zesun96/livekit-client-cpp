@@ -142,6 +142,19 @@ static void on_chat_message(void* user_data, lk_room_t* room, const lk_chat_mess
 	       event->has_edit_timestamp, event->message, event->participant_identity);
 }
 
+static void on_transcription(void* user_data, lk_room_t* room,
+                             const lk_transcription_received_t* event) {
+	(void)user_data;
+	(void)room;
+	printf("Transcription received: participant=%s, track=%s, segments=%zu\n",
+	       event->transcribed_participant_identity, event->track_id, event->segment_count);
+	for (size_t index = 0; index < event->segment_count; ++index) {
+		const lk_transcription_segment_t* segment = &event->segments[index];
+		printf("  id=%s, final=%d, language=%s, text=%s\n", segment->id, segment->is_final,
+		       segment->language, segment->text);
+	}
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -191,6 +204,7 @@ int main(int argc, char** argv) {
 	callbacks.on_data_channel_buffer_status_changed = on_data_channel_buffer_status;
 	callbacks.on_sip_dtmf_received = on_sip_dtmf;
 	callbacks.on_chat_message_received = on_chat_message;
+	callbacks.on_transcription_received = on_transcription;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

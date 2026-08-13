@@ -123,6 +123,18 @@ public:
 		          << std::endl;
 	}
 
+	void OnTranscriptionReceived(
+	    const livekit::core::TranscriptionReceivedEvent& transcription) override {
+		std::cout << "Transcription received: participant="
+		          << transcription.transcribed_participant_identity
+		          << ", track=" << transcription.track_id << std::endl;
+		for (const auto& segment : transcription.segments) {
+			std::cout << "  id=" << segment.id << ", final=" << segment.final
+			          << ", language=" << segment.language << ", text=" << segment.text
+			          << std::endl;
+		}
+	}
+
 	bool connected() const { return connected_.load(); }
 
 private:

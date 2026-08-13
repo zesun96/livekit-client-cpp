@@ -26,12 +26,19 @@
 #include "track/video_track.h"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <set>
 #include <tuple>
 
 namespace {
 constexpr uint64_t kMaximumBufferedDataStreamSize = 64ULL * 1024 * 1024;
+
+int64_t CurrentTimestampMilliseconds() {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+	           std::chrono::system_clock::now().time_since_epoch())
+	    .count();
+}
 
 static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOptions room_options) {
 	livekit::core::EngineOptions engine_options;
@@ -594,6 +601,10 @@ void Room::FailIncomingDataStreams(const std::string& reason) {
 		incoming_texts_.clear();
 		incoming_files_.clear();
 	}
+	{
+		std::lock_guard<std::mutex> guard(transcription_mutex_);
+		transcription_received_times_.clear();
+	}
 	for (const auto& [handler, event] : text_events) {
 		handler(event);
 	}
@@ -1065,6 +1076,38 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		event.participant_identity = packet.participant_identity();
 		if (auto* listener = event_listener_.load()) {
 			listener->OnChatMessageReceived(event);
+		}
+		return;
+	}
+	if (packet.has_transcription()) {
+		const auto& transcription = packet.transcription();
+		TranscriptionReceivedEvent event;
+		event.transcribed_participant_identity = transcription.transcribed_participant_identity();
+		event.track_id = transcription.track_id();
+		event.segments.reserve(static_cast<std::size_t>(transcription.segments_size()));
+		const auto received_time = CurrentTimestampMilliseconds();
+		{
+			std::lock_guard<std::mutex> guard(transcription_mutex_);
+			for (const auto& input : transcription.segments()) {
+				TranscriptionSegment segment;
+				segment.id = input.id();
+				segment.text = input.text();
+				segment.language = input.language();
+				segment.start_time = input.start_time();
+				segment.end_time = input.end_time();
+				segment.final = input.final();
+				auto position =
+				    transcription_received_times_.try_emplace(segment.id, received_time).first;
+				segment.first_received_time = position->second;
+				segment.last_received_time = received_time;
+				if (segment.final) {
+					transcription_received_times_.erase(position);
+				}
+				event.segments.push_back(std::move(segment));
+			}
+		}
+		if (auto* listener = event_listener_.load()) {
+			listener->OnTranscriptionReceived(event);
 		}
 		return;
 	}
