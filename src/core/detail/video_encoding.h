@@ -20,6 +20,7 @@ struct VideoEncodingPlan {
 	std::vector<livekit::VideoLayer> layers;
 };
 
+const char* VideoCodecName(VideoCodec codec);
 VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool screen_share,
                                          const TrackPublishOptions& options);
 bool ApplySubscribedQualities(std::vector<webrtc::RtpEncodingParameters>& encodings,

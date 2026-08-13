@@ -140,6 +140,25 @@ core::TrackSource ToCoreTrackSource(lk_track_source_t source) {
 	}
 }
 
+bool ToCoreVideoCodec(lk_video_codec_t codec, core::VideoCodec& result) {
+	switch (codec) {
+	case LK_VIDEO_CODEC_VP8:
+		result = core::VideoCodec::VP8;
+		return true;
+	case LK_VIDEO_CODEC_H264:
+		result = core::VideoCodec::H264;
+		return true;
+	case LK_VIDEO_CODEC_VP9:
+		result = core::VideoCodec::VP9;
+		return true;
+	case LK_VIDEO_CODEC_AV1:
+		result = core::VideoCodec::AV1;
+		return true;
+	default:
+		return false;
+	}
+}
+
 lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 	switch (kind) {
 	case core::TrackKind::Audio:
@@ -1026,6 +1045,7 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->dtx = 1;
 		options->red = 1;
 		options->simulcast = 1;
+		options->video_codec = LK_VIDEO_CODEC_VP8;
 	}
 }
 
@@ -1530,6 +1550,10 @@ lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
 			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, stream) &&
 			    options->stream != nullptr) {
 				publish_options.stream = options->stream;
+			}
+			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, video_codec) &&
+			    !ToCoreVideoCodec(options->video_codec, publish_options.video_codec)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video codec");
 			}
 		}
 		if (!participant->PublishTrack(track->track.get(), publish_options)) {

@@ -59,20 +59,6 @@ bool PublishChatMessage(RtcEngine* engine, const ChatMessage& message) {
 	return engine->SendDataPacket(packet, true);
 }
 
-const char* VideoCodecName(VideoCodec codec) {
-	switch (codec) {
-	case VideoCodec::H264:
-		return "h264";
-	case VideoCodec::VP9:
-		return "vp9";
-	case VideoCodec::AV1:
-		return "av1";
-	case VideoCodec::VP8:
-	default:
-		return "vp8";
-	}
-}
-
 } // namespace
 
 class OutgoingDataStreamState {
@@ -449,6 +435,9 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		auto* video_track = dynamic_cast<LocalVideoTrack*>(local_track);
 		if (video_track == nullptr || video_track->source() == nullptr ||
 		    video_track->source()->Width() == 0 || video_track->source()->Height() == 0) {
+			return false;
+		}
+		if (!engine_->SupportsVideoCodec(option.video_codec)) {
 			return false;
 		}
 		req.set_width(video_track->source()->Width());

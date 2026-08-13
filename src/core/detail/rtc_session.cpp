@@ -17,9 +17,22 @@
 
 #include "rtc_session.h"
 
+#include "video_encoding.h"
+
 #include "api/peer_connection_interface.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace {
+
+bool CodecNameEquals(const std::string& left, const std::string& right) {
+	return left.size() == right.size() &&
+	       std::equal(left.begin(), left.end(), right.begin(), [](char lhs, char rhs) {
+		       return std::tolower(static_cast<unsigned char>(lhs)) ==
+		              std::tolower(static_cast<unsigned char>(rhs));
+	       });
+}
 
 static webrtc::PeerConnectionInterface::RTCConfiguration
 make_rtc_config_join(livekit::JoinResponse join_response, livekit::core::EngineOptions options) {
@@ -146,6 +159,18 @@ void RtcSession::AddObserver(RtcSession::RtcSessionListener* observer) {
 
 void RtcSession::RemoveObserver() { this->observer_ = nullptr; }
 
+bool RtcSession::SupportsVideoCodec(VideoCodec codec) const {
+	if (peer_factory_ == nullptr || peer_factory_->GetPeerConnectFactory() == nullptr) {
+		return false;
+	}
+	const auto capabilities =
+	    peer_factory_->GetPeerConnectFactory()->GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);
+	return std::any_of(capabilities.codecs.begin(), capabilities.codecs.end(),
+	                   [codec](const auto& capability) {
+		                   return CodecNameEquals(capability.name, VideoCodecName(codec));
+	                   });
+}
+
 webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
                          std::vector<webrtc::RtpEncodingParameters> send_encodings) {
@@ -155,6 +180,21 @@ RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	init.send_encodings = send_encodings;
 	is_publisher_connection_required_.store(true);
 	auto transceiver = publisher_pc_->AddTransceiver(track->media_track()->rtc_track(), init);
+	if (transceiver == nullptr || track->Kind() != TrackKind::Video) {
+		return transceiver;
+	}
+	const auto capabilities =
+	    peer_factory_->GetPeerConnectFactory()->GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);
+	std::vector<webrtc::RtpCodecCapability> preferred;
+	for (const auto& codec : capabilities.codecs) {
+		if (CodecNameEquals(codec.name, VideoCodecName(options.video_codec))) {
+			preferred.push_back(codec);
+		}
+	}
+	if (preferred.empty() || !transceiver->SetCodecPreferences(preferred).ok()) {
+		publisher_pc_->RemoveTrack(transceiver);
+		return nullptr;
+	}
 	return transceiver;
 }
 

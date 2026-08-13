@@ -109,6 +109,20 @@ std::string NormalizeCodec(std::string codec) {
 
 } // namespace
 
+const char* VideoCodecName(VideoCodec codec) {
+	switch (codec) {
+	case VideoCodec::H264:
+		return "H264";
+	case VideoCodec::VP9:
+		return "VP9";
+	case VideoCodec::AV1:
+		return "AV1";
+	case VideoCodec::VP8:
+	default:
+		return "VP8";
+	}
+}
+
 VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool screen_share,
                                          const TrackPublishOptions& options) {
 	VideoEncodingPlan result;
@@ -117,7 +131,10 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 	}
 	const auto original = OriginalPreset(width, height, screen_share, options);
 	std::vector<Preset> presets;
-	if (options.simulcast && std::max(width, height) >= 480) {
+	const bool supports_simulcast =
+	    options.video_codec == VideoCodec::VP8 || options.video_codec == VideoCodec::H264;
+	const bool use_simulcast = options.simulcast && supports_simulcast;
+	if (use_simulcast && std::max(width, height) >= 480) {
 		if (screen_share) {
 			presets.push_back({std::max(1u, width / 2), std::max(1u, height / 2),
 			                   std::max<uint64_t>(150000, original.bitrate / 4),
@@ -138,7 +155,7 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 	for (std::size_t index = 0; index < presets.size(); ++index) {
 		const auto& preset = presets[index];
 		webrtc::RtpEncodingParameters encoding;
-		if (options.simulcast) {
+		if (use_simulcast) {
 			encoding.rid = kVideoRids[index];
 		}
 		const auto scale = std::max(
@@ -158,8 +175,8 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 		result.encodings.push_back(encoding);
 
 		livekit::VideoLayer layer;
-		layer.set_quality(static_cast<livekit::VideoQuality>(static_cast<int>(
-		    options.simulcast ? QualityForRid(encoding.rid) : VideoQuality::High)));
+		layer.set_quality(static_cast<livekit::VideoQuality>(
+		    static_cast<int>(use_simulcast ? QualityForRid(encoding.rid) : VideoQuality::High)));
 		layer.set_width(static_cast<uint32_t>(std::ceil(width / scale)));
 		layer.set_height(static_cast<uint32_t>(std::ceil(height / scale)));
 		layer.set_bitrate(static_cast<uint32_t>(

@@ -5,6 +5,13 @@
 namespace livekit::core {
 namespace {
 
+TEST(VideoEncodingTest, MapsPublicVideoCodecNames) {
+	EXPECT_STREQ(VideoCodecName(VideoCodec::VP8), "VP8");
+	EXPECT_STREQ(VideoCodecName(VideoCodec::H264), "H264");
+	EXPECT_STREQ(VideoCodecName(VideoCodec::VP9), "VP9");
+	EXPECT_STREQ(VideoCodecName(VideoCodec::AV1), "AV1");
+}
+
 TEST(VideoEncodingTest, BuildsThreeOrderedLayersForHdCamera) {
 	TrackPublishOptions options;
 	options.simulcast = true;
@@ -109,6 +116,19 @@ TEST(VideoEncodingTest, NeverDisablesSingleEncodingOrMismatchedCodec) {
 	update.codecs = {{"h264", {{VideoQuality::High, false}}}};
 	EXPECT_FALSE(ApplySubscribedQualities(simulcast, update, "vp8"));
 	EXPECT_TRUE(simulcast[2].active);
+}
+
+TEST(VideoEncodingTest, UsesSingleEncodingForSvcCodecsUntilSvcLayersAreSupported) {
+	for (const auto codec : {VideoCodec::VP9, VideoCodec::AV1}) {
+		TrackPublishOptions options;
+		options.video_codec = codec;
+		options.simulcast = true;
+		const auto plan = BuildVideoEncodingPlan(1280, 720, false, options);
+		ASSERT_EQ(plan.encodings.size(), 1u);
+		EXPECT_TRUE(plan.encodings[0].rid.empty());
+		ASSERT_EQ(plan.layers.size(), 1u);
+		EXPECT_EQ(plan.layers[0].quality(), livekit::VideoQuality::HIGH);
+	}
 }
 
 } // namespace

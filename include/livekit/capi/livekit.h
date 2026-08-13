@@ -111,6 +111,13 @@ typedef enum lk_video_quality {
 	LK_VIDEO_QUALITY_OFF = 3
 } lk_video_quality_t;
 
+typedef enum lk_video_codec {
+	LK_VIDEO_CODEC_VP8 = 0,
+	LK_VIDEO_CODEC_H264 = 1,
+	LK_VIDEO_CODEC_VP9 = 2,
+	LK_VIDEO_CODEC_AV1 = 3
+} lk_video_codec_t;
+
 typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_UNKNOWN = 0,
 	LK_CONNECTION_QUALITY_POOR = 1,
@@ -527,6 +534,7 @@ typedef struct lk_track_publish_options {
 	int red;
 	int simulcast;
 	const char* stream;
+	lk_video_codec_t video_codec;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {
