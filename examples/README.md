@@ -129,6 +129,23 @@ $env:LIVEKIT_FILE = "C:/path/to/file.bin"
 & "out/build/vs2022-x64-release/examples/data_transfer/Release/data_transfer.exe"
 ```
 
+### `rpc`
+
+Registers `example.echo` and either waits as a receiver or calls another participant. Start the
+receiver without a destination, then pass its printed identity to the sender:
+
+```powershell
+# Terminal 1
+& "out/build/vs2022-x64-release/examples/rpc/Release/rpc.exe" $url $receiverToken
+
+# Terminal 2
+& "out/build/vs2022-x64-release/examples/rpc/Release/rpc.exe" `
+  $url $senderToken receiver-identity "hello"
+```
+
+The C sample also registers `c.echo`. Passing a third argument invokes that method on the selected
+participant and demonstrates the opaque `lk_rpc_result_t` lifecycle.
+
 ## End-to-end verification
 
 Create two tokens for different identities in the same room. Run `room_event` with the receiver

@@ -97,6 +97,15 @@ Room::~Room() {
 	}
 }
 
+bool Room::RegisterRpcMethod(std::string method, RpcHandler handler) {
+	return rtc_engine_ != nullptr &&
+	       rtc_engine_->RegisterRpcMethod(std::move(method), std::move(handler));
+}
+
+bool Room::UnregisterRpcMethod(const std::string& method) {
+	return rtc_engine_ != nullptr && rtc_engine_->UnregisterRpcMethod(method);
+}
+
 bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) {
 	auto expected = state_.load();
 	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {

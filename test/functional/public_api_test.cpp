@@ -1,4 +1,5 @@
 #include "livekit/core/livekit_client.h"
+#include "livekit/core/rpc.h"
 #include "livekit/core/track/audio_source_interface.h"
 #include "livekit/core/track/video_source_interface.h"
 
@@ -33,6 +34,30 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }
+
+TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
+	auto room = CreateRoomUnique();
+	ASSERT_NE(room, nullptr);
+	EXPECT_FALSE(
+	    room->RegisterRpcMethod("", [](const RpcInvocationData&) { return RpcResult::Success(); }));
+	EXPECT_TRUE(room->RegisterRpcMethod("echo", [](const RpcInvocationData& invocation) {
+		return RpcResult::Success(invocation.payload);
+	}));
+	EXPECT_FALSE(room->RegisterRpcMethod(
+	    "echo", [](const RpcInvocationData&) { return RpcResult::Success(); }));
+	EXPECT_TRUE(room->UnregisterRpcMethod("echo"));
+	EXPECT_FALSE(room->UnregisterRpcMethod("echo"));
+
+	PerformRpcParams params;
+	params.destination_identity = "destination";
+	params.method = "echo";
+	params.payload.assign(kMaximumRpcPayloadBytes + 1, 'x');
+	const auto result = room->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	ASSERT_TRUE(result.error.has_value());
+	EXPECT_EQ(result.error->code, RpcErrorCode::RequestPayloadTooLarge);
+	EXPECT_EQ(result.error->message, "Request payload too large");
+}
 
 TEST(MediaSourceTest, ValidatesI420VideoFrames) {
 	ASSERT_TRUE(Init());

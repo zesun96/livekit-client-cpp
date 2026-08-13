@@ -21,16 +21,20 @@
 #define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
 #include "livekit/core/option/rtc_engine_option.h"
+#include "livekit/core/rpc.h"
 #include "livekit_rtc.pb.h"
 #include "rtc_session.h"
 #include "signal_client.h"
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -86,6 +90,9 @@ public:
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);
+	bool RegisterRpcMethod(std::string method, RpcHandler handler);
+	bool UnregisterRpcMethod(const std::string& method);
+	RpcResult PerformRpc(const PerformRpcParams& params);
 	bool SetTrackMuted(const std::string& track_sid, bool muted);
 	bool SetTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
 	                        bool subscribed);
@@ -194,6 +201,26 @@ private:
 	void registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
 	                         bool publisher_channel = false);
 	void unregisterDataChannels();
+	void StartRpcWorkers();
+	void StopRpcWorkers();
+	void RunRpcWorker();
+	void HandleRpcPacket(const livekit::DataPacket& packet);
+	void HandleRpcRequest(const livekit::DataPacket& packet);
+	void HandleRpcAck(const livekit::DataPacket& packet);
+	void HandleRpcResponse(const livekit::DataPacket& packet);
+	void SendRpcResponse(const std::string& destination_identity, const std::string& request_id,
+	                     const RpcResult& result);
+	void CancelPendingRpc(const std::optional<std::string>& participant_identity,
+	                      RpcErrorCode code);
+
+	struct PendingRpcCall {
+		std::mutex mutex;
+		std::condition_variable cv;
+		std::string destination_identity;
+		bool acknowledged = false;
+		bool completed = false;
+		RpcResult result;
+	};
 
 private:
 	std::atomic<RtcEngineListener*> room_listener_{nullptr};
@@ -233,6 +260,17 @@ private:
 	std::condition_variable rtc_connected_cv_;
 	bool rtc_connected_ = false;
 	std::atomic<bool> publisher_answer_received_{false};
+	std::mutex rpc_handlers_mutex_;
+	std::map<std::string, RpcHandler> rpc_handlers_;
+	std::mutex pending_rpc_mutex_;
+	std::map<std::string, std::shared_ptr<PendingRpcCall>> pending_rpc_calls_;
+	std::mutex rpc_participants_mutex_;
+	std::set<std::string> rpc_participant_identities_;
+	std::mutex rpc_tasks_mutex_;
+	std::condition_variable rpc_tasks_cv_;
+	std::deque<std::function<void()>> rpc_tasks_;
+	std::vector<std::thread> rpc_workers_;
+	bool rpc_workers_stopping_ = false;
 };
 
 } // namespace core

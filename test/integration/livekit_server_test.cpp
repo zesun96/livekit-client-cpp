@@ -769,5 +769,84 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	EXPECT_TRUE(receiver->Disconnect());
 }
 
+TEST(LiveKitServerTest, PerformsRpcBetweenParticipants) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the RPC "
+		                "integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	ASSERT_TRUE(
+	    receiver->RegisterRpcMethod("integration.echo", [](const RpcInvocationData& invocation) {
+		    return RpcResult::Success("echo:" + invocation.payload + ":" +
+		                              invocation.caller_identity);
+	    }));
+	ASSERT_TRUE(receiver->RegisterRpcMethod("integration.error", [](const RpcInvocationData&) {
+		return RpcResult::Failure(
+		    {RpcErrorCode::ApplicationError, "expected application error", "details"});
+	}));
+	ASSERT_TRUE(receiver->RegisterRpcMethod("integration.large", [](const RpcInvocationData&) {
+		return RpcResult::Success(std::string(kMaximumRpcPayloadBytes + 1, 'x'));
+	}));
+
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+	const auto receiver_identity = receiver->GetLocalParticipant()->Identity();
+	const auto sender_identity = sender->GetLocalParticipant()->Identity();
+	ASSERT_FALSE(receiver_identity.empty());
+
+	PerformRpcParams params;
+	params.destination_identity = receiver_identity;
+	params.method = "integration.echo";
+	params.payload = "hello";
+	params.response_timeout = std::chrono::seconds(10);
+	auto result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_TRUE(result.Ok()) << (result.error ? result.error->message : "unknown error");
+	EXPECT_EQ(result.payload, "echo:hello:" + sender_identity);
+
+	params.method = "integration.missing";
+	result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	EXPECT_EQ(result.error->code, RpcErrorCode::UnsupportedMethod);
+
+	params.destination_identity = "missing-rpc-participant";
+	params.method = "integration.echo";
+	result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	EXPECT_EQ(result.error->code, RpcErrorCode::RecipientNotFound);
+	params.destination_identity = receiver_identity;
+
+	params.method = "integration.error";
+	result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	EXPECT_EQ(result.error->code, RpcErrorCode::ApplicationError);
+	EXPECT_EQ(result.error->message, "expected application error");
+	EXPECT_EQ(result.error->data, "details");
+
+	params.method = "integration.large";
+	result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	EXPECT_EQ(result.error->code, RpcErrorCode::ResponsePayloadTooLarge);
+
+	params.method = "integration.echo";
+	params.payload.assign(kMaximumRpcPayloadBytes + 1, 'x');
+	result = sender->GetLocalParticipant()->PerformRpc(params);
+	ASSERT_FALSE(result.Ok());
+	EXPECT_EQ(result.error->code, RpcErrorCode::RequestPayloadTooLarge);
+
+	EXPECT_TRUE(receiver->UnregisterRpcMethod("integration.echo"));
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
 } // namespace
 } // namespace livekit::core

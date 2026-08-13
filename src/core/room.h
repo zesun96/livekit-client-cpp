@@ -46,6 +46,8 @@ public:
 	                     RoomConnectOptions opts = default_room_connect_options()) override;
 	virtual void AddEventListener(RoomEventInterface* listener) override;
 	virtual void RemoveEventListener() override;
+	bool RegisterRpcMethod(std::string method, RpcHandler handler) override;
+	bool UnregisterRpcMethod(const std::string& method) override;
 	RoomState State() const;
 	DisconnectReason LastDisconnectReason() const;
 	virtual bool IsConnected() override;
