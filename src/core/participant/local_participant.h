@@ -37,12 +37,13 @@ namespace livekit {
 namespace core {
 
 class RoomEventInterface;
+class OutgoingDataStreamState;
 
 class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
 	LocalParticipant(std::string sid, std::string identity, EncryptionType encryption_type,
 	                 RtcEngine* engine, RoomOptions options);
-	virtual ~LocalParticipant() = default;
+	~LocalParticipant() override;
 
 	virtual void UpdateFromInfo(const livekit::ParticipantInfo& info) override;
 	void UpdateFromInfoPreservingTracks(const livekit::ParticipantInfo& info);
@@ -68,6 +69,8 @@ public:
 	bool SendText(const std::string& text, TextSendOptions options) override;
 	bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
+	std::unique_ptr<TextStreamWriterInterface> StreamText(StreamTextOptions options) override;
+	std::unique_ptr<ByteStreamWriterInterface> StreamBytes(StreamBytesOptions options) override;
 	RpcResult PerformRpc(const PerformRpcParams& params) override;
 	bool SetTrackSubscriptionPermissions(
 	    bool all_participants_allowed,
@@ -83,6 +86,7 @@ private:
 	std::mutex subscription_permissions_mutex_;
 	bool all_participants_allowed_to_subscribe_ = true;
 	std::vector<ParticipantTrackPermission> participant_track_permissions_;
+	std::shared_ptr<OutgoingDataStreamState> outgoing_stream_state_;
 
 	// AudioSourceInterface* source_;
 };

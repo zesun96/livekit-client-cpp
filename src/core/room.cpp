@@ -107,6 +107,32 @@ bool Room::UnregisterRpcMethod(const std::string& method) {
 	return rtc_engine_ != nullptr && rtc_engine_->UnregisterRpcMethod(method);
 }
 
+bool Room::RegisterTextStreamHandler(std::string topic, TextStreamHandler handler) {
+	if (!handler) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+	return text_stream_handlers_.emplace(std::move(topic), std::move(handler)).second;
+}
+
+bool Room::UnregisterTextStreamHandler(const std::string& topic) {
+	std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+	return text_stream_handlers_.erase(topic) != 0;
+}
+
+bool Room::RegisterByteStreamHandler(std::string topic, ByteStreamHandler handler) {
+	if (!handler) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+	return byte_stream_handlers_.emplace(std::move(topic), std::move(handler)).second;
+}
+
+bool Room::UnregisterByteStreamHandler(const std::string& topic) {
+	std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+	return byte_stream_handlers_.erase(topic) != 0;
+}
+
 bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) {
 	auto expected = state_.load();
 	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {
@@ -190,11 +216,7 @@ bool Room::Disconnect() {
 	}
 	detached_tracks.clear();
 	rtc_engine_->Disconnect();
-	{
-		std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
-		incoming_files_.clear();
-		incoming_texts_.clear();
-	}
+	FailIncomingDataStreams("room disconnected");
 	state_ = RoomState::Disconnected;
 	NotifyDisconnectedOnce(DisconnectReason::ClientInitiated);
 	return true;
@@ -545,7 +567,38 @@ void Room::SignalDisconnectedEvent(livekit::DisconnectReason reason) {
 		}
 	}
 	if (current != RoomState::Disconnecting && current != RoomState::Disconnected) {
+		FailIncomingDataStreams("connection closed");
 		NotifyDisconnectedOnce(from_disconnect_reason(reason));
+	}
+}
+
+void Room::FailIncomingDataStreams(const std::string& reason) {
+	std::vector<std::pair<TextStreamHandler, TextStreamEvent>> text_events;
+	std::vector<std::pair<ByteStreamHandler, ByteStreamEvent>> byte_events;
+	{
+		std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
+		for (auto& [id, incoming] : incoming_texts_) {
+			if (incoming.handler) {
+				text_events.push_back(
+				    {incoming.handler,
+				     {incoming.info, DataStreamEventType::Failed, "", 0, reason}});
+			}
+		}
+		for (auto& [id, incoming] : incoming_files_) {
+			if (incoming.handler) {
+				byte_events.push_back(
+				    {incoming.handler,
+				     {incoming.info, DataStreamEventType::Failed, {}, 0, reason}});
+			}
+		}
+		incoming_texts_.clear();
+		incoming_files_.clear();
+	}
+	for (const auto& [handler, event] : text_events) {
+		handler(event);
+	}
+	for (const auto& [handler, event] : byte_events) {
+		handler(event);
 	}
 }
 
@@ -1001,16 +1054,36 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		    header.text_header().attached_stream_ids().end());
 		incoming.event.attributes.insert(header.attributes().begin(), header.attributes().end());
 		incoming.event.timestamp = header.timestamp();
+		incoming.info.stream_id = incoming.event.stream_id;
+		incoming.info.mime_type = header.mime_type();
+		incoming.info.topic = incoming.event.topic;
+		incoming.info.participant_identity = incoming.event.participant_identity;
+		incoming.info.reply_to_stream_id = incoming.event.reply_to_stream_id;
+		incoming.info.attached_stream_ids = incoming.event.attached_stream_ids;
+		incoming.info.attributes = incoming.event.attributes;
+		incoming.info.timestamp = incoming.event.timestamp;
+		{
+			std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+			auto handler = text_stream_handlers_.find(header.topic());
+			if (handler != text_stream_handlers_.end()) {
+				incoming.handler = handler->second;
+			}
+		}
 		if (header.has_total_length()) {
 			incoming.expected_length = header.total_length();
-			if (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
-			    *incoming.expected_length > kMaximumBufferedDataStreamSize) {
+			incoming.info.total_size = header.total_length();
+			if (!incoming.handler &&
+			    (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
+			     *incoming.expected_length > kMaximumBufferedDataStreamSize)) {
 				return;
 			}
-			try {
-				incoming.event.text.reserve(static_cast<std::size_t>(*incoming.expected_length));
-			} catch (const std::exception&) {
-				return;
+			if (!incoming.handler) {
+				try {
+					incoming.event.text.reserve(
+					    static_cast<std::size_t>(*incoming.expected_length));
+				} catch (const std::exception&) {
+					return;
+				}
 			}
 		}
 		if (header.has_inline_content()) {
@@ -1018,15 +1091,33 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			    header.inline_content().size() != *incoming.expected_length) {
 				return;
 			}
-			incoming.event.text = header.inline_content();
-			if (auto* listener = event_listener_.load()) {
-				listener->OnTextReceived(incoming.event);
+			if (incoming.handler) {
+				TextStreamEvent event{incoming.info, DataStreamEventType::Open};
+				incoming.handler(event);
+				event.type = DataStreamEventType::Chunk;
+				event.content = header.inline_content();
+				incoming.handler(event);
+				event.type = DataStreamEventType::Closed;
+				event.content.clear();
+				incoming.handler(event);
+			} else {
+				incoming.event.text = header.inline_content();
+				if (auto* listener = event_listener_.load()) {
+					listener->OnTextReceived(incoming.event);
+				}
 			}
 			return;
 		}
-		std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
-		incoming_files_.erase(header.stream_id());
-		incoming_texts_[header.stream_id()] = std::move(incoming);
+		auto handler = incoming.handler;
+		auto info = incoming.info;
+		{
+			std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
+			incoming_files_.erase(header.stream_id());
+			incoming_texts_[header.stream_id()] = std::move(incoming);
+		}
+		if (handler) {
+			handler(TextStreamEvent{std::move(info), DataStreamEventType::Open});
+		}
 		return;
 	}
 	if (packet.has_stream_header() && packet.stream_header().has_byte_header()) {
@@ -1043,16 +1134,35 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		incoming.event.participant_identity = packet.participant_identity();
 		incoming.event.attributes.insert(header.attributes().begin(), header.attributes().end());
 		incoming.event.timestamp = header.timestamp();
+		incoming.info.stream_id = incoming.event.stream_id;
+		incoming.info.mime_type = incoming.event.mime_type;
+		incoming.info.topic = incoming.event.topic;
+		incoming.info.participant_identity = incoming.event.participant_identity;
+		incoming.info.attributes = incoming.event.attributes;
+		incoming.info.timestamp = incoming.event.timestamp;
+		incoming.info.name = incoming.event.name;
+		{
+			std::lock_guard<std::mutex> guard(stream_handlers_mutex_);
+			auto handler = byte_stream_handlers_.find(header.topic());
+			if (handler != byte_stream_handlers_.end()) {
+				incoming.handler = handler->second;
+			}
+		}
 		if (header.has_total_length()) {
 			incoming.expected_length = header.total_length();
-			if (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
-			    *incoming.expected_length > kMaximumBufferedDataStreamSize) {
+			incoming.info.total_size = header.total_length();
+			if (!incoming.handler &&
+			    (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
+			     *incoming.expected_length > kMaximumBufferedDataStreamSize)) {
 				return;
 			}
-			try {
-				incoming.event.data.reserve(static_cast<std::size_t>(*incoming.expected_length));
-			} catch (const std::exception&) {
-				return;
+			if (!incoming.handler) {
+				try {
+					incoming.event.data.reserve(
+					    static_cast<std::size_t>(*incoming.expected_length));
+				} catch (const std::exception&) {
+					return;
+				}
 			}
 		}
 		if (header.has_inline_content()) {
@@ -1060,63 +1170,123 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			    header.inline_content().size() != *incoming.expected_length) {
 				return;
 			}
-			incoming.event.data.assign(header.inline_content().begin(),
-			                           header.inline_content().end());
-			if (auto* listener = event_listener_.load()) {
-				ByteReceivedEvent byte_event;
-				static_cast<FileReceivedEvent&>(byte_event) = incoming.event;
-				listener->OnByteReceived(byte_event);
-				if (!incoming.event.name.empty()) {
-					listener->OnFileReceived(incoming.event);
+			if (incoming.handler) {
+				ByteStreamEvent event{incoming.info, DataStreamEventType::Open};
+				incoming.handler(event);
+				event.type = DataStreamEventType::Chunk;
+				event.content.assign(header.inline_content().begin(),
+				                     header.inline_content().end());
+				incoming.handler(event);
+				event.type = DataStreamEventType::Closed;
+				event.content.clear();
+				incoming.handler(event);
+			} else {
+				incoming.event.data.assign(header.inline_content().begin(),
+				                           header.inline_content().end());
+				if (auto* listener = event_listener_.load()) {
+					ByteReceivedEvent byte_event;
+					static_cast<FileReceivedEvent&>(byte_event) = incoming.event;
+					listener->OnByteReceived(byte_event);
+					if (!incoming.event.name.empty()) {
+						listener->OnFileReceived(incoming.event);
+					}
 				}
 			}
 			return;
 		}
-		std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
-		incoming_texts_.erase(header.stream_id());
-		incoming_files_[header.stream_id()] = std::move(incoming);
+		auto handler = incoming.handler;
+		auto info = incoming.info;
+		{
+			std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
+			incoming_texts_.erase(header.stream_id());
+			incoming_files_[header.stream_id()] = std::move(incoming);
+		}
+		if (handler) {
+			handler(ByteStreamEvent{std::move(info), DataStreamEventType::Open});
+		}
 		return;
 	}
 	if (packet.has_stream_chunk()) {
 		const auto& chunk = packet.stream_chunk();
-		std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
-		auto text = incoming_texts_.find(chunk.stream_id());
-		if (text != incoming_texts_.end()) {
-			if (chunk.chunk_index() != text->second.next_chunk) {
-				incoming_texts_.erase(text);
-				return;
+		TextStreamHandler text_handler;
+		TextStreamEvent text_event;
+		ByteStreamHandler byte_handler;
+		ByteStreamEvent byte_event;
+		{
+			std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
+			auto text = incoming_texts_.find(chunk.stream_id());
+			if (text != incoming_texts_.end()) {
+				const auto content_size = static_cast<uint64_t>(chunk.content().size());
+				if (chunk.chunk_index() != text->second.next_chunk ||
+				    content_size >
+				        std::numeric_limits<uint64_t>::max() - text->second.received_length ||
+				    (text->second.expected_length &&
+				     (text->second.received_length > *text->second.expected_length ||
+				      content_size >
+				          *text->second.expected_length - text->second.received_length)) ||
+				    (!text->second.handler && content_size > kMaximumBufferedDataStreamSize -
+				                                                 text->second.event.text.size())) {
+					text_handler = text->second.handler;
+					text_event = {text->second.info, DataStreamEventType::Failed, "",
+					              chunk.chunk_index(), "invalid stream chunk"};
+					incoming_texts_.erase(text);
+				} else {
+					text->second.received_length += content_size;
+					++text->second.next_chunk;
+					if (text->second.handler) {
+						text_handler = text->second.handler;
+						text_event = {text->second.info, DataStreamEventType::Chunk,
+						              chunk.content(), chunk.chunk_index(), ""};
+					} else {
+						text->second.event.text.append(chunk.content());
+					}
+				}
+			} else {
+				auto bytes = incoming_files_.find(chunk.stream_id());
+				if (bytes == incoming_files_.end()) {
+					return;
+				}
+				const auto content_size = static_cast<uint64_t>(chunk.content().size());
+				if (chunk.chunk_index() != bytes->second.next_chunk ||
+				    content_size >
+				        std::numeric_limits<uint64_t>::max() - bytes->second.received_length ||
+				    (bytes->second.expected_length &&
+				     (bytes->second.received_length > *bytes->second.expected_length ||
+				      content_size >
+				          *bytes->second.expected_length - bytes->second.received_length)) ||
+				    (!bytes->second.handler &&
+				     content_size >
+				         kMaximumBufferedDataStreamSize - bytes->second.event.data.size())) {
+					byte_handler = bytes->second.handler;
+					byte_event = {bytes->second.info,
+					              DataStreamEventType::Failed,
+					              {},
+					              chunk.chunk_index(),
+					              "invalid stream chunk"};
+					incoming_files_.erase(bytes);
+				} else {
+					bytes->second.received_length += content_size;
+					++bytes->second.next_chunk;
+					if (bytes->second.handler) {
+						byte_handler = bytes->second.handler;
+						byte_event.info = bytes->second.info;
+						byte_event.type = DataStreamEventType::Chunk;
+						byte_event.content.assign(chunk.content().begin(), chunk.content().end());
+						byte_event.chunk_index = chunk.chunk_index();
+					} else {
+						bytes->second.event.data.insert(bytes->second.event.data.end(),
+						                                chunk.content().begin(),
+						                                chunk.content().end());
+					}
+				}
 			}
-			const auto content_size = static_cast<uint64_t>(chunk.content().size());
-			if (content_size > kMaximumBufferedDataStreamSize - text->second.event.text.size() ||
-			    (text->second.expected_length &&
-			     (text->second.event.text.size() > *text->second.expected_length ||
-			      content_size > *text->second.expected_length - text->second.event.text.size()))) {
-				incoming_texts_.erase(text);
-				return;
-			}
-			text->second.event.text.append(chunk.content());
-			++text->second.next_chunk;
-			return;
 		}
-		auto it = incoming_files_.find(chunk.stream_id());
-		if (it == incoming_files_.end()) {
-			return;
+		if (text_handler) {
+			text_handler(text_event);
 		}
-		if (chunk.chunk_index() != it->second.next_chunk) {
-			incoming_files_.erase(it);
-			return;
+		if (byte_handler) {
+			byte_handler(byte_event);
 		}
-		const auto content_size = static_cast<uint64_t>(chunk.content().size());
-		if (content_size > kMaximumBufferedDataStreamSize - it->second.event.data.size() ||
-		    (it->second.expected_length &&
-		     (it->second.event.data.size() > *it->second.expected_length ||
-		      content_size > *it->second.expected_length - it->second.event.data.size()))) {
-			incoming_files_.erase(it);
-			return;
-		}
-		it->second.event.data.insert(it->second.event.data.end(), chunk.content().begin(),
-		                             chunk.content().end());
-		++it->second.next_chunk;
 		return;
 	}
 	if (packet.has_stream_trailer()) {
@@ -1124,16 +1294,32 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		bool has_text_event = false;
 		FileReceivedEvent event;
 		bool has_byte_event = false;
+		TextStreamHandler text_handler;
+		TextStreamEvent text_stream_event;
+		ByteStreamHandler byte_handler;
+		ByteStreamEvent byte_stream_event;
 		{
 			std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
 			auto text = incoming_texts_.find(packet.stream_trailer().stream_id());
 			if (text != incoming_texts_.end()) {
-				if (packet.stream_trailer().reason().empty() &&
+				const bool complete =
+				    packet.stream_trailer().reason().empty() &&
 				    (!text->second.expected_length ||
-				     text->second.event.text.size() == *text->second.expected_length)) {
-					for (const auto& [key, value] : packet.stream_trailer().attributes()) {
-						text->second.event.attributes[key] = value;
+				     text->second.received_length == *text->second.expected_length);
+				for (const auto& [key, value] : packet.stream_trailer().attributes()) {
+					text->second.event.attributes[key] = value;
+					text->second.info.attributes[key] = value;
+				}
+				if (text->second.handler) {
+					text_handler = text->second.handler;
+					text_stream_event.info = text->second.info;
+					text_stream_event.type =
+					    complete ? DataStreamEventType::Closed : DataStreamEventType::Failed;
+					text_stream_event.reason = packet.stream_trailer().reason();
+					if (!complete && text_stream_event.reason.empty()) {
+						text_stream_event.reason = "incomplete stream";
 					}
+				} else if (complete) {
 					text_event = std::move(text->second.event);
 					has_text_event = true;
 				}
@@ -1141,17 +1327,34 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			}
 			auto it = incoming_files_.find(packet.stream_trailer().stream_id());
 			if (it != incoming_files_.end()) {
-				if (packet.stream_trailer().reason().empty() &&
-				    (!it->second.expected_length ||
-				     it->second.event.data.size() == *it->second.expected_length)) {
-					for (const auto& [key, value] : packet.stream_trailer().attributes()) {
-						it->second.event.attributes[key] = value;
+				const bool complete = packet.stream_trailer().reason().empty() &&
+				                      (!it->second.expected_length ||
+				                       it->second.received_length == *it->second.expected_length);
+				for (const auto& [key, value] : packet.stream_trailer().attributes()) {
+					it->second.event.attributes[key] = value;
+					it->second.info.attributes[key] = value;
+				}
+				if (it->second.handler) {
+					byte_handler = it->second.handler;
+					byte_stream_event.info = it->second.info;
+					byte_stream_event.type =
+					    complete ? DataStreamEventType::Closed : DataStreamEventType::Failed;
+					byte_stream_event.reason = packet.stream_trailer().reason();
+					if (!complete && byte_stream_event.reason.empty()) {
+						byte_stream_event.reason = "incomplete stream";
 					}
+				} else if (complete) {
 					event = std::move(it->second.event);
 					has_byte_event = true;
 				}
 				incoming_files_.erase(it);
 			}
+		}
+		if (text_handler) {
+			text_handler(text_stream_event);
+		}
+		if (byte_handler) {
+			byte_handler(byte_stream_event);
 		}
 		if (auto* listener = event_listener_.load()) {
 			if (has_text_event) {

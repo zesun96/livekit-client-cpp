@@ -46,9 +46,16 @@ int main(int argc, char* argv[]) {
 	const std::vector<uint8_t> bytes{'l', 'i', 'v', 'e', 'k', 'i', 't'};
 	livekit::core::ByteSendOptions byte_options;
 	byte_options.topic = "byte-transfer";
+	livekit::core::StreamTextOptions stream_options;
+	stream_options.topic = "incremental-text-transfer";
+	const std::string first_chunk = "incremental ";
+	const std::string second_chunk = "message";
+	stream_options.total_size = first_chunk.size() + second_chunk.size();
+	auto writer = room->GetLocalParticipant()->StreamText(stream_options);
 	if (!room->GetLocalParticipant()->SendText(message, message_options) ||
 	    !room->GetLocalParticipant()->SendBytes(bytes, byte_options) ||
-	    !room->GetLocalParticipant()->SendFile(path.string())) {
+	    !room->GetLocalParticipant()->SendFile(path.string()) || !writer ||
+	    !writer->Write(first_chunk) || !writer->Write(second_chunk) || !writer->Close()) {
 		std::cerr << "Failed to send data streams" << std::endl;
 		return 1;
 	}

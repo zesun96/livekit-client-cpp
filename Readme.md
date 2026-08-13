@@ -28,6 +28,7 @@ Because webrtc requires C++20.
 - [x] Video publishing and receiving (I420/VP8)
 - [x] Reliable and lossy data messages
 - [x] Chunked file transfer over LiveKit data streams
+- [x] Incremental text/byte stream writers and topic-scoped chunk handlers
 - [x] Participant RPC with ACK/response timeouts, standard errors, and C API support
 - [ ] E2ee
 

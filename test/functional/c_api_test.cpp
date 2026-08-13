@@ -12,6 +12,9 @@ lk_rpc_handler_result_t EchoRpc(void*, const lk_rpc_invocation_t* invocation) {
 	return {invocation->payload, 0, nullptr, nullptr};
 }
 
+void TextStream(void*, lk_room_t*, const lk_text_stream_event_t*) {}
+void ByteStream(void*, lk_room_t*, const lk_byte_stream_event_t*) {}
+
 TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	const auto required = lk_version(nullptr, 0);
 	ASSERT_GT(required, 1u);
@@ -55,6 +58,18 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_STREQ(bytes.mime_type, "application/octet-stream");
 	EXPECT_EQ(bytes.chunk_size, 15000u);
 
+	lk_stream_text_options_t stream_text;
+	lk_stream_text_options_init(&stream_text);
+	EXPECT_EQ(stream_text.struct_size, sizeof(stream_text));
+	EXPECT_EQ(stream_text.chunk_size, 15000u);
+
+	lk_stream_bytes_options_t stream_bytes;
+	lk_stream_bytes_options_init(&stream_bytes);
+	EXPECT_EQ(stream_bytes.struct_size, sizeof(stream_bytes));
+	EXPECT_STREQ(stream_bytes.mime_type, "application/octet-stream");
+	EXPECT_STREQ(stream_bytes.name, "unknown");
+	EXPECT_EQ(stream_bytes.chunk_size, 15000u);
+
 	lk_rpc_perform_options_t rpc;
 	lk_rpc_perform_options_init(&rpc);
 	EXPECT_EQ(rpc.struct_size, sizeof(rpc));
@@ -83,6 +98,16 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_republish_all_tracks(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_text(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_bytes(nullptr, nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_stream_text(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_text_stream_writer_write(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_text_stream_writer_id(nullptr, nullptr, 0), 0u);
+	EXPECT_FALSE(lk_text_stream_writer_is_closed(nullptr));
+	EXPECT_EQ(lk_room_stream_bytes(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_byte_stream_writer_write(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_byte_stream_writer_id(nullptr, nullptr, 0), 0u);
+	EXPECT_FALSE(lk_byte_stream_writer_is_closed(nullptr));
+	EXPECT_EQ(lk_room_register_text_stream_handler(nullptr, nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_register_rpc_method(nullptr, nullptr, nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
@@ -128,6 +153,17 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_register_rpc_method(room, "echo", EchoRpc, nullptr), LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),
+	          LK_STATUS_OK);
+	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),
+	          LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_unregister_text_stream_handler(room, "stream-text"), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_register_byte_stream_handler(room, "stream-bytes", ByteStream, nullptr),
+	          LK_STATUS_OK);
+	EXPECT_EQ(lk_room_unregister_byte_stream_handler(room, "stream-bytes"), LK_STATUS_OK);
+	lk_text_stream_writer_t* text_writer = nullptr;
+	EXPECT_EQ(lk_room_stream_text(room, nullptr, &text_writer), LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(text_writer, nullptr);
 	lk_participant_track_permission_t permission;
 	lk_participant_track_permission_init(&permission);
 	EXPECT_EQ(lk_room_set_track_subscription_permissions(room, 0, &permission, 1),

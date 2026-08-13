@@ -809,6 +809,71 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	ASSERT_TRUE(
 	    WaitUntil([&] { return events.received_bytes("integration-bytes", byte_payload); }));
 
+	std::mutex stream_mutex;
+	std::vector<TextStreamEvent> text_stream_events;
+	std::vector<ByteStreamEvent> byte_stream_events;
+	ASSERT_TRUE(receiver->RegisterTextStreamHandler(
+	    "integration-stream-text", [&](const TextStreamEvent& event) {
+		    std::lock_guard<std::mutex> guard(stream_mutex);
+		    text_stream_events.push_back(event);
+	    }));
+	ASSERT_TRUE(receiver->RegisterByteStreamHandler(
+	    "integration-stream-bytes", [&](const ByteStreamEvent& event) {
+		    std::lock_guard<std::mutex> guard(stream_mutex);
+		    byte_stream_events.push_back(event);
+	    }));
+	const std::string streamed_text = "incremental text over two writes";
+	uint64_t text_progress = 0;
+	StreamTextOptions stream_text_options;
+	stream_text_options.topic = "integration-stream-text";
+	stream_text_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	stream_text_options.total_size = streamed_text.size();
+	stream_text_options.on_progress = [&](uint64_t sent, std::optional<uint64_t>) {
+		text_progress = sent;
+	};
+	auto text_writer = sender->GetLocalParticipant()->StreamText(stream_text_options);
+	ASSERT_NE(text_writer, nullptr);
+	ASSERT_TRUE(text_writer->Write("incremental text "));
+	ASSERT_TRUE(text_writer->Write("over two writes"));
+	ASSERT_TRUE(text_writer->Close());
+	EXPECT_EQ(text_progress, streamed_text.size());
+	ASSERT_TRUE(WaitUntil([&] {
+		std::lock_guard<std::mutex> guard(stream_mutex);
+		return !text_stream_events.empty() &&
+		       text_stream_events.back().type == DataStreamEventType::Closed;
+	}));
+	{
+		std::lock_guard<std::mutex> guard(stream_mutex);
+		std::string received;
+		for (const auto& event : text_stream_events) {
+			if (event.type == DataStreamEventType::Chunk) {
+				received += event.content;
+			}
+		}
+		EXPECT_EQ(received, streamed_text);
+		EXPECT_EQ(text_stream_events.front().info.participant_identity,
+		          sender->GetLocalParticipant()->Identity());
+	}
+
+	StreamBytesOptions stream_byte_options;
+	stream_byte_options.topic = "integration-stream-bytes";
+	stream_byte_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	auto byte_writer = sender->GetLocalParticipant()->StreamBytes(stream_byte_options);
+	ASSERT_NE(byte_writer, nullptr);
+	ASSERT_TRUE(byte_writer->Write(std::vector<uint8_t>{1, 2, 3, 4}));
+	ASSERT_TRUE(byte_writer->Cancel("integration cancellation"));
+	ASSERT_TRUE(WaitUntil([&] {
+		std::lock_guard<std::mutex> guard(stream_mutex);
+		return !byte_stream_events.empty() &&
+		       byte_stream_events.back().type == DataStreamEventType::Failed;
+	}));
+	{
+		std::lock_guard<std::mutex> guard(stream_mutex);
+		EXPECT_EQ(byte_stream_events.back().reason, "integration cancellation");
+	}
+	EXPECT_TRUE(receiver->UnregisterTextStreamHandler("integration-stream-text"));
+	EXPECT_TRUE(receiver->UnregisterByteStreamHandler("integration-stream-bytes"));
+
 	std::vector<uint8_t> file_payload(40 * 1024);
 	for (std::size_t i = 0; i < file_payload.size(); ++i) {
 		file_payload[i] = static_cast<uint8_t>(i % 251);

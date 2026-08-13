@@ -112,6 +112,14 @@ static lk_rpc_handler_result_t on_echo_rpc(void* user_data, const lk_rpc_invocat
 	return result;
 }
 
+static void on_text_stream(void* user_data, lk_room_t* room, const lk_text_stream_event_t* event) {
+	(void)user_data;
+	(void)room;
+	printf("Text stream %s: state=%d, chunk=%llu, bytes=%zu, reason=%s\n", event->stream_id,
+	       (int)event->type, (unsigned long long)event->chunk_index, event->content_size,
+	       event->reason);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -175,6 +183,10 @@ int main(int argc, char** argv) {
 	if (lk_room_register_rpc_method(room, "c.echo", on_echo_rpc, NULL) != LK_STATUS_OK) {
 		fprintf(stderr, "RPC registration failed: %s\n", lk_last_error());
 	}
+	if (lk_room_register_text_stream_handler(room, "c.stream-demo", on_text_stream, NULL) !=
+	    LK_STATUS_OK) {
+		fprintf(stderr, "Text stream registration failed: %s\n", lk_last_error());
+	}
 
 	if (lk_room_connect(room, url, token) != LK_STATUS_OK) {
 		fprintf(stderr, "Connection failed: %s\n", lk_last_error());
@@ -197,6 +209,23 @@ int main(int argc, char** argv) {
 	if (read_string(lk_local_participant_identity, room, &identity)) {
 		printf("Connected as %s\n", identity);
 		free(identity);
+	}
+	{
+		const char* first = "incremental ";
+		const char* second = "text from C";
+		lk_stream_text_options_t options;
+		lk_text_stream_writer_t* writer = NULL;
+		lk_stream_text_options_init(&options);
+		options.topic = "c.stream-demo";
+		options.has_total_size = 1;
+		options.total_size = strlen(first) + strlen(second);
+		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK ||
+		    lk_text_stream_writer_write(writer, first, strlen(first)) != LK_STATUS_OK ||
+		    lk_text_stream_writer_write(writer, second, strlen(second)) != LK_STATUS_OK ||
+		    lk_text_stream_writer_close(writer) != LK_STATUS_OK) {
+			fprintf(stderr, "Incremental text stream failed: %s\n", lk_last_error());
+		}
+		lk_text_stream_writer_destroy(writer);
 	}
 
 	if (argc >= 4) {

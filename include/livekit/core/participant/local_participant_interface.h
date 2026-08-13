@@ -84,6 +84,13 @@ public:
 	virtual bool SetTrackSubscriptionPermissions(
 	    bool all_participants_allowed,
 	    const std::vector<ParticipantTrackPermission>& participant_permissions = {}) = 0;
+	// Appended for ABI compatibility with existing LocalParticipantInterface implementations.
+	virtual std::unique_ptr<TextStreamWriterInterface> StreamText(StreamTextOptions = {}) {
+		return nullptr;
+	}
+	virtual std::unique_ptr<ByteStreamWriterInterface> StreamBytes(StreamBytesOptions = {}) {
+		return nullptr;
+	}
 };
 
 } // namespace core

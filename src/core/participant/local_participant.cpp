@@ -38,6 +38,25 @@
 namespace livekit {
 namespace core {
 
+class OutgoingDataStreamState {
+public:
+	explicit OutgoingDataStreamState(RtcEngine* engine) : engine_(engine) {}
+
+	bool Send(const livekit::DataPacket& packet) {
+		std::lock_guard<std::mutex> guard(mutex_);
+		return engine_ != nullptr && engine_->SendDataPacket(packet, true);
+	}
+
+	void Invalidate() {
+		std::lock_guard<std::mutex> guard(mutex_);
+		engine_ = nullptr;
+	}
+
+private:
+	std::mutex mutex_;
+	RtcEngine* engine_;
+};
+
 namespace {
 
 constexpr std::size_t kMaximumDataStreamChunkSize = 15'000;
@@ -94,6 +113,190 @@ bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const ui
 	return engine->SendDataPacket(trailer_packet, true);
 }
 
+template <typename Info>
+void PopulateStreamingHeader(livekit::DataStream_Header& header, const Info& info) {
+	header.set_stream_id(info.stream_id);
+	header.set_timestamp(info.timestamp);
+	header.set_topic(info.topic);
+	header.set_mime_type(info.mime_type);
+	if (info.total_size.has_value()) {
+		header.set_total_length(*info.total_size);
+	}
+	for (const auto& [key, value] : info.attributes) {
+		(*header.mutable_attributes())[key] = value;
+	}
+}
+
+bool SendStreamTrailer(const std::shared_ptr<OutgoingDataStreamState>& state,
+                       const std::vector<std::string>& destination_identities,
+                       const std::string& stream_id, const std::string& reason) {
+	livekit::DataPacket packet;
+	for (const auto& identity : destination_identities) {
+		packet.add_destination_identities(identity);
+	}
+	auto* trailer = packet.mutable_stream_trailer();
+	trailer->set_stream_id(stream_id);
+	trailer->set_reason(reason);
+	return state && state->Send(packet);
+}
+
+class OutgoingStreamWriterBase {
+public:
+	OutgoingStreamWriterBase(std::shared_ptr<OutgoingDataStreamState> state, DataStreamInfo info,
+	                         std::vector<std::string> destination_identities,
+	                         std::size_t chunk_size, int32_t version,
+	                         DataStreamProgressHandler progress)
+	    : state_(std::move(state)), info_(std::move(info)),
+	      destination_identities_(std::move(destination_identities)), chunk_size_(chunk_size),
+	      version_(version), progress_(std::move(progress)) {}
+
+	virtual ~OutgoingStreamWriterBase() { CancelInternal("writer destroyed before close"); }
+
+	bool IsClosedInternal() const {
+		std::lock_guard<std::mutex> guard(mutex_);
+		return closed_;
+	}
+
+	bool WriteBytes(const uint8_t* data, std::size_t size, bool preserve_utf8_boundaries) {
+		DataStreamProgressHandler progress;
+		uint64_t bytes_sent = 0;
+		std::optional<uint64_t> total_size;
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			if (closed_ || (data == nullptr && size != 0)) {
+				return false;
+			}
+			for (std::size_t offset = 0; offset < size;) {
+				std::size_t count = std::min(chunk_size_, size - offset);
+				if (preserve_utf8_boundaries && offset + count < size) {
+					while (count > 0 && (data[offset + count] & 0xc0U) == 0x80U) {
+						--count;
+					}
+					if (count == 0) {
+						return false;
+					}
+				}
+				livekit::DataPacket packet;
+				for (const auto& identity : destination_identities_) {
+					packet.add_destination_identities(identity);
+				}
+				auto* chunk = packet.mutable_stream_chunk();
+				chunk->set_stream_id(info_.stream_id);
+				chunk->set_chunk_index(next_chunk_++);
+				chunk->set_version(version_);
+				chunk->set_content(data + offset, count);
+				if (!state_ || !state_->Send(packet)) {
+					closed_ = true;
+					return false;
+				}
+				offset += count;
+				bytes_sent_ += count;
+			}
+			progress = progress_;
+			bytes_sent = bytes_sent_;
+			total_size = info_.total_size;
+		}
+		if (progress) {
+			progress(bytes_sent, total_size);
+		}
+		return true;
+	}
+
+	bool CloseInternal() {
+		bool complete = true;
+		DataStreamProgressHandler progress;
+		uint64_t bytes_sent = 0;
+		std::optional<uint64_t> total_size;
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			if (closed_) {
+				return false;
+			}
+			closed_ = true;
+			complete = !info_.total_size.has_value() || bytes_sent_ == *info_.total_size;
+			if (!SendStreamTrailer(state_, destination_identities_, info_.stream_id,
+			                       complete ? "" : "incomplete stream")) {
+				return false;
+			}
+			progress = progress_;
+			bytes_sent = bytes_sent_;
+			total_size = info_.total_size;
+		}
+		if (complete && progress) {
+			progress(bytes_sent, total_size);
+		}
+		return complete;
+	}
+
+	bool CancelInternal(std::string reason) {
+		std::lock_guard<std::mutex> guard(mutex_);
+		if (closed_) {
+			return false;
+		}
+		closed_ = true;
+		if (reason.empty()) {
+			reason = "cancelled";
+		}
+		return SendStreamTrailer(state_, destination_identities_, info_.stream_id, reason);
+	}
+
+protected:
+	DataStreamInfo info_;
+
+private:
+	std::shared_ptr<OutgoingDataStreamState> state_;
+	std::vector<std::string> destination_identities_;
+	std::size_t chunk_size_;
+	int32_t version_;
+	DataStreamProgressHandler progress_;
+	mutable std::mutex mutex_;
+	uint64_t next_chunk_ = 0;
+	uint64_t bytes_sent_ = 0;
+	bool closed_ = false;
+};
+
+class TextStreamWriter final : public TextStreamWriterInterface, private OutgoingStreamWriterBase {
+public:
+	TextStreamWriter(std::shared_ptr<OutgoingDataStreamState> state, TextStreamInfo info,
+	                 StreamTextOptions options)
+	    : OutgoingStreamWriterBase(std::move(state), info,
+	                               std::move(options.destination_identities), options.chunk_size,
+	                               options.version, std::move(options.on_progress)),
+	      text_info_(std::move(info)) {}
+
+	TextStreamInfo Info() const override { return text_info_; }
+	bool Write(const std::string& text) override {
+		return WriteBytes(reinterpret_cast<const uint8_t*>(text.data()), text.size(), true);
+	}
+	bool Close() override { return CloseInternal(); }
+	bool Cancel(std::string reason) override { return CancelInternal(std::move(reason)); }
+	bool IsClosed() const override { return IsClosedInternal(); }
+
+private:
+	TextStreamInfo text_info_;
+};
+
+class ByteStreamWriter final : public ByteStreamWriterInterface, private OutgoingStreamWriterBase {
+public:
+	ByteStreamWriter(std::shared_ptr<OutgoingDataStreamState> state, ByteStreamInfo info,
+	                 StreamBytesOptions options)
+	    : OutgoingStreamWriterBase(std::move(state), info,
+	                               std::move(options.destination_identities), options.chunk_size, 0,
+	                               std::move(options.on_progress)),
+	      byte_info_(std::move(info)) {}
+
+	ByteStreamInfo Info() const override { return byte_info_; }
+	bool Write(const std::vector<uint8_t>& data) override {
+		return WriteBytes(data.data(), data.size(), false);
+	}
+	bool Close() override { return CloseInternal(); }
+	bool Cancel(std::string reason) override { return CancelInternal(std::move(reason)); }
+	bool IsClosed() const override { return IsClosedInternal(); }
+
+private:
+	ByteStreamInfo byte_info_;
+};
+
 } // namespace
 
 LocalParticipant::LocalParticipant(std::string sid, std::string identity,
@@ -101,9 +304,12 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity,
                                    RoomOptions options)
     : engine_(engine), options_(options), encryption_type_(encryption_type),
       Participant(std::move(sid), std::move(identity), "", "",
-                  std::map<std::string, std::string>{}) {
+                  std::map<std::string, std::string>{}),
+      outgoing_stream_state_(std::make_shared<OutgoingDataStreamState>(engine)) {
 	is_local_participant_ = true;
 }
+
+LocalParticipant::~LocalParticipant() { outgoing_stream_state_->Invalidate(); }
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 	const auto owned_publications = TrackPublicationsSnapshot();
@@ -536,6 +742,66 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 	PopulateStreamPacket(trailer_packet, options);
 	trailer_packet.mutable_stream_trailer()->set_stream_id(stream_id);
 	return engine_->SendDataPacket(trailer_packet, true);
+}
+
+std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTextOptions options) {
+	if (engine_ == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize ||
+	    (options.update && options.stream_id.empty())) {
+		return nullptr;
+	}
+	TextStreamInfo info;
+	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
+	info.mime_type = "text/plain";
+	info.topic = options.topic;
+	info.attributes = options.attributes;
+	info.total_size = options.total_size;
+	info.timestamp = CurrentTimestampMilliseconds();
+	info.reply_to_stream_id = options.reply_to_stream_id;
+	info.attached_stream_ids = options.attached_stream_ids;
+	livekit::DataPacket packet;
+	PopulateStreamPacket(packet, options);
+	auto* header = packet.mutable_stream_header();
+	PopulateStreamingHeader(*header, info);
+	auto* text_header = header->mutable_text_header();
+	text_header->set_operation_type(options.update ? livekit::DataStream_OperationType_UPDATE
+	                                               : livekit::DataStream_OperationType_CREATE);
+	text_header->set_version(options.version);
+	text_header->set_reply_to_stream_id(options.reply_to_stream_id);
+	for (const auto& stream_id : options.attached_stream_ids) {
+		text_header->add_attached_stream_ids(stream_id);
+	}
+	if (!outgoing_stream_state_->Send(packet)) {
+		return nullptr;
+	}
+	return std::make_unique<TextStreamWriter>(outgoing_stream_state_, std::move(info),
+	                                          std::move(options));
+}
+
+std::unique_ptr<ByteStreamWriterInterface>
+LocalParticipant::StreamBytes(StreamBytesOptions options) {
+	if (engine_ == nullptr || options.chunk_size == 0 ||
+	    options.chunk_size > kMaximumDataStreamChunkSize) {
+		return nullptr;
+	}
+	ByteStreamInfo info;
+	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
+	info.mime_type = options.mime_type;
+	info.topic = options.topic;
+	info.attributes = options.attributes;
+	info.total_size = options.total_size;
+	info.timestamp = CurrentTimestampMilliseconds();
+	info.name = options.name;
+	livekit::DataPacket packet;
+	PopulateStreamPacket(packet, options);
+	auto* header = packet.mutable_stream_header();
+	PopulateStreamingHeader(*header, info);
+	header->mutable_byte_header()->set_name(options.name);
+	if (!outgoing_stream_state_->Send(packet)) {
+		return nullptr;
+	}
+	return std::make_unique<ByteStreamWriter>(outgoing_stream_state_, std::move(info),
+	                                          std::move(options));
 }
 
 } // namespace core
