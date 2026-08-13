@@ -73,6 +73,7 @@ public:
 	void OnTrackSubscribed(RemoteTrackInterface* track, RemoteParticipantInterface*) override {
 		if (track->Kind() == TrackKind::Audio) {
 			audio_subscribed_.store(true);
+			audio_subscribed_count_.fetch_add(1);
 		} else if (track->Kind() == TrackKind::Video) {
 			video_subscribed_.store(true);
 		}
@@ -80,8 +81,12 @@ public:
 
 	void OnTrackUnsubscribed(RemoteTrackInterface* track, TrackPublicationInterface*,
 	                         RemoteParticipantInterface*) override {
-		if (track != nullptr && track->Kind() == TrackKind::Video) {
-			video_unsubscribed_.fetch_add(1);
+		if (track != nullptr) {
+			if (track->Kind() == TrackKind::Audio) {
+				audio_unsubscribed_.fetch_add(1);
+			} else if (track->Kind() == TrackKind::Video) {
+				video_unsubscribed_.fetch_add(1);
+			}
 		}
 	}
 
@@ -162,6 +167,8 @@ public:
 	uint64_t reconnecting_count() const { return reconnecting_.load(); }
 	uint64_t reconnected_count() const { return reconnected_.load(); }
 	uint64_t audio_frame_count() const { return audio_frames_.load(); }
+	uint64_t audio_subscribed_count() const { return audio_subscribed_count_.load(); }
+	uint64_t audio_unsubscribed_count() const { return audio_unsubscribed_.load(); }
 	uint64_t video_frame_count() const { return video_frames_.load(); }
 	uint64_t video_unsubscribed_count() const { return video_unsubscribed_.load(); }
 	uint32_t last_video_width() const { return last_video_width_.load(); }
@@ -206,6 +213,8 @@ private:
 	std::atomic<uint64_t> reconnecting_{0};
 	std::atomic<uint64_t> reconnected_{0};
 	std::atomic<uint64_t> audio_frames_{0};
+	std::atomic<uint64_t> audio_subscribed_count_{0};
+	std::atomic<uint64_t> audio_unsubscribed_{0};
 	std::atomic<uint64_t> video_frames_{0};
 	std::atomic<uint64_t> video_unsubscribed_{0};
 	std::atomic<uint32_t> last_video_width_{0};
@@ -978,13 +987,17 @@ TEST(LiveKitServerTest, EnforcesTrackSubscriptionPermissions) {
 	auto* remote_publication = remote_sender->GetTrackPublication(TrackSource::Microphone);
 	ASSERT_NE(remote_publication, nullptr);
 	EXPECT_FALSE(remote_publication->IsSubscriptionAllowed());
+	ASSERT_TRUE(WaitUntil([&] { return events.audio_unsubscribed_count() > 0; }));
 
 	receiver_permission.allow_all = true;
+	const auto subscriptions_before_grant = events.audio_subscribed_count();
 	ASSERT_TRUE(sender->GetLocalParticipant()->SetTrackSubscriptionPermissions(
 	    false, {receiver_permission}));
 	ASSERT_TRUE(WaitUntil([&] { return events.permission_changed(track_sid, true, 2); }));
 	EXPECT_TRUE(remote_publication->IsSubscriptionAllowed());
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(remote_sender->Sid(), track_sid, true));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.audio_subscribed_count() > subscriptions_before_grant; }));
 	const auto frames_before_grant = events.audio_frame_count();
 	const auto grant_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	while (events.audio_frame_count() < frames_before_grant + 3 &&
