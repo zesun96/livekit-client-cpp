@@ -21,6 +21,7 @@ Because webrtc requires C++20.
 - [x] Room and participant state, track publications, active speakers, and quality events
 - [x] Room metadata and recording status change events
 - [x] Participant metadata, display name, and attribute updates
+- [x] Participant permission snapshots and change events
 - [x] Connection state, identity lookup, local track mute, and remote subscription controls
 - [x] Publisher track subscription permissions with reconnect restoration
 - [x] Track subscription failure events and retained protocol error details

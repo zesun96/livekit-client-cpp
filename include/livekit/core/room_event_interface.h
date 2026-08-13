@@ -22,6 +22,7 @@
 
 #include "data_packet.h"
 #include "option/media_option.h"
+#include "participant/participant_interface.h"
 #include "track/audio_frame.h"
 #include "track/subscription_error.h"
 #include "track/video_frame.h"
@@ -122,6 +123,8 @@ public:
 	virtual void OnRecordingStatusChanged(bool) {}
 	virtual void OnMetricsReceived(const MetricsReceivedEvent&) {}
 	virtual void OnConnectionStateChanged(RoomState) {}
+	virtual void OnParticipantPermissionsChanged(const ParticipantPermissions&,
+	                                             ParticipantInterface*) {}
 };
 
 } // namespace core

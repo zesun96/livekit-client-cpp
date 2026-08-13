@@ -37,6 +37,16 @@ public:
 		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
 	}
 
+	void
+	OnParticipantPermissionsChanged(const livekit::core::ParticipantPermissions& previous,
+	                                livekit::core::ParticipantInterface* participant) override {
+		const auto current = participant->Permissions();
+		std::cout << "Participant permissions changed: " << participant->Identity()
+		          << ", publish=" << previous.can_publish << "->" << current.can_publish
+		          << ", subscribe=" << previous.can_subscribe << "->" << current.can_subscribe
+		          << std::endl;
+	}
+
 	void OnTrackSubscriptionFailed(const std::string& track_sid,
 	                               livekit::core::RemoteParticipantInterface* participant,
 	                               livekit::core::SubscriptionError error) override {

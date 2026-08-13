@@ -156,6 +156,20 @@ typedef struct lk_participant_info {
 	int is_local;
 } lk_participant_info_t;
 
+typedef struct lk_participant_permissions {
+	int can_subscribe;
+	int can_publish;
+	int can_publish_data;
+	const lk_track_source_t* can_publish_sources;
+	size_t can_publish_source_count;
+	int hidden;
+	int recorder;
+	int can_update_metadata;
+	int agent;
+	int can_subscribe_metrics;
+	int can_manage_agent_session;
+} lk_participant_permissions_t;
+
 typedef struct lk_track_publication_info {
 	const char* sid;
 	const char* name;
@@ -372,6 +386,9 @@ typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
                                               lk_disconnect_reason_t reason);
 typedef void (*lk_participant_event_callback)(void* user_data, lk_room_t* room,
                                               const lk_participant_info_t* participant);
+typedef void (*lk_participant_permissions_callback)(
+    void* user_data, lk_room_t* room, const lk_participant_permissions_t* previous_permissions,
+    const lk_participant_permissions_t* permissions, const lk_participant_info_t* participant);
 typedef void (*lk_track_event_callback)(void* user_data, lk_room_t* room,
                                         const lk_track_publication_info_t* track,
                                         const lk_participant_info_t* participant);
@@ -459,6 +476,7 @@ typedef struct lk_room_callbacks {
 	lk_recording_status_callback on_recording_status_changed;
 	lk_metrics_received_callback on_metrics_received;
 	lk_connection_state_callback on_connection_state_changed;
+	lk_participant_permissions_callback on_participant_permissions_changed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

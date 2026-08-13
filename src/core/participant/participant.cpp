@@ -17,6 +17,7 @@
 
 #include "participant.h"
 
+#include "../detail/converted_proto.h"
 #include "../track/track_publication.h"
 
 #include <set>
@@ -69,6 +70,11 @@ float Participant::AudioLevel() {
 ConnectionQuality Participant::GetConnectionQuality() {
 	std::lock_guard<std::mutex> guard(participant_mutex_);
 	return connection_quality_;
+}
+
+ParticipantPermissions Participant::Permissions() {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return permissions_;
 }
 
 bool Participant::IsLocalParticipant() {
@@ -124,7 +130,22 @@ bool Participant::UpdateInfoFields(const livekit::ParticipantInfo& info) {
 	for (const auto& [key, value] : info.attributes()) {
 		attributes_.emplace(key, value);
 	}
-	permissions_ = info.permission();
+	permissions_.can_subscribe = info.permission().can_subscribe();
+	permissions_.can_publish = info.permission().can_publish();
+	permissions_.can_publish_data = info.permission().can_publish_data();
+	permissions_.can_publish_sources.clear();
+	permissions_.can_publish_sources.reserve(
+	    static_cast<std::size_t>(info.permission().can_publish_sources_size()));
+	for (const auto source : info.permission().can_publish_sources()) {
+		permissions_.can_publish_sources.push_back(
+		    from_proto(static_cast<livekit::TrackSource>(source)));
+	}
+	permissions_.hidden = info.permission().hidden();
+	permissions_.recorder = info.permission().recorder();
+	permissions_.can_update_metadata = info.permission().can_update_metadata();
+	permissions_.agent = info.permission().agent();
+	permissions_.can_subscribe_metrics = info.permission().can_subscribe_metrics();
+	permissions_.can_manage_agent_session = info.permission().can_manage_agent_session();
 	kind_ = info.kind();
 	return true;
 }

@@ -145,6 +145,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_recording_status_changed, nullptr);
 	EXPECT_EQ(callbacks.on_metrics_received, nullptr);
 	EXPECT_EQ(callbacks.on_connection_state_changed, nullptr);
+	EXPECT_EQ(callbacks.on_participant_permissions_changed, nullptr);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);

@@ -290,6 +290,29 @@ struct OwnedParticipantInfo {
 	lk_participant_info_t info{};
 };
 
+struct OwnedParticipantPermissions {
+	explicit OwnedParticipantPermissions(const core::ParticipantPermissions& source) {
+		publish_sources.reserve(source.can_publish_sources.size());
+		for (const auto value : source.can_publish_sources) {
+			publish_sources.push_back(ToCTrackSource(value));
+		}
+		permissions = {source.can_subscribe ? 1 : 0,
+		               source.can_publish ? 1 : 0,
+		               source.can_publish_data ? 1 : 0,
+		               publish_sources.data(),
+		               publish_sources.size(),
+		               source.hidden ? 1 : 0,
+		               source.recorder ? 1 : 0,
+		               source.can_update_metadata ? 1 : 0,
+		               source.agent ? 1 : 0,
+		               source.can_subscribe_metrics ? 1 : 0,
+		               source.can_manage_agent_session ? 1 : 0};
+	}
+
+	std::vector<lk_track_source_t> publish_sources;
+	lk_participant_permissions_t permissions{};
+};
+
 struct OwnedTrackInfo {
 	explicit OwnedTrackInfo(core::TrackPublicationInterface* publication) {
 		if (publication == nullptr) {
@@ -472,6 +495,21 @@ public:
 	void OnParticipantDisconnected(core::RemoteParticipantInterface* participant) override {
 		Participant(callbacks_member(&lk_room_callbacks_t::on_participant_disconnected),
 		            participant);
+	}
+
+	void OnParticipantPermissionsChanged(const core::ParticipantPermissions& previous_permissions,
+	                                     core::ParticipantInterface* participant) override {
+		OwnedParticipantPermissions previous(previous_permissions);
+		OwnedParticipantPermissions current(
+		    participant != nullptr ? participant->Permissions() : core::ParticipantPermissions{});
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_permissions_changed != nullptr) {
+				callbacks.on_participant_permissions_changed(
+				    callbacks.user_data, owner_, &previous.permissions, &current.permissions,
+				    &owned_participant.info);
+			}
+		});
 	}
 
 	void OnTrackPublished(core::TrackPublicationInterface* track,
