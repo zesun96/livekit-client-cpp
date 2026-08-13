@@ -180,6 +180,78 @@ public:
 	bool last_allowed = true;
 };
 
+class ParticipantPermissionEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnParticipantPermissionsChanged(const ParticipantPermissions& previous_permissions,
+	                                     ParticipantInterface* participant) override {
+		++count;
+		previous = previous_permissions;
+		current = participant->Permissions();
+		participant_identity = participant->Identity();
+	}
+
+	int count = 0;
+	ParticipantPermissions previous;
+	ParticipantPermissions current;
+	std::string participant_identity;
+};
+
+TEST(ParticipantStateTest, ReportsCompleteParticipantPermissionChanges) {
+	Room room;
+	ParticipantPermissionEvents events;
+	room.AddEventListener(&events);
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_permissions");
+	info.set_identity("permissions-user");
+	info.set_version(1);
+	info.mutable_permission()->set_can_subscribe(true);
+	info.mutable_permission()->set_can_publish(false);
+	info.mutable_permission()->set_can_publish_data(true);
+	info.mutable_permission()->add_can_publish_sources(livekit::TrackSource::MICROPHONE);
+	room.ParticipantUpdateEvent({info});
+	EXPECT_EQ(events.count, 0);
+	auto* participant = room.GetRemoteParticipantBySid("PA_permissions");
+	ASSERT_NE(participant, nullptr);
+	EXPECT_TRUE(participant->Permissions().can_subscribe);
+	EXPECT_EQ(participant->Permissions().can_publish_sources,
+	          std::vector<TrackSource>{TrackSource::Microphone});
+
+	info.set_version(2);
+	auto* permission = info.mutable_permission();
+	permission->set_can_subscribe(false);
+	permission->set_can_publish(true);
+	permission->set_can_publish_data(false);
+	permission->add_can_publish_sources(livekit::TrackSource::CAMERA);
+	permission->set_hidden(true);
+	permission->set_recorder(true);
+	permission->set_can_update_metadata(true);
+	permission->set_agent(true);
+	permission->set_can_subscribe_metrics(true);
+	permission->set_can_manage_agent_session(true);
+	room.ParticipantUpdateEvent({info});
+
+	EXPECT_EQ(events.count, 1);
+	EXPECT_EQ(events.participant_identity, "permissions-user");
+	EXPECT_TRUE(events.previous.can_subscribe);
+	EXPECT_FALSE(events.previous.can_publish);
+	EXPECT_FALSE(events.current.can_subscribe);
+	EXPECT_TRUE(events.current.can_publish);
+	EXPECT_FALSE(events.current.can_publish_data);
+	EXPECT_EQ(events.current.can_publish_sources,
+	          (std::vector<TrackSource>{TrackSource::Microphone, TrackSource::Camera}));
+	EXPECT_TRUE(events.current.hidden);
+	EXPECT_TRUE(events.current.recorder);
+	EXPECT_TRUE(events.current.can_update_metadata);
+	EXPECT_TRUE(events.current.agent);
+	EXPECT_TRUE(events.current.can_subscribe_metrics);
+	EXPECT_TRUE(events.current.can_manage_agent_session);
+
+	room.ParticipantUpdateEvent({info});
+	EXPECT_EQ(events.count, 1);
+	room.RemoveEventListener();
+}
+
 TEST(ParticipantStateTest, AppliesSubscriptionPermissionUpdates) {
 	Room room;
 	SubscriptionPermissionEvents events;

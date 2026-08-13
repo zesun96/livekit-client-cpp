@@ -45,6 +45,7 @@ public:
 	float AudioLevel() override;
 	ConnectionQuality GetConnectionQuality() override;
 	virtual bool IsLocalParticipant() override;
+	ParticipantPermissions Permissions() override;
 
 	std::vector<TrackPublicationInterface*> GetTrackPublications() override;
 	TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override;
@@ -86,7 +87,7 @@ protected:
 	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> video_track_publications_;
 	float audio_level_ = 0.0f;
 	int64_t last_spoke_at_ = 0;
-	livekit::ParticipantPermission permissions_;
+	ParticipantPermissions permissions_;
 	livekit::ParticipantInfo_Kind kind_{};
 	ConnectionQuality connection_quality_ = ConnectionQuality::Unknown;
 };

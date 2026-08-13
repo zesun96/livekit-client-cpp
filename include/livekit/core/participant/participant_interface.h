@@ -30,6 +30,21 @@
 namespace livekit {
 namespace core {
 
+struct ParticipantPermissions {
+	bool can_subscribe = false;
+	bool can_publish = false;
+	bool can_publish_data = false;
+	std::vector<TrackSource> can_publish_sources;
+	bool hidden = false;
+	bool recorder = false;
+	bool can_update_metadata = false;
+	bool agent = false;
+	bool can_subscribe_metrics = false;
+	bool can_manage_agent_session = false;
+
+	bool operator==(const ParticipantPermissions&) const = default;
+};
+
 class ParticipantInterface {
 public:
 	virtual std::string Identity() = 0;
@@ -49,6 +64,8 @@ public:
 	virtual bool IsMicrophoneEnabled() = 0;
 	virtual bool IsScreenShareEnabled() = 0;
 	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) = 0;
+	// Appended to preserve the virtual method order of existing ParticipantInterface consumers.
+	virtual ParticipantPermissions Permissions() { return {}; }
 
 public:
 	virtual ~ParticipantInterface() = default;

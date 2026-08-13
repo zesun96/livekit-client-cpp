@@ -1598,6 +1598,11 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		ParticipantInterface* participant;
 		std::shared_ptr<RemoteParticipant> retained_participant;
 	};
+	struct PermissionsEvent {
+		ParticipantPermissions previous;
+		ParticipantInterface* participant;
+		std::shared_ptr<RemoteParticipant> retained_participant;
+	};
 	struct MuteEvent {
 		std::shared_ptr<TrackPublicationInterface> publication;
 		ParticipantInterface* participant;
@@ -1621,6 +1626,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	std::vector<ParticipantValueEvent> metadata_changed;
 	std::vector<ParticipantValueEvent> name_changed;
 	std::vector<AttributesEvent> attributes_changed;
+	std::vector<PermissionsEvent> permissions_changed;
 	std::vector<MuteEvent> mute_changed;
 
 	auto attribute_changes = [](const std::map<std::string, std::string>& old_attributes,
@@ -1651,6 +1657,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				const auto old_metadata = local_participant_->Metadata();
 				const auto old_name = local_participant_->Name();
 				const auto old_attributes = local_participant_->Attributes();
+				const auto old_permissions = local_participant_->Permissions();
 				const auto old_publications = local_participant_->TrackPublicationsSnapshot();
 				std::map<std::string, bool> old_mutes;
 				for (const auto& [sid, publication] : old_publications) {
@@ -1670,6 +1677,10 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 					if (!changes.empty()) {
 						attributes_changed.push_back(
 						    {std::move(changes), local_participant_.get(), nullptr});
+					}
+					if (old_permissions != local_participant_->Permissions()) {
+						permissions_changed.push_back(
+						    {old_permissions, local_participant_.get(), nullptr});
 					}
 					auto new_publications = local_participant_->TrackPublicationsSnapshot();
 					for (const auto& [sid, publication] : new_publications) {
@@ -1734,6 +1745,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			const auto old_metadata = retained->Metadata();
 			const auto old_name = retained->Name();
 			const auto old_attributes = retained->Attributes();
+			const auto old_permissions = retained->Permissions();
 			const auto old_publications = retained->TrackPublicationsSnapshot();
 			std::map<std::string, bool> old_mutes;
 			for (const auto& [sid, publication] : old_publications) {
@@ -1753,6 +1765,9 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			auto changes = attribute_changes(old_attributes, retained->Attributes());
 			if (!changes.empty()) {
 				attributes_changed.push_back({std::move(changes), retained.get(), retained});
+			}
+			if (old_permissions != retained->Permissions()) {
+				permissions_changed.push_back({old_permissions, retained.get(), retained});
 			}
 			for (const auto& [sid, publication] : new_publications) {
 				auto old = old_publications.find(sid);
@@ -1830,6 +1845,9 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		}
 		for (const auto& event : attributes_changed) {
 			listener->OnParticipantAttributesChanged(event.changes, event.participant);
+		}
+		for (const auto& event : permissions_changed) {
+			listener->OnParticipantPermissionsChanged(event.previous, event.participant);
 		}
 		for (const auto& participant : disconnected) {
 			listener->OnParticipantDisconnected(participant.get());

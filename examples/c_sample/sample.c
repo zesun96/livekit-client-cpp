@@ -54,6 +54,17 @@ static void on_participant_connected(void* user_data, lk_room_t* room,
 	printf("Participant connected: %s (%s)\n", participant->identity, participant->sid);
 }
 
+static void on_participant_permissions(void* user_data, lk_room_t* room,
+                                       const lk_participant_permissions_t* previous_permissions,
+                                       const lk_participant_permissions_t* permissions,
+                                       const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("Participant permissions changed: %s, publish=%d->%d, subscribe=%d->%d\n",
+	       participant->identity, previous_permissions->can_publish, permissions->can_publish,
+	       previous_permissions->can_subscribe, permissions->can_subscribe);
+}
+
 static void on_track_published(void* user_data, lk_room_t* room,
                                const lk_track_publication_info_t* track,
                                const lk_participant_info_t* participant) {
@@ -216,6 +227,7 @@ int main(int argc, char** argv) {
 	callbacks.on_connection_state_changed = on_connection_state;
 	callbacks.on_disconnected_with_reason = on_disconnected;
 	callbacks.on_participant_connected = on_participant_connected;
+	callbacks.on_participant_permissions_changed = on_participant_permissions;
 	callbacks.on_track_published = on_track_published;
 	callbacks.on_track_subscription_failed = on_track_subscription_failed;
 	callbacks.on_track_unsubscribed = on_track_unsubscribed;
