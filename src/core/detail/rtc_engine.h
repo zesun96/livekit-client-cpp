@@ -58,6 +58,7 @@ public:
 		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
 		virtual void
 		MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) = 0;
+		virtual void MediaTrackRemovedEvent(const std::string& track_sid) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
 		virtual void RemoteMuteChangedEvent(const std::string& sid, bool muted) = 0;
 		virtual void LocalTrackUnpublishedEvent(const std::string& sid) = 0;
@@ -68,6 +69,8 @@ public:
 		virtual void
 		SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) = 0;
 		virtual void SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) = 0;
+		virtual void
+		StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& updates) = 0;
 		virtual void SignalDisconnectedEvent(livekit::DisconnectReason reason) = 0;
 		virtual void ReconnectingEvent(bool full_reconnect) = 0;
 		virtual void SignalResumedEvent() = 0;
@@ -103,6 +106,7 @@ public:
 	bool SetTrackMuted(const std::string& track_sid, bool muted);
 	bool SetTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
 	                        bool subscribed);
+	bool UpdateTrackSettings(const std::string& track_sid, const RemoteTrackSettings& settings);
 	bool UpdateLocalMetadata(const std::string& metadata, const std::string& name,
 	                         const std::map<std::string, std::string>& attributes);
 	// Retained internally so connection recovery can authenticate with the newest server-issued

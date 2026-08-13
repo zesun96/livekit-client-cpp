@@ -48,6 +48,13 @@ public:
 	virtual bool IsSubscriptionAllowed() { return true; }
 	// The most recent server-reported failure, if a subscription attempt failed.
 	virtual std::optional<SubscriptionError> LastSubscriptionError() { return std::nullopt; }
+	// Remote publications override these methods. Local publications keep the safe defaults.
+	virtual TrackSubscriptionStatus SubscriptionStatus() {
+		return TrackSubscriptionStatus::Unsubscribed;
+	}
+	virtual bool SetSubscribed(bool) { return false; }
+	virtual RemoteTrackSettings GetRemoteTrackSettings() { return {}; }
+	virtual bool UpdateRemoteTrackSettings(const RemoteTrackSettings&) { return false; }
 };
 
 } // namespace core

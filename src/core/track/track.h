@@ -46,6 +46,7 @@ public:
 	bool Muted();
 
 	void SetMuted(bool muted);
+	bool SetStreamState(TrackStreamState state);
 
 	std::string GetRTCStats() override;
 	void SetEnabled(bool enabled) override;
@@ -62,7 +63,7 @@ private:
 	std::string name_;
 	TrackKind kind_;
 	TrackSource source_;
-	TrackStreamState stream_state_;
+	std::atomic<TrackStreamState> stream_state_;
 	TrackDimensions dimensions_;
 	std::atomic<bool> muted_{false};
 	std::atomic<bool> enabled_{true};

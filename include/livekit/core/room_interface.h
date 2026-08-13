@@ -82,6 +82,8 @@ public:
 	bool SetLocalTrackMuted(std::string track_sid, bool muted);
 	bool SetRemoteTrackSubscribed(std::string participant_sid, std::string track_sid,
 	                              bool subscribed);
+	bool UpdateRemoteTrackSettings(std::string participant_sid, std::string track_sid,
+	                               const RemoteTrackSettings& settings);
 };
 
 RoomInterface* CreateRoom();

@@ -99,6 +99,13 @@ public:
 	// Kept at the end so extending the listener does not reorder existing callback slots.
 	virtual void OnTrackSubscriptionFailed(const std::string&, RemoteParticipantInterface*,
 	                                       SubscriptionError) {}
+	virtual void OnTrackUnsubscribed(RemoteTrackInterface*, TrackPublicationInterface*,
+	                                 RemoteParticipantInterface*) {}
+	virtual void OnTrackStreamStateChanged(TrackPublicationInterface*, RemoteParticipantInterface*,
+	                                       TrackStreamState) {}
+	virtual void OnTrackSubscriptionStatusChanged(TrackPublicationInterface*,
+	                                              RemoteParticipantInterface*,
+	                                              TrackSubscriptionStatus) {}
 };
 
 } // namespace core

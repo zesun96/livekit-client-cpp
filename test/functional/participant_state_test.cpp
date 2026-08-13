@@ -1,6 +1,7 @@
 #include "../../src/core/detail/rtc_engine.h"
 #include "../../src/core/participant/remote_participant.h"
 #include "../../src/core/room.h"
+#include "../../src/core/track/remote_track_publication.h"
 #include "../../src/core/track/track.h"
 #include "../../src/core/track/track_publication.h"
 
@@ -222,6 +223,78 @@ TEST(ParticipantStateTest, ReportsAndRetainsSubscriptionFailures) {
 	room.RemoveEventListener();
 }
 
+TEST(ParticipantStateTest, ControlsAndRetainsRemoteTrackPreferences) {
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_remote");
+	*info.add_tracks() = MakeTrack("TR_video", "camera", livekit::TrackType::VIDEO,
+	                               livekit::TrackSource::CAMERA, false);
+
+	int subscription_updates = 0;
+	int settings_updates = 0;
+	int status_updates = 0;
+	bool last_subscribed = true;
+	RemoteTrackSettings last_settings;
+	TrackSubscriptionStatus last_status = TrackSubscriptionStatus::Desired;
+	RemoteParticipant::PublicationHandlers handlers;
+	handlers.subscription = [&](const std::string& sid, bool subscribed) {
+		EXPECT_EQ(sid, "TR_video");
+		++subscription_updates;
+		last_subscribed = subscribed;
+		return true;
+	};
+	handlers.settings = [&](const std::string& sid, const RemoteTrackSettings& settings) {
+		EXPECT_EQ(sid, "TR_video");
+		++settings_updates;
+		last_settings = settings;
+		return true;
+	};
+	handlers.status = [&](const std::string& sid, TrackSubscriptionStatus current,
+	                      TrackSubscriptionStatus) {
+		EXPECT_EQ(sid, "TR_video");
+		++status_updates;
+		last_status = current;
+	};
+	RemoteParticipant participant(info, true, std::move(handlers));
+	auto* publication = participant.GetTrackPublication(TrackSource::Camera);
+	ASSERT_NE(publication, nullptr);
+	auto* remote = dynamic_cast<RemoteTrackPublication*>(publication);
+	ASSERT_NE(remote, nullptr);
+	EXPECT_EQ(publication->SubscriptionStatus(), TrackSubscriptionStatus::Desired);
+
+	EXPECT_TRUE(publication->SetSubscribed(false));
+	EXPECT_FALSE(last_subscribed);
+	EXPECT_EQ(publication->SubscriptionStatus(), TrackSubscriptionStatus::Unsubscribed);
+	EXPECT_EQ(last_status, TrackSubscriptionStatus::Unsubscribed);
+	EXPECT_EQ(status_updates, 1);
+	RemoteTrackSettings settings;
+	settings.video_quality = VideoQuality::Medium;
+	EXPECT_FALSE(publication->UpdateRemoteTrackSettings(settings));
+
+	EXPECT_TRUE(publication->SetSubscribed(true));
+	EXPECT_EQ(publication->SubscriptionStatus(), TrackSubscriptionStatus::Desired);
+	EXPECT_TRUE(publication->SetSubscribed(true));
+	EXPECT_EQ(subscription_updates, 3);
+	EXPECT_EQ(status_updates, 2);
+	settings.video_dimensions = TrackDimensions{640, 360};
+	EXPECT_FALSE(publication->UpdateRemoteTrackSettings(settings));
+	settings.video_quality.reset();
+	settings.video_fps = 24;
+	settings.priority = 1;
+	EXPECT_TRUE(publication->UpdateRemoteTrackSettings(settings));
+	EXPECT_EQ(settings_updates, 1);
+	ASSERT_TRUE(last_settings.video_dimensions.has_value());
+	EXPECT_EQ(last_settings.video_dimensions->width, 640u);
+	EXPECT_EQ(last_settings.video_dimensions->height, 360u);
+	EXPECT_EQ(last_settings.video_fps, 24u);
+	EXPECT_EQ(last_settings.priority, 1u);
+
+	EXPECT_TRUE(remote->SetTrackAttached(true));
+	EXPECT_EQ(publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
+	EXPECT_TRUE(remote->ResendPreferences());
+	EXPECT_EQ(subscription_updates, 4);
+	EXPECT_EQ(settings_updates, 2);
+}
+
 TEST(TrackStateTest, ReportsEnabledStateChanges) {
 	Track track("TR_local", "camera", TrackKind::Video);
 	EXPECT_TRUE(track.IsEnabled());
@@ -229,6 +302,11 @@ TEST(TrackStateTest, ReportsEnabledStateChanges) {
 	EXPECT_FALSE(track.IsEnabled());
 	track.SetEnabled(true);
 	EXPECT_TRUE(track.IsEnabled());
+	EXPECT_EQ(track.StreamState(), TrackStreamState::Unknown);
+	EXPECT_TRUE(track.SetStreamState(TrackStreamState::Active));
+	EXPECT_FALSE(track.SetStreamState(TrackStreamState::Active));
+	EXPECT_TRUE(track.SetStreamState(TrackStreamState::Paused));
+	EXPECT_EQ(track.StreamState(), TrackStreamState::Paused);
 }
 
 TEST(RtcEngineStateTest, RetainsNewestTokenForReconnect) {

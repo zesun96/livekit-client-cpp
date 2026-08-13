@@ -64,6 +64,8 @@ public:
 	void SetConnectionQuality(ConnectionQuality quality);
 
 protected:
+	virtual std::shared_ptr<TrackPublicationInterface>
+	CreateTrackPublication(const livekit::TrackInfo& info);
 	// Updates participant identity and metadata without reconciling track publications. A full
 	// reconnect needs this split so locally owned tracks survive the replacement JoinResponse and
 	// can be published on the new PeerConnection.

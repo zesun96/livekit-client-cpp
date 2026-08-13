@@ -78,6 +78,22 @@ public:
 		}
 	}
 
+	void OnTrackUnsubscribed(RemoteTrackInterface* track, TrackPublicationInterface*,
+	                         RemoteParticipantInterface*) override {
+		if (track != nullptr && track->Kind() == TrackKind::Video) {
+			video_unsubscribed_.fetch_add(1);
+		}
+	}
+
+	void OnTrackSubscriptionStatusChanged(TrackPublicationInterface* publication,
+	                                      RemoteParticipantInterface*,
+	                                      TrackSubscriptionStatus status) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		subscription_status_sid_ = publication != nullptr ? publication->Sid() : "";
+		subscription_status_ = status;
+		++subscription_status_count_;
+	}
+
 	void OnTrackSubscriptionPermissionChanged(TrackPublicationInterface* track,
 	                                          RemoteParticipantInterface*, bool allowed) override {
 		std::lock_guard<std::mutex> guard(lock_);
@@ -147,6 +163,7 @@ public:
 	uint64_t reconnected_count() const { return reconnected_.load(); }
 	uint64_t audio_frame_count() const { return audio_frames_.load(); }
 	uint64_t video_frame_count() const { return video_frames_.load(); }
+	uint64_t video_unsubscribed_count() const { return video_unsubscribed_.load(); }
 	uint32_t last_video_width() const { return last_video_width_.load(); }
 	uint32_t last_video_height() const { return last_video_height_.load(); }
 	uint64_t local_tracks_published() const { return local_tracks_published_.load(); }
@@ -176,6 +193,12 @@ public:
 		return permission_track_sid_ == track_sid && permission_allowed_ == allowed &&
 		       permission_change_count_ >= minimum_count;
 	}
+	bool subscription_status(const std::string& track_sid, TrackSubscriptionStatus status,
+	                         uint64_t minimum_count = 1) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return subscription_status_sid_ == track_sid && subscription_status_ == status &&
+		       subscription_status_count_ >= minimum_count;
+	}
 
 private:
 	std::atomic<bool> audio_subscribed_{false};
@@ -184,6 +207,7 @@ private:
 	std::atomic<uint64_t> reconnected_{0};
 	std::atomic<uint64_t> audio_frames_{0};
 	std::atomic<uint64_t> video_frames_{0};
+	std::atomic<uint64_t> video_unsubscribed_{0};
 	std::atomic<uint32_t> last_video_width_{0};
 	std::atomic<uint32_t> last_video_height_{0};
 	std::atomic<uint64_t> local_tracks_published_{0};
@@ -203,6 +227,9 @@ private:
 	std::string permission_track_sid_;
 	bool permission_allowed_ = true;
 	uint64_t permission_change_count_ = 0;
+	std::string subscription_status_sid_;
+	TrackSubscriptionStatus subscription_status_ = TrackSubscriptionStatus::Unsubscribed;
+	uint64_t subscription_status_count_ = 0;
 };
 
 class ParticipantEvents final : public RoomEventInterface {
@@ -677,10 +704,28 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    << PublicationSummary(sender_participant);
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
+	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
+	RemoteTrackSettings remote_settings;
+	remote_settings.video_dimensions = TrackDimensions{160, 90};
+	remote_settings.video_fps = 15;
+	remote_settings.priority = 1;
+	ASSERT_TRUE(receiver->UpdateRemoteTrackSettings(sender_participant->Sid(),
+	                                                video_publication->Sid(), remote_settings));
+	const auto retained_settings = video_publication->GetRemoteTrackSettings();
+	ASSERT_TRUE(retained_settings.video_dimensions.has_value());
+	EXPECT_EQ(retained_settings.video_dimensions->width, 160u);
+	EXPECT_EQ(retained_settings.video_dimensions->height, 90u);
+	EXPECT_EQ(retained_settings.video_fps, 15u);
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
 	                                               video_publication->Sid(), false));
+	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Unsubscribed);
+	EXPECT_TRUE(events.subscription_status(video_publication->Sid(),
+	                                       TrackSubscriptionStatus::Unsubscribed));
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
 	                                               video_publication->Sid(), true));
+	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
+	EXPECT_TRUE(
+	    events.subscription_status(video_publication->Sid(), TrackSubscriptionStatus::Subscribed));
 	EXPECT_EQ(video_publication->Name(), "integration-video");
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());
@@ -690,6 +735,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_TRUE(video_track->IsEnabled());
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return sender_participant->GetTrackPublication(TrackSource::Camera) == nullptr; }));
+	EXPECT_GT(events.video_unsubscribed_count(), 0u);
 	ASSERT_TRUE(sender->GetLocalParticipant()->RepublishAllTracks());
 	ASSERT_TRUE(WaitUntil([&] {
 		return sender_participant->GetTrackPublication(TrackSource::Microphone) != nullptr;

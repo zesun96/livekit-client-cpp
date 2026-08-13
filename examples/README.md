@@ -53,7 +53,8 @@ repository configuration.
 A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It registers room,
 participant, and track callbacks, connects, reads the local identity into a caller-owned buffer,
 reports subscription failures (including unsupported codecs and missing tracks), and cleans up the
-room and runtime.
+room and runtime. For remote video it requests medium quality at 24 FPS through
+`lk_room_update_remote_track_settings()` and prints stream/subscription state changes.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
@@ -72,8 +73,9 @@ Connects to a room, prints the local participant identity and SID, and disconnec
 
 ### `room_event`
 
-Receives room events, subscribed tracks, decoded PCM/I420 frames, data messages, and completed
-files. It also reports `OnReconnecting` and `OnReconnected` while the SDK first attempts a
+Receives room events, subscribed and unsubscribed tracks, SFU pause/resume state, decoded PCM/I420
+frames, data messages, and completed files. It also reports `OnReconnecting` and `OnReconnected`
+while the SDK first attempts a
 protocol-level signal resume and falls back to a full reconnect when required, and prints the
 protocol-level reason when the room disconnects. Applications can query the same value later with
 `RoomInterface::LastDisconnectReason()`. The optional third argument controls how many seconds to
@@ -112,6 +114,12 @@ The C sample provides the same behavior through `LIVEKIT_ALLOWED_SUBSCRIBER` and
 Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
 an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
 again.
+
+For a subscribed remote video publication, `UpdateRemoteTrackSettings()` can request a maximum
+quality or explicit dimensions, an FPS cap, a subscription priority, and temporary server-side
+disablement. `TrackPublicationInterface::SubscriptionStatus()` distinguishes desired, subscribed,
+and explicitly unsubscribed tracks. Room listeners receive `OnTrackUnsubscribed`,
+`OnTrackStreamStateChanged`, and `OnTrackSubscriptionStatusChanged` without polling.
 
 ### `publish_video`
 

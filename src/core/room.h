@@ -66,6 +66,8 @@ public:
 	bool SetLocalTrackMutedInternal(std::string track_sid, bool muted);
 	bool SetRemoteTrackSubscribedInternal(std::string participant_sid, std::string track_sid,
 	                                      bool subscribed);
+	bool UpdateRemoteTrackSettingsInternal(std::string participant_sid, std::string track_sid,
+	                                       const RemoteTrackSettings& settings);
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
 
@@ -75,6 +77,7 @@ public:
 	virtual void
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
 	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) override;
+	void MediaTrackRemovedEvent(const std::string& track_sid) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
 	void RemoteMuteChangedEvent(const std::string& sid, bool muted) override;
 	void LocalTrackUnpublishedEvent(const std::string& sid) override;
@@ -85,6 +88,7 @@ public:
 	void
 	SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) override;
 	void SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) override;
+	void StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& updates) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;
@@ -101,6 +105,16 @@ private:
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const VideoFrame& frame);
 	void NotifyDisconnectedOnce(DisconnectReason reason);
+	bool SendRemoteTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
+	                               bool subscribed);
+	bool SendRemoteTrackSettings(const std::string& participant_sid, const std::string& track_sid,
+	                             const RemoteTrackSettings& settings);
+	void RemoteSubscriptionStatusChanged(const std::string& participant_sid,
+	                                     const std::string& track_sid,
+	                                     TrackSubscriptionStatus status);
+	RemoteParticipant::PublicationHandlers
+	CreateRemotePublicationHandlers(const std::string& participant_sid);
+	void ResendRemoteTrackPreferences();
 
 	struct IncomingFile {
 		FileReceivedEvent event;

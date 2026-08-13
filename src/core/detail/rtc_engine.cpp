@@ -770,6 +770,32 @@ bool RtcEngine::SetTrackSubscribed(const std::string& participant_sid, const std
 	return true;
 }
 
+bool RtcEngine::UpdateTrackSettings(const std::string& track_sid,
+                                    const RemoteTrackSettings& settings) {
+	if (track_sid.empty()) {
+		return false;
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return false;
+	}
+	livekit::UpdateTrackSettings update;
+	update.add_track_sids(track_sid);
+	update.set_disabled(!settings.enabled);
+	if (settings.video_quality.has_value()) {
+		update.set_quality(
+		    static_cast<livekit::VideoQuality>(static_cast<int>(*settings.video_quality)));
+	}
+	if (settings.video_dimensions.has_value()) {
+		update.set_width(settings.video_dimensions->width);
+		update.set_height(settings.video_dimensions->height);
+	}
+	update.set_fps(settings.video_fps);
+	update.set_priority(settings.priority);
+	signal_client->SendUpdateTrackSettings(update);
+	return true;
+}
+
 bool RtcEngine::UpdateLocalMetadata(const std::string& metadata, const std::string& name,
                                     const std::map<std::string, std::string>& attributes) {
 	auto signal_client = SignalClientSnapshot();
@@ -958,7 +984,11 @@ void RtcEngine::OnConnectionQuality(const std::vector<livekit::ConnectionQuality
 		listener->ConnectionQualityEvent(update);
 	}
 }
-void RtcEngine::OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) { return; }
+void RtcEngine::OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) {
+	if (auto* listener = room_listener_.load()) {
+		listener->StreamStateUpdateEvent(update);
+	}
+}
 void RtcEngine::OnSubscriptionPermissionUpdate(
     const livekit::SubscriptionPermissionUpdate& update) {
 	if (auto* listener = room_listener_.load()) {
@@ -1080,7 +1110,14 @@ void RtcEngine::OnTrack(PeerTransport::Target target,
 }
 
 void RtcEngine::OnRemoveTrack(PeerTransport::Target target,
-                              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {}
+                              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
+	if (target != PeerTransport::Target::SUBSCRIBER || !receiver || !receiver->track()) {
+		return;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->MediaTrackRemovedEvent(receiver->track()->id());
+	}
+}
 
 void RtcEngine::OnInterestingUsage(PeerTransport::Target target, int usagePattern) {}
 
