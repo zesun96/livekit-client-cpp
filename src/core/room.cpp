@@ -666,6 +666,33 @@ void Room::SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissi
 	}
 }
 
+void Room::SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<TrackPublicationInterface> publication;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participant = FindRemoteParticipantForTrack(response.track_sid());
+		if (!participant) {
+			return;
+		}
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found = publications.find(response.track_sid());
+		if (found == publications.end()) {
+			return;
+		}
+		publication = found->second;
+		if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+			concrete->SetSubscriptionError(
+			    static_cast<SubscriptionError>(static_cast<int>(response.err())));
+		}
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnTrackSubscriptionFailed(
+		    response.track_sid(), participant.get(),
+		    static_cast<SubscriptionError>(static_cast<int>(response.err())));
+	}
+}
+
 void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track) {
 	if (!rtc_track) {
 		return;
@@ -713,6 +740,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 				if (candidate->Sid() == track_sid) {
 					if (auto* concrete = dynamic_cast<TrackPublication*>(candidate)) {
 						concrete->SetTrack(subscribed_track.get());
+						concrete->SetSubscriptionError(std::nullopt);
 					}
 					break;
 				}

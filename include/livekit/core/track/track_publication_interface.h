@@ -21,7 +21,9 @@
 #define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 
 #include "livekit/core/option/media_option.h"
+#include "livekit/core/track/subscription_error.h"
 
+#include <optional>
 #include <string>
 
 namespace livekit {
@@ -44,6 +46,8 @@ public:
 	virtual TrackInterface* Track() { return nullptr; }
 	// For remote publications, reports the publisher's permission for this local participant.
 	virtual bool IsSubscriptionAllowed() { return true; }
+	// The most recent server-reported failure, if a subscription attempt failed.
+	virtual std::optional<SubscriptionError> LastSubscriptionError() { return std::nullopt; }
 };
 
 } // namespace core

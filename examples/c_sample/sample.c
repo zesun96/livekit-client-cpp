@@ -56,6 +56,16 @@ static void on_track_published(void* user_data, lk_room_t* room,
 	printf("Track published by %s: %s (%s)\n", participant->identity, track->name, track->sid);
 }
 
+static void on_track_subscription_failed(void* user_data, lk_room_t* room,
+                                         const lk_track_publication_info_t* track,
+                                         const lk_participant_info_t* participant,
+                                         lk_subscription_error_t error) {
+	(void)user_data;
+	(void)room;
+	printf("Track subscription failed for %s from %s: error=%d\n", track->sid,
+	       participant->identity, (int)error);
+}
+
 static lk_rpc_handler_result_t on_echo_rpc(void* user_data, const lk_rpc_invocation_t* invocation) {
 	lk_rpc_handler_result_t result = {0};
 	(void)user_data;
@@ -106,6 +116,7 @@ int main(int argc, char** argv) {
 	callbacks.on_disconnected_with_reason = on_disconnected;
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;
+	callbacks.on_track_subscription_failed = on_track_subscription_failed;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

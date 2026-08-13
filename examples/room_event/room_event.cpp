@@ -30,6 +30,13 @@ public:
 		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
 	}
 
+	void OnTrackSubscriptionFailed(const std::string& track_sid,
+	                               livekit::core::RemoteParticipantInterface* participant,
+	                               livekit::core::SubscriptionError error) override {
+		std::cout << "Subscription failed for track " << track_sid << " from "
+		          << participant->Identity() << ", error=" << static_cast<int>(error) << std::endl;
+	}
+
 	void
 	OnTrackSubscriptionPermissionChanged(livekit::core::TrackPublicationInterface* track,
 	                                     livekit::core::RemoteParticipantInterface* participant,

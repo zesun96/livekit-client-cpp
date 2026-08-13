@@ -45,12 +45,14 @@ public:
 	bool IsSimulcasted() override;
 	TrackInterface* Track() override;
 	bool IsSubscriptionAllowed() override;
+	std::optional<SubscriptionError> LastSubscriptionError() override;
 
 	void UpdateInfo(livekit::TrackInfo info);
 	livekit::TrackInfo Info() const;
 	void SetTrack(::livekit::core::Track* track);
 	void SetMuted(bool muted);
 	bool SetSubscriptionAllowed(bool allowed);
+	void SetSubscriptionError(std::optional<SubscriptionError> error);
 
 private:
 	mutable std::mutex mutex_;
@@ -64,6 +66,7 @@ private:
 	bool simulcasted_;
 	bool muted_;
 	bool subscription_allowed_ = true;
+	std::optional<SubscriptionError> subscription_error_;
 
 	::livekit::core::Track* track_;
 };

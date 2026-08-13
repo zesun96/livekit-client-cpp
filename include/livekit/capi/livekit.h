@@ -98,6 +98,12 @@ typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_LOST = 4
 } lk_connection_quality_t;
 
+typedef enum lk_subscription_error {
+	LK_SUBSCRIPTION_ERROR_UNKNOWN = 0,
+	LK_SUBSCRIPTION_ERROR_CODEC_UNSUPPORTED = 1,
+	LK_SUBSCRIPTION_ERROR_TRACK_NOT_FOUND = 2
+} lk_subscription_error_t;
+
 typedef enum lk_rpc_error_code {
 	LK_RPC_ERROR_UNSUPPORTED_METHOD = 1400,
 	LK_RPC_ERROR_RECIPIENT_NOT_FOUND = 1401,
@@ -234,6 +240,10 @@ typedef void (*lk_track_subscription_permission_callback)(void* user_data, lk_ro
                                                           const lk_track_publication_info_t* track,
                                                           const lk_participant_info_t* participant,
                                                           int allowed);
+typedef void (*lk_track_subscription_failed_callback)(void* user_data, lk_room_t* room,
+                                                      const lk_track_publication_info_t* track,
+                                                      const lk_participant_info_t* participant,
+                                                      lk_subscription_error_t error);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -262,6 +272,7 @@ typedef struct lk_room_callbacks {
 	lk_room_event_callback on_reconnected;
 	lk_room_disconnected_callback on_disconnected_with_reason;
 	lk_track_subscription_permission_callback on_track_subscription_permission_changed;
+	lk_track_subscription_failed_callback on_track_subscription_failed;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {

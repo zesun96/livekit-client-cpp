@@ -84,6 +84,7 @@ public:
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
 	void
 	SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) override;
+	void SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;

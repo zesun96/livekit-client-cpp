@@ -173,6 +173,17 @@ lk_connection_quality_t ToCConnectionQuality(core::ConnectionQuality quality) {
 	}
 }
 
+lk_subscription_error_t ToCSubscriptionError(core::SubscriptionError error) {
+	switch (error) {
+	case core::SubscriptionError::CodecUnsupported:
+		return LK_SUBSCRIPTION_ERROR_CODEC_UNSUPPORTED;
+	case core::SubscriptionError::TrackNotFound:
+		return LK_SUBSCRIPTION_ERROR_TRACK_NOT_FOUND;
+	default:
+		return LK_SUBSCRIPTION_ERROR_UNKNOWN;
+	}
+}
+
 lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
 	switch (state) {
 	case core::RoomInterface::RoomState::Connecting:
@@ -436,6 +447,29 @@ public:
 			if (callbacks.on_track_subscribed != nullptr) {
 				callbacks.on_track_subscribed(callbacks.user_data, owner_, &owned_track.info,
 				                              &owned_participant.info);
+			}
+		});
+	}
+
+	void OnTrackSubscriptionFailed(const std::string& track_sid,
+	                               core::RemoteParticipantInterface* participant,
+	                               core::SubscriptionError error) override {
+		core::TrackPublicationInterface* publication = nullptr;
+		if (participant != nullptr) {
+			for (auto* candidate : participant->GetTrackPublications()) {
+				if (candidate->Sid() == track_sid) {
+					publication = candidate;
+					break;
+				}
+			}
+		}
+		OwnedTrackInfo owned_track(publication);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_track_subscription_failed != nullptr) {
+				callbacks.on_track_subscription_failed(callbacks.user_data, owner_,
+				                                       &owned_track.info, &owned_participant.info,
+				                                       ToCSubscriptionError(error));
 			}
 		});
 	}

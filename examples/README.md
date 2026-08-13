@@ -52,7 +52,8 @@ repository configuration.
 
 A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It registers room,
 participant, and track callbacks, connects, reads the local identity into a caller-owned buffer,
-and cleans up the room and runtime.
+reports subscription failures (including unsupported codecs and missing tracks), and cleans up the
+room and runtime.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
