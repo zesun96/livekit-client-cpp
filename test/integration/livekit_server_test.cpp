@@ -809,6 +809,62 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());
 
+	// Screen-share helpers must override a caller-provided source and advertise the correct
+	// LiveKit source without taking ownership of desktop capture.
+	auto screen_video_source = CreateVideoSourceUnique();
+	ASSERT_TRUE(screen_video_source->CaptureFrame(video_frame));
+	auto screen_video_track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    "integration-screen-video", screen_video_source.get());
+	ASSERT_NE(screen_video_track, nullptr);
+	TrackPublishOptions screen_video_options;
+	screen_video_options.source = TrackSource::Camera;
+	screen_video_options.simulcast = false;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishScreenShareVideoTrack(
+	    screen_video_track.get(), screen_video_options));
+	const auto screen_video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (sender_participant->GetTrackPublication(TrackSource::ScreenShare) == nullptr &&
+	       std::chrono::steady_clock::now() < screen_video_deadline) {
+		video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                               std::chrono::steady_clock::now().time_since_epoch())
+		                               .count();
+		ASSERT_TRUE(screen_video_source->CaptureFrame(video_frame));
+		std::this_thread::sleep_for(std::chrono::milliseconds(33));
+	}
+	auto* screen_video_publication =
+	    sender_participant->GetTrackPublication(TrackSource::ScreenShare);
+	ASSERT_NE(screen_video_publication, nullptr);
+	EXPECT_EQ(screen_video_publication->Name(), "integration-screen-video");
+	EXPECT_EQ(screen_video_publication->Kind(), TrackKind::Video);
+	EXPECT_TRUE(sender_participant->IsScreenShareEnabled());
+	ASSERT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(screen_video_track.get()));
+	ASSERT_TRUE(WaitUntil([&] {
+		return sender_participant->GetTrackPublication(TrackSource::ScreenShare) == nullptr;
+	}));
+
+	auto screen_audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto screen_audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "integration-screen-audio", screen_audio_source.get());
+	ASSERT_NE(screen_audio_track, nullptr);
+	TrackPublishOptions screen_audio_options;
+	screen_audio_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishScreenShareAudioTrack(
+	    screen_audio_track.get(), screen_audio_options));
+	const auto screen_audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (sender_participant->GetTrackPublication(TrackSource::ScreenShareAudio) == nullptr &&
+	       std::chrono::steady_clock::now() < screen_audio_deadline) {
+		ASSERT_TRUE(screen_audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	auto* screen_audio_publication =
+	    sender_participant->GetTrackPublication(TrackSource::ScreenShareAudio);
+	ASSERT_NE(screen_audio_publication, nullptr);
+	EXPECT_EQ(screen_audio_publication->Name(), "integration-screen-audio");
+	EXPECT_EQ(screen_audio_publication->Kind(), TrackKind::Audio);
+	ASSERT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(screen_audio_track.get()));
+	ASSERT_TRUE(WaitUntil([&] {
+		return sender_participant->GetTrackPublication(TrackSource::ScreenShareAudio) == nullptr;
+	}));
+
 	std::vector<LocalTrackInterface*> video_tracks{video_track.get()};
 	ASSERT_EQ(sender->GetLocalParticipant()->UnpublishTracks(video_tracks, false), 1u);
 	EXPECT_TRUE(video_track->IsEnabled());
@@ -829,6 +885,10 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 
 	video_track.reset();
 	video_source.reset();
+	screen_video_track.reset();
+	screen_video_source.reset();
+	screen_audio_track.reset();
+	screen_audio_source.reset();
 	audio_track.reset();
 	audio_source.reset();
 	receiver->RemoveEventListener();

@@ -95,6 +95,11 @@ Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and op
 layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 currently use one
 encoding until SVC publishing is implemented.
 
+Applications that already capture desktop I420/PCM frames can publish them with
+`PublishScreenShareVideoTrack` and `PublishScreenShareAudioTrack` (or the corresponding C API
+functions). These helpers set the LiveKit track source; native desktop capture and system-audio
+capture are not yet provided by the SDK.
+
 ## Tests
 
 Tests use GoogleTest 1.15.2 from a small, checksum-verified source archive.

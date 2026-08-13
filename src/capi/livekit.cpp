@@ -159,6 +159,36 @@ bool ToCoreVideoCodec(lk_video_codec_t codec, core::VideoCodec& result) {
 	}
 }
 
+lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
+                                      core::TrackPublishOptions& result) {
+	if (options == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid publish options struct size");
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, source)) {
+		result.source = ToCoreTrackSource(options->source);
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, dtx)) {
+		result.dtx = options->dtx != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, red)) {
+		result.red = options->red != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, simulcast)) {
+		result.simulcast = options->simulcast != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, stream) && options->stream != nullptr) {
+		result.stream = options->stream;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, video_codec) &&
+	    !ToCoreVideoCodec(options->video_codec, result.video_codec)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video codec");
+	}
+	return LK_STATUS_OK;
+}
+
 lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 	switch (kind) {
 	case core::TrackKind::Audio:
@@ -989,6 +1019,49 @@ private:
 	lk_room_t* owner_;
 };
 
+namespace {
+
+enum class PublishMode { Track, ScreenShareVideo, ScreenShareAudio };
+
+lk_status_t PublishLocalTrack(lk_room_t* room, lk_local_track_t* track,
+                              const lk_track_publish_options_t* options, PublishMode mode) {
+	auto* participant = LocalParticipant(room);
+	if (participant == nullptr || track == nullptr || track->track == nullptr) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "room and track are required");
+	}
+	if (track->owner != room) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "track belongs to a different room");
+	}
+	if (track->published.load()) {
+		return Failure(LK_STATUS_INVALID_STATE, "track is already published");
+	}
+	core::TrackPublishOptions publish_options;
+	const auto options_status = ToCoreTrackPublishOptions(options, publish_options);
+	if (options_status != LK_STATUS_OK) {
+		return options_status;
+	}
+
+	bool published = false;
+	switch (mode) {
+	case PublishMode::ScreenShareVideo:
+		published = participant->PublishScreenShareVideoTrack(track->track.get(), publish_options);
+		break;
+	case PublishMode::ScreenShareAudio:
+		published = participant->PublishScreenShareAudioTrack(track->track.get(), publish_options);
+		break;
+	case PublishMode::Track:
+		published = participant->PublishTrack(track->track.get(), publish_options);
+		break;
+	}
+	if (!published) {
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to publish track");
+	}
+	track->published.store(true);
+	return LK_STATUS_OK;
+}
+
+} // namespace
+
 extern "C" {
 
 lk_status_t lk_init(void) {
@@ -1519,49 +1592,19 @@ lk_status_t lk_room_create_video_track(lk_room_t* room, const char* label,
 
 lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
                                    const lk_track_publish_options_t* options) {
-	return Guard([&] {
-		auto* participant = LocalParticipant(room);
-		if (participant == nullptr || track == nullptr || track->track == nullptr) {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and track are required");
-		}
-		if (track->owner != room) {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "track belongs to a different room");
-		}
-		if (track->published.load()) {
-			return Failure(LK_STATUS_INVALID_STATE, "track is already published");
-		}
-		core::TrackPublishOptions publish_options;
-		if (options != nullptr) {
-			if (options->struct_size < sizeof(options->struct_size)) {
-				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid publish options struct size");
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, source)) {
-				publish_options.source = ToCoreTrackSource(options->source);
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, dtx)) {
-				publish_options.dtx = options->dtx != 0;
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, red)) {
-				publish_options.red = options->red != 0;
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, simulcast)) {
-				publish_options.simulcast = options->simulcast != 0;
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, stream) &&
-			    options->stream != nullptr) {
-				publish_options.stream = options->stream;
-			}
-			if (LKC_HAS_FIELD(options, lk_track_publish_options_t, video_codec) &&
-			    !ToCoreVideoCodec(options->video_codec, publish_options.video_codec)) {
-				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video codec");
-			}
-		}
-		if (!participant->PublishTrack(track->track.get(), publish_options)) {
-			return Failure(LK_STATUS_OPERATION_FAILED, "failed to publish track");
-		}
-		track->published.store(true);
-		return LK_STATUS_OK;
-	});
+	return Guard([&] { return PublishLocalTrack(room, track, options, PublishMode::Track); });
+}
+
+lk_status_t lk_local_track_publish_screen_share_video(lk_room_t* room, lk_local_track_t* track,
+                                                      const lk_track_publish_options_t* options) {
+	return Guard(
+	    [&] { return PublishLocalTrack(room, track, options, PublishMode::ScreenShareVideo); });
+}
+
+lk_status_t lk_local_track_publish_screen_share_audio(lk_room_t* room, lk_local_track_t* track,
+                                                      const lk_track_publish_options_t* options) {
+	return Guard(
+	    [&] { return PublishLocalTrack(room, track, options, PublishMode::ScreenShareAudio); });
 }
 
 lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish) {

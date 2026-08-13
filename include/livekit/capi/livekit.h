@@ -708,6 +708,11 @@ LKC_API lk_status_t lk_room_create_video_track(lk_room_t* room, const char* labe
                                                lk_video_source_t* source, lk_local_track_t** track);
 LKC_API lk_status_t lk_local_track_publish(lk_room_t* room, lk_local_track_t* track,
                                            const lk_track_publish_options_t* options);
+/* These helpers classify application-provided frames as screen-share media. */
+LKC_API lk_status_t lk_local_track_publish_screen_share_video(
+    lk_room_t* room, lk_local_track_t* track, const lk_track_publish_options_t* options);
+LKC_API lk_status_t lk_local_track_publish_screen_share_audio(
+    lk_room_t* room, lk_local_track_t* track, const lk_track_publish_options_t* options);
 LKC_API lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish);
 LKC_API lk_status_t lk_room_republish_all_tracks(lk_room_t* room);
 LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted);
