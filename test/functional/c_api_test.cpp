@@ -97,6 +97,10 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_video_source_capture_i420(nullptr, nullptr, 0, 0, 0, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_unpublish(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_track_publish_screen_share_video(nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_track_publish_screen_share_audio(nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_republish_all_tracks(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_text(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_bytes(nullptr, nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);

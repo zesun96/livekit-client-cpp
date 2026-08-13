@@ -64,6 +64,22 @@ public:
 	}
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) = 0;
+	// Publishes application-provided frames as a screen-share source. These helpers only set the
+	// LiveKit source classification; capture remains owned by the application.
+	bool PublishScreenShareVideoTrack(LocalTrackInterface* track, TrackPublishOptions option = {}) {
+		if (track == nullptr || track->Kind() != TrackKind::Video) {
+			return false;
+		}
+		option.source = TrackSource::ScreenShare;
+		return PublishTrack(track, std::move(option));
+	}
+	bool PublishScreenShareAudioTrack(LocalTrackInterface* track, TrackPublishOptions option = {}) {
+		if (track == nullptr || track->Kind() != TrackKind::Audio) {
+			return false;
+		}
+		option.source = TrackSource::ScreenShareAudio;
+		return PublishTrack(track, std::move(option));
+	}
 	// Removes a published track from the publisher PeerConnection. The track object remains owned
 	// by the caller and may be published again. When stop_on_unpublish is true its media source is
 	// disabled after the sender has been removed.
