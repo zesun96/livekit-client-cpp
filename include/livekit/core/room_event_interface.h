@@ -109,6 +109,7 @@ public:
 	virtual void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus&) {}
 	virtual void OnSipDtmfReceived(const SipDtmfEvent&) {}
 	virtual void OnChatMessageReceived(const ChatMessage&) {}
+	virtual void OnTranscriptionReceived(const TranscriptionReceivedEvent&) {}
 };
 
 } // namespace core

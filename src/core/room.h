@@ -154,6 +154,8 @@ private:
 	std::mutex incoming_streams_mutex_;
 	std::map<std::string, IncomingFile> incoming_files_;
 	std::map<std::string, IncomingText> incoming_texts_;
+	std::mutex transcription_mutex_;
+	std::map<std::string, int64_t> transcription_received_times_;
 	std::mutex stream_handlers_mutex_;
 	std::map<std::string, TextStreamHandler> text_stream_handlers_;
 	std::map<std::string, ByteStreamHandler> byte_stream_handlers_;
