@@ -85,10 +85,15 @@ isolated from the BoringSSL symbols embedded in `webrtc.lib`. CMake copies
 `websockets.dll` next to SDK executables automatically; applications consuming
 the static library must deploy that DLL with their executable.
 
-Video uses libwebrtc's VP8 encoder and decoder template factories. The
-libwebrtc package must contain the corresponding libvpx implementation.
+Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected
+`TrackPublishOptions::video_codec` (or `lk_track_publish_options_t::video_codec` in C) is applied as
+the transceiver codec preference; publishing fails instead of silently negotiating another codec
+when the linked libwebrtc package lacks it. The default `webrtc-build` package enables VP8, VP9,
+and AV1 but builds with `rtc_use_h264=false`; rebuild libwebrtc with H264 enabled before selecting
+H264.
 Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and optional dynacast
-layer activation through `RoomOptions::dynacast`.
+layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 currently use one
+encoding until SVC publishing is implemented.
 
 ## Tests
 

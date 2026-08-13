@@ -50,6 +50,28 @@ bool WaitUntil(const std::function<bool()>& predicate,
 	return predicate();
 }
 
+VideoCodec VideoCodecFromEnvironment(std::string& mime_type) {
+	const char* value = std::getenv("LIVEKIT_VIDEO_CODEC");
+	std::string codec = value != nullptr ? value : "vp8";
+	std::transform(codec.begin(), codec.end(), codec.begin(), [](unsigned char character) {
+		return static_cast<char>(std::tolower(character));
+	});
+	if (codec == "h264") {
+		mime_type = "video/H264";
+		return VideoCodec::H264;
+	}
+	if (codec == "vp9") {
+		mime_type = "video/VP9";
+		return VideoCodec::VP9;
+	}
+	if (codec == "av1") {
+		mime_type = "video/AV1";
+		return VideoCodec::AV1;
+	}
+	mime_type = "video/VP8";
+	return VideoCodec::VP8;
+}
+
 std::string PublicationSummary(ParticipantInterface* participant) {
 	if (participant == nullptr) {
 		return "participant is null";
@@ -735,6 +757,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	TrackPublishOptions video_options;
 	video_options.source = TrackSource::Camera;
 	video_options.simulcast = true;
+	std::string expected_video_mime_type;
+	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
 
 	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -755,7 +779,10 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    << PublicationSummary(sender_participant);
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
-	EXPECT_TRUE(video_publication->IsSimulcasted());
+	EXPECT_EQ(video_publication->MimeType(), expected_video_mime_type);
+	const bool expect_simulcast = video_options.video_codec == VideoCodec::VP8 ||
+	                              video_options.video_codec == VideoCodec::H264;
+	EXPECT_EQ(video_publication->IsSimulcasted(), expect_simulcast);
 	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
 	RemoteTrackSettings remote_settings;
 	remote_settings.video_dimensions = TrackDimensions{160, 90};

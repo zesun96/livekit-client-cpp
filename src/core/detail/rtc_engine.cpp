@@ -605,6 +605,11 @@ RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	return nullptr;
 }
 
+bool RtcEngine::SupportsVideoCodec(VideoCodec codec) const {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	return rtc_session_ != nullptr && rtc_session_->SupportsVideoCodec(codec);
+}
+
 bool RtcEngine::RemoveSender(LocalTrack* track) {
 	std::lock_guard<std::mutex> guard(session_lock_);
 	return rtc_session_ != nullptr && rtc_session_->RemoveSender(track);

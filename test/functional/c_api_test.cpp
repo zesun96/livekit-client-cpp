@@ -40,6 +40,7 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(publish.dtx, 1);
 	EXPECT_EQ(publish.red, 1);
 	EXPECT_EQ(publish.simulcast, 1);
+	EXPECT_EQ(publish.video_codec, LK_VIDEO_CODEC_VP8);
 
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
