@@ -965,7 +965,11 @@ void RtcEngine::OnSubscriptionPermissionUpdate(
 		listener->SubscriptionPermissionUpdateEvent(update);
 	}
 }
-void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& response) { return; }
+void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& response) {
+	if (auto* listener = room_listener_.load()) {
+		listener->SubscriptionErrorEvent(response);
+	}
+}
 void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
 void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
 

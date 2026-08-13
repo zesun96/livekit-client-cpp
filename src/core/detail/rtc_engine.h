@@ -67,6 +67,7 @@ public:
 		ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) = 0;
 		virtual void
 		SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) = 0;
+		virtual void SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) = 0;
 		virtual void SignalDisconnectedEvent(livekit::DisconnectReason reason) = 0;
 		virtual void ReconnectingEvent(bool full_reconnect) = 0;
 		virtual void SignalResumedEvent() = 0;

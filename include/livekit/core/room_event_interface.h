@@ -23,6 +23,7 @@
 #include "data_packet.h"
 #include "option/media_option.h"
 #include "track/audio_frame.h"
+#include "track/subscription_error.h"
 #include "track/video_frame.h"
 
 #include <map>
@@ -95,6 +96,9 @@ public:
 	virtual void OnTextReceived(const TextReceivedEvent&) {}
 	virtual void OnByteReceived(const ByteReceivedEvent&) {}
 	virtual void OnFileReceived(const FileReceivedEvent&) {}
+	// Kept at the end so extending the listener does not reorder existing callback slots.
+	virtual void OnTrackSubscriptionFailed(const std::string&, RemoteParticipantInterface*,
+	                                       SubscriptionError) {}
 };
 
 } // namespace core

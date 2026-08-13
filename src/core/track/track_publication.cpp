@@ -75,6 +75,11 @@ bool TrackPublication::IsSubscriptionAllowed() {
 	return subscription_allowed_;
 }
 
+std::optional<SubscriptionError> TrackPublication::LastSubscriptionError() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return subscription_error_;
+}
+
 void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
 	std::lock_guard<std::mutex> guard(mutex_);
 	info_ = info;
@@ -114,6 +119,11 @@ bool TrackPublication::SetSubscriptionAllowed(bool allowed) {
 	}
 	subscription_allowed_ = allowed;
 	return true;
+}
+
+void TrackPublication::SetSubscriptionError(std::optional<SubscriptionError> error) {
+	std::lock_guard<std::mutex> guard(mutex_);
+	subscription_error_ = error;
 }
 
 } // namespace core

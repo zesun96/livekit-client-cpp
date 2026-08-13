@@ -171,6 +171,57 @@ TEST(ParticipantStateTest, AppliesSubscriptionPermissionUpdates) {
 	room.RemoveEventListener();
 }
 
+class SubscriptionFailureEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnTrackSubscriptionFailed(const std::string& sid, RemoteParticipantInterface* participant,
+	                               SubscriptionError error) override {
+		++count;
+		track_sid = sid;
+		participant_sid = participant != nullptr ? participant->Sid() : "";
+		last_error = error;
+	}
+
+	int count = 0;
+	std::string track_sid;
+	std::string participant_sid;
+	SubscriptionError last_error = SubscriptionError::Unknown;
+};
+
+TEST(ParticipantStateTest, ReportsAndRetainsSubscriptionFailures) {
+	Room room;
+	SubscriptionFailureEvents events;
+	room.AddEventListener(&events);
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_publisher");
+	*info.add_tracks() = MakeTrack("TR_video", "camera", livekit::TrackType::VIDEO,
+	                               livekit::TrackSource::CAMERA, false);
+	room.ParticipantUpdateEvent({info});
+	auto* participant = room.GetRemoteParticipantBySid("PA_publisher");
+	ASSERT_NE(participant, nullptr);
+	auto* publication = participant->GetTrackPublication(TrackSource::Camera);
+	ASSERT_NE(publication, nullptr);
+	EXPECT_FALSE(publication->LastSubscriptionError().has_value());
+
+	livekit::SubscriptionResponse response;
+	response.set_track_sid("TR_video");
+	response.set_err(livekit::SE_CODEC_UNSUPPORTED);
+	room.SubscriptionErrorEvent(response);
+
+	ASSERT_TRUE(publication->LastSubscriptionError().has_value());
+	EXPECT_EQ(*publication->LastSubscriptionError(), SubscriptionError::CodecUnsupported);
+	EXPECT_EQ(events.count, 1);
+	EXPECT_EQ(events.track_sid, "TR_video");
+	EXPECT_EQ(events.participant_sid, "PA_publisher");
+	EXPECT_EQ(events.last_error, SubscriptionError::CodecUnsupported);
+
+	response.set_track_sid("TR_missing");
+	response.set_err(livekit::SE_TRACK_NOTFOUND);
+	room.SubscriptionErrorEvent(response);
+	EXPECT_EQ(events.count, 1);
+	room.RemoveEventListener();
+}
+
 TEST(TrackStateTest, ReportsEnabledStateChanges) {
 	Track track("TR_local", "camera", TrackKind::Video);
 	EXPECT_TRUE(track.IsEnabled());
