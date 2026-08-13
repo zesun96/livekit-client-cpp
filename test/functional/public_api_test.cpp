@@ -59,6 +59,21 @@ TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
 	EXPECT_EQ(result.error->message, "Request payload too large");
 }
 
+TEST(PublicApiTest, ValidatesAndRetainsTrackSubscriptionPermissionsBeforeConnect) {
+	auto room = CreateRoomUnique();
+	auto* local = room->GetLocalParticipant();
+	ASSERT_NE(local, nullptr);
+	EXPECT_TRUE(local->SetTrackSubscriptionPermissions(false));
+	ParticipantTrackPermission invalid;
+	EXPECT_FALSE(local->SetTrackSubscriptionPermissions(false, {invalid}));
+	ParticipantTrackPermission valid;
+	valid.participant_identity = "viewer";
+	valid.allowed_track_sids = {"TR_audio"};
+	EXPECT_TRUE(local->SetTrackSubscriptionPermissions(false, {valid}));
+	valid.allowed_track_sids.push_back("");
+	EXPECT_FALSE(local->SetTrackSubscriptionPermissions(false, {valid}));
+}
+
 TEST(MediaSourceTest, ValidatesI420VideoFrames) {
 	ASSERT_TRUE(Init());
 	auto source = CreateVideoSourceUnique();

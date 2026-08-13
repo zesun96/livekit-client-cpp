@@ -120,6 +120,57 @@ TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
 	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
 }
 
+class SubscriptionPermissionEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnTrackSubscriptionPermissionChanged(TrackPublicationInterface* publication,
+	                                          RemoteParticipantInterface*, bool allowed) override {
+		++count;
+		track_sid = publication != nullptr ? publication->Sid() : "";
+		last_allowed = allowed;
+	}
+
+	int count = 0;
+	std::string track_sid;
+	bool last_allowed = true;
+};
+
+TEST(ParticipantStateTest, AppliesSubscriptionPermissionUpdates) {
+	Room room;
+	SubscriptionPermissionEvents events;
+	room.AddEventListener(&events);
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_publisher");
+	info.set_identity("publisher");
+	*info.add_tracks() = MakeTrack("TR_video", "camera", livekit::TrackType::VIDEO,
+	                               livekit::TrackSource::CAMERA, false);
+	room.ParticipantUpdateEvent({info});
+	auto* participant = room.GetRemoteParticipantBySid("PA_publisher");
+	ASSERT_NE(participant, nullptr);
+	auto* publication = participant->GetTrackPublication(TrackSource::Camera);
+	ASSERT_NE(publication, nullptr);
+	EXPECT_TRUE(publication->IsSubscriptionAllowed());
+
+	livekit::SubscriptionPermissionUpdate denied;
+	denied.set_participant_sid("PA_publisher");
+	denied.set_track_sid("TR_video");
+	denied.set_allowed(false);
+	room.SubscriptionPermissionUpdateEvent(denied);
+	EXPECT_FALSE(publication->IsSubscriptionAllowed());
+	EXPECT_EQ(events.count, 1);
+	EXPECT_EQ(events.track_sid, "TR_video");
+	EXPECT_FALSE(events.last_allowed);
+
+	room.SubscriptionPermissionUpdateEvent(denied);
+	EXPECT_EQ(events.count, 1);
+	denied.set_allowed(true);
+	room.SubscriptionPermissionUpdateEvent(denied);
+	EXPECT_TRUE(publication->IsSubscriptionAllowed());
+	EXPECT_EQ(events.count, 2);
+	EXPECT_TRUE(events.last_allowed);
+	room.RemoveEventListener();
+}
+
 TEST(TrackStateTest, ReportsEnabledStateChanges) {
 	Track track("TR_local", "camera", TrackKind::Video);
 	EXPECT_TRUE(track.IsEnabled());

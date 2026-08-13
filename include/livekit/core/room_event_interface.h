@@ -78,6 +78,8 @@ public:
 	virtual void OnTrackMuted(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackUnmuted(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnTrackSubscribed(RemoteTrackInterface*, RemoteParticipantInterface*) {}
+	virtual void OnTrackSubscriptionPermissionChanged(TrackPublicationInterface*,
+	                                                  RemoteParticipantInterface*, bool) {}
 	virtual void OnActiveSpeakersChanged(const std::vector<ParticipantInterface*>&) {}
 	virtual void OnParticipantMetadataChanged(const std::string&, ParticipantInterface*) {}
 	virtual void OnParticipantNameChanged(const std::string&, ParticipantInterface*) {}

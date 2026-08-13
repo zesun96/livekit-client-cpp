@@ -22,6 +22,7 @@
 
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit/core/rpc.h"
+#include "livekit/core/subscription_permission.h"
 #include "livekit_rtc.pb.h"
 #include "rtc_session.h"
 #include "signal_client.h"
@@ -64,6 +65,8 @@ public:
 		virtual void RoomUpdateEvent(const livekit::Room& update) = 0;
 		virtual void
 		ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) = 0;
+		virtual void
+		SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) = 0;
 		virtual void SignalDisconnectedEvent(livekit::DisconnectReason reason) = 0;
 		virtual void ReconnectingEvent(bool full_reconnect) = 0;
 		virtual void SignalResumedEvent() = 0;
@@ -93,6 +96,9 @@ public:
 	bool RegisterRpcMethod(std::string method, RpcHandler handler);
 	bool UnregisterRpcMethod(const std::string& method);
 	RpcResult PerformRpc(const PerformRpcParams& params);
+	bool UpdateSubscriptionPermissions(
+	    bool all_participants_allowed,
+	    const std::vector<ParticipantTrackPermission>& participant_permissions);
 	bool SetTrackMuted(const std::string& track_sid, bool muted);
 	bool SetTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
 	                        bool subscribed);

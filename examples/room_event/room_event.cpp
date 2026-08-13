@@ -30,6 +30,15 @@ public:
 		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
 	}
 
+	void
+	OnTrackSubscriptionPermissionChanged(livekit::core::TrackPublicationInterface* track,
+	                                     livekit::core::RemoteParticipantInterface* participant,
+	                                     bool allowed) override {
+		std::cout << "Subscription permission " << (allowed ? "granted" : "revoked")
+		          << " for track " << track->Sid() << " from " << participant->Identity()
+		          << std::endl;
+	}
+
 	void OnAudioFrame(livekit::core::RemoteTrackInterface*,
 	                  livekit::core::RemoteParticipantInterface*,
 	                  const livekit::core::AudioFrame&) override {

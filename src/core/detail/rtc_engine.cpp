@@ -710,6 +710,35 @@ RpcResult RtcEngine::PerformRpc(const PerformRpcParams& params) {
 	return result;
 }
 
+bool RtcEngine::UpdateSubscriptionPermissions(
+    bool all_participants_allowed,
+    const std::vector<ParticipantTrackPermission>& participant_permissions) {
+	std::vector<livekit::TrackPermission> permissions;
+	permissions.reserve(participant_permissions.size());
+	for (const auto& permission : participant_permissions) {
+		if (permission.participant_sid.empty() && permission.participant_identity.empty()) {
+			return false;
+		}
+		livekit::TrackPermission converted;
+		converted.set_participant_sid(permission.participant_sid);
+		converted.set_participant_identity(permission.participant_identity);
+		converted.set_all_tracks(permission.allow_all);
+		for (const auto& track_sid : permission.allowed_track_sids) {
+			if (track_sid.empty()) {
+				return false;
+			}
+			converted.add_track_sids(track_sid);
+		}
+		permissions.push_back(std::move(converted));
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return false;
+	}
+	signal_client->SendUpdateSubscriptionPermissions(all_participants_allowed, permissions);
+	return true;
+}
+
 bool RtcEngine::SetTrackMuted(const std::string& track_sid, bool muted) {
 	if (track_sid.empty()) {
 		return false;
@@ -932,7 +961,9 @@ void RtcEngine::OnConnectionQuality(const std::vector<livekit::ConnectionQuality
 void RtcEngine::OnStreamStateUpdate(const std::vector<livekit::StreamStateInfo>& update) { return; }
 void RtcEngine::OnSubscriptionPermissionUpdate(
     const livekit::SubscriptionPermissionUpdate& update) {
-	return;
+	if (auto* listener = room_listener_.load()) {
+		listener->SubscriptionPermissionUpdateEvent(update);
+	}
 }
 void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& response) { return; }
 void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }

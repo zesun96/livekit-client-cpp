@@ -107,6 +107,19 @@ int main(int argc, char** argv) {
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_track_published = on_track_published;
 	lk_room_set_callbacks(room, &callbacks);
+	{
+		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");
+		if (allowed_subscriber != NULL && allowed_subscriber[0] != '\0') {
+			lk_participant_track_permission_t permission;
+			lk_participant_track_permission_init(&permission);
+			permission.participant_identity = allowed_subscriber;
+			permission.allow_all = 1;
+			if (lk_room_set_track_subscription_permissions(room, 0, &permission, 1) !=
+			    LK_STATUS_OK) {
+				fprintf(stderr, "Subscription permission failed: %s\n", lk_last_error());
+			}
+		}
+	}
 	if (lk_room_register_rpc_method(room, "c.echo", on_echo_rpc, NULL) != LK_STATUS_OK) {
 		fprintf(stderr, "RPC registration failed: %s\n", lk_last_error());
 	}

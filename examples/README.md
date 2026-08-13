@@ -96,6 +96,22 @@ publish/unpublish lifecycle exposed by the official client SDKs.
   $url $publisherToken
 ```
 
+Pass a receiver identity as the optional third argument to deny every other participant access to
+the published audio. Permissions may be configured before connecting and are restored after a
+signal resume or full reconnect:
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_audio/Release/publish_audio.exe" `
+  $url $publisherToken receiver-identity
+```
+
+The C sample provides the same behavior through `LIVEKIT_ALLOWED_SUBSCRIBER` and
+`lk_room_set_track_subscription_permissions()`.
+
+Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
+an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
+again.
+
 ### `publish_video`
 
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.

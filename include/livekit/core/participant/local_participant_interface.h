@@ -24,6 +24,7 @@
 #include "livekit/core/option/option.h"
 #include "livekit/core/participant/participant_interface.h"
 #include "livekit/core/rpc.h"
+#include "livekit/core/subscription_permission.h"
 
 #include "../track/audio_source_interface.h"
 #include "../track/local_track_interface.h"
@@ -78,6 +79,11 @@ public:
 	virtual bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options = {}) = 0;
 	virtual bool SendFile(const std::string& path, FileSendOptions options = {}) = 0;
 	virtual RpcResult PerformRpc(const PerformRpcParams& params) = 0;
+	// Controls who may subscribe to locally published tracks. When all_participants_allowed is
+	// false, omitted participants cannot subscribe to any track.
+	virtual bool SetTrackSubscriptionPermissions(
+	    bool all_participants_allowed,
+	    const std::vector<ParticipantTrackPermission>& participant_permissions = {}) = 0;
 };
 
 } // namespace core

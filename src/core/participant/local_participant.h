@@ -31,6 +31,7 @@
 #include "participant.h"
 
 #include <atomic>
+#include <mutex>
 
 namespace livekit {
 namespace core {
@@ -68,6 +69,10 @@ public:
 	bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
 	RpcResult PerformRpc(const PerformRpcParams& params) override;
+	bool SetTrackSubscriptionPermissions(
+	    bool all_participants_allowed,
+	    const std::vector<ParticipantTrackPermission>& participant_permissions) override;
+	bool ResendTrackSubscriptionPermissions();
 	void SetEventListener(RoomEventInterface* listener);
 
 private:
@@ -75,6 +80,9 @@ private:
 	RoomOptions options_;
 	EncryptionType encryption_type_;
 	std::atomic<RoomEventInterface*> event_listener_{nullptr};
+	std::mutex subscription_permissions_mutex_;
+	bool all_participants_allowed_to_subscribe_ = true;
+	std::vector<ParticipantTrackPermission> participant_track_permissions_;
 
 	// AudioSourceInterface* source_;
 };
