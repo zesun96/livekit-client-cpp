@@ -463,6 +463,12 @@ livekit::DataPacket StreamTrailer(const std::string& id) {
 	return packet;
 }
 
+livekit::DataPacket FailedStreamTrailer(const std::string& id, const std::string& reason) {
+	auto packet = StreamTrailer(id);
+	packet.mutable_stream_trailer()->set_reason(reason);
+	return packet;
+}
+
 TEST(DataStreamStateTest, ReassemblesTextAndByteStreams) {
 	Room room;
 	DataStreamEvents events;
@@ -529,6 +535,69 @@ TEST(DataStreamStateTest, HandlesInlineStreamsAndRejectsInvalidChunks) {
 	EXPECT_TRUE(events.bytes.empty());
 	EXPECT_TRUE(events.files.empty());
 	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, DispatchesRegisteredTopicsIncrementallyWithoutLegacyBuffering) {
+	Room room;
+	DataStreamEvents legacy_events;
+	room.AddEventListener(&legacy_events);
+	std::vector<TextStreamEvent> text_events;
+	std::vector<ByteStreamEvent> byte_events;
+	ASSERT_TRUE(room.RegisterTextStreamHandler(
+	    "stream-topic", [&](const TextStreamEvent& event) { text_events.push_back(event); }));
+	EXPECT_FALSE(room.RegisterTextStreamHandler("stream-topic", [](const TextStreamEvent&) {}));
+
+	auto text_header = StreamHeader("incremental-text", 11);
+	text_header.mutable_stream_header()->set_mime_type("text/plain");
+	text_header.mutable_stream_header()->mutable_text_header();
+	room.DataPacketEvent(text_header);
+	room.DataPacketEvent(StreamChunk("incremental-text", 0, "hello "));
+	room.DataPacketEvent(StreamChunk("incremental-text", 1, "world"));
+	room.DataPacketEvent(StreamTrailer("incremental-text"));
+	ASSERT_EQ(text_events.size(), 4u);
+	EXPECT_EQ(text_events[0].type, DataStreamEventType::Open);
+	EXPECT_EQ(text_events[0].info.participant_identity, "sender");
+	EXPECT_EQ(text_events[1].content, "hello ");
+	EXPECT_EQ(text_events[1].chunk_index, 0u);
+	EXPECT_EQ(text_events[2].content, "world");
+	EXPECT_EQ(text_events[3].type, DataStreamEventType::Closed);
+	EXPECT_TRUE(legacy_events.texts.empty());
+	EXPECT_TRUE(room.UnregisterTextStreamHandler("stream-topic"));
+	EXPECT_FALSE(room.UnregisterTextStreamHandler("stream-topic"));
+
+	ASSERT_TRUE(room.RegisterByteStreamHandler(
+	    "stream-topic", [&](const ByteStreamEvent& event) { byte_events.push_back(event); }));
+	auto bytes_header = StreamHeader("incremental-bytes", 4);
+	bytes_header.mutable_stream_header()->set_mime_type("application/test");
+	bytes_header.mutable_stream_header()->mutable_byte_header()->set_name("payload.bin");
+	room.DataPacketEvent(bytes_header);
+	room.DataPacketEvent(StreamChunk("incremental-bytes", 0, "data"));
+	room.DataPacketEvent(FailedStreamTrailer("incremental-bytes", "sender cancelled"));
+	ASSERT_EQ(byte_events.size(), 3u);
+	EXPECT_EQ(byte_events[0].type, DataStreamEventType::Open);
+	EXPECT_EQ(byte_events[0].info.name, "payload.bin");
+	EXPECT_EQ(byte_events[1].content, std::vector<uint8_t>({'d', 'a', 't', 'a'}));
+	EXPECT_EQ(byte_events[2].type, DataStreamEventType::Failed);
+	EXPECT_EQ(byte_events[2].reason, "sender cancelled");
+	EXPECT_TRUE(legacy_events.bytes.empty());
+	EXPECT_TRUE(room.UnregisterByteStreamHandler("stream-topic"));
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, FailsOpenTopicStreamsWhenRoomDisconnects) {
+	Room room;
+	std::vector<TextStreamEvent> events;
+	ASSERT_TRUE(room.RegisterTextStreamHandler(
+	    "stream-topic", [&](const TextStreamEvent& event) { events.push_back(event); }));
+	auto header = StreamHeader("open-stream", 100);
+	header.mutable_stream_header()->mutable_text_header();
+	room.DataPacketEvent(header);
+	ASSERT_EQ(events.size(), 1u);
+	room.ConnectedEvent({});
+	ASSERT_TRUE(room.Disconnect());
+	ASSERT_EQ(events.size(), 2u);
+	EXPECT_EQ(events.back().type, DataStreamEventType::Failed);
+	EXPECT_EQ(events.back().reason, "room disconnected");
 }
 
 TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {

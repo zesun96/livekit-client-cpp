@@ -76,6 +76,11 @@ public:
 	virtual ParticipantInterface* GetParticipantBySid(std::string sid) = 0;
 	ParticipantInterface* GetParticipantByIdentity(std::string identity);
 	virtual ParticipantInterface* GetParticipantByName(std::string name) = 0;
+	// Appended for ABI compatibility with existing RoomInterface implementations.
+	virtual bool RegisterTextStreamHandler(std::string, TextStreamHandler) { return false; }
+	virtual bool UnregisterTextStreamHandler(const std::string&) { return false; }
+	virtual bool RegisterByteStreamHandler(std::string, ByteStreamHandler) { return false; }
+	virtual bool UnregisterByteStreamHandler(const std::string&) { return false; }
 
 	// These controls return false when the room is disconnected or the participant/track SID does
 	// not belong to the room.

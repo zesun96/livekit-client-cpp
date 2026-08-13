@@ -48,6 +48,10 @@ public:
 	virtual void RemoveEventListener() override;
 	bool RegisterRpcMethod(std::string method, RpcHandler handler) override;
 	bool UnregisterRpcMethod(const std::string& method) override;
+	bool RegisterTextStreamHandler(std::string topic, TextStreamHandler handler) override;
+	bool UnregisterTextStreamHandler(const std::string& topic) override;
+	bool RegisterByteStreamHandler(std::string topic, ByteStreamHandler handler) override;
+	bool UnregisterByteStreamHandler(const std::string& topic) override;
 	RoomState State() const;
 	DisconnectReason LastDisconnectReason() const;
 	virtual bool IsConnected() override;
@@ -115,15 +119,22 @@ private:
 	RemoteParticipant::PublicationHandlers
 	CreateRemotePublicationHandlers(const std::string& participant_sid);
 	void ResendRemoteTrackPreferences();
+	void FailIncomingDataStreams(const std::string& reason);
 
 	struct IncomingFile {
 		FileReceivedEvent event;
+		ByteStreamInfo info;
+		ByteStreamHandler handler;
 		std::optional<uint64_t> expected_length;
+		uint64_t received_length = 0;
 		uint64_t next_chunk = 0;
 	};
 	struct IncomingText {
 		TextReceivedEvent event;
+		TextStreamInfo info;
+		TextStreamHandler handler;
 		std::optional<uint64_t> expected_length;
+		uint64_t received_length = 0;
 		uint64_t next_chunk = 0;
 	};
 
@@ -142,6 +153,9 @@ private:
 	std::mutex incoming_streams_mutex_;
 	std::map<std::string, IncomingFile> incoming_files_;
 	std::map<std::string, IncomingText> incoming_texts_;
+	std::mutex stream_handlers_mutex_;
+	std::map<std::string, TextStreamHandler> text_stream_handlers_;
+	std::map<std::string, ByteStreamHandler> byte_stream_handlers_;
 	ServerInfo server_info_;
 	mutable std::mutex room_info_mutex_;
 	livekit::Room room_info_;

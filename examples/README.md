@@ -54,7 +54,8 @@ A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It r
 participant, and track callbacks, connects, reads the local identity into a caller-owned buffer,
 reports subscription failures (including unsupported codecs and missing tracks), and cleans up the
 room and runtime. For remote video it requests medium quality at 24 FPS through
-`lk_room_update_remote_track_settings()` and prints stream/subscription state changes.
+`lk_room_update_remote_track_settings()`, prints track state changes, and demonstrates the opaque
+incremental text-stream writer and topic handler C APIs.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
@@ -139,8 +140,9 @@ common publish settings and intentionally want to rebuild every publisher sender
 
 ### `data_transfer`
 
-Sends text, in-memory bytes, and the selected file using LiveKit data streams compatible with the
-official JS and Go SDKs.
+Sends one-shot text, in-memory bytes, the selected file, and a two-write incremental text stream
+using LiveKit data streams compatible with the official JS and Go SDKs. Run `room_event` first to
+observe Open/Chunk/Closed delivery for the incremental stream.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/data_transfer/Release/data_transfer.exe" `
@@ -187,4 +189,5 @@ token, then run one of the publishing examples in another terminal:
 ```
 
 The receiver reports track subscription and the first decoded audio or video frame. For
-`data_transfer`, it reports the text stream, byte stream, and completed file size.
+`data_transfer`, it reports one-shot text/bytes, incremental text chunks, and the completed file
+size.

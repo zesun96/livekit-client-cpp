@@ -125,6 +125,12 @@ int main(int argc, char* argv[]) {
 	auto room = livekit::core::CreateRoomUnique();
 	RoomEvents events;
 	room->AddEventListener(&events);
+	room->RegisterTextStreamHandler(
+	    "incremental-text-transfer", [](const livekit::core::TextStreamEvent& event) {
+		    std::cout << "Incremental text stream " << event.info.stream_id
+		              << ": state=" << static_cast<int>(event.type)
+		              << ", chunk-bytes=" << event.content.size() << std::endl;
+	    });
 	if (!room->Connect(arguments.url, arguments.token) ||
 	    !livekit::examples::WaitUntil([&] { return events.connected(); })) {
 		std::cerr << "Failed to connect to LiveKit" << std::endl;
@@ -147,6 +153,7 @@ int main(int argc, char* argv[]) {
 	std::cout << "Listening for room events for " << listen_seconds << " seconds..." << std::endl;
 	std::this_thread::sleep_for(std::chrono::seconds(listen_seconds));
 	room->Disconnect();
+	room->UnregisterTextStreamHandler("incremental-text-transfer");
 	room->RemoveEventListener();
 	return 0;
 }

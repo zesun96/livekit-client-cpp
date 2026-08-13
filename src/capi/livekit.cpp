@@ -63,6 +63,14 @@ struct lk_rpc_result {
 	core::RpcResult result;
 };
 
+struct lk_text_stream_writer {
+	std::unique_ptr<core::TextStreamWriterInterface> writer;
+};
+
+struct lk_byte_stream_writer {
+	std::unique_ptr<core::ByteStreamWriterInterface> writer;
+};
+
 namespace {
 
 thread_local std::string last_error;
@@ -203,6 +211,19 @@ lk_track_subscription_status_t ToCTrackSubscriptionStatus(core::TrackSubscriptio
 		return LK_TRACK_SUBSCRIPTION_STATUS_SUBSCRIBED;
 	default:
 		return LK_TRACK_SUBSCRIPTION_STATUS_UNSUBSCRIBED;
+	}
+}
+
+lk_data_stream_event_type_t ToCDataStreamEventType(core::DataStreamEventType type) {
+	switch (type) {
+	case core::DataStreamEventType::Chunk:
+		return LK_DATA_STREAM_EVENT_CHUNK;
+	case core::DataStreamEventType::Closed:
+		return LK_DATA_STREAM_EVENT_CLOSED;
+	case core::DataStreamEventType::Failed:
+		return LK_DATA_STREAM_EVENT_FAILED;
+	default:
+		return LK_DATA_STREAM_EVENT_OPEN;
 	}
 }
 
@@ -814,6 +835,24 @@ void lk_byte_send_options_init(lk_byte_send_options_t* options) {
 		*options = {};
 		options->struct_size = sizeof(*options);
 		options->mime_type = "application/octet-stream";
+		options->chunk_size = 15000;
+	}
+}
+
+void lk_stream_text_options_init(lk_stream_text_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->chunk_size = 15000;
+	}
+}
+
+void lk_stream_bytes_options_init(lk_stream_bytes_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->mime_type = "application/octet-stream";
+		options->name = "unknown";
 		options->chunk_size = 15000;
 	}
 }
@@ -1650,6 +1689,351 @@ lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
 		return participant->SendFile(path, std::move(send_options))
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to send file");
+	});
+}
+
+lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t* options,
+                                lk_text_stream_writer_t** writer) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || writer == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and writer output are required");
+		}
+		*writer = nullptr;
+		core::StreamTextOptions converted;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream text options size");
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, topic) && options->topic) {
+				converted.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 && !options->destination_identities) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				converted.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, attribute_count) &&
+			    !CopyAttributes(options->attributes, options->attribute_count,
+			                    converted.attributes)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream text attributes");
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, reply_to_stream_id) &&
+			    options->reply_to_stream_id) {
+				converted.reply_to_stream_id = options->reply_to_stream_id;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, attached_stream_id_count)) {
+				if (options->attached_stream_id_count != 0 && !options->attached_stream_ids) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "attached stream IDs are null");
+				}
+				converted.attached_stream_ids = DestinationIdentities(
+				    options->attached_stream_ids, options->attached_stream_id_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, stream_id) && options->stream_id) {
+				converted.stream_id = options->stream_id;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, has_total_size) &&
+			    options->has_total_size) {
+				if (!LKC_HAS_FIELD(options, lk_stream_text_options_t, total_size)) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "total size is missing");
+				}
+				converted.total_size = options->total_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, chunk_size)) {
+				converted.chunk_size = options->chunk_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, update)) {
+				converted.update = options->update != 0;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, version)) {
+				converted.version = options->version;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, on_progress) &&
+			    options->on_progress) {
+				auto callback = options->on_progress;
+				auto* user_data =
+				    LKC_HAS_FIELD(options, lk_stream_text_options_t, progress_user_data)
+				        ? options->progress_user_data
+				        : nullptr;
+				converted.on_progress = [callback, user_data](uint64_t sent,
+				                                              std::optional<uint64_t> total) {
+					callback(user_data, sent, total.has_value(), total.value_or(0));
+				};
+			}
+		}
+		auto core_writer = participant->StreamText(std::move(converted));
+		if (!core_writer) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open text stream");
+		}
+		auto handle = std::make_unique<lk_text_stream_writer>();
+		handle->writer = std::move(core_writer);
+		*writer = handle.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_text_stream_writer_write(lk_text_stream_writer_t* writer, const char* text,
+                                        size_t text_size) {
+	return Guard([&] {
+		if (!writer || !writer->writer || (!text && text_size != 0)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer and text are required");
+		}
+		const std::string value = text_size == 0 ? std::string{} : std::string(text, text_size);
+		return writer->writer->Write(value)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write text stream");
+	});
+}
+
+lk_status_t lk_text_stream_writer_close(lk_text_stream_writer_t* writer) {
+	return Guard([&] {
+		return writer && writer->writer && writer->writer->Close()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE,
+		                     "text stream is already closed or incomplete");
+	});
+}
+
+lk_status_t lk_text_stream_writer_cancel(lk_text_stream_writer_t* writer, const char* reason) {
+	return Guard([&] {
+		if (!writer || !writer->writer) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
+		}
+		return writer->writer->Cancel(reason ? reason : "cancelled")
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
+	});
+}
+
+size_t lk_text_stream_writer_id(const lk_text_stream_writer_t* writer, char* buffer,
+                                size_t buffer_size) {
+	return SizeGuard([&] {
+		return writer && writer->writer
+		           ? CopyString(writer->writer->Info().stream_id, buffer, buffer_size)
+		           : 0;
+	});
+}
+
+int lk_text_stream_writer_is_closed(const lk_text_stream_writer_t* writer) {
+	return writer && writer->writer && writer->writer->IsClosed();
+}
+
+void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer) {
+	try {
+		delete writer;
+	} catch (...) {
+		SetError("exception while destroying text stream writer");
+	}
+}
+
+lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_t* options,
+                                 lk_byte_stream_writer_t** writer) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || writer == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and writer output are required");
+		}
+		*writer = nullptr;
+		core::StreamBytesOptions converted;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream byte options size");
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, topic) && options->topic) {
+				converted.topic = options->topic;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, mime_type) &&
+			    options->mime_type) {
+				converted.mime_type = options->mime_type;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, name) && options->name) {
+				converted.name = options->name;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, destination_identity_count)) {
+				if (options->destination_identity_count != 0 && !options->destination_identities) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "destination identities are null");
+				}
+				converted.destination_identities = DestinationIdentities(
+				    options->destination_identities, options->destination_identity_count);
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, attribute_count) &&
+			    !CopyAttributes(options->attributes, options->attribute_count,
+			                    converted.attributes)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream byte attributes");
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, stream_id) &&
+			    options->stream_id) {
+				converted.stream_id = options->stream_id;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, has_total_size) &&
+			    options->has_total_size) {
+				if (!LKC_HAS_FIELD(options, lk_stream_bytes_options_t, total_size)) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "total size is missing");
+				}
+				converted.total_size = options->total_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, chunk_size)) {
+				converted.chunk_size = options->chunk_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, on_progress) &&
+			    options->on_progress) {
+				auto callback = options->on_progress;
+				auto* user_data =
+				    LKC_HAS_FIELD(options, lk_stream_bytes_options_t, progress_user_data)
+				        ? options->progress_user_data
+				        : nullptr;
+				converted.on_progress = [callback, user_data](uint64_t sent,
+				                                              std::optional<uint64_t> total) {
+					callback(user_data, sent, total.has_value(), total.value_or(0));
+				};
+			}
+		}
+		auto core_writer = participant->StreamBytes(std::move(converted));
+		if (!core_writer) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open byte stream");
+		}
+		auto handle = std::make_unique<lk_byte_stream_writer>();
+		handle->writer = std::move(core_writer);
+		*writer = handle.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_byte_stream_writer_write(lk_byte_stream_writer_t* writer, const uint8_t* data,
+                                        size_t data_size) {
+	return Guard([&] {
+		if (!writer || !writer->writer || (!data && data_size != 0)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer and data are required");
+		}
+		std::vector<uint8_t> value;
+		if (data_size != 0) {
+			value.assign(data, data + data_size);
+		}
+		return writer->writer->Write(value)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write byte stream");
+	});
+}
+
+lk_status_t lk_byte_stream_writer_close(lk_byte_stream_writer_t* writer) {
+	return Guard([&] {
+		return writer && writer->writer && writer->writer->Close()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE,
+		                     "byte stream is already closed or incomplete");
+	});
+}
+
+lk_status_t lk_byte_stream_writer_cancel(lk_byte_stream_writer_t* writer, const char* reason) {
+	return Guard([&] {
+		if (!writer || !writer->writer) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
+		}
+		return writer->writer->Cancel(reason ? reason : "cancelled")
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
+	});
+}
+
+size_t lk_byte_stream_writer_id(const lk_byte_stream_writer_t* writer, char* buffer,
+                                size_t buffer_size) {
+	return SizeGuard([&] {
+		return writer && writer->writer
+		           ? CopyString(writer->writer->Info().stream_id, buffer, buffer_size)
+		           : 0;
+	});
+}
+
+int lk_byte_stream_writer_is_closed(const lk_byte_stream_writer_t* writer) {
+	return writer && writer->writer && writer->writer->IsClosed();
+}
+
+void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer) {
+	try {
+		delete writer;
+	} catch (...) {
+		SetError("exception while destroying byte stream writer");
+	}
+}
+
+lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* topic,
+                                                 lk_text_stream_handler handler, void* user_data) {
+	return Guard([&] {
+		if (!room || !room->room || !topic || !handler) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, topic, and handler are required");
+		}
+		const bool registered = room->room->RegisterTextStreamHandler(
+		    topic, [room, handler, user_data](const core::TextStreamEvent& event) {
+			    std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex);
+			    const lk_text_stream_event_t converted{ToCDataStreamEventType(event.type),
+			                                           event.info.stream_id.c_str(),
+			                                           event.info.mime_type.c_str(),
+			                                           event.info.topic.c_str(),
+			                                           event.info.participant_identity.c_str(),
+			                                           event.content.data(),
+			                                           event.content.size(),
+			                                           event.chunk_index,
+			                                           event.info.total_size.has_value(),
+			                                           event.info.total_size.value_or(0),
+			                                           event.reason.c_str()};
+			    handler(user_data, room, &converted);
+		    });
+		return registered
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "text stream topic is already registered");
+	});
+}
+
+lk_status_t lk_room_unregister_text_stream_handler(lk_room_t* room, const char* topic) {
+	return Guard([&] {
+		if (!room || !room->room || !topic) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and topic are required");
+		}
+		return room->room->UnregisterTextStreamHandler(topic)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "text stream topic is not registered");
+	});
+}
+
+lk_status_t lk_room_register_byte_stream_handler(lk_room_t* room, const char* topic,
+                                                 lk_byte_stream_handler handler, void* user_data) {
+	return Guard([&] {
+		if (!room || !room->room || !topic || !handler) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, topic, and handler are required");
+		}
+		const bool registered = room->room->RegisterByteStreamHandler(
+		    topic, [room, handler, user_data](const core::ByteStreamEvent& event) {
+			    std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex);
+			    const lk_byte_stream_event_t converted{ToCDataStreamEventType(event.type),
+			                                           event.info.stream_id.c_str(),
+			                                           event.info.name.c_str(),
+			                                           event.info.mime_type.c_str(),
+			                                           event.info.topic.c_str(),
+			                                           event.info.participant_identity.c_str(),
+			                                           event.content.data(),
+			                                           event.content.size(),
+			                                           event.chunk_index,
+			                                           event.info.total_size.has_value(),
+			                                           event.info.total_size.value_or(0),
+			                                           event.reason.c_str()};
+			    handler(user_data, room, &converted);
+		    });
+		return registered
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "byte stream topic is already registered");
+	});
+}
+
+lk_status_t lk_room_unregister_byte_stream_handler(lk_room_t* room, const char* topic) {
+	return Guard([&] {
+		if (!room || !room->room || !topic) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and topic are required");
+		}
+		return room->room->UnregisterByteStreamHandler(topic)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "byte stream topic is not registered");
 	});
 }
 

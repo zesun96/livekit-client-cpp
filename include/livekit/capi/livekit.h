@@ -38,6 +38,8 @@ typedef struct lk_audio_source lk_audio_source_t;
 typedef struct lk_video_source lk_video_source_t;
 typedef struct lk_local_track lk_local_track_t;
 typedef struct lk_rpc_result lk_rpc_result_t;
+typedef struct lk_text_stream_writer lk_text_stream_writer_t;
+typedef struct lk_byte_stream_writer lk_byte_stream_writer_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -136,6 +138,13 @@ typedef enum lk_rpc_error_code {
 	LK_RPC_ERROR_SEND_FAILED = 1505
 } lk_rpc_error_code_t;
 
+typedef enum lk_data_stream_event_type {
+	LK_DATA_STREAM_EVENT_OPEN = 0,
+	LK_DATA_STREAM_EVENT_CHUNK = 1,
+	LK_DATA_STREAM_EVENT_CLOSED = 2,
+	LK_DATA_STREAM_EVENT_FAILED = 3
+} lk_data_stream_event_type_t;
+
 typedef struct lk_participant_info {
 	const char* sid;
 	const char* identity;
@@ -203,6 +212,35 @@ typedef struct lk_text_received {
 	int64_t timestamp;
 } lk_text_received_t;
 
+typedef struct lk_text_stream_event {
+	lk_data_stream_event_type_t type;
+	const char* stream_id;
+	const char* mime_type;
+	const char* topic;
+	const char* participant_identity;
+	const char* content;
+	size_t content_size;
+	uint64_t chunk_index;
+	int has_total_size;
+	uint64_t total_size;
+	const char* reason;
+} lk_text_stream_event_t;
+
+typedef struct lk_byte_stream_event {
+	lk_data_stream_event_type_t type;
+	const char* stream_id;
+	const char* name;
+	const char* mime_type;
+	const char* topic;
+	const char* participant_identity;
+	const uint8_t* content;
+	size_t content_size;
+	uint64_t chunk_index;
+	int has_total_size;
+	uint64_t total_size;
+	const char* reason;
+} lk_byte_stream_event_t;
+
 typedef struct lk_attribute {
 	const char* key;
 	const char* value;
@@ -224,6 +262,12 @@ typedef struct lk_rpc_handler_result {
 
 typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
                                                   const lk_rpc_invocation_t* invocation);
+typedef void (*lk_data_stream_progress_callback)(void* user_data, uint64_t bytes_sent,
+                                                 int has_total_size, uint64_t total_size);
+typedef void (*lk_text_stream_handler)(void* user_data, lk_room_t* room,
+                                       const lk_text_stream_event_t* event);
+typedef void (*lk_byte_stream_handler)(void* user_data, lk_room_t* room,
+                                       const lk_byte_stream_event_t* event);
 
 typedef void (*lk_room_event_callback)(void* user_data, lk_room_t* room);
 typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
@@ -372,6 +416,43 @@ typedef struct lk_byte_send_options {
 	size_t chunk_size;
 } lk_byte_send_options_t;
 
+typedef struct lk_stream_text_options {
+	size_t struct_size;
+	const char* topic;
+	const char* const* destination_identities;
+	size_t destination_identity_count;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	const char* reply_to_stream_id;
+	const char* const* attached_stream_ids;
+	size_t attached_stream_id_count;
+	const char* stream_id;
+	int has_total_size;
+	uint64_t total_size;
+	size_t chunk_size;
+	int update;
+	int32_t version;
+	lk_data_stream_progress_callback on_progress;
+	void* progress_user_data;
+} lk_stream_text_options_t;
+
+typedef struct lk_stream_bytes_options {
+	size_t struct_size;
+	const char* topic;
+	const char* mime_type;
+	const char* name;
+	const char* const* destination_identities;
+	size_t destination_identity_count;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	const char* stream_id;
+	int has_total_size;
+	uint64_t total_size;
+	size_t chunk_size;
+	lk_data_stream_progress_callback on_progress;
+	void* progress_user_data;
+} lk_stream_bytes_options_t;
+
 typedef struct lk_rpc_perform_options {
 	size_t struct_size;
 	const char* destination_identity;
@@ -413,6 +494,8 @@ LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
 LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
+LKC_API void lk_stream_text_options_init(lk_stream_text_options_t* options);
+LKC_API void lk_stream_bytes_options_init(lk_stream_bytes_options_t* options);
 LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
 LKC_API void lk_participant_track_permission_init(lk_participant_track_permission_t* permission);
 LKC_API void lk_remote_track_settings_init(lk_remote_track_settings_t* settings);
@@ -483,6 +566,36 @@ LKC_API lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, siz
                                        const lk_byte_send_options_t* options);
 LKC_API lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
                                       const lk_file_send_options_t* options);
+LKC_API lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t* options,
+                                        lk_text_stream_writer_t** writer);
+LKC_API lk_status_t lk_text_stream_writer_write(lk_text_stream_writer_t* writer, const char* text,
+                                                size_t text_size);
+LKC_API lk_status_t lk_text_stream_writer_close(lk_text_stream_writer_t* writer);
+LKC_API lk_status_t lk_text_stream_writer_cancel(lk_text_stream_writer_t* writer,
+                                                 const char* reason);
+LKC_API size_t lk_text_stream_writer_id(const lk_text_stream_writer_t* writer, char* buffer,
+                                        size_t buffer_size);
+LKC_API int lk_text_stream_writer_is_closed(const lk_text_stream_writer_t* writer);
+LKC_API void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer);
+LKC_API lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_t* options,
+                                         lk_byte_stream_writer_t** writer);
+LKC_API lk_status_t lk_byte_stream_writer_write(lk_byte_stream_writer_t* writer,
+                                                const uint8_t* data, size_t data_size);
+LKC_API lk_status_t lk_byte_stream_writer_close(lk_byte_stream_writer_t* writer);
+LKC_API lk_status_t lk_byte_stream_writer_cancel(lk_byte_stream_writer_t* writer,
+                                                 const char* reason);
+LKC_API size_t lk_byte_stream_writer_id(const lk_byte_stream_writer_t* writer, char* buffer,
+                                        size_t buffer_size);
+LKC_API int lk_byte_stream_writer_is_closed(const lk_byte_stream_writer_t* writer);
+LKC_API void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer);
+LKC_API lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* topic,
+                                                         lk_text_stream_handler handler,
+                                                         void* user_data);
+LKC_API lk_status_t lk_room_unregister_text_stream_handler(lk_room_t* room, const char* topic);
+LKC_API lk_status_t lk_room_register_byte_stream_handler(lk_room_t* room, const char* topic,
+                                                         lk_byte_stream_handler handler,
+                                                         void* user_data);
+LKC_API lk_status_t lk_room_unregister_byte_stream_handler(lk_room_t* room, const char* topic);
 
 LKC_API lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* method,
                                                 lk_rpc_handler handler, void* user_data);
