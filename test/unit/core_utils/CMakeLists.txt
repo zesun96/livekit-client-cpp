@@ -14,12 +14,14 @@ add_executable(
   websocket_data_test.cpp
   uri_test.cpp
   async_utils_test.cpp
+  data_channel_backpressure_test.cpp
   signal_url_test.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/signal_url.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/uri.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_uri.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_data.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/debouncer.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_channel_backpressure.cpp
 )
 
 target_compile_features(livekit_core_utils_tests PRIVATE cxx_std_20)

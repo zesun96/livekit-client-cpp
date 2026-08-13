@@ -93,6 +93,7 @@ public:
 	SubscriptionPermissionUpdateEvent(const livekit::SubscriptionPermissionUpdate& update) override;
 	void SubscriptionErrorEvent(const livekit::SubscriptionResponse& response) override;
 	void StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& updates) override;
+	void DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;

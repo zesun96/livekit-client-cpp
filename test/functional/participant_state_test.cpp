@@ -430,10 +430,14 @@ public:
 	void OnTextReceived(const TextReceivedEvent& event) override { texts.push_back(event); }
 	void OnByteReceived(const ByteReceivedEvent& event) override { bytes.push_back(event); }
 	void OnFileReceived(const FileReceivedEvent& event) override { files.push_back(event); }
+	void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus& status) override {
+		buffer_statuses.push_back(status);
+	}
 
 	std::vector<TextReceivedEvent> texts;
 	std::vector<ByteReceivedEvent> bytes;
 	std::vector<FileReceivedEvent> files;
+	std::vector<DataChannelBufferStatus> buffer_statuses;
 };
 
 livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
@@ -598,6 +602,18 @@ TEST(DataStreamStateTest, FailsOpenTopicStreamsWhenRoomDisconnects) {
 	ASSERT_EQ(events.size(), 2u);
 	EXPECT_EQ(events.back().type, DataStreamEventType::Failed);
 	EXPECT_EQ(events.back().reason, "room disconnected");
+}
+
+TEST(DataStreamStateTest, ForwardsDataChannelBackpressureTransitions) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	room.DataChannelBufferStatusEvent({true, 4 * 1024 * 1024, 4 * 1024 * 1024, 1024 * 1024, true});
+	ASSERT_EQ(events.buffer_statuses.size(), 1u);
+	EXPECT_TRUE(events.buffer_statuses[0].reliable);
+	EXPECT_TRUE(events.buffer_statuses[0].backpressured);
+	EXPECT_EQ(events.buffer_statuses[0].high_water_mark, 4u * 1024 * 1024);
+	room.RemoveEventListener();
 }
 
 TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {

@@ -20,6 +20,8 @@
 #ifndef _LKC_CORE_DETAIL_RTC_ENGINE_H_
 #define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
+#include "data_channel_backpressure.h"
+#include "livekit/core/data_packet.h"
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit/core/rpc.h"
 #include "livekit/core/subscription_permission.h"
@@ -45,9 +47,7 @@ namespace core {
 class RtcSession;
 
 class SignalClient;
-class RtcEngine : public SignalClientObserver,
-                  public RtcSession::RtcSessionListener,
-                  public webrtc::DataChannelObserver {
+class RtcEngine : public SignalClientObserver, public RtcSession::RtcSessionListener {
 public:
 	class RtcEngineListener {
 	public:
@@ -76,6 +76,7 @@ public:
 		virtual void SignalResumedEvent() = 0;
 		virtual void ResumedEvent() = 0;
 		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
+		virtual void DataChannelBufferStatusEvent(const DataChannelBufferStatus&) {}
 	};
 
 	RtcEngine();
@@ -192,12 +193,19 @@ public:
 	              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override;
 
-	/* Pure virtual methods inherited from webrtc::DataChannelObserver. */
-	void OnStateChange() override;
-	void OnMessage(const webrtc::DataBuffer& buffer) override;
-	void OnBufferedAmountChange(uint64_t sent_data_size) override;
-
 private:
+	class DataChannelObserverProxy;
+	friend class DataChannelObserverProxy;
+	void
+	OnDataChannelStateChange(const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel,
+	                         bool reliable, bool monitor_buffer);
+	void OnDataChannelMessage(const webrtc::DataBuffer& buffer);
+	void OnDataChannelBufferedAmountChange(
+	    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable,
+	    bool monitor_buffer);
+	void
+	QueueDataChannelBufferStatusUpdate(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
+	                                   bool reliable);
 	livekit::JoinResponse ConnectTransport(const std::string& url, const std::string& token,
 	                                       const EngineOptions& options);
 	bool ResumeTransport(const std::string& url, const std::string& token,
@@ -212,6 +220,12 @@ private:
 	void registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
 	                         bool publisher_channel = false);
 	void unregisterDataChannels();
+	bool
+	WaitForDataChannelBuffer(const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel,
+	                         bool reliable);
+	void UpdateDataChannelBufferStatus(
+	    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable);
+	void QueueDataChannelBufferStatusEvent(DataChannelBufferStatus status);
 	void StartRpcWorkers();
 	void StopRpcWorkers();
 	void RunRpcWorker();
@@ -246,7 +260,11 @@ private:
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
 	std::mutex data_channels_lock_;
+	std::mutex reliable_data_channel_send_mutex_;
+	std::mutex lossy_data_channel_send_mutex_;
 	std::vector<webrtc::scoped_refptr<webrtc::DataChannelInterface>> data_channels_;
+	std::vector<std::unique_ptr<DataChannelObserverProxy>> data_channel_observers_;
+	DataChannelBackpressure data_channel_backpressure_;
 
 	livekit::JoinResponse join_resp_;
 	mutable std::mutex pending_track_resolvers_lock_;

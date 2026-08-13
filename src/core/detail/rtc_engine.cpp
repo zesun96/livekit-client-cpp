@@ -30,6 +30,9 @@
 namespace {
 constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
+constexpr auto kDataChannelDrainTimeout = std::chrono::seconds(10);
+constexpr uint64_t kDataChannelHighWaterMark = 4ULL * 1024 * 1024;
+constexpr uint64_t kDataChannelLowWaterMark = 1ULL * 1024 * 1024;
 constexpr auto kRecoveryRtcTimeout = std::chrono::seconds(15);
 constexpr auto kRpcAckTimeout = std::chrono::milliseconds(7'000);
 constexpr auto kMinimumRpcTimeout = std::chrono::milliseconds(8'000);
@@ -89,11 +92,42 @@ livekit::ReconnectReason ToReconnectReason(livekit::DisconnectReason reason) {
 namespace livekit {
 namespace core {
 
+class RtcEngine::DataChannelObserverProxy final : public webrtc::DataChannelObserver {
+public:
+	DataChannelObserverProxy(RtcEngine* engine,
+	                         webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
+	                         bool reliable, bool monitor_buffer)
+	    : engine_(engine), channel_(std::move(channel)), reliable_(reliable),
+	      monitor_buffer_(monitor_buffer) {}
+
+	void OnStateChange() override {
+		engine_->OnDataChannelStateChange(channel_, reliable_, monitor_buffer_);
+	}
+
+	void OnMessage(const webrtc::DataBuffer& buffer) override {
+		engine_->OnDataChannelMessage(buffer);
+	}
+
+	void OnBufferedAmountChange(uint64_t) override {
+		engine_->OnDataChannelBufferedAmountChange(channel_, reliable_, monitor_buffer_);
+	}
+
+private:
+	RtcEngine* engine_;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> channel_;
+	bool reliable_;
+	bool monitor_buffer_;
+};
+
 RpcError RpcError::BuiltIn(RpcErrorCode code, std::string data) {
 	return {code, RpcErrorMessage(code), std::move(data)};
 }
 
-RtcEngine::RtcEngine() : is_subscriber_primary_(true) { StartRpcWorkers(); }
+RtcEngine::RtcEngine()
+    : is_subscriber_primary_(true),
+      data_channel_backpressure_(kDataChannelHighWaterMark, kDataChannelLowWaterMark) {
+	StartRpcWorkers();
+}
 
 RtcEngine::~RtcEngine() {
 	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
@@ -621,8 +655,62 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 	if (!packet.SerializeToString(&serialized)) {
 		return false;
 	}
-	return channel->Send(
+	std::lock_guard<std::mutex> send_guard(reliable ? reliable_data_channel_send_mutex_
+	                                                : lossy_data_channel_send_mutex_);
+	UpdateDataChannelBufferStatus(channel, reliable);
+	if (!WaitForDataChannelBuffer(channel, reliable)) {
+		return false;
+	}
+	const bool sent = channel->Send(
 	    webrtc::DataBuffer(webrtc::CopyOnWriteBuffer(serialized.data(), serialized.size()), true));
+	UpdateDataChannelBufferStatus(channel, reliable);
+	return sent;
+}
+
+bool RtcEngine::WaitForDataChannelBuffer(
+    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable) {
+	return channel &&
+	       data_channel_backpressure_.WaitUntilWritable(
+	           reliable, [channel] { return channel->buffered_amount(); },
+	           [channel] { return channel->state() == webrtc::DataChannelInterface::kOpen; },
+	           std::chrono::duration_cast<std::chrono::milliseconds>(kDataChannelDrainTimeout));
+}
+
+void RtcEngine::UpdateDataChannelBufferStatus(
+    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable) {
+	if (!channel) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		const auto& current = reliable ? reliableDC_ : lossyDC_;
+		if (!current || current.get() != channel.get()) {
+			return;
+		}
+	}
+	const auto amount = channel->buffered_amount();
+	const auto transition = data_channel_backpressure_.Update(reliable, amount);
+	if (!transition.changed) {
+		return;
+	}
+	QueueDataChannelBufferStatusEvent({reliable, amount, data_channel_backpressure_.HighWaterMark(),
+	                                   data_channel_backpressure_.LowWaterMark(),
+	                                   transition.backpressured});
+}
+
+void RtcEngine::QueueDataChannelBufferStatusEvent(DataChannelBufferStatus status) {
+	{
+		std::lock_guard<std::mutex> guard(rpc_tasks_mutex_);
+		if (rpc_workers_stopping_) {
+			return;
+		}
+		rpc_tasks_.emplace_back([this, status] {
+			if (auto* listener = room_listener_.load()) {
+				listener->DataChannelBufferStatusEvent(status);
+			}
+		});
+	}
+	rpc_tasks_cv_.notify_one();
 }
 
 bool RtcEngine::RegisterRpcMethod(std::string method, RpcHandler handler) {
@@ -1166,8 +1254,12 @@ void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInt
 			return;
 		}
 	}
-	channel->RegisterObserver(this);
+	const bool reliable = channel->label() != "_lossy";
+	auto observer =
+	    std::make_unique<DataChannelObserverProxy>(this, channel, reliable, publisher_channel);
+	channel->RegisterObserver(observer.get());
 	data_channels_.push_back(channel);
+	data_channel_observers_.push_back(std::move(observer));
 	if (publisher_channel && channel->label() == "_reliable") {
 		reliableDC_ = channel;
 	} else if (publisher_channel && channel->label() == "_lossy") {
@@ -1176,11 +1268,17 @@ void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInt
 }
 
 void RtcEngine::unregisterDataChannels() {
-	std::lock_guard<std::mutex> guard(data_channels_lock_);
-	for (const auto& channel : data_channels_) {
-		channel->UnregisterObserver();
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		for (const auto& channel : data_channels_) {
+			channel->UnregisterObserver();
+		}
+		data_channels_.clear();
+		data_channel_observers_.clear();
+		reliableDC_ = nullptr;
+		lossyDC_ = nullptr;
 	}
-	data_channels_.clear();
+	data_channel_backpressure_.Reset();
 }
 
 void RtcEngine::StartRpcWorkers() {
@@ -1394,9 +1492,16 @@ void RtcEngine::CancelPendingRpc(const std::optional<std::string>& participant_i
 	}
 }
 
-void RtcEngine::OnStateChange() {}
+void RtcEngine::OnDataChannelStateChange(
+    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable,
+    bool monitor_buffer) {
+	data_channel_backpressure_.Notify();
+	if (monitor_buffer) {
+		QueueDataChannelBufferStatusUpdate(channel, reliable);
+	}
+}
 
-void RtcEngine::OnMessage(const webrtc::DataBuffer& buffer) {
+void RtcEngine::OnDataChannelMessage(const webrtc::DataBuffer& buffer) {
 	if (buffer.data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
 		return;
 	}
@@ -1413,7 +1518,28 @@ void RtcEngine::OnMessage(const webrtc::DataBuffer& buffer) {
 	}
 }
 
-void RtcEngine::OnBufferedAmountChange(uint64_t sent_data_size) {}
+void RtcEngine::OnDataChannelBufferedAmountChange(
+    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable,
+    bool monitor_buffer) {
+	data_channel_backpressure_.Notify();
+	if (monitor_buffer) {
+		QueueDataChannelBufferStatusUpdate(channel, reliable);
+	}
+}
+
+void RtcEngine::QueueDataChannelBufferStatusUpdate(
+    webrtc::scoped_refptr<webrtc::DataChannelInterface> channel, bool reliable) {
+	{
+		std::lock_guard<std::mutex> guard(rpc_tasks_mutex_);
+		if (rpc_workers_stopping_) {
+			return;
+		}
+		rpc_tasks_.emplace_back([this, channel = std::move(channel), reliable] {
+			UpdateDataChannelBufferStatus(channel, reliable);
+		});
+	}
+	rpc_tasks_cv_.notify_one();
+}
 
 } // namespace core
 } // namespace livekit

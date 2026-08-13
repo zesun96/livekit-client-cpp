@@ -104,6 +104,13 @@ public:
 		          << std::endl;
 	}
 
+	void OnDataChannelBufferStatusChanged(
+	    const livekit::core::DataChannelBufferStatus& status) override {
+		std::cout << (status.reliable ? "Reliable" : "Lossy")
+		          << " data channel backpressure=" << status.backpressured
+		          << ", buffered=" << status.buffered_amount << std::endl;
+	}
+
 	bool connected() const { return connected_.load(); }
 
 private:
