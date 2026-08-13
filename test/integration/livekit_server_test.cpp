@@ -171,6 +171,12 @@ public:
 		chat_message_ = message;
 	}
 
+	void OnLocalTrackSubscribed(TrackPublicationInterface* publication,
+	                            ParticipantInterface*) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		local_track_subscribed_sid_ = publication != nullptr ? publication->Sid() : "";
+	}
+
 	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
 	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
 	bool video_subscribed() const { return video_subscribed_.load(); }
@@ -217,6 +223,10 @@ public:
 		       chat_message_.edit_timestamp.has_value() == edited &&
 		       chat_message_.participant_identity == identity;
 	}
+	bool local_track_subscribed(const std::string& sid) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return local_track_subscribed_sid_ == sid;
+	}
 	bool permission_changed(const std::string& track_sid, bool allowed,
 	                        uint64_t minimum_count = 1) {
 		std::lock_guard<std::mutex> guard(lock_);
@@ -260,6 +270,7 @@ private:
 	std::string dtmf_digit_;
 	std::string dtmf_identity_;
 	ChatMessage chat_message_;
+	std::string local_track_subscribed_sid_;
 	std::string permission_track_sid_;
 	bool permission_allowed_ = true;
 	uint64_t permission_change_count_ = 0;
@@ -680,6 +691,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 		    receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
 		return participant != nullptr && participant->IsMicrophoneEnabled();
 	}));
+	ASSERT_TRUE(WaitUntil([&] { return events.local_track_subscribed(audio_track->Sid()); }))
+	    << "publisher did not receive TrackSubscribed for " << audio_track->Sid();
 	auto* sender_participant =
 	    receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
 	ASSERT_NE(sender_participant, nullptr);

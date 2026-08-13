@@ -1069,6 +1069,10 @@ void Room::DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) {
 	}
 }
 
+void Room::LocalTrackSubscribedEvent(const std::string& track_sid) {
+	local_participant_->LocalTrackSubscribed(track_sid);
+}
+
 void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 	if (packet.has_user()) {
 		DataReceivedEvent event;

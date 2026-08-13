@@ -535,6 +535,12 @@ public:
 		      participant);
 	}
 
+	void OnLocalTrackSubscribed(core::TrackPublicationInterface* track,
+	                            core::ParticipantInterface* participant) override {
+		Track(callbacks_member(&lk_room_callbacks_t::on_local_track_subscribed), track,
+		      participant);
+	}
+
 	void OnTrackMuted(core::TrackPublicationInterface* track,
 	                  core::ParticipantInterface* participant) override {
 		Track(callbacks_member(&lk_room_callbacks_t::on_track_muted), track, participant);

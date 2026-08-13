@@ -37,6 +37,12 @@ public:
 		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
 	}
 
+	void OnLocalTrackSubscribed(livekit::core::TrackPublicationInterface* publication,
+	                            livekit::core::ParticipantInterface* participant) override {
+		std::cout << "Local track has a subscriber: " << publication->Sid() << " from "
+		          << participant->Identity() << std::endl;
+	}
+
 	void
 	OnParticipantPermissionsChanged(const livekit::core::ParticipantPermissions& previous,
 	                                livekit::core::ParticipantInterface* participant) override {

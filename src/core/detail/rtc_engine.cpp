@@ -1089,7 +1089,14 @@ void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& respons
 	}
 }
 void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
-void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) { return; }
+void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) {
+	if (track_sid.empty()) {
+		return;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->LocalTrackSubscribedEvent(track_sid);
+	}
+}
 
 void RtcEngine::OnLocalOffer(PeerTransport::Target target,
                              std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {

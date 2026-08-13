@@ -475,6 +475,16 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		local_track->SetEnabled(true);
 		if (auto* listener = event_listener_.load()) {
 			listener->OnLocalTrackPublished(publication.get(), this);
+			bool emit_subscribed = false;
+			{
+				std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+				emit_subscribed =
+				    subscribed_local_track_sids_.count(publication->Sid()) != 0 &&
+				    emitted_local_track_subscriptions_.insert(publication->Sid()).second;
+			}
+			if (emit_subscribed) {
+				listener->OnLocalTrackSubscribed(publication.get(), this);
+			}
 		}
 
 	} catch (const std::exception& e) {
@@ -501,6 +511,11 @@ bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_u
 
 	local_track->SetTransceiver(nullptr);
 	RemoveTrackPublication(local_track->Sid());
+	{
+		std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+		subscribed_local_track_sids_.erase(local_track->Sid());
+		emitted_local_track_subscriptions_.erase(local_track->Sid());
+	}
 	if (stop_on_unpublish) {
 		local_track->SetEnabled(false);
 	}
@@ -509,6 +524,30 @@ bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_u
 		listener->OnLocalTrackUnpublished(publication->second.get(), this);
 	}
 	return true;
+}
+
+void LocalParticipant::LocalTrackSubscribed(const std::string& track_sid) {
+	if (track_sid.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+		subscribed_local_track_sids_.insert(track_sid);
+	}
+	auto publications = TrackPublicationsSnapshot();
+	auto publication = publications.find(track_sid);
+	if (publication == publications.end()) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+		if (!emitted_local_track_subscriptions_.insert(track_sid).second) {
+			return;
+		}
+	}
+	if (auto* listener = event_listener_.load()) {
+		listener->OnLocalTrackSubscribed(publication->second.get(), this);
+	}
 }
 
 std::size_t LocalParticipant::UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
