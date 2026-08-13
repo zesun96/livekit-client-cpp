@@ -399,6 +399,13 @@ bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublish
 	return engine_->SendDataPacket(packet, options.reliable);
 }
 
+RpcResult LocalParticipant::PerformRpc(const PerformRpcParams& params) {
+	if (engine_ == nullptr) {
+		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::SendFailed));
+	}
+	return engine_->PerformRpc(params);
+}
+
 bool LocalParticipant::SendText(const std::string& text, TextSendOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize) {

@@ -26,6 +26,7 @@
 #include "participant/remote_participant_interface.h"
 #include "protostruct/livekit_rtc_struct.h"
 #include "room_event_interface.h"
+#include "rpc.h"
 
 #include <memory>
 
@@ -50,6 +51,8 @@ public:
 
 	virtual void AddEventListener(RoomEventInterface* listener) = 0;
 	virtual void RemoveEventListener() = 0;
+	virtual bool RegisterRpcMethod(std::string method, RpcHandler handler) = 0;
+	virtual bool UnregisterRpcMethod(const std::string& method) = 0;
 
 	// Returns the full connection lifecycle state. Unlike IsConnected(), this distinguishes
 	// connecting, disconnecting, and failed rooms.

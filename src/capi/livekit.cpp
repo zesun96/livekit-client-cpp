@@ -1,6 +1,7 @@
 #include "livekit/capi/livekit.h"
 
 #include "livekit/core/livekit_client.h"
+#include "livekit/core/rpc.h"
 #include "livekit/core/track/audio_source_interface.h"
 #include "livekit/core/track/local_track_interface.h"
 #include "livekit/core/track/remote_track_interface.h"
@@ -56,6 +57,10 @@ struct lk_local_track {
 	lk_video_source_t* video_source = nullptr;
 	std::shared_ptr<RoomHandleState> room_state;
 	std::atomic_bool published{false};
+};
+
+struct lk_rpc_result {
+	core::RpcResult result;
 };
 
 namespace {
@@ -686,6 +691,14 @@ void lk_byte_send_options_init(lk_byte_send_options_t* options) {
 		options->struct_size = sizeof(*options);
 		options->mime_type = "application/octet-stream";
 		options->chunk_size = 15000;
+	}
+}
+
+void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->response_timeout_ms = 15000;
 	}
 }
 
@@ -1388,6 +1401,124 @@ lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
 		return participant->SendFile(path, std::move(send_options))
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to send file");
+	});
+}
+
+lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* method, lk_rpc_handler handler,
+                                        void* user_data) {
+	return Guard([&] {
+		if (room == nullptr || method == nullptr || *method == '\0' || handler == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, method, and handler are required");
+		}
+		const bool registered = room->room->RegisterRpcMethod(
+		    method, [handler, user_data](const core::RpcInvocationData& invocation) {
+			    const lk_rpc_invocation_t c_invocation{
+			        invocation.request_id.c_str(), invocation.caller_identity.c_str(),
+			        invocation.payload.c_str(),
+			        static_cast<uint32_t>(invocation.response_timeout.count())};
+			    const auto response = handler(user_data, &c_invocation);
+			    if (response.error_code == 0) {
+				    return core::RpcResult::Success(response.payload != nullptr ? response.payload
+				                                                                : "");
+			    }
+			    auto error =
+			        core::RpcError::BuiltIn(static_cast<core::RpcErrorCode>(response.error_code));
+			    if (response.error_message != nullptr) {
+				    error.message = response.error_message;
+			    }
+			    if (response.error_data != nullptr) {
+				    error.data = response.error_data;
+			    }
+			    return core::RpcResult::Failure(std::move(error));
+		    });
+		return registered ? LK_STATUS_OK
+		                  : Failure(LK_STATUS_INVALID_STATE, "RPC method is already registered");
+	});
+}
+
+lk_status_t lk_room_unregister_rpc_method(lk_room_t* room, const char* method) {
+	return Guard([&] {
+		if (room == nullptr || method == nullptr || *method == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and method are required");
+		}
+		return room->room->UnregisterRpcMethod(method)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_STATE, "RPC method is not registered");
+	});
+}
+
+lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t* options,
+                                lk_rpc_result_t** result) {
+	return Guard([&] {
+		if (result == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC result output is null");
+		}
+		*result = nullptr;
+		if (room == nullptr || options == nullptr ||
+		    options->struct_size < sizeof(options->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and valid RPC options are required");
+		}
+		if (!LKC_HAS_FIELD(options, lk_rpc_perform_options_t, destination_identity) ||
+		    options->destination_identity == nullptr || *options->destination_identity == '\0' ||
+		    !LKC_HAS_FIELD(options, lk_rpc_perform_options_t, method) ||
+		    options->method == nullptr || *options->method == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC destination and method are required");
+		}
+
+		core::PerformRpcParams params;
+		params.destination_identity = options->destination_identity;
+		params.method = options->method;
+		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, payload) &&
+		    options->payload != nullptr) {
+			params.payload = options->payload;
+		}
+		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, response_timeout_ms) &&
+		    options->response_timeout_ms != 0) {
+			params.response_timeout = std::chrono::milliseconds(options->response_timeout_ms);
+		}
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "local participant is unavailable");
+		}
+		auto owned = std::make_unique<lk_rpc_result_t>();
+		owned->result = participant->PerformRpc(params);
+		*result = owned.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_rpc_result_destroy(lk_rpc_result_t* result) { delete result; }
+
+int lk_rpc_result_ok(const lk_rpc_result_t* result) {
+	return result != nullptr && result->result.Ok() ? 1 : 0;
+}
+
+size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return result != nullptr ? CopyString(result->result.payload, buffer, buffer_size) : 0;
+	});
+}
+
+uint32_t lk_rpc_result_error_code(const lk_rpc_result_t* result) {
+	return result != nullptr && result->result.error
+	           ? static_cast<uint32_t>(result->result.error->code)
+	           : 0;
+}
+
+size_t lk_rpc_result_error_message(const lk_rpc_result_t* result, char* buffer,
+                                   size_t buffer_size) {
+	return SizeGuard([&] {
+		return result != nullptr && result->result.error
+		           ? CopyString(result->result.error->message, buffer, buffer_size)
+		           : 0;
+	});
+}
+
+size_t lk_rpc_result_error_data(const lk_rpc_result_t* result, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return result != nullptr && result->result.error
+		           ? CopyString(result->result.error->data, buffer, buffer_size)
+		           : 0;
 	});
 }
 

@@ -67,6 +67,7 @@ public:
 	bool SendText(const std::string& text, TextSendOptions options) override;
 	bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
+	RpcResult PerformRpc(const PerformRpcParams& params) override;
 	void SetEventListener(RoomEventInterface* listener);
 
 private:

@@ -20,6 +20,8 @@
 #include "rtc_session.h"
 #include "signal_client.h"
 
+#include "rtc_base/crypto_random.h"
+
 #include <algorithm>
 #include <future>
 #include <limits>
@@ -29,6 +31,49 @@ namespace {
 constexpr auto kAddTrackTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
 constexpr auto kRecoveryRtcTimeout = std::chrono::seconds(15);
+constexpr auto kRpcAckTimeout = std::chrono::milliseconds(7'000);
+constexpr auto kMinimumRpcTimeout = std::chrono::milliseconds(8'000);
+constexpr uint32_t kRpcVersion = 1;
+
+std::string RpcErrorMessage(livekit::core::RpcErrorCode code) {
+	using livekit::core::RpcErrorCode;
+	switch (code) {
+	case RpcErrorCode::UnsupportedMethod:
+		return "Method not supported at destination";
+	case RpcErrorCode::RecipientNotFound:
+		return "Recipient not found";
+	case RpcErrorCode::RequestPayloadTooLarge:
+		return "Request payload too large";
+	case RpcErrorCode::UnsupportedServer:
+		return "RPC not supported by server";
+	case RpcErrorCode::UnsupportedVersion:
+		return "Unsupported RPC version";
+	case RpcErrorCode::ApplicationError:
+		return "Application error in method handler";
+	case RpcErrorCode::ConnectionTimeout:
+		return "Connection timeout";
+	case RpcErrorCode::ResponseTimeout:
+		return "Response timeout";
+	case RpcErrorCode::RecipientDisconnected:
+		return "Recipient disconnected";
+	case RpcErrorCode::ResponsePayloadTooLarge:
+		return "Response payload too large";
+	case RpcErrorCode::SendFailed:
+		return "Failed to send";
+	}
+	return "RPC error";
+}
+
+std::string TruncateUtf8(const std::string& value, std::size_t maximum_bytes) {
+	if (value.size() <= maximum_bytes) {
+		return value;
+	}
+	std::size_t end = maximum_bytes;
+	while (end > 0 && (static_cast<unsigned char>(value[end]) & 0xc0) == 0x80) {
+		--end;
+	}
+	return value.substr(0, end);
+}
 
 livekit::ReconnectReason ToReconnectReason(livekit::DisconnectReason reason) {
 	if (reason == livekit::DisconnectReason::MEDIA_FAILURE) {
@@ -44,12 +89,17 @@ livekit::ReconnectReason ToReconnectReason(livekit::DisconnectReason reason) {
 namespace livekit {
 namespace core {
 
-RtcEngine::RtcEngine() : is_subscriber_primary_(true) {}
+RpcError RpcError::BuiltIn(RpcErrorCode code, std::string data) {
+	return {code, RpcErrorMessage(code), std::move(data)};
+}
+
+RtcEngine::RtcEngine() : is_subscriber_primary_(true) { StartRpcWorkers(); }
 
 RtcEngine::~RtcEngine() {
 	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
 	room_listener_.store(nullptr);
 	Disconnect();
+	StopRpcWorkers();
 }
 
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
@@ -103,6 +153,19 @@ livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const 
 
 	std::lock_guard<std::mutex> guard(session_lock_);
 	join_resp_ = response;
+	{
+		std::lock_guard<std::mutex> participants_guard(rpc_participants_mutex_);
+		rpc_participant_identities_.clear();
+		if (!response.participant().identity().empty()) {
+			rpc_participant_identities_.insert(response.participant().identity());
+		}
+		for (const auto& participant : response.other_participants()) {
+			if (!participant.identity().empty() &&
+			    participant.state() != livekit::ParticipantInfo_State_DISCONNECTED) {
+				rpc_participant_identities_.insert(participant.identity());
+			}
+		}
+	}
 	is_subscriber_primary_ = response.subscriber_primary();
 	if (!peer_factory_) {
 		peer_factory_ = PeerTransportFactory::Create();
@@ -224,6 +287,7 @@ void RtcEngine::Disconnect() {
 	ResetTransport(true);
 	StopRecovery();
 	ResetTransport(false);
+	CancelPendingRpc(std::nullopt, RpcErrorCode::RecipientDisconnected);
 	{
 		std::lock_guard<std::mutex> guard(access_token_mutex_);
 		access_token_.clear();
@@ -277,6 +341,10 @@ void RtcEngine::ResetTransport(bool send_leave) {
 	{
 		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
 		pending_track_resolvers_.clear();
+	}
+	{
+		std::lock_guard<std::mutex> guard(rpc_participants_mutex_);
+		rpc_participant_identities_.clear();
 	}
 }
 
@@ -557,6 +625,91 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 	    webrtc::DataBuffer(webrtc::CopyOnWriteBuffer(serialized.data(), serialized.size()), true));
 }
 
+bool RtcEngine::RegisterRpcMethod(std::string method, RpcHandler handler) {
+	if (method.empty() || !handler) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(rpc_handlers_mutex_);
+	return rpc_handlers_.emplace(std::move(method), std::move(handler)).second;
+}
+
+bool RtcEngine::UnregisterRpcMethod(const std::string& method) {
+	std::lock_guard<std::mutex> guard(rpc_handlers_mutex_);
+	return rpc_handlers_.erase(method) != 0;
+}
+
+RpcResult RtcEngine::PerformRpc(const PerformRpcParams& params) {
+	if (params.destination_identity.empty()) {
+		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::RecipientNotFound));
+	}
+	if (params.method.empty()) {
+		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::UnsupportedMethod));
+	}
+	if (params.payload.size() > kMaximumRpcPayloadBytes) {
+		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::RequestPayloadTooLarge));
+	}
+	{
+		std::lock_guard<std::mutex> guard(rpc_participants_mutex_);
+		if (!rpc_participant_identities_.contains(params.destination_identity)) {
+			return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::RecipientNotFound));
+		}
+	}
+
+	const auto timeout = (std::max)(params.response_timeout, kMinimumRpcTimeout);
+	const auto timeout_ms =
+	    (std::min)(timeout, std::chrono::milliseconds((std::numeric_limits<uint32_t>::max)()));
+	const auto request_id = webrtc::CreateRandomUuid();
+	auto pending = std::make_shared<PendingRpcCall>();
+	pending->destination_identity = params.destination_identity;
+	{
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		pending_rpc_calls_.emplace(request_id, pending);
+	}
+
+	livekit::DataPacket packet;
+	packet.set_kind(livekit::DataPacket_Kind_RELIABLE);
+	packet.add_destination_identities(params.destination_identity);
+	auto* request = packet.mutable_rpc_request();
+	request->set_id(request_id);
+	request->set_method(params.method);
+	request->set_payload(params.payload);
+	request->set_response_timeout_ms(static_cast<uint32_t>(timeout_ms.count()));
+	request->set_version(kRpcVersion);
+
+	if (!SendDataPacket(packet, true)) {
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		pending_rpc_calls_.erase(request_id);
+		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::SendFailed));
+	}
+
+	const auto started_at = std::chrono::steady_clock::now();
+	const auto response_deadline = started_at + timeout_ms;
+	const auto ack_deadline = (std::min)(started_at + kRpcAckTimeout, response_deadline);
+	std::unique_lock<std::mutex> pending_guard(pending->mutex);
+	if (!pending->cv.wait_until(pending_guard, ack_deadline, [&pending]() {
+		    return pending->acknowledged || pending->completed;
+	    })) {
+		pending->completed = true;
+		pending->result = RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::ConnectionTimeout));
+	}
+	if (!pending->completed &&
+	    !pending->cv.wait_until(pending_guard, response_deadline,
+	                            [&pending]() { return pending->completed; })) {
+		pending->completed = true;
+		pending->result = RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::ResponseTimeout));
+	}
+	auto result = pending->result;
+	pending_guard.unlock();
+	{
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		auto found = pending_rpc_calls_.find(request_id);
+		if (found != pending_rpc_calls_.end() && found->second == pending) {
+			pending_rpc_calls_.erase(found);
+		}
+	}
+	return result;
+}
+
 bool RtcEngine::SetTrackMuted(const std::string& track_sid, bool muted) {
 	if (track_sid.empty()) {
 		return false;
@@ -739,6 +892,24 @@ void RtcEngine::OnClose() {
 	}
 }
 void RtcEngine::OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) {
+	for (const auto& participant : updates) {
+		if (participant.identity().empty()) {
+			continue;
+		}
+		const bool disconnected =
+		    participant.state() == livekit::ParticipantInfo_State_DISCONNECTED;
+		{
+			std::lock_guard<std::mutex> guard(rpc_participants_mutex_);
+			if (disconnected) {
+				rpc_participant_identities_.erase(participant.identity());
+			} else {
+				rpc_participant_identities_.insert(participant.identity());
+			}
+		}
+		if (disconnected) {
+			CancelPendingRpc(participant.identity(), RpcErrorCode::RecipientDisconnected);
+		}
+	}
 	if (auto* listener = room_listener_.load()) {
 		listener->ParticipantUpdateEvent(updates);
 	}
@@ -940,6 +1111,217 @@ void RtcEngine::unregisterDataChannels() {
 	data_channels_.clear();
 }
 
+void RtcEngine::StartRpcWorkers() {
+	std::lock_guard<std::mutex> guard(rpc_tasks_mutex_);
+	rpc_workers_stopping_ = false;
+	for (std::size_t index = 0; index < 2; ++index) {
+		rpc_workers_.emplace_back([this]() { RunRpcWorker(); });
+	}
+}
+
+void RtcEngine::StopRpcWorkers() {
+	{
+		std::lock_guard<std::mutex> guard(rpc_tasks_mutex_);
+		rpc_workers_stopping_ = true;
+		rpc_tasks_.clear();
+	}
+	rpc_tasks_cv_.notify_all();
+	for (auto& worker : rpc_workers_) {
+		if (worker.joinable()) {
+			worker.join();
+		}
+	}
+	rpc_workers_.clear();
+}
+
+void RtcEngine::RunRpcWorker() {
+	while (true) {
+		std::function<void()> task;
+		{
+			std::unique_lock<std::mutex> guard(rpc_tasks_mutex_);
+			rpc_tasks_cv_.wait(guard,
+			                   [this]() { return rpc_workers_stopping_ || !rpc_tasks_.empty(); });
+			if (rpc_workers_stopping_ && rpc_tasks_.empty()) {
+				return;
+			}
+			task = std::move(rpc_tasks_.front());
+			rpc_tasks_.pop_front();
+		}
+		task();
+	}
+}
+
+void RtcEngine::HandleRpcPacket(const livekit::DataPacket& packet) {
+	if (packet.has_rpc_request()) {
+		HandleRpcRequest(packet);
+	} else if (packet.has_rpc_ack()) {
+		HandleRpcAck(packet);
+	} else if (packet.has_rpc_response()) {
+		HandleRpcResponse(packet);
+	}
+}
+
+void RtcEngine::HandleRpcRequest(const livekit::DataPacket& packet) {
+	const auto caller_identity = packet.participant_identity();
+	const auto request = packet.rpc_request();
+	if (caller_identity.empty() || request.id().empty()) {
+		return;
+	}
+
+	livekit::DataPacket ack_packet;
+	ack_packet.set_kind(livekit::DataPacket_Kind_RELIABLE);
+	ack_packet.add_destination_identities(caller_identity);
+	ack_packet.mutable_rpc_ack()->set_request_id(request.id());
+	if (!SendDataPacket(ack_packet, true)) {
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> guard(rpc_tasks_mutex_);
+		if (rpc_workers_stopping_) {
+			return;
+		}
+		rpc_tasks_.emplace_back([this, caller_identity, request]() {
+			if (request.version() != kRpcVersion) {
+				SendRpcResponse(
+				    caller_identity, request.id(),
+				    RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::UnsupportedVersion)));
+				return;
+			}
+
+			RpcHandler handler;
+			{
+				std::lock_guard<std::mutex> guard(rpc_handlers_mutex_);
+				auto found = rpc_handlers_.find(request.method());
+				if (found != rpc_handlers_.end()) {
+					handler = found->second;
+				}
+			}
+			if (!handler) {
+				SendRpcResponse(
+				    caller_identity, request.id(),
+				    RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::UnsupportedMethod)));
+				return;
+			}
+
+			RpcResult result;
+			try {
+				result = handler({request.id(), caller_identity, request.payload(),
+				                  std::chrono::milliseconds(request.response_timeout_ms())});
+			} catch (...) {
+				result = RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::ApplicationError));
+			}
+			SendRpcResponse(caller_identity, request.id(), result);
+		});
+	}
+	rpc_tasks_cv_.notify_one();
+}
+
+void RtcEngine::HandleRpcAck(const livekit::DataPacket& packet) {
+	std::shared_ptr<PendingRpcCall> pending;
+	{
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		auto found = pending_rpc_calls_.find(packet.rpc_ack().request_id());
+		if (found == pending_rpc_calls_.end()) {
+			return;
+		}
+		pending = found->second;
+	}
+	if (!packet.participant_identity().empty() &&
+	    packet.participant_identity() != pending->destination_identity) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(pending->mutex);
+		pending->acknowledged = true;
+	}
+	pending->cv.notify_all();
+}
+
+void RtcEngine::HandleRpcResponse(const livekit::DataPacket& packet) {
+	const auto& response = packet.rpc_response();
+	std::shared_ptr<PendingRpcCall> pending;
+	{
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		auto found = pending_rpc_calls_.find(response.request_id());
+		if (found == pending_rpc_calls_.end()) {
+			return;
+		}
+		pending = found->second;
+	}
+	if (!packet.participant_identity().empty() &&
+	    packet.participant_identity() != pending->destination_identity) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(pending->mutex);
+		if (pending->completed) {
+			return;
+		}
+		pending->acknowledged = true;
+		pending->completed = true;
+		if (response.has_error()) {
+			pending->result =
+			    RpcResult::Failure({static_cast<RpcErrorCode>(response.error().code()),
+			                        response.error().message(), response.error().data()});
+		} else {
+			pending->result = RpcResult::Success(response.payload());
+		}
+	}
+	pending->cv.notify_all();
+}
+
+void RtcEngine::SendRpcResponse(const std::string& destination_identity,
+                                const std::string& request_id, const RpcResult& result) {
+	livekit::DataPacket packet;
+	packet.set_kind(livekit::DataPacket_Kind_RELIABLE);
+	packet.add_destination_identities(destination_identity);
+	auto* response = packet.mutable_rpc_response();
+	response->set_request_id(request_id);
+	if (result.error) {
+		auto* error = response->mutable_error();
+		error->set_code(static_cast<uint32_t>(result.error->code));
+		error->set_message(TruncateUtf8(result.error->message, kMaximumRpcErrorMessageBytes));
+		error->set_data(TruncateUtf8(result.error->data, kMaximumRpcPayloadBytes));
+	} else if (result.payload.size() > kMaximumRpcPayloadBytes) {
+		auto* error = response->mutable_error();
+		const auto rpc_error = RpcError::BuiltIn(RpcErrorCode::ResponsePayloadTooLarge);
+		error->set_code(static_cast<uint32_t>(rpc_error.code));
+		error->set_message(rpc_error.message);
+	} else {
+		response->set_payload(result.payload);
+	}
+	SendDataPacket(packet, true);
+}
+
+void RtcEngine::CancelPendingRpc(const std::optional<std::string>& participant_identity,
+                                 RpcErrorCode code) {
+	std::vector<std::shared_ptr<PendingRpcCall>> cancelled;
+	{
+		std::lock_guard<std::mutex> guard(pending_rpc_mutex_);
+		for (auto current = pending_rpc_calls_.begin(); current != pending_rpc_calls_.end();) {
+			if (!participant_identity ||
+			    current->second->destination_identity == *participant_identity) {
+				cancelled.push_back(current->second);
+				current = pending_rpc_calls_.erase(current);
+			} else {
+				++current;
+			}
+		}
+	}
+	for (const auto& pending : cancelled) {
+		{
+			std::lock_guard<std::mutex> guard(pending->mutex);
+			if (pending->completed) {
+				continue;
+			}
+			pending->completed = true;
+			pending->result = RpcResult::Failure(RpcError::BuiltIn(code));
+		}
+		pending->cv.notify_all();
+	}
+}
+
 void RtcEngine::OnStateChange() {}
 
 void RtcEngine::OnMessage(const webrtc::DataBuffer& buffer) {
@@ -948,6 +1330,10 @@ void RtcEngine::OnMessage(const webrtc::DataBuffer& buffer) {
 	}
 	livekit::DataPacket packet;
 	if (!packet.ParseFromArray(buffer.data.data(), static_cast<int>(buffer.data.size()))) {
+		return;
+	}
+	if (packet.has_rpc_request() || packet.has_rpc_ack() || packet.has_rpc_response()) {
+		HandleRpcPacket(packet);
 		return;
 	}
 	if (auto* listener = room_listener_.load()) {

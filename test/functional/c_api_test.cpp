@@ -8,6 +8,10 @@
 
 namespace {
 
+lk_rpc_handler_result_t EchoRpc(void*, const lk_rpc_invocation_t* invocation) {
+	return {invocation->payload, 0, nullptr, nullptr};
+}
+
 TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	const auto required = lk_version(nullptr, 0);
 	ASSERT_GT(required, 1u);
@@ -50,6 +54,11 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(bytes.struct_size, sizeof(bytes));
 	EXPECT_STREQ(bytes.mime_type, "application/octet-stream");
 	EXPECT_EQ(bytes.chunk_size, 15000u);
+
+	lk_rpc_perform_options_t rpc;
+	lk_rpc_perform_options_init(&rpc);
+	EXPECT_EQ(rpc.struct_size, sizeof(rpc));
+	EXPECT_EQ(rpc.response_timeout_ms, 15000u);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -63,6 +72,9 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_republish_all_tracks(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_text(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_bytes(nullptr, nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_register_rpc_method(nullptr, nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -89,6 +101,10 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_set_callbacks(room, nullptr), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_remote_track_subscribed(room, "missing", "missing", 1),
 	          LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(lk_room_register_rpc_method(room, "echo", EchoRpc, nullptr), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_register_rpc_method(room, "echo", EchoRpc, nullptr), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_INVALID_STATE);
 
 	lk_audio_source_options_t audio_options;
 	lk_audio_source_options_init(&audio_options);

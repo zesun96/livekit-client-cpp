@@ -37,6 +37,7 @@ typedef struct lk_room lk_room_t;
 typedef struct lk_audio_source lk_audio_source_t;
 typedef struct lk_video_source lk_video_source_t;
 typedef struct lk_local_track lk_local_track_t;
+typedef struct lk_rpc_result lk_rpc_result_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -96,6 +97,20 @@ typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_EXCELLENT = 3,
 	LK_CONNECTION_QUALITY_LOST = 4
 } lk_connection_quality_t;
+
+typedef enum lk_rpc_error_code {
+	LK_RPC_ERROR_UNSUPPORTED_METHOD = 1400,
+	LK_RPC_ERROR_RECIPIENT_NOT_FOUND = 1401,
+	LK_RPC_ERROR_REQUEST_PAYLOAD_TOO_LARGE = 1402,
+	LK_RPC_ERROR_UNSUPPORTED_SERVER = 1403,
+	LK_RPC_ERROR_UNSUPPORTED_VERSION = 1404,
+	LK_RPC_ERROR_APPLICATION_ERROR = 1500,
+	LK_RPC_ERROR_CONNECTION_TIMEOUT = 1501,
+	LK_RPC_ERROR_RESPONSE_TIMEOUT = 1502,
+	LK_RPC_ERROR_RECIPIENT_DISCONNECTED = 1503,
+	LK_RPC_ERROR_RESPONSE_PAYLOAD_TOO_LARGE = 1504,
+	LK_RPC_ERROR_SEND_FAILED = 1505
+} lk_rpc_error_code_t;
 
 typedef struct lk_participant_info {
 	const char* sid;
@@ -167,6 +182,23 @@ typedef struct lk_attribute {
 	const char* key;
 	const char* value;
 } lk_attribute_t;
+
+typedef struct lk_rpc_invocation {
+	const char* request_id;
+	const char* caller_identity;
+	const char* payload;
+	uint32_t response_timeout_ms;
+} lk_rpc_invocation_t;
+
+typedef struct lk_rpc_handler_result {
+	const char* payload;
+	uint32_t error_code;
+	const char* error_message;
+	const char* error_data;
+} lk_rpc_handler_result_t;
+
+typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
+                                                  const lk_rpc_invocation_t* invocation);
 
 typedef void (*lk_room_event_callback)(void* user_data, lk_room_t* room);
 typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
@@ -294,6 +326,14 @@ typedef struct lk_byte_send_options {
 	size_t chunk_size;
 } lk_byte_send_options_t;
 
+typedef struct lk_rpc_perform_options {
+	size_t struct_size;
+	const char* destination_identity;
+	const char* method;
+	const char* payload;
+	uint32_t response_timeout_ms;
+} lk_rpc_perform_options_t;
+
 LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
@@ -307,6 +347,7 @@ LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
 LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
+LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
@@ -368,6 +409,21 @@ LKC_API lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, siz
                                        const lk_byte_send_options_t* options);
 LKC_API lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
                                       const lk_file_send_options_t* options);
+
+LKC_API lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* method,
+                                                lk_rpc_handler handler, void* user_data);
+LKC_API lk_status_t lk_room_unregister_rpc_method(lk_room_t* room, const char* method);
+LKC_API lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t* options,
+                                        lk_rpc_result_t** result);
+LKC_API void lk_rpc_result_destroy(lk_rpc_result_t* result);
+LKC_API int lk_rpc_result_ok(const lk_rpc_result_t* result);
+LKC_API size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer,
+                                     size_t buffer_size);
+LKC_API uint32_t lk_rpc_result_error_code(const lk_rpc_result_t* result);
+LKC_API size_t lk_rpc_result_error_message(const lk_rpc_result_t* result, char* buffer,
+                                           size_t buffer_size);
+LKC_API size_t lk_rpc_result_error_data(const lk_rpc_result_t* result, char* buffer,
+                                        size_t buffer_size);
 
 #ifdef __cplusplus
 }
