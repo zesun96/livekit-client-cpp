@@ -85,6 +85,14 @@ enum class DataStreamEventType {
 	Failed = 3,
 };
 
+struct DataChannelBufferStatus {
+	bool reliable = true;
+	uint64_t buffered_amount = 0;
+	uint64_t high_water_mark = 0;
+	uint64_t low_water_mark = 0;
+	bool backpressured = false;
+};
+
 struct DataStreamInfo {
 	std::string stream_id;
 	std::string mime_type;

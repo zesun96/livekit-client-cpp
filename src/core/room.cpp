@@ -1023,6 +1023,12 @@ void Room::StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& u
 	}
 }
 
+void Room::DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) {
+	if (auto* listener = event_listener_.load()) {
+		listener->OnDataChannelBufferStatusChanged(status);
+	}
+}
+
 void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 	if (packet.has_user()) {
 		DataReceivedEvent event;

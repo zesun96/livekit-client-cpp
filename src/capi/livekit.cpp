@@ -568,6 +568,18 @@ public:
 		});
 	}
 
+	void OnDataChannelBufferStatusChanged(const core::DataChannelBufferStatus& status) override {
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_data_channel_buffer_status_changed != nullptr) {
+				const lk_data_channel_buffer_status_t converted{
+				    status.reliable, status.buffered_amount, status.high_water_mark,
+				    status.low_water_mark, status.backpressured};
+				callbacks.on_data_channel_buffer_status_changed(callbacks.user_data, owner_,
+				                                                &converted);
+			}
+		});
+	}
+
 	void OnTrackSubscriptionPermissionChanged(core::TrackPublicationInterface* track,
 	                                          core::RemoteParticipantInterface* participant,
 	                                          bool allowed) override {

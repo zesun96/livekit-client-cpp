@@ -120,6 +120,14 @@ static void on_text_stream(void* user_data, lk_room_t* room, const lk_text_strea
 	       event->reason);
 }
 
+static void on_data_channel_buffer_status(void* user_data, lk_room_t* room,
+                                          const lk_data_channel_buffer_status_t* status) {
+	(void)user_data;
+	(void)room;
+	printf("Data channel backpressure: reliable=%d, active=%d, buffered=%llu\n", status->reliable,
+	       status->backpressured, (unsigned long long)status->buffered_amount);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -166,6 +174,7 @@ int main(int argc, char** argv) {
 	callbacks.on_track_unsubscribed = on_track_unsubscribed;
 	callbacks.on_track_stream_state_changed = on_track_stream_state_changed;
 	callbacks.on_track_subscription_status_changed = on_track_subscription_status_changed;
+	callbacks.on_data_channel_buffer_status_changed = on_data_channel_buffer_status;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

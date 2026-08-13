@@ -137,6 +137,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_track_unsubscribed, nullptr);
 	EXPECT_EQ(callbacks.on_track_stream_state_changed, nullptr);
 	EXPECT_EQ(callbacks.on_track_subscription_status_changed, nullptr);
+	EXPECT_EQ(callbacks.on_data_channel_buffer_status_changed, nullptr);
 
 	lk_remote_track_settings_t settings;
 	lk_remote_track_settings_init(&settings);

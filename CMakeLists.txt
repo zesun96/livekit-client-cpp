@@ -129,6 +129,7 @@ set(
 
   src/core/detail/audio_device.cpp
   src/core/detail/converted_proto.cpp
+  src/core/detail/data_channel_backpressure.cpp
   src/core/detail/debouncer.cpp
   src/core/detail/internals.cpp
   src/core/detail/global_task_queue.cpp

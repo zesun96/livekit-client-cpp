@@ -106,6 +106,7 @@ public:
 	virtual void OnTrackSubscriptionStatusChanged(TrackPublicationInterface*,
 	                                              RemoteParticipantInterface*,
 	                                              TrackSubscriptionStatus) {}
+	virtual void OnDataChannelBufferStatusChanged(const DataChannelBufferStatus&) {}
 };
 
 } // namespace core

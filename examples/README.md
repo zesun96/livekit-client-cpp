@@ -82,6 +82,10 @@ protocol-level reason when the room disconnects. Applications can query the same
 `RoomInterface::LastDisconnectReason()`. The optional third argument controls how many seconds to
 listen and defaults to 30.
 
+The receiver also prints DataChannel backpressure transitions. Reliable and lossy channels use
+independent bounded queues; once a queue reaches the high-water mark, SDK sends wait for it to
+drain below the low-water mark or fail after the bounded timeout.
+
 ```powershell
 & "out/build/vs2022-x64-release/examples/room_event/Release/room_event.exe" `
   $url $receiverToken 30

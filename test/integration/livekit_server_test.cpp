@@ -874,6 +874,35 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	EXPECT_TRUE(receiver->UnregisterTextStreamHandler("integration-stream-text"));
 	EXPECT_TRUE(receiver->UnregisterByteStreamHandler("integration-stream-bytes"));
 
+	std::atomic<uint64_t> large_stream_bytes{0};
+	std::atomic<bool> large_stream_closed{false};
+	ASSERT_TRUE(receiver->RegisterByteStreamHandler(
+	    "integration-large-stream", [&](const ByteStreamEvent& event) {
+		    if (event.type == DataStreamEventType::Chunk) {
+			    large_stream_bytes.fetch_add(event.content.size());
+		    } else if (event.type == DataStreamEventType::Closed) {
+			    large_stream_closed = true;
+		    }
+	    }));
+	constexpr std::size_t large_stream_size = 6 * 1024 * 1024;
+	StreamBytesOptions large_options;
+	large_options.topic = "integration-large-stream";
+	large_options.total_size = large_stream_size;
+	large_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	auto large_writer = sender->GetLocalParticipant()->StreamBytes(large_options);
+	ASSERT_NE(large_writer, nullptr);
+	const std::vector<uint8_t> large_chunk(64 * 1024, 0x5a);
+	for (std::size_t sent = 0; sent < large_stream_size; sent += large_chunk.size()) {
+		ASSERT_TRUE(large_writer->Write(large_chunk));
+	}
+	ASSERT_TRUE(large_writer->Close());
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return large_stream_closed.load() && large_stream_bytes.load() == large_stream_size;
+	    },
+	    std::chrono::seconds(20)));
+	EXPECT_TRUE(receiver->UnregisterByteStreamHandler("integration-large-stream"));
+
 	std::vector<uint8_t> file_payload(40 * 1024);
 	for (std::size_t i = 0; i < file_payload.size(); ++i) {
 		file_payload[i] = static_cast<uint8_t>(i % 251);
