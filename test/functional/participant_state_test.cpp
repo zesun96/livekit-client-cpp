@@ -455,6 +455,14 @@ public:
 		subscribed_track_sid = publication != nullptr ? publication->Sid() : "";
 		subscriber_event_is_local = participant != nullptr && participant->IsLocalParticipant();
 	}
+	void OnSubscribedQualityUpdate(TrackPublicationInterface* publication,
+	                               ParticipantInterface* participant,
+	                               const SubscribedQualityUpdate& update) override {
+		++quality_update_count;
+		quality_track_sid = publication != nullptr ? publication->Sid() : "";
+		quality_event_is_local = participant != nullptr && participant->IsLocalParticipant();
+		quality_update = update;
+	}
 
 	int unpublished_count = 0;
 	std::string track_sid;
@@ -462,6 +470,10 @@ public:
 	int subscribed_count = 0;
 	std::string subscribed_track_sid;
 	bool subscriber_event_is_local = false;
+	int quality_update_count = 0;
+	std::string quality_track_sid;
+	bool quality_event_is_local = false;
+	SubscribedQualityUpdate quality_update;
 };
 
 class ConnectionEvents final : public RoomEventInterface {
@@ -970,6 +982,58 @@ TEST(LocalTrackStateTest, ForwardsFirstRemoteSubscriptionOnce) {
 	EXPECT_TRUE(events.subscriber_event_is_local);
 	room.LocalTrackSubscribedEvent("TR_local");
 	EXPECT_EQ(events.subscribed_count, 1);
+	room.RemoveEventListener();
+}
+
+TEST(LocalTrackStateTest, RetainsAndForwardsSubscribedQualityUpdates) {
+	Room room;
+	LocalTrackEvents events;
+	room.AddEventListener(&events);
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+
+	livekit::TrackInfo info = MakeTrack("TR_video", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	auto publication = std::make_shared<LocalTrackPublication>(info, nullptr);
+	participant->AddTrackPublication(publication);
+
+	livekit::SubscribedQualityUpdate update;
+	update.set_track_sid("TR_video");
+	auto* legacy = update.add_subscribed_qualities();
+	legacy->set_quality(livekit::VideoQuality::HIGH);
+	legacy->set_enabled(true);
+	auto* codec = update.add_subscribed_codecs();
+	codec->set_codec("video/VP8");
+	auto* low = codec->add_qualities();
+	low->set_quality(livekit::VideoQuality::LOW);
+	low->set_enabled(false);
+	auto* high = codec->add_qualities();
+	high->set_quality(livekit::VideoQuality::HIGH);
+	high->set_enabled(true);
+	room.SubscribedQualityUpdateEvent(update);
+
+	EXPECT_EQ(events.quality_update_count, 1);
+	EXPECT_EQ(events.quality_track_sid, "TR_video");
+	EXPECT_TRUE(events.quality_event_is_local);
+	EXPECT_EQ(events.quality_update.track_sid, "TR_video");
+	ASSERT_EQ(events.quality_update.qualities.size(), 1u);
+	EXPECT_EQ(events.quality_update.qualities[0].quality, VideoQuality::High);
+	EXPECT_TRUE(events.quality_update.qualities[0].enabled);
+	ASSERT_EQ(events.quality_update.codecs.size(), 1u);
+	EXPECT_EQ(events.quality_update.codecs[0].codec, "video/VP8");
+	ASSERT_EQ(events.quality_update.codecs[0].qualities.size(), 2u);
+	EXPECT_EQ(events.quality_update.codecs[0].qualities[0].quality, VideoQuality::Low);
+	EXPECT_FALSE(events.quality_update.codecs[0].qualities[0].enabled);
+
+	const auto retained = publication->LastSubscribedQualityUpdate();
+	ASSERT_TRUE(retained.has_value());
+	EXPECT_EQ(retained->track_sid, "TR_video");
+	EXPECT_EQ(retained->codecs[0].qualities[1].quality, VideoQuality::High);
+	EXPECT_TRUE(retained->codecs[0].qualities[1].enabled);
+
+	update.set_track_sid("TR_unknown");
+	room.SubscribedQualityUpdateEvent(update);
+	EXPECT_EQ(events.quality_update_count, 1);
 	room.RemoveEventListener();
 }
 

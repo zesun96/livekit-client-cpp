@@ -238,9 +238,16 @@ bool ToCoreVideoQuality(lk_video_quality_t quality, core::VideoQuality& result) 
 	case LK_VIDEO_QUALITY_HIGH:
 		result = core::VideoQuality::High;
 		return true;
+	case LK_VIDEO_QUALITY_OFF:
+		result = core::VideoQuality::Off;
+		return true;
 	default:
 		return false;
 	}
+}
+
+lk_video_quality_t ToCVideoQuality(core::VideoQuality quality) {
+	return static_cast<lk_video_quality_t>(quality);
 }
 
 lk_room_state_t ToCRoomState(core::RoomInterface::RoomState state) {
@@ -539,6 +546,44 @@ public:
 	                            core::ParticipantInterface* participant) override {
 		Track(callbacks_member(&lk_room_callbacks_t::on_local_track_subscribed), track,
 		      participant);
+	}
+
+	void OnSubscribedQualityUpdate(core::TrackPublicationInterface* track,
+	                               core::ParticipantInterface* participant,
+	                               const core::SubscribedQualityUpdate& update) override {
+		std::vector<lk_subscribed_quality_t> legacy_qualities;
+		legacy_qualities.reserve(update.qualities.size());
+		for (const auto& quality : update.qualities) {
+			legacy_qualities.push_back({ToCVideoQuality(quality.quality), quality.enabled ? 1 : 0});
+		}
+		std::vector<std::vector<lk_subscribed_quality_t>> codec_quality_groups;
+		codec_quality_groups.reserve(update.codecs.size());
+		for (const auto& codec : update.codecs) {
+			auto& qualities = codec_quality_groups.emplace_back();
+			qualities.reserve(codec.qualities.size());
+			for (const auto& quality : codec.qualities) {
+				qualities.push_back({ToCVideoQuality(quality.quality), quality.enabled ? 1 : 0});
+			}
+		}
+		std::vector<lk_subscribed_codec_t> codecs;
+		codecs.reserve(update.codecs.size());
+		for (std::size_t index = 0; index < update.codecs.size(); ++index) {
+			const auto& codec = update.codecs[index];
+			const auto& qualities = codec_quality_groups[index];
+			codecs.push_back({codec.codec.c_str(), qualities.data(), qualities.size()});
+		}
+		const lk_subscribed_quality_update_t c_update{
+		    update.track_sid.c_str(), legacy_qualities.data(), legacy_qualities.size(),
+		    codecs.data(), codecs.size()};
+		OwnedTrackInfo owned_track(track);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_subscribed_quality_update != nullptr) {
+				callbacks.on_subscribed_quality_update(callbacks.user_data, owner_,
+				                                       &owned_track.info, &owned_participant.info,
+				                                       &c_update);
+			}
+		});
 	}
 
 	void OnTrackMuted(core::TrackPublicationInterface* track,

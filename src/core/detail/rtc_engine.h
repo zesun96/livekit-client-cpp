@@ -78,6 +78,7 @@ public:
 		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
 		virtual void DataChannelBufferStatusEvent(const DataChannelBufferStatus&) {}
 		virtual void LocalTrackSubscribedEvent(const std::string&) {}
+		virtual void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate&) {}
 	};
 
 	RtcEngine();

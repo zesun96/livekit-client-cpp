@@ -37,10 +37,14 @@ public:
 
 	void UpdatePublishOptions(TrackPublishOptions option);
 	TrackPublishOptions PublishOptions() const;
+	void UpdateSubscribedQuality(SubscribedQualityUpdate update);
+	std::optional<SubscribedQualityUpdate> LastSubscribedQualityUpdate() const override;
 
 private:
 	mutable std::mutex option_mutex_;
 	TrackPublishOptions option_;
+	mutable std::mutex subscribed_quality_mutex_;
+	std::optional<SubscribedQualityUpdate> subscribed_quality_update_;
 };
 
 } // namespace core

@@ -95,6 +95,7 @@ public:
 	void StreamStateUpdateEvent(const std::vector<livekit::StreamStateInfo>& updates) override;
 	void DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) override;
 	void LocalTrackSubscribedEvent(const std::string& track_sid) override;
+	void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate& update) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;

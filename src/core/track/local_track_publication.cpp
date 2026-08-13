@@ -17,6 +17,8 @@
 
 #include "local_track_publication.h"
 
+#include <utility>
+
 namespace livekit {
 namespace core {
 
@@ -31,6 +33,16 @@ void LocalTrackPublication::UpdatePublishOptions(TrackPublishOptions option) {
 TrackPublishOptions LocalTrackPublication::PublishOptions() const {
 	std::lock_guard<std::mutex> guard(option_mutex_);
 	return option_;
+}
+
+void LocalTrackPublication::UpdateSubscribedQuality(SubscribedQualityUpdate update) {
+	std::lock_guard<std::mutex> guard(subscribed_quality_mutex_);
+	subscribed_quality_update_ = std::move(update);
+}
+
+std::optional<SubscribedQualityUpdate> LocalTrackPublication::LastSubscribedQualityUpdate() const {
+	std::lock_guard<std::mutex> guard(subscribed_quality_mutex_);
+	return subscribed_quality_update_;
 }
 
 } // namespace core

@@ -550,6 +550,25 @@ void LocalParticipant::LocalTrackSubscribed(const std::string& track_sid) {
 	}
 }
 
+void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate update) {
+	if (update.track_sid.empty()) {
+		return;
+	}
+	auto publications = TrackPublicationsSnapshot();
+	auto publication = publications.find(update.track_sid);
+	if (publication == publications.end() || publication->second->Kind() != TrackKind::Video) {
+		return;
+	}
+	auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication->second.get());
+	if (local_publication == nullptr) {
+		return;
+	}
+	local_publication->UpdateSubscribedQuality(update);
+	if (auto* listener = event_listener_.load()) {
+		listener->OnSubscribedQualityUpdate(local_publication, this, update);
+	}
+}
+
 std::size_t LocalParticipant::UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
                                               bool stop_on_unpublish) {
 	std::size_t unpublished = 0;
