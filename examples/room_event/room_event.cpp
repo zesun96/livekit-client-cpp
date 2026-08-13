@@ -139,6 +139,12 @@ public:
 		}
 	}
 
+	void OnMetricsReceived(const livekit::core::MetricsReceivedEvent& metrics) override {
+		std::cout << "Metrics received: series=" << metrics.time_series.size()
+		          << ", events=" << metrics.events.size()
+		          << ", from=" << metrics.participant_identity << std::endl;
+	}
+
 	bool connected() const { return connected_.load(); }
 
 private:

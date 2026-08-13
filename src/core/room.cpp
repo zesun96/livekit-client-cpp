@@ -1116,6 +1116,66 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		}
 		return;
 	}
+	if (packet.has_metrics()) {
+		const auto& metrics = packet.metrics();
+		MetricsReceivedEvent event;
+		event.timestamp_ms = metrics.timestamp_ms();
+		if (metrics.has_normalized_timestamp()) {
+			event.normalized_timestamp = MetricTimestamp{metrics.normalized_timestamp().seconds(),
+			                                             metrics.normalized_timestamp().nanos()};
+		}
+		event.string_data.assign(metrics.str_data().begin(), metrics.str_data().end());
+		event.participant_identity = packet.participant_identity();
+		event.time_series.reserve(static_cast<std::size_t>(metrics.time_series_size()));
+		for (const auto& input : metrics.time_series()) {
+			TimeSeriesMetric series;
+			series.label = input.label();
+			series.participant_identity = input.participant_identity();
+			series.track_sid = input.track_sid();
+			series.rid = input.rid();
+			series.samples.reserve(static_cast<std::size_t>(input.samples_size()));
+			for (const auto& input_sample : input.samples()) {
+				MetricSample sample;
+				sample.timestamp_ms = input_sample.timestamp_ms();
+				if (input_sample.has_normalized_timestamp()) {
+					sample.normalized_timestamp =
+					    MetricTimestamp{input_sample.normalized_timestamp().seconds(),
+					                    input_sample.normalized_timestamp().nanos()};
+				}
+				sample.value = input_sample.value();
+				series.samples.push_back(std::move(sample));
+			}
+			event.time_series.push_back(std::move(series));
+		}
+		event.events.reserve(static_cast<std::size_t>(metrics.events_size()));
+		for (const auto& input : metrics.events()) {
+			EventMetric metric;
+			metric.label = input.label();
+			metric.participant_identity = input.participant_identity();
+			metric.track_sid = input.track_sid();
+			metric.rid = input.rid();
+			metric.start_timestamp_ms = input.start_timestamp_ms();
+			if (input.has_end_timestamp_ms()) {
+				metric.end_timestamp_ms = input.end_timestamp_ms();
+			}
+			if (input.has_normalized_start_timestamp()) {
+				metric.normalized_start_timestamp =
+				    MetricTimestamp{input.normalized_start_timestamp().seconds(),
+				                    input.normalized_start_timestamp().nanos()};
+			}
+			if (input.has_normalized_end_timestamp()) {
+				metric.normalized_end_timestamp =
+				    MetricTimestamp{input.normalized_end_timestamp().seconds(),
+				                    input.normalized_end_timestamp().nanos()};
+			}
+			metric.metadata = input.metadata();
+			event.events.push_back(std::move(metric));
+		}
+		if (auto* listener = event_listener_.load()) {
+			listener->OnMetricsReceived(event);
+		}
+		return;
+	}
 	if (packet.has_stream_header() && packet.stream_header().has_text_header()) {
 		const auto& header = packet.stream_header();
 		if (header.stream_id().empty() ||

@@ -484,6 +484,7 @@ public:
 	void OnTranscriptionReceived(const TranscriptionReceivedEvent& event) override {
 		transcriptions.push_back(event);
 	}
+	void OnMetricsReceived(const MetricsReceivedEvent& event) override { metrics.push_back(event); }
 
 	std::vector<TextReceivedEvent> texts;
 	std::vector<ByteReceivedEvent> bytes;
@@ -492,6 +493,7 @@ public:
 	std::vector<SipDtmfEvent> dtmf_events;
 	std::vector<ChatMessage> chat_messages;
 	std::vector<TranscriptionReceivedEvent> transcriptions;
+	std::vector<MetricsReceivedEvent> metrics;
 };
 
 livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
@@ -759,6 +761,71 @@ TEST(DataStreamStateTest, TracksIncrementalTranscriptionSegments) {
 	EXPECT_TRUE(events.transcriptions[1].segments[0].final);
 	EXPECT_EQ(events.transcriptions[1].segments[0].first_received_time, first_received_time);
 	EXPECT_GE(events.transcriptions[1].segments[0].last_received_time, first_received_time);
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, ForwardsStructuredMetricsBatches) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	livekit::DataPacket packet;
+	packet.set_participant_identity("metrics-sender");
+	auto* metrics = packet.mutable_metrics();
+	metrics->set_timestamp_ms(1234);
+	metrics->mutable_normalized_timestamp()->set_seconds(100);
+	metrics->mutable_normalized_timestamp()->set_nanos(200);
+	metrics->add_str_data("participant");
+	metrics->add_str_data("track");
+	metrics->add_str_data("rid");
+	auto* series = metrics->add_time_series();
+	series->set_label(17);
+	series->set_participant_identity(4096);
+	series->set_track_sid(4097);
+	series->set_rid(4098);
+	auto* sample = series->add_samples();
+	sample->set_timestamp_ms(1200);
+	sample->mutable_normalized_timestamp()->set_seconds(99);
+	sample->mutable_normalized_timestamp()->set_nanos(50);
+	sample->set_value(42.5f);
+	auto* metric_event = metrics->add_events();
+	metric_event->set_label(3);
+	metric_event->set_participant_identity(4096);
+	metric_event->set_track_sid(4097);
+	metric_event->set_rid(4098);
+	metric_event->set_start_timestamp_ms(1100);
+	metric_event->set_end_timestamp_ms(1300);
+	metric_event->mutable_normalized_start_timestamp()->set_seconds(98);
+	metric_event->mutable_normalized_end_timestamp()->set_seconds(101);
+	metric_event->set_metadata("{\"reason\":\"test\"}");
+	room.DataPacketEvent(packet);
+
+	ASSERT_EQ(events.metrics.size(), 1u);
+	const auto& received = events.metrics[0];
+	EXPECT_EQ(received.timestamp_ms, 1234);
+	ASSERT_TRUE(received.normalized_timestamp.has_value());
+	EXPECT_EQ(received.normalized_timestamp->seconds, 100);
+	EXPECT_EQ(received.normalized_timestamp->nanos, 200);
+	EXPECT_EQ(received.participant_identity, "metrics-sender");
+	ASSERT_EQ(received.string_data.size(), 3u);
+	EXPECT_EQ(received.string_data[0], "participant");
+	ASSERT_EQ(received.time_series.size(), 1u);
+	EXPECT_EQ(received.time_series[0].label, 17u);
+	EXPECT_EQ(received.time_series[0].participant_identity, 4096u);
+	EXPECT_EQ(received.time_series[0].track_sid, 4097u);
+	EXPECT_EQ(received.time_series[0].rid, 4098u);
+	ASSERT_EQ(received.time_series[0].samples.size(), 1u);
+	EXPECT_EQ(received.time_series[0].samples[0].timestamp_ms, 1200);
+	ASSERT_TRUE(received.time_series[0].samples[0].normalized_timestamp.has_value());
+	EXPECT_EQ(received.time_series[0].samples[0].normalized_timestamp->seconds, 99);
+	EXPECT_FLOAT_EQ(received.time_series[0].samples[0].value, 42.5f);
+	ASSERT_EQ(received.events.size(), 1u);
+	EXPECT_EQ(received.events[0].label, 3u);
+	EXPECT_EQ(received.events[0].start_timestamp_ms, 1100);
+	ASSERT_TRUE(received.events[0].end_timestamp_ms.has_value());
+	EXPECT_EQ(*received.events[0].end_timestamp_ms, 1300);
+	ASSERT_TRUE(received.events[0].normalized_start_timestamp.has_value());
+	ASSERT_TRUE(received.events[0].normalized_end_timestamp.has_value());
+	EXPECT_EQ(received.events[0].metadata, "{\"reason\":\"test\"}");
 	room.RemoveEventListener();
 }
 

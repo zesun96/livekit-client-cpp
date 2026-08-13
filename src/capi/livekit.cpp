@@ -681,6 +681,66 @@ public:
 		});
 	}
 
+	void OnMetricsReceived(const core::MetricsReceivedEvent& event) override {
+		auto timestamp = [](const std::optional<core::MetricTimestamp>& value) {
+			return value.has_value() ? lk_metric_timestamp_t{value->seconds, value->nanos}
+			                         : lk_metric_timestamp_t{};
+		};
+		std::vector<const char*> string_data;
+		string_data.reserve(event.string_data.size());
+		for (const auto& value : event.string_data) {
+			string_data.push_back(value.c_str());
+		}
+		std::vector<std::vector<lk_metric_sample_t>> sample_groups;
+		sample_groups.reserve(event.time_series.size());
+		for (const auto& series : event.time_series) {
+			auto& samples = sample_groups.emplace_back();
+			samples.reserve(series.samples.size());
+			for (const auto& sample : series.samples) {
+				samples.push_back({sample.timestamp_ms,
+				                   sample.normalized_timestamp.has_value() ? 1 : 0,
+				                   timestamp(sample.normalized_timestamp), sample.value});
+			}
+		}
+		std::vector<lk_time_series_metric_t> time_series;
+		time_series.reserve(event.time_series.size());
+		for (std::size_t index = 0; index < event.time_series.size(); ++index) {
+			const auto& series = event.time_series[index];
+			const auto& samples = sample_groups[index];
+			time_series.push_back({series.label, series.participant_identity, series.track_sid,
+			                       series.rid, samples.data(), samples.size()});
+		}
+		std::vector<lk_event_metric_t> metric_events;
+		metric_events.reserve(event.events.size());
+		for (const auto& metric : event.events) {
+			metric_events.push_back(
+			    {metric.label, metric.participant_identity, metric.track_sid, metric.rid,
+			     metric.start_timestamp_ms, metric.end_timestamp_ms.has_value() ? 1 : 0,
+			     metric.end_timestamp_ms.value_or(0),
+			     metric.normalized_start_timestamp.has_value() ? 1 : 0,
+			     timestamp(metric.normalized_start_timestamp),
+			     metric.normalized_end_timestamp.has_value() ? 1 : 0,
+			     timestamp(metric.normalized_end_timestamp), metric.metadata.c_str()});
+		}
+		const lk_metrics_received_t c_event{
+		    event.timestamp_ms,
+		    event.normalized_timestamp.has_value() ? 1 : 0,
+		    timestamp(event.normalized_timestamp),
+		    string_data.data(),
+		    string_data.size(),
+		    time_series.data(),
+		    time_series.size(),
+		    metric_events.data(),
+		    metric_events.size(),
+		    event.participant_identity.c_str(),
+		};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_metrics_received != nullptr) {
+				callbacks.on_metrics_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
 	void OnTextReceived(const core::TextReceivedEvent& event) override {
 		const lk_text_received_t c_event{event.stream_id.c_str(),
 		                                 event.text.c_str(),

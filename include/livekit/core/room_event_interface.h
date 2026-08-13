@@ -111,6 +111,7 @@ public:
 	virtual void OnChatMessageReceived(const ChatMessage&) {}
 	virtual void OnTranscriptionReceived(const TranscriptionReceivedEvent&) {}
 	virtual void OnRecordingStatusChanged(bool) {}
+	virtual void OnMetricsReceived(const MetricsReceivedEvent&) {}
 };
 
 } // namespace core
