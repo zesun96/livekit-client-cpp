@@ -18,6 +18,7 @@
 #include "local_participant.h"
 
 #include "../detail/converted_proto.h"
+#include "../detail/video_encoding.h"
 #include "../track/audio_source.h"
 #include "../track/audio_track.h"
 #include "../track/local_audio_track.h"
@@ -56,6 +57,20 @@ bool PublishChatMessage(RtcEngine* engine, const ChatMessage& message) {
 	chat->set_deleted(message.deleted);
 	chat->set_generated(message.generated);
 	return engine->SendDataPacket(packet, true);
+}
+
+const char* VideoCodecName(VideoCodec codec) {
+	switch (codec) {
+	case VideoCodec::H264:
+		return "h264";
+	case VideoCodec::VP9:
+		return "vp9";
+	case VideoCodec::AV1:
+		return "av1";
+	case VideoCodec::VP8:
+	default:
+		return "vp8";
+	}
 }
 
 } // namespace
@@ -439,6 +454,17 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		req.set_width(video_track->source()->Width());
 		req.set_height(video_track->source()->Height());
 	}
+	VideoEncodingPlan video_encoding_plan;
+	if (kind == TrackKind::Video) {
+		video_encoding_plan = BuildVideoEncodingPlan(
+		    req.width(), req.height(), option.source == TrackSource::ScreenShare, option);
+		for (const auto& layer : video_encoding_plan.layers) {
+			req.add_layers()->CopyFrom(layer);
+		}
+		auto* codec = req.add_simulcast_codecs();
+		codec->set_codec(VideoCodecName(option.video_codec));
+		codec->set_cid(cid);
+	}
 
 	try {
 		std::cout << "PublishTrack,name" << req.name() << ",kind" << req.type() << std::endl;
@@ -458,8 +484,8 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 
 		auto publication = std::make_shared<LocalTrackPublication>(ti, local_track);
 		local_track->UpdateInfo(ti);
-		std::vector<webrtc::RtpEncodingParameters> send_encodings;
-		auto transceiver = engine_->CreateSender(local_track, option, send_encodings);
+		auto transceiver =
+		    engine_->CreateSender(local_track, option, video_encoding_plan.encodings);
 
 		if (!transceiver) {
 			return false;
@@ -564,6 +590,24 @@ void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate upd
 		return;
 	}
 	local_publication->UpdateSubscribedQuality(update);
+	bool dynacast = false;
+	{
+		std::lock_guard<std::mutex> guard(room_options_mutex_);
+		dynacast = options_.dynacast;
+	}
+	if (dynacast) {
+		auto* local_track = dynamic_cast<LocalTrack*>(local_publication->Track());
+		auto transceiver = local_track != nullptr ? local_track->Transceiver() : nullptr;
+		auto sender = transceiver != nullptr ? transceiver->sender() : nullptr;
+		if (sender != nullptr) {
+			auto parameters = sender->GetParameters();
+			const auto options = local_publication->PublishOptions();
+			if (ApplySubscribedQualities(parameters.encodings, update,
+			                             VideoCodecName(options.video_codec))) {
+				sender->SetParameters(parameters);
+			}
+		}
+	}
 	if (auto* listener = event_listener_.load()) {
 		listener->OnSubscribedQualityUpdate(local_publication, this, update);
 	}
@@ -652,6 +696,11 @@ bool LocalParticipant::RepublishAllTracksAfterReconnect() {
 
 void LocalParticipant::SetEventListener(RoomEventInterface* listener) {
 	event_listener_.store(listener);
+}
+
+void LocalParticipant::UpdateRoomOptions(RoomOptions options) {
+	std::lock_guard<std::mutex> guard(room_options_mutex_);
+	options_ = std::move(options);
 }
 
 bool LocalParticipant::SetMetadata(const std::string& metadata) {

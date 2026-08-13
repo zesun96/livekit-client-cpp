@@ -137,6 +137,11 @@ and explicitly unsubscribed tracks. Room listeners receive `OnTrackUnsubscribed`
 
 ### `publish_video`
 
+Publishes video with the SDK's default LiveKit-compatible simulcast encoding plan. Camera video at
+HD resolutions uses ordered `q`/`h`/`f` layers; set `TrackPublishOptions::simulcast` to `false` for
+a single high-quality encoding. When `RoomOptions::dynacast` is enabled, server subscribed-quality
+updates dynamically activate and deactivate only those real simulcast layers.
+
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
 The SDK encodes the frames as VP8 for transport.
 It then unpublishes the local track and renegotiates before disconnecting.

@@ -168,6 +168,8 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	disconnected_event_emitted_ = false;
 	full_reconnect_prepared_ = false;
 	disconnect_reason_ = DisconnectReason::Unknown;
+	options_ = opts;
+	local_participant_->UpdateRoomOptions(opts);
 
 	try {
 		EngineOptions engine_options = make_engine_config(opts);

@@ -87,6 +87,8 @@ the static library must deploy that DLL with their executable.
 
 Video uses libwebrtc's VP8 encoder and decoder template factories. The
 libwebrtc package must contain the corresponding libvpx implementation.
+Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and optional dynacast
+layer activation through `RoomOptions::dynacast`.
 
 ## Tests
 

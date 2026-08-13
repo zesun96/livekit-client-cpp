@@ -669,11 +669,13 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(runtime.initialized());
 	MediaEvents events;
 	auto receiver = CreateRoomUnique();
+	RoomOptions sender_options;
+	sender_options.dynacast = true;
 	auto sender = CreateRoomUnique();
 	receiver->AddEventListener(&events);
 	sender->AddEventListener(&events);
 	ASSERT_TRUE(receiver->Connect(url, receiver_token));
-	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token, sender_options));
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(10)));
 	EXPECT_EQ(receiver->State(), RoomInterface::RoomState::Connected);
@@ -717,8 +719,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(events.audio_received());
 
 	VideoFrame video_frame;
-	video_frame.width = 320;
-	video_frame.height = 180;
+	video_frame.width = 640;
+	video_frame.height = 360;
 	video_frame.data.resize(video_frame.width * video_frame.height * 3 / 2, 128);
 	std::fill(video_frame.data.begin(),
 	          video_frame.data.begin() + video_frame.width * video_frame.height, 64);
@@ -732,7 +734,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_NE(video_track, nullptr);
 	TrackPublishOptions video_options;
 	video_options.source = TrackSource::Camera;
-	video_options.simulcast = false;
+	video_options.simulcast = true;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
 
 	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -753,6 +755,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    << PublicationSummary(sender_participant);
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
+	EXPECT_TRUE(video_publication->IsSimulcasted());
 	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
 	RemoteTrackSettings remote_settings;
 	remote_settings.video_dimensions = TrackDimensions{160, 90};
