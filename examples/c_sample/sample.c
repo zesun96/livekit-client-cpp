@@ -135,6 +135,13 @@ static void on_sip_dtmf(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* e
 	       event->participant_identity);
 }
 
+static void on_chat_message(void* user_data, lk_room_t* room, const lk_chat_message_t* event) {
+	(void)user_data;
+	(void)room;
+	printf("Chat message received: id=%s, edited=%d, text=%s, from=%s\n", event->id,
+	       event->has_edit_timestamp, event->message, event->participant_identity);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -183,6 +190,7 @@ int main(int argc, char** argv) {
 	callbacks.on_track_subscription_status_changed = on_track_subscription_status_changed;
 	callbacks.on_data_channel_buffer_status_changed = on_data_channel_buffer_status;
 	callbacks.on_sip_dtmf_received = on_sip_dtmf;
+	callbacks.on_chat_message_received = on_chat_message;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");
@@ -234,6 +242,20 @@ int main(int argc, char** argv) {
 		    lk_room_publish_dtmf(room, code != NULL ? (uint32_t)strtoul(code, NULL, 10) : 0,
 		                         digit) != LK_STATUS_OK) {
 			fprintf(stderr, "SIP DTMF publish failed: %s\n", lk_last_error());
+		}
+	}
+	{
+		const char* message = getenv("LIVEKIT_CHAT_MESSAGE");
+		if (message != NULL) {
+			char message_id[LK_CHAT_MESSAGE_ID_BUFFER_SIZE];
+			int64_t timestamp = 0;
+			if (lk_room_send_chat_message(room, message, message_id, sizeof(message_id),
+			                              &timestamp) != LK_STATUS_OK) {
+				fprintf(stderr, "Chat message send failed: %s\n", lk_last_error());
+			} else {
+				printf("Chat message sent: id=%s, timestamp=%lld\n", message_id,
+				       (long long)timestamp);
+			}
 		}
 	}
 	{

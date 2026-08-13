@@ -434,12 +434,16 @@ public:
 		buffer_statuses.push_back(status);
 	}
 	void OnSipDtmfReceived(const SipDtmfEvent& event) override { dtmf_events.push_back(event); }
+	void OnChatMessageReceived(const ChatMessage& message) override {
+		chat_messages.push_back(message);
+	}
 
 	std::vector<TextReceivedEvent> texts;
 	std::vector<ByteReceivedEvent> bytes;
 	std::vector<FileReceivedEvent> files;
 	std::vector<DataChannelBufferStatus> buffer_statuses;
 	std::vector<SipDtmfEvent> dtmf_events;
+	std::vector<ChatMessage> chat_messages;
 };
 
 livekit::DataPacket StreamHeader(const std::string& id, uint64_t size) {
@@ -631,6 +635,30 @@ TEST(DataStreamStateTest, ForwardsSipDtmfPackets) {
 	EXPECT_EQ(events.dtmf_events[0].code, 11u);
 	EXPECT_EQ(events.dtmf_events[0].digit, "#");
 	EXPECT_EQ(events.dtmf_events[0].participant_identity, "sip-participant");
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, ForwardsStructuredChatMessages) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	livekit::DataPacket packet;
+	packet.set_participant_identity("chat-participant");
+	auto* chat = packet.mutable_chat_message();
+	chat->set_id("message-id");
+	chat->set_timestamp(1000);
+	chat->set_edit_timestamp(2000);
+	chat->set_message("edited text");
+	chat->set_generated(true);
+	room.DataPacketEvent(packet);
+	ASSERT_EQ(events.chat_messages.size(), 1u);
+	EXPECT_EQ(events.chat_messages[0].id, "message-id");
+	EXPECT_EQ(events.chat_messages[0].timestamp, 1000);
+	ASSERT_TRUE(events.chat_messages[0].edit_timestamp.has_value());
+	EXPECT_EQ(*events.chat_messages[0].edit_timestamp, 2000);
+	EXPECT_EQ(events.chat_messages[0].message, "edited text");
+	EXPECT_TRUE(events.chat_messages[0].generated);
+	EXPECT_EQ(events.chat_messages[0].participant_identity, "chat-participant");
 	room.RemoveEventListener();
 }
 

@@ -116,6 +116,13 @@ public:
 		          << ", from=" << event.participant_identity << std::endl;
 	}
 
+	void OnChatMessageReceived(const livekit::core::ChatMessage& message) override {
+		std::cout << "Chat message received: id=" << message.id
+		          << ", edited=" << message.edit_timestamp.has_value()
+		          << ", text=" << message.message << ", from=" << message.participant_identity
+		          << std::endl;
+	}
+
 	bool connected() const { return connected_.load(); }
 
 private:

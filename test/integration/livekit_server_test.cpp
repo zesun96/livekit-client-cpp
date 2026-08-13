@@ -166,6 +166,11 @@ public:
 		dtmf_identity_ = event.participant_identity;
 	}
 
+	void OnChatMessageReceived(const ChatMessage& message) override {
+		std::lock_guard<std::mutex> guard(lock_);
+		chat_message_ = message;
+	}
+
 	bool audio_received() const { return audio_subscribed_.load() && audio_frames_.load() >= 5; }
 	bool video_received() const { return video_subscribed_.load() && video_frames_.load() >= 3; }
 	bool video_subscribed() const { return video_subscribed_.load(); }
@@ -204,6 +209,13 @@ public:
 	bool received_dtmf(uint32_t code, const std::string& digit, const std::string& identity) {
 		std::lock_guard<std::mutex> guard(lock_);
 		return dtmf_code_ == code && dtmf_digit_ == digit && dtmf_identity_ == identity;
+	}
+	bool received_chat(const std::string& id, const std::string& text, bool edited,
+	                   const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return chat_message_.id == id && chat_message_.message == text &&
+		       chat_message_.edit_timestamp.has_value() == edited &&
+		       chat_message_.participant_identity == identity;
 	}
 	bool permission_changed(const std::string& track_sid, bool allowed,
 	                        uint64_t minimum_count = 1) {
@@ -247,6 +259,7 @@ private:
 	uint32_t dtmf_code_ = 0;
 	std::string dtmf_digit_;
 	std::string dtmf_identity_;
+	ChatMessage chat_message_;
 	std::string permission_track_sid_;
 	bool permission_allowed_ = true;
 	uint64_t permission_change_count_ = 0;
@@ -812,6 +825,21 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishDtmf(11, "#"));
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return events.received_dtmf(11, "#", sender->GetLocalParticipant()->Identity()); }));
+	auto chat = sender->GetLocalParticipant()->SendChatMessage("hello from structured chat");
+	ASSERT_TRUE(chat.has_value());
+	ASSERT_FALSE(chat->id.empty());
+	ASSERT_TRUE(WaitUntil([&] {
+		return events.received_chat(chat->id, chat->message, false,
+		                            sender->GetLocalParticipant()->Identity());
+	}));
+	auto edited_chat =
+	    sender->GetLocalParticipant()->EditChatMessage("edited structured chat", *chat);
+	ASSERT_TRUE(edited_chat.has_value());
+	ASSERT_TRUE(edited_chat->edit_timestamp.has_value());
+	ASSERT_TRUE(WaitUntil([&] {
+		return events.received_chat(chat->id, edited_chat->message, true,
+		                            sender->GetLocalParticipant()->Identity());
+	}));
 
 	const std::vector<uint8_t> lossy_payload{'l', 'o', 's', 's', 'y'};
 	data_options.reliable = false;

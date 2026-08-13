@@ -645,6 +645,24 @@ public:
 		});
 	}
 
+	void OnChatMessageReceived(const core::ChatMessage& event) override {
+		const lk_chat_message_t c_event{
+		    event.id.c_str(),
+		    event.timestamp,
+		    event.edit_timestamp.has_value() ? 1 : 0,
+		    event.edit_timestamp.value_or(0),
+		    event.message.c_str(),
+		    event.deleted ? 1 : 0,
+		    event.generated ? 1 : 0,
+		    event.participant_identity.c_str(),
+		};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_chat_message_received != nullptr) {
+				callbacks.on_chat_message_received(callbacks.user_data, owner_, &c_event);
+			}
+		});
+	}
+
 	void OnTextReceived(const core::TextReceivedEvent& event) override {
 		const lk_text_received_t c_event{event.stream_id.c_str(),
 		                                 event.text.c_str(),
@@ -1579,6 +1597,48 @@ lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* dig
 		return participant->PublishDtmf(code, digit)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to publish SIP DTMF");
+	});
+}
+
+lk_status_t lk_room_send_chat_message(lk_room_t* room, const char* message, char* message_id,
+                                      size_t message_id_size, int64_t* timestamp) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || message == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and chat message are required");
+		}
+		if (message_id != nullptr && message_id_size < LK_CHAT_MESSAGE_ID_BUFFER_SIZE) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "chat message ID buffer is too small");
+		}
+		auto sent = participant->SendChatMessage(message);
+		if (!sent.has_value()) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to send chat message");
+		}
+		if (message_id != nullptr) {
+			CopyString(sent->id, message_id, message_id_size);
+		}
+		if (timestamp != nullptr) {
+			*timestamp = sent->timestamp;
+		}
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_edit_chat_message(lk_room_t* room, const char* message_id,
+                                      int64_t original_timestamp, const char* message) {
+	return Guard([&] {
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || message_id == nullptr || *message_id == '\0' ||
+		    message == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room, message ID, and chat message are required");
+		}
+		core::ChatMessage original;
+		original.id = message_id;
+		original.timestamp = original_timestamp;
+		return participant->EditChatMessage(message, original).has_value()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to edit chat message");
 	});
 }
 

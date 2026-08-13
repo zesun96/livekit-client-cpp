@@ -34,6 +34,16 @@ struct SipDtmfEvent {
 	std::string participant_identity;
 };
 
+struct ChatMessage {
+	std::string id;
+	int64_t timestamp = 0;
+	std::optional<int64_t> edit_timestamp;
+	std::string message;
+	bool deleted = false;
+	bool generated = false;
+	std::string participant_identity;
+};
+
 struct FileSendOptions {
 	std::string topic = "files";
 	std::string mime_type = "application/octet-stream";

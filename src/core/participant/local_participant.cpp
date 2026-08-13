@@ -38,6 +38,28 @@
 namespace livekit {
 namespace core {
 
+namespace {
+
+bool PublishChatMessage(RtcEngine* engine, const ChatMessage& message) {
+	if (engine == nullptr || message.id.empty()) {
+		return false;
+	}
+	livekit::DataPacket packet;
+	packet.set_kind(livekit::DataPacket_Kind_RELIABLE);
+	auto* chat = packet.mutable_chat_message();
+	chat->set_id(message.id);
+	chat->set_timestamp(message.timestamp);
+	if (message.edit_timestamp.has_value()) {
+		chat->set_edit_timestamp(*message.edit_timestamp);
+	}
+	chat->set_message(message.message);
+	chat->set_deleted(message.deleted);
+	chat->set_generated(message.generated);
+	return engine->SendDataPacket(packet, true);
+}
+
+} // namespace
+
 class OutgoingDataStreamState {
 public:
 	explicit OutgoingDataStreamState(RtcEngine* engine) : engine_(engine) {}
@@ -615,6 +637,33 @@ bool LocalParticipant::PublishDtmf(uint32_t code, std::string digit) {
 	dtmf->set_code(code);
 	dtmf->set_digit(std::move(digit));
 	return engine_->SendDataPacket(packet, true);
+}
+
+std::optional<ChatMessage> LocalParticipant::SendChatMessage(std::string message) {
+	ChatMessage chat;
+	chat.id = webrtc::CreateRandomUuid();
+	chat.timestamp = CurrentTimestampMilliseconds();
+	chat.message = std::move(message);
+	chat.participant_identity = Identity();
+	if (!PublishChatMessage(engine_, chat)) {
+		return std::nullopt;
+	}
+	return chat;
+}
+
+std::optional<ChatMessage> LocalParticipant::EditChatMessage(std::string message,
+                                                             const ChatMessage& original) {
+	if (original.id.empty()) {
+		return std::nullopt;
+	}
+	ChatMessage edited = original;
+	edited.message = std::move(message);
+	edited.edit_timestamp = CurrentTimestampMilliseconds();
+	edited.participant_identity = Identity();
+	if (!PublishChatMessage(engine_, edited)) {
+		return std::nullopt;
+	}
+	return edited;
 }
 
 RpcResult LocalParticipant::PerformRpc(const PerformRpcParams& params) {
