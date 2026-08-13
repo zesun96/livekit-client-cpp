@@ -64,6 +64,8 @@ public:
 	virtual void OnVideoFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
 	                          const VideoFrame&) {}
 	virtual void OnDataReceived(const DataReceivedEvent&) {}
+	virtual void OnTextReceived(const TextReceivedEvent&) {}
+	virtual void OnByteReceived(const ByteReceivedEvent&) {}
 	virtual void OnFileReceived(const FileReceivedEvent&) {}
 };
 

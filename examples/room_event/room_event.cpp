@@ -48,6 +48,16 @@ public:
 		          << ", from=" << event.participant_identity << std::endl;
 	}
 
+	void OnTextReceived(const livekit::core::TextReceivedEvent& event) override {
+		std::cout << "Text received: topic=" << event.topic << ", text=" << event.text
+		          << ", from=" << event.participant_identity << std::endl;
+	}
+
+	void OnByteReceived(const livekit::core::ByteReceivedEvent& event) override {
+		std::cout << "Bytes received: topic=" << event.topic << ", bytes=" << event.data.size()
+		          << ", from=" << event.participant_identity << std::endl;
+	}
+
 	void OnFileReceived(const livekit::core::FileReceivedEvent& event) override {
 		std::cout << "File received: " << event.name << " (" << event.data.size() << " bytes)"
 		          << std::endl;

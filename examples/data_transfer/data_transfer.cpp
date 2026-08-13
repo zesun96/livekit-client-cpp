@@ -40,13 +40,16 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	livekit::core::DataPublishOptions message_options;
-	message_options.topic = "file-transfer";
+	livekit::core::TextSendOptions message_options;
+	message_options.topic = "text-transfer";
 	const std::string message = "sending:" + path.filename().string();
-	if (!room->GetLocalParticipant()->PublishData(
-	        std::vector<uint8_t>(message.begin(), message.end()), message_options) ||
+	const std::vector<uint8_t> bytes{'l', 'i', 'v', 'e', 'k', 'i', 't'};
+	livekit::core::ByteSendOptions byte_options;
+	byte_options.topic = "byte-transfer";
+	if (!room->GetLocalParticipant()->SendText(message, message_options) ||
+	    !room->GetLocalParticipant()->SendBytes(bytes, byte_options) ||
 	    !room->GetLocalParticipant()->SendFile(path.string())) {
-		std::cerr << "Failed to send file" << std::endl;
+		std::cerr << "Failed to send data streams" << std::endl;
 		return 1;
 	}
 

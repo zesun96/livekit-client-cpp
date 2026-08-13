@@ -109,7 +109,8 @@ same operation as `lk_room_republish_all_tracks()`.
 
 ### `data_transfer`
 
-Sends a reliable data message followed by the selected file as a chunked LiveKit data stream.
+Sends text, in-memory bytes, and the selected file using LiveKit data streams compatible with the
+official JS and Go SDKs.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/data_transfer/Release/data_transfer.exe" `
@@ -139,4 +140,4 @@ token, then run one of the publishing examples in another terminal:
 ```
 
 The receiver reports track subscription and the first decoded audio or video frame. For
-`data_transfer`, it reports both the data message and the completed file size.
+`data_transfer`, it reports the text stream, byte stream, and completed file size.

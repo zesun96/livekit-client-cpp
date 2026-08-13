@@ -133,6 +133,15 @@ typedef struct lk_file_received {
 	const char* participant_identity;
 } lk_file_received_t;
 
+typedef struct lk_text_received {
+	const char* stream_id;
+	const char* text;
+	const char* topic;
+	const char* participant_identity;
+	const char* reply_to_stream_id;
+	int64_t timestamp;
+} lk_text_received_t;
+
 typedef struct lk_attribute {
 	const char* key;
 	const char* value;
@@ -156,6 +165,8 @@ typedef void (*lk_data_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_data_received_t* event);
 typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_file_received_t* event);
+typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
+                                          const lk_text_received_t* event);
 typedef void (*lk_room_metadata_callback)(void* user_data, lk_room_t* room, const char* metadata);
 typedef void (*lk_connection_quality_callback)(void* user_data, lk_room_t* room,
                                                lk_connection_quality_t quality,
@@ -185,6 +196,8 @@ typedef struct lk_room_callbacks {
 	lk_active_speakers_callback on_active_speakers_changed;
 	lk_track_event_callback on_local_track_published;
 	lk_track_event_callback on_local_track_unpublished;
+	lk_text_received_callback on_text_received;
+	lk_file_received_callback on_byte_received;
 } lk_room_callbacks_t;
 
 typedef struct lk_audio_source_options {
@@ -226,7 +239,34 @@ typedef struct lk_file_send_options {
 	const char* const* destination_identities;
 	size_t destination_identity_count;
 	size_t chunk_size;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
 } lk_file_send_options_t;
+
+typedef struct lk_text_send_options {
+	size_t struct_size;
+	const char* topic;
+	const char* const* destination_identities;
+	size_t destination_identity_count;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	const char* reply_to_stream_id;
+	const char* const* attached_stream_ids;
+	size_t attached_stream_id_count;
+	size_t chunk_size;
+} lk_text_send_options_t;
+
+typedef struct lk_byte_send_options {
+	size_t struct_size;
+	const char* topic;
+	const char* mime_type;
+	const char* name;
+	const char* const* destination_identities;
+	size_t destination_identity_count;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	size_t chunk_size;
+} lk_byte_send_options_t;
 
 LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
@@ -239,6 +279,8 @@ LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
 LKC_API void lk_track_publish_options_init(lk_track_publish_options_t* options);
 LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
+LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
+LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
@@ -293,6 +335,10 @@ LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,
 
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);
+LKC_API lk_status_t lk_room_send_text(lk_room_t* room, const char* text,
+                                      const lk_text_send_options_t* options);
+LKC_API lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, size_t data_size,
+                                       const lk_byte_send_options_t* options);
 LKC_API lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
                                       const lk_file_send_options_t* options);
 

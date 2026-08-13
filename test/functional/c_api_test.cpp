@@ -39,6 +39,17 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_STREQ(file.topic, "files");
 	EXPECT_STREQ(file.mime_type, "application/octet-stream");
 	EXPECT_EQ(file.chunk_size, 15000u);
+
+	lk_text_send_options_t text;
+	lk_text_send_options_init(&text);
+	EXPECT_EQ(text.struct_size, sizeof(text));
+	EXPECT_EQ(text.chunk_size, 15000u);
+
+	lk_byte_send_options_t bytes;
+	lk_byte_send_options_init(&bytes);
+	EXPECT_EQ(bytes.struct_size, sizeof(bytes));
+	EXPECT_STREQ(bytes.mime_type, "application/octet-stream");
+	EXPECT_EQ(bytes.chunk_size, 15000u);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -50,6 +61,8 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_unpublish(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_republish_all_tracks(nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_send_text(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_send_bytes(nullptr, nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -66,6 +79,8 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	lk_room_callbacks_init(&callbacks);
 	EXPECT_EQ(callbacks.on_local_track_published, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_unpublished, nullptr);
+	EXPECT_EQ(callbacks.on_text_received, nullptr);
+	EXPECT_EQ(callbacks.on_byte_received, nullptr);
 	EXPECT_EQ(lk_room_set_callbacks(room, &callbacks), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_callbacks(room, nullptr), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_set_remote_track_subscribed(room, "missing", "missing", 1),
