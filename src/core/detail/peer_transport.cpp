@@ -18,7 +18,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "api/make_ref_counted.h"
 #include "api/rtc_event_log/rtc_event_log_factory.h"
+#include "api/stats/rtc_stats_collector_callback.h"
 #include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_decoder_factory_template.h"
@@ -39,6 +41,10 @@
 #include <api/video_codecs/builtin_video_decoder_factory.h>
 #include <api/video_codecs/builtin_video_encoder_factory.h>
 #include <rtc_base/ssl_adapter.h>
+
+#include <atomic>
+#include <chrono>
+#include <future>
 
 namespace {
 std::string serialize_sdp_error(webrtc::SdpParseError error) {
@@ -70,6 +76,80 @@ deserialize_ice_candidate(const std::string& candidate_str) {
 
 namespace livekit {
 namespace core {
+
+namespace {
+
+struct StatsResultState {
+	std::promise<std::string> promise;
+	std::atomic_bool delivered{false};
+};
+
+class StatsCollectorCallback : public webrtc::RTCStatsCollectorCallback {
+public:
+	explicit StatsCollectorCallback(std::shared_ptr<StatsResultState> state)
+	    : state_(std::move(state)) {}
+
+	void
+	OnStatsDelivered(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) override {
+		if (!state_->delivered.exchange(true)) {
+			state_->promise.set_value(report != nullptr ? report->ToJson() : std::string{});
+		}
+	}
+
+private:
+	std::shared_ptr<StatsResultState> state_;
+};
+
+} // namespace
+
+class PeerTransportStatsContext {
+public:
+	explicit PeerTransportStatsContext(
+	    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection)
+	    : peer_connection_(std::move(peer_connection)) {}
+
+	void Invalidate() {
+		std::lock_guard<std::mutex> guard(mutex_);
+		peer_connection_ = nullptr;
+	}
+
+	std::string Collect(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+	                    bool sender) {
+		webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection;
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			peer_connection = peer_connection_;
+		}
+		if (!peer_connection || !transceiver) {
+			return {};
+		}
+
+		auto state = std::make_shared<StatsResultState>();
+		auto future = state->promise.get_future();
+		auto callback = webrtc::make_ref_counted<StatsCollectorCallback>(state);
+		if (sender) {
+			auto selector = transceiver->sender();
+			if (!selector) {
+				return {};
+			}
+			peer_connection->GetStats(std::move(selector), std::move(callback));
+		} else {
+			auto selector = transceiver->receiver();
+			if (!selector) {
+				return {};
+			}
+			peer_connection->GetStats(std::move(selector), std::move(callback));
+		}
+		if (future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+			return {};
+		}
+		return future.get();
+	}
+
+private:
+	std::mutex mutex_;
+	webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
+};
 
 std::map<PeerTransport::Target, const std::string> PeerTransport::target2String = {
     {PeerTransport::Target::UNKNOWN, "unknown"},
@@ -181,6 +261,10 @@ PeerTransport::PeerTransport(Target target,
 PeerTransport::~PeerTransport() {
 	std::cout << "PeerTransport::~PeerTransport()" << std::endl;
 	RemovePeerTransportListener();
+	if (stats_context_) {
+		stats_context_->Invalidate();
+		stats_context_.reset();
+	}
 	if (this->pc_ != nullptr) {
 		this->pc_->Close();
 		this->pc_ = nullptr;
@@ -468,6 +552,15 @@ bool PeerTransport::RemoveTrack(
 	return pc_->RemoveTrackOrError(transceiver->sender()).ok();
 }
 
+std::function<std::string()> PeerTransport::CreateStatsProvider(
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver, bool sender) const {
+	std::weak_ptr<PeerTransportStatsContext> context = stats_context_;
+	return [context, transceiver = std::move(transceiver), sender] {
+		auto retained = context.lock();
+		return retained != nullptr ? retained->Collect(transceiver, sender) : std::string{};
+	};
+}
+
 webrtc::scoped_refptr<webrtc::DataChannelInterface>
 PeerTransport::CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config) {
 	const auto result = this->pc_->CreateDataChannelOrError(label, config);
@@ -575,6 +668,7 @@ bool PeerTransport::create_peer_connection() {
 		return false;
 	}
 	this->pc_ = result.value();
+	stats_context_ = std::make_shared<PeerTransportStatsContext>(pc_);
 	return true;
 }
 

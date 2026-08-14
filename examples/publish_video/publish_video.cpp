@@ -1,6 +1,7 @@
 #include "example_utils.h"
 
 #include "livekit/core/participant/local_participant_interface.h"
+#include "livekit/core/track/rtc_stats.h"
 #include "livekit/core/track/video_source_interface.h"
 
 #include <algorithm>
@@ -52,6 +53,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
+	livekit::core::RTCStatsMonitor stats_monitor;
 	for (uint32_t index = 0; index < 150; ++index) {
 		const uint8_t luma = static_cast<uint8_t>(32 + index % 180);
 		std::fill(frame.data.begin(), frame.data.begin() + width * height, luma);
@@ -64,6 +66,17 @@ int main(int argc, char* argv[]) {
 			return 1;
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(33));
+		if ((index + 1) % 60 == 0) {
+			for (const auto& stats : stats_monitor.Sample(*track).streams) {
+				std::cout << "RTC stats: codec=" << stats.codec_mime_type
+				          << ", packets=" << stats.packets;
+				if (stats.bitrate_bps) {
+					std::cout << ", bitrate=" << static_cast<uint64_t>(*stats.bitrate_bps)
+					          << " bps";
+				}
+				std::cout << std::endl;
+			}
+		}
 	}
 
 	std::cout << "Published 640x360 synthetic video for 5 seconds" << std::endl;

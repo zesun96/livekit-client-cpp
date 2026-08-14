@@ -21,6 +21,7 @@
 #define _LKC_CORE_TRACK_TRACK_INTERFACE_H_
 
 #include "livekit/core/option/option.h"
+#include "livekit/core/track/rtc_stats.h"
 
 #include <string>
 
@@ -29,7 +30,11 @@ namespace core {
 
 class TrackInterface {
 public:
+	// Returns a WebRTC RTCStatsReport JSON document for this sender or receiver. An empty string
+	// means the track is not currently attached to a PeerConnection or collection timed out.
 	virtual std::string GetRTCStats() = 0;
+	// Returns normalized per-RTP-stream values from GetRTCStats().
+	RTCStatsSnapshot GetRTCStatsSnapshot();
 	virtual void SetEnabled(bool enabled) = 0;
 	virtual bool IsEnabled() = 0;
 	virtual TrackKind Kind() = 0;

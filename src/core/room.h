@@ -27,6 +27,7 @@
 #include "track/remote_track.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -80,7 +81,8 @@ public:
 	virtual void ConnectedEvent(livekit::JoinResponse join_resp) override;
 	virtual void
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
-	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) override;
+	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+	                     std::function<std::string()> stats_provider) override;
 	void MediaTrackRemovedEvent(const std::string& track_sid) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
 	void RemoteMuteChangedEvent(const std::string& sid, bool muted) override;
@@ -153,8 +155,11 @@ private:
 	mutable std::mutex participants_mutex_;
 	std::map<std::string, std::shared_ptr<RemoteParticipant>> remote_participants_;
 	std::map<std::string, std::shared_ptr<RemoteTrack>> remote_tracks_;
-	std::map<std::string, webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
-	    pending_media_tracks_;
+	struct PendingMediaTrack {
+		webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track;
+		std::function<std::string()> stats_provider;
+	};
+	std::map<std::string, PendingMediaTrack> pending_media_tracks_;
 	std::mutex incoming_streams_mutex_;
 	std::map<std::string, IncomingFile> incoming_files_;
 	std::map<std::string, IncomingText> incoming_texts_;

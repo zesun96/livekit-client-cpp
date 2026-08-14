@@ -27,6 +27,7 @@
 #include <api/rtp_transceiver_interface.h>
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 
 namespace livekit {
@@ -56,6 +57,7 @@ public:
 
 	void SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> Transceiver() const;
+	void SetStatsProvider(std::function<std::string()> provider);
 
 private:
 	livekit::TrackInfo info_;
@@ -69,6 +71,8 @@ private:
 	std::atomic<bool> enabled_{true};
 	mutable std::mutex transceiver_mutex_;
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver_;
+	mutable std::mutex stats_provider_mutex_;
+	std::function<std::string()> stats_provider_;
 };
 } // namespace core
 } // namespace livekit

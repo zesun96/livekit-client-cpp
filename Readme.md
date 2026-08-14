@@ -100,6 +100,12 @@ Applications that already capture desktop I420/PCM frames can publish them with
 functions). These helpers set the LiveKit track source; native desktop capture and system-audio
 capture are not yet provided by the SDK.
 
+Published local tracks and subscribed remote tracks expose the selector-scoped libwebrtc
+`RTCStatsReport` as JSON through `TrackInterface::GetRTCStats()`. The C API provides the same data
+for local track handles through `lk_local_track_rtc_stats`. C++ applications can use
+`GetRTCStatsSnapshot()` for normalized RTP stream counters or caller-scheduled `RTCStatsMonitor`
+samples for bitrate, RTT, loss, jitter, audio, video, and codec metrics.
+
 ## Tests
 
 Tests use GoogleTest 1.15.2 from a small, checksum-verified source archive.

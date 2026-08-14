@@ -205,6 +205,20 @@ bool RtcSession::RemoveSender(LocalTrack* track) {
 	return publisher_pc_->RemoveTrack(track->Transceiver());
 }
 
+std::function<std::string()> RtcSession::CreatePublisherStatsProvider(
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const {
+	return publisher_pc_ != nullptr
+	           ? publisher_pc_->CreateStatsProvider(std::move(transceiver), true)
+	           : std::function<std::string()>{};
+}
+
+std::function<std::string()> RtcSession::CreateSubscriberStatsProvider(
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const {
+	return subscriber_pc_ != nullptr
+	           ? subscriber_pc_->CreateStatsProvider(std::move(transceiver), false)
+	           : std::function<std::string()>{};
+}
+
 void RtcSession::PublisherNegotiationNeeded() {
 	has_published_.store(true);
 	// if (publisher_negotiation_debouncer_->lock()) {
@@ -468,7 +482,10 @@ void RtcSession::OnAddTrack(
 void RtcSession::OnTrack(PeerTransport::Target target,
                          webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
 	if (observer_) {
-		observer_->OnTrack(target, std::move(transceiver));
+		auto stats_provider = target == PeerTransport::Target::SUBSCRIBER
+		                          ? CreateSubscriberStatsProvider(transceiver)
+		                          : std::function<std::string()>{};
+		observer_->OnTrack(target, std::move(transceiver), std::move(stats_provider));
 	}
 }
 

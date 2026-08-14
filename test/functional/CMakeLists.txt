@@ -3,6 +3,7 @@ add_executable(
   c_api_test.cpp
   participant_state_test.cpp
   public_api_test.cpp
+  track_stats_test.cpp
   video_encoding_test.cpp
 )
 target_compile_features(livekit_public_api_tests PRIVATE cxx_std_20)

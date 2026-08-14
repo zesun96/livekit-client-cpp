@@ -56,8 +56,8 @@ public:
 		virtual void ConnectedEvent(livekit::JoinResponse join_resp) = 0;
 		virtual void
 		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
-		virtual void
-		MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) = 0;
+		virtual void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+		                             std::function<std::string()> stats_provider) = 0;
 		virtual void MediaTrackRemovedEvent(const std::string& track_sid) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
 		virtual void RemoteMuteChangedEvent(const std::string& sid, bool muted) = 0;
@@ -188,9 +188,9 @@ public:
 	virtual void OnAddTrack(
 	    PeerTransport::Target target, webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
 	    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
-	virtual void
-	OnTrack(PeerTransport::Target target,
-	        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
+	virtual void OnTrack(PeerTransport::Target target,
+	                     webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+	                     std::function<std::string()> stats_provider) override;
 	virtual void
 	OnRemoveTrack(PeerTransport::Target target,
 	              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) override;

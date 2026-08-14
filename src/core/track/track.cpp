@@ -45,7 +45,21 @@ bool Track::SetStreamState(TrackStreamState state) {
 	return previous != state;
 }
 
-std::string Track::GetRTCStats() { return ""; };
+std::string Track::GetRTCStats() {
+	std::function<std::string()> provider;
+	{
+		std::lock_guard<std::mutex> guard(stats_provider_mutex_);
+		provider = stats_provider_;
+	}
+	if (!provider) {
+		return {};
+	}
+	try {
+		return provider();
+	} catch (...) {
+		return {};
+	}
+};
 void Track::SetEnabled(bool enabled) { enabled_.store(enabled); };
 bool Track::IsEnabled() { return enabled_.load(); };
 
@@ -58,13 +72,23 @@ void Track::UpdateInfo(livekit::TrackInfo info) {
 }
 
 void Track::SetTransceiver(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
-	std::lock_guard<std::mutex> guard(transceiver_mutex_);
-	transceiver_ = transceiver;
+	{
+		std::lock_guard<std::mutex> guard(transceiver_mutex_);
+		transceiver_ = transceiver;
+	}
+	if (!transceiver) {
+		SetStatsProvider({});
+	}
 }
 
 webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> Track::Transceiver() const {
 	std::lock_guard<std::mutex> guard(transceiver_mutex_);
 	return transceiver_;
+}
+
+void Track::SetStatsProvider(std::function<std::string()> provider) {
+	std::lock_guard<std::mutex> guard(stats_provider_mutex_);
+	stats_provider_ = std::move(provider);
 }
 
 } // namespace core
