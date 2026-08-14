@@ -493,6 +493,10 @@ bool Room::SimulateMediaFailureForTesting() {
 	return rtc_engine_ != nullptr && rtc_engine_->SimulateMediaFailureForTesting();
 }
 
+std::string Room::AccessTokenForReconnectForTesting() const {
+	return rtc_engine_ != nullptr ? rtc_engine_->AccessTokenForReconnect() : std::string{};
+}
+
 RoomInterface::RoomState RoomInterface::State() const {
 	auto* room = dynamic_cast<const Room*>(this);
 	if (room != nullptr) {

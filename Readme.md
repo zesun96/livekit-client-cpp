@@ -161,6 +161,29 @@ $env:LIVEKIT_TOKEN_2_UPDATE = "<second-client-token-with-update-permission>" # o
 ctest --test-dir out/build/tests -L integration --output-on-failure
 ```
 
+Destructive recovery checks are kept out of the regular integration suite. The Windows harness
+starts an owned server, coordinates an explicit restart, verifies server-issued token refresh
+across resume and full reconnect, and restores an existing server in a `finally` block:
+
+```powershell
+$apiSecret = Read-Host "LiveKit API secret"
+.\test\integration\run_reconnect_matrix.ps1 `
+  -ServerExecutable "C:\path\to\livekit-server.exe" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ApiKey "devkey" -ApiSecret $apiSecret `
+  -BuildDirectory "out\build\tests" `
+  -NodeIp "192.168.1.20" -Port 7880 `
+  -ConfigPath "C:\path\to\livekit.yaml" `
+  -ReplaceExistingServer
+```
+
+Run this command from an elevated PowerShell when the existing server is elevated or Windows
+Firewall requires a rule for a newly downloaded server executable. To test a different server
+version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
+RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart` or
+`-Scenario TokenRefresh` to run one part of the matrix. The harness verifies the listener's exact
+executable path before stopping it and never writes credentials or logs into the repository.
+
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
 
