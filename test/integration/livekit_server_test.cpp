@@ -773,12 +773,29 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(events.video_received())
 	    << "subscribed=" << events.video_subscribed() << ", frames=" << events.video_frame_count()
 	    << ", last_size=" << events.last_video_width() << 'x' << events.last_video_height();
+	std::string outbound_stats;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    outbound_stats = video_track->GetRTCStats();
+		    return outbound_stats.find("outbound-rtp") != std::string::npos;
+	    },
+	    std::chrono::seconds(10)))
+	    << outbound_stats;
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return sender_participant->GetTrackPublication(TrackSource::Camera) != nullptr; },
 	    std::chrono::seconds(10)))
 	    << PublicationSummary(sender_participant);
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
+	ASSERT_NE(video_publication->Track(), nullptr);
+	std::string inbound_stats;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    inbound_stats = video_publication->Track()->GetRTCStats();
+		    return inbound_stats.find("inbound-rtp") != std::string::npos;
+	    },
+	    std::chrono::seconds(10)))
+	    << inbound_stats;
 	EXPECT_EQ(video_publication->MimeType(), expected_video_mime_type);
 	const bool expect_simulcast = video_options.video_codec == VideoCodec::VP8 ||
 	                              video_options.video_codec == VideoCodec::H264;

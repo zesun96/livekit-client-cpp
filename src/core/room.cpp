@@ -930,7 +930,8 @@ void Room::SubscriptionErrorEvent(const livekit::SubscriptionResponse& response)
 	}
 }
 
-void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track) {
+void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track,
+                           std::function<std::string()> stats_provider) {
 	if (!rtc_track) {
 		return;
 	}
@@ -945,7 +946,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		participant = FindRemoteParticipantForTrack(track_sid);
 		if (!participant) {
-			pending_media_tracks_[track_sid] = rtc_track;
+			pending_media_tracks_[track_sid] = {rtc_track, std::move(stats_provider)};
 			return;
 		}
 		if (remote_tracks_.count(track_sid) != 0) {
@@ -976,6 +977,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			remote_tracks_.emplace(track_sid, subscribed_track);
 		}
 		if (subscribed_track) {
+			subscribed_track->SetStatsProvider(std::move(stats_provider));
 			subscribed_track->SetStreamState(TrackStreamState::Active);
 			auto publications = participant->TrackPublicationsSnapshot();
 			auto found = publications.find(track_sid);
@@ -1657,7 +1659,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		TrackSubscriptionStatus status = TrackSubscriptionStatus::Unsubscribed;
 	};
 
-	std::vector<webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>> ready_tracks;
+	std::vector<PendingMediaTrack> ready_tracks;
 	std::vector<std::shared_ptr<RemoteParticipant>> connected;
 	std::vector<std::shared_ptr<RemoteParticipant>> disconnected;
 	std::vector<PublicationEvent> published;
@@ -1895,7 +1897,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	}
 
 	for (auto& track : ready_tracks) {
-		MediaTrackEvent(std::move(track));
+		MediaTrackEvent(std::move(track.track), std::move(track.stats_provider));
 	}
 }
 

@@ -29,6 +29,8 @@ namespace core {
 
 class TrackInterface {
 public:
+	// Returns a WebRTC RTCStatsReport JSON document for this sender or receiver. An empty string
+	// means the track is not currently attached to a PeerConnection or collection timed out.
 	virtual std::string GetRTCStats() = 0;
 	virtual void SetEnabled(bool enabled) = 0;
 	virtual bool IsEnabled() = 0;

@@ -83,9 +83,9 @@ public:
 		    PeerTransport::Target target,
 		    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
 		    const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) = 0;
-		virtual void
-		OnTrack(PeerTransport::Target target,
-		        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) = 0;
+		virtual void OnTrack(PeerTransport::Target target,
+		                     webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+		                     std::function<std::string()> stats_provider) = 0;
 		virtual void
 		OnRemoveTrack(PeerTransport::Target target,
 		              webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) = 0;
@@ -113,6 +113,10 @@ public:
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
 	bool SupportsVideoCodec(VideoCodec codec) const;
 	bool RemoveSender(LocalTrack* track);
+	std::function<std::string()> CreatePublisherStatsProvider(
+	    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const;
+	std::function<std::string()> CreateSubscriberStatsProvider(
+	    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const;
 
 	void PublisherNegotiationNeeded();
 

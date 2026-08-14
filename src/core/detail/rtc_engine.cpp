@@ -600,7 +600,11 @@ RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
                         std::vector<webrtc::RtpEncodingParameters> send_encodings) {
 	std::lock_guard<std::mutex> guard(session_lock_);
 	if (rtc_session_) {
-		return rtc_session_->CreateSender(track, options, send_encodings);
+		auto transceiver = rtc_session_->CreateSender(track, options, send_encodings);
+		if (track != nullptr && transceiver != nullptr) {
+			track->SetStatsProvider(rtc_session_->CreatePublisherStatsProvider(transceiver));
+		}
+		return transceiver;
 	}
 	return nullptr;
 }
@@ -612,7 +616,11 @@ bool RtcEngine::SupportsVideoCodec(VideoCodec codec) const {
 
 bool RtcEngine::RemoveSender(LocalTrack* track) {
 	std::lock_guard<std::mutex> guard(session_lock_);
-	return rtc_session_ != nullptr && rtc_session_->RemoveSender(track);
+	const bool removed = rtc_session_ != nullptr && rtc_session_->RemoveSender(track);
+	if (removed && track != nullptr) {
+		track->SetStatsProvider({});
+	}
+	return removed;
 }
 
 void RtcEngine::PublisherNegotiationNeeded() {
@@ -1202,14 +1210,15 @@ void RtcEngine::OnAddTrack(
     const std::vector<webrtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) {}
 
 void RtcEngine::OnTrack(PeerTransport::Target target,
-                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+                        std::function<std::string()> stats_provider) {
 	if (target != PeerTransport::Target::SUBSCRIBER || !transceiver || !transceiver->receiver()) {
 		return;
 	}
 	auto track = transceiver->receiver()->track();
 	if (track) {
 		if (auto* listener = room_listener_.load()) {
-			listener->MediaTrackEvent(std::move(track));
+			listener->MediaTrackEvent(std::move(track), std::move(stats_provider));
 		}
 	}
 }

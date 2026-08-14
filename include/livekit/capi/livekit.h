@@ -716,6 +716,8 @@ LKC_API lk_status_t lk_local_track_publish_screen_share_audio(
 LKC_API lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish);
 LKC_API lk_status_t lk_room_republish_all_tracks(lk_room_t* room);
 LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted);
+LKC_API size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer,
+                                        size_t buffer_size);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
 
 LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,

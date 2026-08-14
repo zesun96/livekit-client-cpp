@@ -25,6 +25,7 @@
 #include "api/create_peerconnection_factory.h"
 #include "api/peer_connection_interface.h"
 
+#include <functional>
 #include <future> // std::promise, std::future
 #include <memory> // std::unique_ptr
 
@@ -33,6 +34,8 @@ namespace core {
 
 std::unique_ptr<webrtc::SessionDescriptionInterface> ConvertSdp(webrtc::SdpType type,
                                                                 const std::string& sdp);
+
+class PeerTransportStatsContext;
 
 class PeerTransport : public webrtc::PeerConnectionObserver {
 public:
@@ -195,6 +198,9 @@ public:
 	AddTransceiver(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
 	               webrtc::RtpTransceiverInit rtpTransceiverInit);
 	bool RemoveTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
+	std::function<std::string()>
+	CreateStatsProvider(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+	                    bool sender) const;
 
 	webrtc::scoped_refptr<webrtc::DataChannelInterface>
 	CreateDataChannel(const std::string& label, const webrtc::DataChannelInit* config);
@@ -249,6 +255,7 @@ private:
 
 	// PeerConnection instance.
 	webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_ = nullptr;
+	std::shared_ptr<PeerTransportStatsContext> stats_context_;
 	mutable std::mutex pc_lock_;
 	mutable std::mutex pending_candidates_lock_;
 	std::vector<std::string> pending_candidates_;

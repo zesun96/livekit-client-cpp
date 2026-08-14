@@ -1653,6 +1653,14 @@ lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted) {
 	});
 }
 
+size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr && track->track != nullptr
+		           ? CopyString(track->track->GetRTCStats(), buffer, buffer_size)
+		           : 0;
+	});
+}
+
 lk_status_t lk_local_track_destroy(lk_local_track_t* track) {
 	if (track == nullptr) {
 		return LK_STATUS_OK;
