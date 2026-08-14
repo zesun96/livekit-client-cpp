@@ -34,6 +34,23 @@
 namespace {
 constexpr uint64_t kMaximumBufferedDataStreamSize = 64ULL * 1024 * 1024;
 
+bool IsSupportedCompression(livekit::DataStream_CompressionType compression) {
+	return compression == livekit::DataStream_CompressionType_NONE ||
+	       compression == livekit::DataStream_CompressionType_DEFLATE_RAW;
+}
+
+bool DecodeInlineContent(const livekit::DataStream_Header& header, std::vector<uint8_t>& output) {
+	if (header.compression() == livekit::DataStream_CompressionType_NONE) {
+		output.assign(header.inline_content().begin(), header.inline_content().end());
+		return output.size() <= kMaximumBufferedDataStreamSize;
+	}
+	livekit::core::detail::InflateRawStream inflater(kMaximumBufferedDataStreamSize);
+	return inflater.IsValid() &&
+	       inflater.Write(reinterpret_cast<const uint8_t*>(header.inline_content().data()),
+	                      header.inline_content().size(), output) &&
+	       inflater.Finished();
+}
+
 int64_t CurrentTimestampMilliseconds() {
 	return std::chrono::duration_cast<std::chrono::milliseconds>(
 	           std::chrono::system_clock::now().time_since_epoch())
@@ -1244,8 +1261,7 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 	}
 	if (packet.has_stream_header() && packet.stream_header().has_text_header()) {
 		const auto& header = packet.stream_header();
-		if (header.stream_id().empty() ||
-		    header.compression() != livekit::DataStream_CompressionType_NONE) {
+		if (header.stream_id().empty() || !IsSupportedCompression(header.compression())) {
 			return;
 		}
 		IncomingText incoming;
@@ -1276,9 +1292,11 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		if (header.has_total_length()) {
 			incoming.expected_length = header.total_length();
 			incoming.info.total_size = header.total_length();
-			if (!incoming.handler &&
-			    (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
-			     *incoming.expected_length > kMaximumBufferedDataStreamSize)) {
+			if ((header.compression() == livekit::DataStream_CompressionType_DEFLATE_RAW &&
+			     *incoming.expected_length > kMaximumBufferedDataStreamSize) ||
+			    (!incoming.handler &&
+			     (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
+			      *incoming.expected_length > kMaximumBufferedDataStreamSize))) {
 				return;
 			}
 			if (!incoming.handler) {
@@ -1290,22 +1308,30 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 				}
 			}
 		}
+		if (header.compression() == livekit::DataStream_CompressionType_DEFLATE_RAW) {
+			incoming.inflater =
+			    std::make_unique<detail::InflateRawStream>(kMaximumBufferedDataStreamSize);
+			if (!incoming.inflater->IsValid()) {
+				return;
+			}
+		}
 		if (header.has_inline_content()) {
-			if (incoming.expected_length &&
-			    header.inline_content().size() != *incoming.expected_length) {
+			std::vector<uint8_t> content;
+			if (!DecodeInlineContent(header, content) ||
+			    (incoming.expected_length && content.size() != *incoming.expected_length)) {
 				return;
 			}
 			if (incoming.handler) {
 				TextStreamEvent event{incoming.info, DataStreamEventType::Open};
 				incoming.handler(event);
 				event.type = DataStreamEventType::Chunk;
-				event.content = header.inline_content();
+				event.content.assign(content.begin(), content.end());
 				incoming.handler(event);
 				event.type = DataStreamEventType::Closed;
 				event.content.clear();
 				incoming.handler(event);
 			} else {
-				incoming.event.text = header.inline_content();
+				incoming.event.text.assign(content.begin(), content.end());
 				if (auto* listener = event_listener_.load()) {
 					listener->OnTextReceived(incoming.event);
 				}
@@ -1326,8 +1352,7 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 	}
 	if (packet.has_stream_header() && packet.stream_header().has_byte_header()) {
 		const auto& header = packet.stream_header();
-		if (header.stream_id().empty() ||
-		    header.compression() != livekit::DataStream_CompressionType_NONE) {
+		if (header.stream_id().empty() || !IsSupportedCompression(header.compression())) {
 			return;
 		}
 		IncomingFile incoming;
@@ -1355,9 +1380,11 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 		if (header.has_total_length()) {
 			incoming.expected_length = header.total_length();
 			incoming.info.total_size = header.total_length();
-			if (!incoming.handler &&
-			    (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
-			     *incoming.expected_length > kMaximumBufferedDataStreamSize)) {
+			if ((header.compression() == livekit::DataStream_CompressionType_DEFLATE_RAW &&
+			     *incoming.expected_length > kMaximumBufferedDataStreamSize) ||
+			    (!incoming.handler &&
+			     (*incoming.expected_length > std::numeric_limits<std::size_t>::max() ||
+			      *incoming.expected_length > kMaximumBufferedDataStreamSize))) {
 				return;
 			}
 			if (!incoming.handler) {
@@ -1369,24 +1396,30 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 				}
 			}
 		}
+		if (header.compression() == livekit::DataStream_CompressionType_DEFLATE_RAW) {
+			incoming.inflater =
+			    std::make_unique<detail::InflateRawStream>(kMaximumBufferedDataStreamSize);
+			if (!incoming.inflater->IsValid()) {
+				return;
+			}
+		}
 		if (header.has_inline_content()) {
-			if (incoming.expected_length &&
-			    header.inline_content().size() != *incoming.expected_length) {
+			std::vector<uint8_t> content;
+			if (!DecodeInlineContent(header, content) ||
+			    (incoming.expected_length && content.size() != *incoming.expected_length)) {
 				return;
 			}
 			if (incoming.handler) {
 				ByteStreamEvent event{incoming.info, DataStreamEventType::Open};
 				incoming.handler(event);
 				event.type = DataStreamEventType::Chunk;
-				event.content.assign(header.inline_content().begin(),
-				                     header.inline_content().end());
+				event.content = content;
 				incoming.handler(event);
 				event.type = DataStreamEventType::Closed;
 				event.content.clear();
 				incoming.handler(event);
 			} else {
-				incoming.event.data.assign(header.inline_content().begin(),
-				                           header.inline_content().end());
+				incoming.event.data = std::move(content);
 				if (auto* listener = event_listener_.load()) {
 					ByteReceivedEvent byte_event;
 					static_cast<FileReceivedEvent&>(byte_event) = incoming.event;
@@ -1420,8 +1453,23 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			std::lock_guard<std::mutex> guard(incoming_streams_mutex_);
 			auto text = incoming_texts_.find(chunk.stream_id());
 			if (text != incoming_texts_.end()) {
-				const auto content_size = static_cast<uint64_t>(chunk.content().size());
-				if (chunk.chunk_index() != text->second.next_chunk ||
+				std::string content = chunk.content();
+				bool content_valid = true;
+				if (text->second.inflater) {
+					const auto compressed_size = static_cast<uint64_t>(chunk.content().size());
+					std::vector<uint8_t> decoded;
+					content_valid = compressed_size <= kMaximumBufferedDataStreamSize -
+					                                       text->second.compressed_length &&
+					                text->second.inflater->Write(
+					                    reinterpret_cast<const uint8_t*>(chunk.content().data()),
+					                    chunk.content().size(), decoded);
+					if (content_valid) {
+						text->second.compressed_length += compressed_size;
+						content.assign(decoded.begin(), decoded.end());
+					}
+				}
+				const auto content_size = static_cast<uint64_t>(content.size());
+				if (!content_valid || chunk.chunk_index() != text->second.next_chunk ||
 				    content_size >
 				        std::numeric_limits<uint64_t>::max() - text->second.received_length ||
 				    (text->second.expected_length &&
@@ -1440,9 +1488,9 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 					if (text->second.handler) {
 						text_handler = text->second.handler;
 						text_event = {text->second.info, DataStreamEventType::Chunk,
-						              chunk.content(), chunk.chunk_index(), ""};
+						              std::move(content), chunk.chunk_index(), ""};
 					} else {
-						text->second.event.text.append(chunk.content());
+						text->second.event.text.append(content);
 					}
 				}
 			} else {
@@ -1450,8 +1498,22 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 				if (bytes == incoming_files_.end()) {
 					return;
 				}
-				const auto content_size = static_cast<uint64_t>(chunk.content().size());
-				if (chunk.chunk_index() != bytes->second.next_chunk ||
+				std::vector<uint8_t> content(chunk.content().begin(), chunk.content().end());
+				bool content_valid = true;
+				if (bytes->second.inflater) {
+					const auto compressed_size = static_cast<uint64_t>(chunk.content().size());
+					content.clear();
+					content_valid = compressed_size <= kMaximumBufferedDataStreamSize -
+					                                       bytes->second.compressed_length &&
+					                bytes->second.inflater->Write(
+					                    reinterpret_cast<const uint8_t*>(chunk.content().data()),
+					                    chunk.content().size(), content);
+					if (content_valid) {
+						bytes->second.compressed_length += compressed_size;
+					}
+				}
+				const auto content_size = static_cast<uint64_t>(content.size());
+				if (!content_valid || chunk.chunk_index() != bytes->second.next_chunk ||
 				    content_size >
 				        std::numeric_limits<uint64_t>::max() - bytes->second.received_length ||
 				    (bytes->second.expected_length &&
@@ -1475,12 +1537,11 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 						byte_handler = bytes->second.handler;
 						byte_event.info = bytes->second.info;
 						byte_event.type = DataStreamEventType::Chunk;
-						byte_event.content.assign(chunk.content().begin(), chunk.content().end());
+						byte_event.content = std::move(content);
 						byte_event.chunk_index = chunk.chunk_index();
 					} else {
 						bytes->second.event.data.insert(bytes->second.event.data.end(),
-						                                chunk.content().begin(),
-						                                chunk.content().end());
+						                                content.begin(), content.end());
 					}
 				}
 			}
@@ -1508,6 +1569,7 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			if (text != incoming_texts_.end()) {
 				const bool complete =
 				    packet.stream_trailer().reason().empty() &&
+				    (!text->second.inflater || text->second.inflater->Finished()) &&
 				    (!text->second.expected_length ||
 				     text->second.received_length == *text->second.expected_length);
 				for (const auto& [key, value] : packet.stream_trailer().attributes()) {
@@ -1532,6 +1594,7 @@ void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 			auto it = incoming_files_.find(packet.stream_trailer().stream_id());
 			if (it != incoming_files_.end()) {
 				const bool complete = packet.stream_trailer().reason().empty() &&
+				                      (!it->second.inflater || it->second.inflater->Finished()) &&
 				                      (!it->second.expected_length ||
 				                       it->second.received_length == *it->second.expected_length);
 				for (const auto& [key, value] : packet.stream_trailer().attributes()) {

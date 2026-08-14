@@ -42,19 +42,24 @@ int main(int argc, char* argv[]) {
 
 	livekit::core::TextSendOptions message_options;
 	message_options.topic = "text-transfer";
+	message_options.compress = true;
 	const std::string message = "sending:" + path.filename().string();
 	const std::vector<uint8_t> bytes{'l', 'i', 'v', 'e', 'k', 'i', 't'};
 	livekit::core::ByteSendOptions byte_options;
 	byte_options.topic = "byte-transfer";
+	byte_options.compress = true;
+	livekit::core::FileSendOptions file_options;
+	file_options.compress = true;
 	livekit::core::StreamTextOptions stream_options;
 	stream_options.topic = "incremental-text-transfer";
+	stream_options.compress = true;
 	const std::string first_chunk = "incremental ";
 	const std::string second_chunk = "message";
 	stream_options.total_size = first_chunk.size() + second_chunk.size();
 	auto writer = room->GetLocalParticipant()->StreamText(stream_options);
 	if (!room->GetLocalParticipant()->SendText(message, message_options) ||
 	    !room->GetLocalParticipant()->SendBytes(bytes, byte_options) ||
-	    !room->GetLocalParticipant()->SendFile(path.string()) || !writer ||
+	    !room->GetLocalParticipant()->SendFile(path.string(), file_options) || !writer ||
 	    !writer->Write(first_chunk) || !writer->Write(second_chunk) || !writer->Close()) {
 		std::cerr << "Failed to send data streams" << std::endl;
 		return 1;

@@ -41,6 +41,7 @@ endif()
 
 find_package(libwebsockets CONFIG REQUIRED)
 find_package(libuv CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
 
 if(TARGET websockets_shared)
   set(LKC_LIBWEBSOCKETS_TARGET websockets_shared)
@@ -131,6 +132,7 @@ set(
   src/core/detail/audio_device.cpp
   src/core/detail/converted_proto.cpp
   src/core/detail/data_channel_backpressure.cpp
+  src/core/detail/data_stream_compression.cpp
   src/core/detail/debouncer.cpp
   src/core/detail/internals.cpp
   src/core/detail/global_task_queue.cpp
@@ -180,6 +182,7 @@ target_link_libraries(livekitclient PRIVATE
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 

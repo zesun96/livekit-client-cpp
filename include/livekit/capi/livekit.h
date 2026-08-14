@@ -554,6 +554,7 @@ typedef struct lk_file_send_options {
 	size_t chunk_size;
 	const lk_attribute_t* attributes;
 	size_t attribute_count;
+	int compress;
 } lk_file_send_options_t;
 
 typedef struct lk_text_send_options {
@@ -567,6 +568,7 @@ typedef struct lk_text_send_options {
 	const char* const* attached_stream_ids;
 	size_t attached_stream_id_count;
 	size_t chunk_size;
+	int compress;
 } lk_text_send_options_t;
 
 typedef struct lk_byte_send_options {
@@ -579,6 +581,7 @@ typedef struct lk_byte_send_options {
 	const lk_attribute_t* attributes;
 	size_t attribute_count;
 	size_t chunk_size;
+	int compress;
 } lk_byte_send_options_t;
 
 typedef struct lk_stream_text_options {
@@ -599,6 +602,7 @@ typedef struct lk_stream_text_options {
 	int32_t version;
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
+	int compress;
 } lk_stream_text_options_t;
 
 typedef struct lk_stream_bytes_options {
@@ -616,6 +620,7 @@ typedef struct lk_stream_bytes_options {
 	size_t chunk_size;
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
+	int compress;
 } lk_stream_bytes_options_t;
 
 typedef struct lk_rpc_perform_options {

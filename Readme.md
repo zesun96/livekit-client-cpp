@@ -106,6 +106,11 @@ for local track handles through `lk_local_track_rtc_stats`. C++ applications can
 `GetRTCStatsSnapshot()` for normalized RTP stream counters or caller-scheduled `RTCStatsMonitor`
 samples for bitrate, RTT, loss, jitter, audio, video, and codec metrics.
 
+Text, byte, file, and incremental DataStreams support optional LiveKit-compatible raw-deflate
+compression through the `compress` send option. Compression is disabled by default for backward
+compatibility. Compressed streams retain the original byte count in `total_size`; receivers enforce
+a 64 MiB compressed-input and decompressed-output limit before dispatching data to applications.
+
 ## Tests
 
 Tests use GoogleTest 1.15.2 from a small, checksum-verified source archive.

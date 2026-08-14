@@ -160,9 +160,11 @@ common publish settings and intentionally want to rebuild every publisher sender
 
 ### `data_transfer`
 
-Sends one-shot text, in-memory bytes, the selected file, and a two-write incremental text stream
-using LiveKit data streams compatible with the official JS and Go SDKs. Run `room_event` first to
-observe Open/Chunk/Closed delivery for the incremental stream.
+Sends raw-deflate-compressed one-shot text, in-memory bytes, the selected file, and a two-write
+incremental text stream using LiveKit data streams compatible with the official JS and Go SDKs.
+Run `room_event` first to observe decompressed Open/Chunk/Closed delivery for the incremental
+stream. Applications can leave each send option's `compress` field at its default `false` when
+communicating with older clients.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/data_transfer/Release/data_transfer.exe" `
