@@ -535,6 +535,26 @@ TEST(RoomConnectionStateTest, TransitionsThroughSuccessfulReconnect) {
 	room.RemoveEventListener();
 }
 
+TEST(RoomConnectionStateTest, DoesNotDuplicateEventWhenResumeEscalatesToFullReconnect) {
+	Room room;
+	ConnectionEvents events;
+	room.AddEventListener(&events);
+	room.ConnectedEvent({});
+
+	room.ReconnectingEvent(false);
+	room.ReconnectingEvent(true);
+	room.ReconnectingEvent(true);
+
+	EXPECT_EQ(room.State(), RoomInterface::RoomState::Reconnecting);
+	EXPECT_EQ(events.reconnecting_count, 1);
+	ASSERT_EQ(events.states.size(), 2u);
+	EXPECT_EQ(events.states[1], RoomState::Reconnecting);
+
+	room.ResumedEvent();
+	EXPECT_EQ(events.reconnected_count, 1);
+	room.RemoveEventListener();
+}
+
 TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
 	Room room;
 	ConnectionEvents events;

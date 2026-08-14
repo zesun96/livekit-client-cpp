@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_OPTION_ROOM_OPTION_H_
 #define _LKC_CORE_OPTION_ROOM_OPTION_H_
 
+#include "reconnect_policy.h"
 #include "rtc_engine_option.h"
 
 namespace livekit {
@@ -36,6 +37,8 @@ struct RoomOptions {
 	bool dynacast = false;
 	RtcConfiguration rtc_config;
 	uint32_t join_retries = 3;
+	std::chrono::milliseconds reconnect_timeout{15'000};
+	std::shared_ptr<ReconnectPolicy> reconnect_policy = CreateDefaultReconnectPolicy();
 	RoomSdkOptions sdk_options;
 };
 

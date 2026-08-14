@@ -76,6 +76,8 @@ public:
 	                                       const RemoteTrackSettings& settings);
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
+	bool SimulateMediaFailureForTesting();
+	std::string AccessTokenForReconnectForTesting() const;
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:

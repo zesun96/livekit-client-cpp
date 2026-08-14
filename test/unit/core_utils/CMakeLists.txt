@@ -15,6 +15,7 @@ add_executable(
   uri_test.cpp
   async_utils_test.cpp
   data_channel_backpressure_test.cpp
+  reconnect_policy_test.cpp
   signal_url_test.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/signal_url.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/uri.cpp
@@ -22,6 +23,7 @@ add_executable(
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_data.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/debouncer.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_channel_backpressure.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/core/option/reconnect_policy.cpp
 )
 
 target_compile_features(livekit_core_utils_tests PRIVATE cxx_std_20)

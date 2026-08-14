@@ -17,6 +17,7 @@ Because webrtc requires C++20.
 - [x] WebSocket signaling and room lifecycle
 - [x] Unified connection state change events across the full room lifecycle
 - [x] Protocol-level signal resume with SyncState/ICE restart and automatic full-reconnect fallback
+- [x] Configurable reconnect timeout/backoff policy with bounded, interruptible retries
 - [x] Structured LiveKit disconnect reasons in C++ and C APIs
 - [x] Room and participant state, track publications, active speakers, and quality events
 - [x] Room metadata and recording status change events
@@ -111,6 +112,12 @@ compression through the `compress` send option. Compression is disabled by defau
 compatibility. Compressed streams retain the original byte count in `total_size`; receivers enforce
 a 64 MiB compressed-input and decompressed-output limit before dispatching data to applications.
 
+Connection recovery uses `RoomConnectOptions::reconnect_timeout` as the per-attempt RTC upper bound
+and invokes `RoomConnectOptions::reconnect_policy` before each full-reconnect attempt. Custom
+policies return a delay or `std::nullopt` to stop recovery; `join_retries` remains the maximum number
+of full-reconnect attempts. Policy callbacks run on the SDK recovery thread and should return
+quickly. The default policy retries immediately and then uses quadratic backoff capped at 7 seconds.
+
 ## Tests
 
 Tests use GoogleTest 1.15.2 from a small, checksum-verified source archive.
@@ -153,6 +160,29 @@ $env:LIVEKIT_TOKEN_2_UPDATE = "<second-client-token-with-update-permission>" # o
 
 ctest --test-dir out/build/tests -L integration --output-on-failure
 ```
+
+Destructive recovery checks are kept out of the regular integration suite. The Windows harness
+starts an owned server, coordinates an explicit restart, verifies server-issued token refresh
+across resume and full reconnect, and restores an existing server in a `finally` block:
+
+```powershell
+$apiSecret = Read-Host "LiveKit API secret"
+.\test\integration\run_reconnect_matrix.ps1 `
+  -ServerExecutable "C:\path\to\livekit-server.exe" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ApiKey "devkey" -ApiSecret $apiSecret `
+  -BuildDirectory "out\build\tests" `
+  -NodeIp "192.168.1.20" -Port 7880 `
+  -ConfigPath "C:\path\to\livekit.yaml" `
+  -ReplaceExistingServer
+```
+
+Run this command from an elevated PowerShell when the existing server is elevated or Windows
+Firewall requires a rule for a newly downloaded server executable. To test a different server
+version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
+RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart` or
+`-Scenario TokenRefresh` to run one part of the matrix. The harness verifies the listener's exact
+executable path before stopping it and never writes credentials or logs into the repository.
 
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.

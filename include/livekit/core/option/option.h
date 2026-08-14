@@ -22,6 +22,7 @@
 
 #include "e2ee_option.h"
 #include "media_option.h"
+#include "reconnect_policy.h"
 #include "room_option.h"
 #include "rtc_engine_option.h"
 #include "signal_option.h"
