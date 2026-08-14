@@ -61,6 +61,10 @@ static livekit::core::EngineOptions make_engine_config(livekit::core::RoomOption
 	livekit::core::EngineOptions engine_options;
 
 	engine_options.join_retries = room_options.join_retries;
+	engine_options.reconnect_timeout = room_options.reconnect_timeout;
+	engine_options.reconnect_policy = room_options.reconnect_policy != nullptr
+	                                      ? std::move(room_options.reconnect_policy)
+	                                      : livekit::core::CreateDefaultReconnectPolicy();
 	engine_options.rtc_config.ice_servers = room_options.rtc_config.ice_servers;
 	engine_options.rtc_config.continual_gathering_policy =
 	    room_options.rtc_config.continual_gathering_policy;
@@ -483,6 +487,10 @@ bool Room::SimulateSignalDisconnectForTesting() {
 
 bool Room::SimulateFullReconnectForTesting() {
 	return rtc_engine_ != nullptr && rtc_engine_->SimulateFullReconnectForTesting();
+}
+
+bool Room::SimulateMediaFailureForTesting() {
+	return rtc_engine_ != nullptr && rtc_engine_->SimulateMediaFailureForTesting();
 }
 
 RoomInterface::RoomState RoomInterface::State() const {

@@ -119,6 +119,7 @@ set(
   src/core/track/video_source.cpp
 
   src/core/option/defalut_option.cpp
+  src/core/option/reconnect_policy.cpp
 
   src/core/participant/local_participant.cpp
   src/core/participant/participant.cpp

@@ -33,7 +33,6 @@ constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelDrainTimeout = std::chrono::seconds(10);
 constexpr uint64_t kDataChannelHighWaterMark = 4ULL * 1024 * 1024;
 constexpr uint64_t kDataChannelLowWaterMark = 1ULL * 1024 * 1024;
-constexpr auto kRecoveryRtcTimeout = std::chrono::seconds(15);
 constexpr auto kRpcAckTimeout = std::chrono::milliseconds(7'000);
 constexpr auto kMinimumRpcTimeout = std::chrono::milliseconds(8'000);
 constexpr uint32_t kRpcVersion = 1;
@@ -86,6 +85,26 @@ livekit::ReconnectReason ToReconnectReason(livekit::DisconnectReason reason) {
 		return livekit::ReconnectReason::RR_SIGNAL_DISCONNECTED;
 	}
 	return livekit::ReconnectReason::RR_UNKNOWN;
+}
+
+livekit::core::ReconnectReason ToPublicReconnectReason(livekit::DisconnectReason reason) {
+	if (reason == livekit::DisconnectReason::MEDIA_FAILURE) {
+		return livekit::core::ReconnectReason::MediaFailure;
+	}
+	if (reason == livekit::DisconnectReason::SIGNAL_CLOSE) {
+		return livekit::core::ReconnectReason::SignalDisconnected;
+	}
+	return livekit::core::ReconnectReason::Unknown;
+}
+
+const char* ReconnectReasonName(livekit::DisconnectReason reason) {
+	if (reason == livekit::DisconnectReason::MEDIA_FAILURE) {
+		return "media_failure";
+	}
+	if (reason == livekit::DisconnectReason::SIGNAL_CLOSE) {
+		return "signal_disconnected";
+	}
+	return "unknown";
 }
 } // namespace
 
@@ -301,7 +320,9 @@ bool RtcEngine::ResumeTransport(const std::string& url, const std::string& token
 	}
 
 	std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
-	const bool connected = rtc_connected_cv_.wait_for(guard, kRecoveryRtcTimeout, [this]() {
+	const auto reconnect_timeout =
+	    (std::max)(options.reconnect_timeout, std::chrono::milliseconds(1));
+	const bool connected = rtc_connected_cv_.wait_for(guard, reconnect_timeout, [this]() {
 		if (recovery_stop_.load() || force_full_reconnect_.load()) {
 			return true;
 		}
@@ -424,6 +445,8 @@ void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_
 		}
 		return;
 	}
+	PLOG_INFO << "connection recovery started: reason=" << ReconnectReasonName(reason)
+	          << ", force_full_reconnect=" << force_full_reconnect;
 	recovering_connection_ = true;
 	{
 		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
@@ -456,6 +479,7 @@ void RtcEngine::RunRecovery() {
 		options = connection_options_;
 	}
 	const auto attempts = (std::max)(uint32_t{1}, options.join_retries);
+	const auto recovery_started = std::chrono::steady_clock::now();
 	livekit::JoinResponse recovered_response;
 	bool recovered = false;
 
@@ -469,6 +493,7 @@ void RtcEngine::RunRecovery() {
 			recovered = ResumeTransport(url, token, options, recovery_failure_reason_.load());
 		}
 		if (recovered && !force_full_reconnect_) {
+			PLOG_INFO << "connection recovery completed with signal resume";
 			if (auto* listener = room_listener_.load()) {
 				listener->ResumedEvent();
 			}
@@ -487,6 +512,39 @@ void RtcEngine::RunRecovery() {
 	recovered = false;
 
 	for (uint32_t attempt = 0; attempt < attempts && !recovery_stop_; ++attempt) {
+		ReconnectContext context;
+		context.retry_count = attempt;
+		context.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+		    std::chrono::steady_clock::now() - recovery_started);
+		context.reason = ToPublicReconnectReason(recovery_failure_reason_.load());
+		context.server_url = url;
+		std::optional<std::chrono::milliseconds> retry_delay;
+		try {
+			retry_delay = options.reconnect_policy != nullptr
+			                  ? options.reconnect_policy->NextRetryDelay(context)
+			                  : CreateDefaultReconnectPolicy()->NextRetryDelay(context);
+		} catch (const std::exception& error) {
+			PLOG_ERROR << "connection recovery policy failed: " << error.what();
+			break;
+		} catch (...) {
+			PLOG_ERROR << "connection recovery policy failed with an unknown exception";
+			break;
+		}
+		if (!retry_delay.has_value()) {
+			PLOG_WARNING << "connection recovery policy stopped retries after " << attempt
+			             << " attempt(s)";
+			break;
+		}
+		PLOG_INFO << "full reconnect attempt " << (attempt + 1) << "/" << attempts
+		          << ", delay_ms=" << retry_delay->count();
+		if (*retry_delay > std::chrono::milliseconds::zero()) {
+			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
+			rtc_connected_cv_.wait_for(guard, *retry_delay,
+			                           [this]() { return recovery_stop_.load(); });
+			if (recovery_stop_) {
+				break;
+			}
+		}
 		{
 			std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
 			rtc_connected_ = false;
@@ -505,7 +563,9 @@ void RtcEngine::RunRecovery() {
 		recovered_response = ConnectTransport(url, token, options);
 		if (recovered_response.has_room()) {
 			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
-			recovered = rtc_connected_cv_.wait_for(guard, kRecoveryRtcTimeout, [this]() {
+			const auto reconnect_timeout =
+			    (std::max)(options.reconnect_timeout, std::chrono::milliseconds(1));
+			recovered = rtc_connected_cv_.wait_for(guard, reconnect_timeout, [this]() {
 				return rtc_connected_ || recovery_stop_.load();
 			});
 			recovered = recovered && rtc_connected_ && !recovery_stop_;
@@ -513,18 +573,23 @@ void RtcEngine::RunRecovery() {
 		if (recovered) {
 			break;
 		}
-		if (attempt + 1 < attempts && !recovery_stop_) {
-			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
-			rtc_connected_cv_.wait_for(guard, std::chrono::seconds(attempt + 1),
-			                           [this]() { return recovery_stop_.load(); });
-		}
 	}
 
 	if (recovered) {
+		PLOG_INFO << "connection recovery completed with full reconnect in "
+		          << std::chrono::duration_cast<std::chrono::milliseconds>(
+		                 std::chrono::steady_clock::now() - recovery_started)
+		                 .count()
+		          << "ms";
 		if (auto* listener = room_listener_.load()) {
 			listener->ReconnectedEvent(std::move(recovered_response));
 		}
 	} else if (!recovery_stop_) {
+		PLOG_ERROR << "connection recovery exhausted after "
+		           << std::chrono::duration_cast<std::chrono::milliseconds>(
+		                  std::chrono::steady_clock::now() - recovery_started)
+		                  .count()
+		           << "ms";
 		ResetTransport(false);
 		recovery_allowed_ = false;
 		if (auto* listener = room_listener_.load()) {
@@ -961,6 +1026,16 @@ bool RtcEngine::SimulateFullReconnectForTesting() {
 		return false;
 	}
 	StartRecovery(livekit::DisconnectReason::SIGNAL_CLOSE, true);
+	return true;
+}
+
+bool RtcEngine::SimulateMediaFailureForTesting() {
+	if (!recovery_allowed_ || recovery_stop_) {
+		return false;
+	}
+	OnStateChange(RtcSession::State::kFailed,
+	              webrtc::PeerConnectionInterface::PeerConnectionState::kFailed,
+	              webrtc::PeerConnectionInterface::PeerConnectionState::kFailed);
 	return true;
 }
 

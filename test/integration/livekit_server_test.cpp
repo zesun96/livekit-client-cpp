@@ -370,18 +370,40 @@ private:
 class ReconnectEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}
-	void OnReconnecting() override { reconnecting_.store(true); }
-	void OnReconnected() override { reconnected_.store(true); }
+	void OnReconnecting() override { reconnecting_.fetch_add(1); }
+	void OnReconnected() override { reconnected_.fetch_add(1); }
 	void OnDisconnected() override { disconnected_.store(true); }
 
-	bool reconnecting() const { return reconnecting_.load(); }
-	bool reconnected() const { return reconnected_.load(); }
+	bool reconnecting() const { return reconnecting_.load() > 0; }
+	bool reconnected() const { return reconnected_.load() > 0; }
 	bool disconnected() const { return disconnected_.load(); }
+	uint32_t reconnecting_count() const { return reconnecting_.load(); }
+	uint32_t reconnected_count() const { return reconnected_.load(); }
 
 private:
-	std::atomic<bool> reconnecting_{false};
-	std::atomic<bool> reconnected_{false};
+	std::atomic<uint32_t> reconnecting_{0};
+	std::atomic<uint32_t> reconnected_{0};
 	std::atomic<bool> disconnected_{false};
+};
+
+class RecordingReconnectPolicy final : public ReconnectPolicy {
+public:
+	std::optional<std::chrono::milliseconds>
+	NextRetryDelay(const ReconnectContext& context) override {
+		calls_.fetch_add(1);
+		last_retry_count_.store(context.retry_count);
+		last_reason_.store(context.reason);
+		return std::chrono::milliseconds::zero();
+	}
+
+	uint32_t calls() const { return calls_.load(); }
+	uint32_t last_retry_count() const { return last_retry_count_.load(); }
+	ReconnectReason last_reason() const { return last_reason_.load(); }
+
+private:
+	std::atomic<uint32_t> calls_{0};
+	std::atomic<uint32_t> last_retry_count_{0};
+	std::atomic<ReconnectReason> last_reason_{ReconnectReason::Unknown};
 };
 
 class TemporaryFile {
@@ -452,6 +474,8 @@ TEST(LiveKitServerTest, RecoversAfterSignalTransportDisconnect) {
 	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && room->IsConnected(); },
 	                      std::chrono::seconds(30)));
 	EXPECT_FALSE(events.disconnected());
+	EXPECT_EQ(events.reconnecting_count(), 1u);
+	EXPECT_EQ(events.reconnected_count(), 1u);
 	EXPECT_FALSE(room->Sid().empty());
 	EXPECT_FALSE(room->GetLocalParticipant()->Sid().empty());
 
@@ -473,11 +497,14 @@ TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
 	ASSERT_TRUE(runtime.initialized());
 	MediaEvents events;
 	auto receiver = CreateRoomUnique();
-	auto sender = CreateRoomUnique();
+	auto reconnect_policy = std::make_shared<RecordingReconnectPolicy>();
+	RoomOptions sender_options;
+	sender_options.reconnect_policy = reconnect_policy;
+	auto sender = CreateRoomUnique(sender_options);
 	receiver->AddEventListener(&events);
 	sender->AddEventListener(&events);
 	ASSERT_TRUE(receiver->Connect(url, receiver_token));
-	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token, sender_options));
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(10)));
 	const auto sender_identity = sender->GetLocalParticipant()->Identity();
@@ -500,10 +527,13 @@ TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
 
 	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
 	ASSERT_NE(concrete_sender, nullptr);
-	ASSERT_TRUE(concrete_sender->SimulateFullReconnectForTesting());
+	ASSERT_TRUE(concrete_sender->SimulateMediaFailureForTesting());
 	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting(); }, std::chrono::seconds(10)));
 	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(30)));
+	EXPECT_EQ(reconnect_policy->calls(), 1u);
+	EXPECT_EQ(reconnect_policy->last_retry_count(), 0u);
+	EXPECT_EQ(reconnect_policy->last_reason(), ReconnectReason::MediaFailure);
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
 		    auto* participant = receiver->GetRemoteParticipantByIdentity(sender_identity);

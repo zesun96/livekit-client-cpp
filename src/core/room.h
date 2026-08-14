@@ -76,6 +76,7 @@ public:
 	                                       const RemoteTrackSettings& settings);
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
+	bool SimulateMediaFailureForTesting();
 
 	/* Pure virtual methods inherited from RtcEngineListener */
 public:

@@ -119,6 +119,7 @@ public:
 	void SendSyncState(const std::vector<livekit::TrackPublishedResponse>& published_tracks);
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
+	bool SimulateMediaFailureForTesting();
 
 	/* Pure virtual methods inherited from SignalClientObserver */
 public:

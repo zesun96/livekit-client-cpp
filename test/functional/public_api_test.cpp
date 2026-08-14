@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <vector>
 
 namespace livekit::core {
@@ -31,6 +32,20 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	EXPECT_EQ(room->GetRemoteParticipantByIdentity("missing"), nullptr);
 	EXPECT_FALSE(room->SetLocalTrackMuted("missing", true));
 	EXPECT_FALSE(room->SetRemoteTrackSubscribed("missing", "missing", true));
+}
+
+TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
+	auto options = default_room_connect_options();
+	EXPECT_EQ(options.join_retries, 3u);
+	EXPECT_EQ(options.reconnect_timeout, std::chrono::seconds(15));
+	ASSERT_NE(options.reconnect_policy, nullptr);
+
+	ReconnectContext context;
+	context.retry_count = 1;
+	context.elapsed = std::chrono::seconds(2);
+	context.reason = ReconnectReason::SignalDisconnected;
+	context.server_url = "ws://localhost:7880";
+	EXPECT_EQ(options.reconnect_policy->NextRetryDelay(context), std::chrono::milliseconds(300));
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }

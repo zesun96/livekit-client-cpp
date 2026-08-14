@@ -17,6 +17,7 @@ Because webrtc requires C++20.
 - [x] WebSocket signaling and room lifecycle
 - [x] Unified connection state change events across the full room lifecycle
 - [x] Protocol-level signal resume with SyncState/ICE restart and automatic full-reconnect fallback
+- [x] Configurable reconnect timeout/backoff policy with bounded, interruptible retries
 - [x] Structured LiveKit disconnect reasons in C++ and C APIs
 - [x] Room and participant state, track publications, active speakers, and quality events
 - [x] Room metadata and recording status change events
@@ -110,6 +111,12 @@ Text, byte, file, and incremental DataStreams support optional LiveKit-compatibl
 compression through the `compress` send option. Compression is disabled by default for backward
 compatibility. Compressed streams retain the original byte count in `total_size`; receivers enforce
 a 64 MiB compressed-input and decompressed-output limit before dispatching data to applications.
+
+Connection recovery uses `RoomConnectOptions::reconnect_timeout` as the per-attempt RTC upper bound
+and invokes `RoomConnectOptions::reconnect_policy` before each full-reconnect attempt. Custom
+policies return a delay or `std::nullopt` to stop recovery; `join_retries` remains the maximum number
+of full-reconnect attempts. Policy callbacks run on the SDK recovery thread and should return
+quickly. The default policy retries immediately and then uses quadratic backoff capped at 7 seconds.
 
 ## Tests
 

@@ -25,6 +25,8 @@ RoomOptions default_room_options() {
 	option.auto_subscribe = true;
 	option.dynacast = false;
 	option.join_retries = 3;
+	option.reconnect_timeout = std::chrono::seconds(15);
+	option.reconnect_policy = CreateDefaultReconnectPolicy();
 	option.rtc_config.continual_gathering_policy = ContinualGatheringPolicy::GatherContinually;
 	option.rtc_config.ice_transport_type = IceTransportsType::All;
 	option.sdk_options.sdk = "cpp";
