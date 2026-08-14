@@ -333,6 +333,7 @@ int main(int argc, char** argv) {
 		lk_text_stream_writer_t* writer = NULL;
 		lk_stream_text_options_init(&options);
 		options.topic = "c.stream-demo";
+		options.compress = 1;
 		options.has_total_size = 1;
 		options.total_size = strlen(first) + strlen(second);
 		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK ||

@@ -980,6 +980,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 
 	TextSendOptions text_options;
 	text_options.topic = "integration-text";
+	text_options.compress = true;
 	text_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	ASSERT_TRUE(sender->GetLocalParticipant()->SendText("hello from C++", text_options));
 	ASSERT_TRUE(
@@ -988,6 +989,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	const std::vector<uint8_t> byte_payload{'b', 'y', 't', 'e', 's'};
 	ByteSendOptions byte_options;
 	byte_options.topic = "integration-bytes";
+	byte_options.compress = true;
 	byte_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	ASSERT_TRUE(sender->GetLocalParticipant()->SendBytes(byte_payload, byte_options));
 	ASSERT_TRUE(
@@ -1012,6 +1014,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	stream_text_options.topic = "integration-stream-text";
 	stream_text_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	stream_text_options.total_size = streamed_text.size();
+	stream_text_options.compress = true;
 	stream_text_options.on_progress = [&](uint64_t sent, std::optional<uint64_t>) {
 		text_progress = sent;
 	};
@@ -1041,6 +1044,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 
 	StreamBytesOptions stream_byte_options;
 	stream_byte_options.topic = "integration-stream-bytes";
+	stream_byte_options.compress = true;
 	stream_byte_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	auto byte_writer = sender->GetLocalParticipant()->StreamBytes(stream_byte_options);
 	ASSERT_NE(byte_writer, nullptr);
@@ -1072,6 +1076,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	StreamBytesOptions large_options;
 	large_options.topic = "integration-large-stream";
 	large_options.total_size = large_stream_size;
+	large_options.compress = true;
 	large_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	auto large_writer = sender->GetLocalParticipant()->StreamBytes(large_options);
 	ASSERT_NE(large_writer, nullptr);
@@ -1095,6 +1100,7 @@ TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {
 	FileSendOptions file_options;
 	file_options.topic = "integration-file";
 	file_options.mime_type = "application/x-livekit-test";
+	file_options.compress = true;
 	file_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
 	ASSERT_TRUE(sender->GetLocalParticipant()->SendFile(file.path().string(), file_options));
 	ASSERT_TRUE(WaitUntil(

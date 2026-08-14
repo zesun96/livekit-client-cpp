@@ -18,6 +18,7 @@
 #include "local_participant.h"
 
 #include "../detail/converted_proto.h"
+#include "../detail/data_stream_compression.h"
 #include "../detail/video_encoding.h"
 #include "../track/audio_source.h"
 #include "../track/audio_track.h"
@@ -83,6 +84,7 @@ private:
 namespace {
 
 constexpr std::size_t kMaximumDataStreamChunkSize = 15'000;
+constexpr uint64_t kMaximumCompressedDataStreamSize = 64ULL * 1024 * 1024;
 
 int64_t CurrentTimestampMilliseconds() {
 	return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -104,19 +106,20 @@ void PopulateStreamHeader(livekit::DataStream_Header& header, const std::string&
 	header.set_timestamp(CurrentTimestampMilliseconds());
 	header.set_topic(options.topic);
 	header.set_total_length(total_length);
+	header.set_compression(options.compress ? livekit::DataStream_CompressionType_DEFLATE_RAW
+	                                        : livekit::DataStream_CompressionType_NONE);
 	for (const auto& [key, value] : options.attributes) {
 		(*header.mutable_attributes())[key] = value;
 	}
 }
 
 template <typename Options>
-bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const uint8_t* data,
-                       std::size_t size, const Options& options) {
+bool SendStreamChunks(RtcEngine* engine, const std::string& stream_id, const uint8_t* data,
+                      std::size_t size, const Options& options, uint64_t& chunk_index) {
 	if (engine == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize || (data == nullptr && size != 0)) {
 		return false;
 	}
-	uint64_t chunk_index = 0;
 	for (std::size_t offset = 0; offset < size; offset += options.chunk_size) {
 		const auto count = std::min(options.chunk_size, size - offset);
 		livekit::DataPacket chunk_packet;
@@ -129,6 +132,37 @@ bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const ui
 			return false;
 		}
 	}
+	return true;
+}
+
+template <typename Options>
+bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const uint8_t* data,
+                       std::size_t size, const Options& options) {
+	if (options.compress && size > kMaximumCompressedDataStreamSize) {
+		return false;
+	}
+	std::vector<uint8_t> compressed;
+	if (options.compress) {
+		detail::DeflateRawStream deflater;
+		if (!deflater.IsValid()) {
+			return false;
+		}
+		for (std::size_t offset = 0; offset < size; offset += options.chunk_size) {
+			const auto count = std::min(options.chunk_size, size - offset);
+			if (!deflater.Write(data + offset, count, compressed)) {
+				return false;
+			}
+		}
+		if (!deflater.Finish(compressed)) {
+			return false;
+		}
+		data = compressed.data();
+		size = compressed.size();
+	}
+	uint64_t chunk_index = 0;
+	if (!SendStreamChunks(engine, stream_id, data, size, options, chunk_index)) {
+		return false;
+	}
 
 	livekit::DataPacket trailer_packet;
 	PopulateStreamPacket(trailer_packet, options);
@@ -137,11 +171,13 @@ bool SendStreamPayload(RtcEngine* engine, const std::string& stream_id, const ui
 }
 
 template <typename Info>
-void PopulateStreamingHeader(livekit::DataStream_Header& header, const Info& info) {
+void PopulateStreamingHeader(livekit::DataStream_Header& header, const Info& info, bool compress) {
 	header.set_stream_id(info.stream_id);
 	header.set_timestamp(info.timestamp);
 	header.set_topic(info.topic);
 	header.set_mime_type(info.mime_type);
+	header.set_compression(compress ? livekit::DataStream_CompressionType_DEFLATE_RAW
+	                                : livekit::DataStream_CompressionType_NONE);
 	if (info.total_size.has_value()) {
 		header.set_total_length(*info.total_size);
 	}
@@ -168,10 +204,11 @@ public:
 	OutgoingStreamWriterBase(std::shared_ptr<OutgoingDataStreamState> state, DataStreamInfo info,
 	                         std::vector<std::string> destination_identities,
 	                         std::size_t chunk_size, int32_t version,
-	                         DataStreamProgressHandler progress)
+	                         DataStreamProgressHandler progress, bool compress)
 	    : state_(std::move(state)), info_(std::move(info)),
 	      destination_identities_(std::move(destination_identities)), chunk_size_(chunk_size),
-	      version_(version), progress_(std::move(progress)) {}
+	      version_(version), progress_(std::move(progress)),
+	      deflater_(compress ? std::make_unique<detail::DeflateRawStream>() : nullptr) {}
 
 	virtual ~OutgoingStreamWriterBase() { CancelInternal("writer destroyed before close"); }
 
@@ -186,34 +223,50 @@ public:
 		std::optional<uint64_t> total_size;
 		{
 			std::lock_guard<std::mutex> guard(mutex_);
-			if (closed_ || (data == nullptr && size != 0)) {
+			if (closed_ || (data == nullptr && size != 0) ||
+			    (deflater_ && (bytes_sent_ > kMaximumCompressedDataStreamSize ||
+			                   size > kMaximumCompressedDataStreamSize - bytes_sent_))) {
 				return false;
 			}
-			for (std::size_t offset = 0; offset < size;) {
-				std::size_t count = std::min(chunk_size_, size - offset);
-				if (preserve_utf8_boundaries && offset + count < size) {
-					while (count > 0 && (data[offset + count] & 0xc0U) == 0x80U) {
-						--count;
-					}
-					if (count == 0) {
-						return false;
-					}
-				}
-				livekit::DataPacket packet;
-				for (const auto& identity : destination_identities_) {
-					packet.add_destination_identities(identity);
-				}
-				auto* chunk = packet.mutable_stream_chunk();
-				chunk->set_stream_id(info_.stream_id);
-				chunk->set_chunk_index(next_chunk_++);
-				chunk->set_version(version_);
-				chunk->set_content(data + offset, count);
-				if (!state_ || !state_->Send(packet)) {
+			if (deflater_) {
+				if (!deflater_->IsValid()) {
 					closed_ = true;
 					return false;
 				}
-				offset += count;
-				bytes_sent_ += count;
+				std::vector<uint8_t> output;
+				if (!deflater_->Write(data, size, output) ||
+				    !SendBytes(output.data(), output.size())) {
+					closed_ = true;
+					return false;
+				}
+				bytes_sent_ += size;
+			} else {
+				for (std::size_t offset = 0; offset < size;) {
+					std::size_t count = std::min(chunk_size_, size - offset);
+					if (preserve_utf8_boundaries && offset + count < size) {
+						while (count > 0 && (data[offset + count] & 0xc0U) == 0x80U) {
+							--count;
+						}
+						if (count == 0) {
+							return false;
+						}
+					}
+					livekit::DataPacket packet;
+					for (const auto& identity : destination_identities_) {
+						packet.add_destination_identities(identity);
+					}
+					auto* chunk = packet.mutable_stream_chunk();
+					chunk->set_stream_id(info_.stream_id);
+					chunk->set_chunk_index(next_chunk_++);
+					chunk->set_version(version_);
+					chunk->set_content(data + offset, count);
+					if (!state_ || !state_->Send(packet)) {
+						closed_ = true;
+						return false;
+					}
+					offset += count;
+					bytes_sent_ += count;
+				}
 			}
 			progress = progress_;
 			bytes_sent = bytes_sent_;
@@ -237,6 +290,12 @@ public:
 			}
 			closed_ = true;
 			complete = !info_.total_size.has_value() || bytes_sent_ == *info_.total_size;
+			if (deflater_) {
+				std::vector<uint8_t> output;
+				if (!deflater_->Finish(output) || !SendBytes(output.data(), output.size())) {
+					return false;
+				}
+			}
 			if (!SendStreamTrailer(state_, destination_identities_, info_.stream_id,
 			                       complete ? "" : "incomplete stream")) {
 				return false;
@@ -267,11 +326,31 @@ protected:
 	DataStreamInfo info_;
 
 private:
+	bool SendBytes(const uint8_t* data, std::size_t size) {
+		for (std::size_t offset = 0; offset < size; offset += chunk_size_) {
+			const auto count = std::min(chunk_size_, size - offset);
+			livekit::DataPacket packet;
+			for (const auto& identity : destination_identities_) {
+				packet.add_destination_identities(identity);
+			}
+			auto* chunk = packet.mutable_stream_chunk();
+			chunk->set_stream_id(info_.stream_id);
+			chunk->set_chunk_index(next_chunk_++);
+			chunk->set_version(version_);
+			chunk->set_content(data + offset, count);
+			if (!state_ || !state_->Send(packet)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	std::shared_ptr<OutgoingDataStreamState> state_;
 	std::vector<std::string> destination_identities_;
 	std::size_t chunk_size_;
 	int32_t version_;
 	DataStreamProgressHandler progress_;
+	std::unique_ptr<detail::DeflateRawStream> deflater_;
 	mutable std::mutex mutex_;
 	uint64_t next_chunk_ = 0;
 	uint64_t bytes_sent_ = 0;
@@ -282,9 +361,9 @@ class TextStreamWriter final : public TextStreamWriterInterface, private Outgoin
 public:
 	TextStreamWriter(std::shared_ptr<OutgoingDataStreamState> state, TextStreamInfo info,
 	                 StreamTextOptions options)
-	    : OutgoingStreamWriterBase(std::move(state), info,
-	                               std::move(options.destination_identities), options.chunk_size,
-	                               options.version, std::move(options.on_progress)),
+	    : OutgoingStreamWriterBase(
+	          std::move(state), info, std::move(options.destination_identities), options.chunk_size,
+	          options.version, std::move(options.on_progress), options.compress),
 	      text_info_(std::move(info)) {}
 
 	TextStreamInfo Info() const override { return text_info_; }
@@ -305,7 +384,7 @@ public:
 	                 StreamBytesOptions options)
 	    : OutgoingStreamWriterBase(std::move(state), info,
 	                               std::move(options.destination_identities), options.chunk_size, 0,
-	                               std::move(options.on_progress)),
+	                               std::move(options.on_progress), options.compress),
 	      byte_info_(std::move(info)) {}
 
 	ByteStreamInfo Info() const override { return byte_info_; }
@@ -808,7 +887,8 @@ bool LocalParticipant::ResendTrackSubscriptionPermissions() {
 
 bool LocalParticipant::SendText(const std::string& text, TextSendOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
-	    options.chunk_size > kMaximumDataStreamChunkSize) {
+	    options.chunk_size > kMaximumDataStreamChunkSize ||
+	    (options.compress && text.size() > kMaximumCompressedDataStreamSize)) {
 		return false;
 	}
 	const std::string stream_id = webrtc::CreateRandomUuid();
@@ -832,7 +912,8 @@ bool LocalParticipant::SendText(const std::string& text, TextSendOptions options
 
 bool LocalParticipant::SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
-	    options.chunk_size > kMaximumDataStreamChunkSize) {
+	    options.chunk_size > kMaximumDataStreamChunkSize ||
+	    (options.compress && data.size() > kMaximumCompressedDataStreamSize)) {
 		return false;
 	}
 	const std::string stream_id = webrtc::CreateRandomUuid();
@@ -862,6 +943,9 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 		return false;
 	}
 	const auto file_size = static_cast<uint64_t>(end);
+	if (options.compress && file_size > kMaximumCompressedDataStreamSize) {
+		return false;
+	}
 	input.seekg(0, std::ios::beg);
 
 	const std::string stream_id = webrtc::CreateRandomUuid();
@@ -876,21 +960,41 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 		return false;
 	}
 
-	std::vector<char> buffer(options.chunk_size);
+	std::vector<uint8_t> buffer(options.chunk_size);
+	std::unique_ptr<detail::DeflateRawStream> deflater;
+	if (options.compress) {
+		deflater = std::make_unique<detail::DeflateRawStream>();
+		if (!deflater->IsValid()) {
+			return false;
+		}
+	}
 	uint64_t chunk_index = 0;
 	while (input) {
-		input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+		input.read(reinterpret_cast<char*>(buffer.data()),
+		           static_cast<std::streamsize>(buffer.size()));
 		const auto count = input.gcount();
 		if (count <= 0) {
 			break;
 		}
-		livekit::DataPacket chunk_packet;
-		PopulateStreamPacket(chunk_packet, options);
-		auto* chunk = chunk_packet.mutable_stream_chunk();
-		chunk->set_stream_id(stream_id);
-		chunk->set_chunk_index(chunk_index++);
-		chunk->set_content(buffer.data(), static_cast<std::size_t>(count));
-		if (!engine_->SendDataPacket(chunk_packet, true)) {
+		const uint8_t* payload = buffer.data();
+		std::size_t payload_size = static_cast<std::size_t>(count);
+		std::vector<uint8_t> compressed;
+		if (deflater) {
+			if (!deflater->Write(payload, payload_size, compressed)) {
+				return false;
+			}
+			payload = compressed.data();
+			payload_size = compressed.size();
+		}
+		if (!SendStreamChunks(engine_, stream_id, payload, payload_size, options, chunk_index)) {
+			return false;
+		}
+	}
+	if (deflater) {
+		std::vector<uint8_t> compressed;
+		if (!deflater->Finish(compressed) ||
+		    !SendStreamChunks(engine_, stream_id, compressed.data(), compressed.size(), options,
+		                      chunk_index)) {
 			return false;
 		}
 	}
@@ -904,8 +1008,16 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTextOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize ||
-	    (options.update && options.stream_id.empty())) {
+	    (options.update && options.stream_id.empty()) ||
+	    (options.compress && options.total_size &&
+	     *options.total_size > kMaximumCompressedDataStreamSize)) {
 		return nullptr;
+	}
+	if (options.compress) {
+		detail::DeflateRawStream validation;
+		if (!validation.IsValid()) {
+			return nullptr;
+		}
 	}
 	TextStreamInfo info;
 	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
@@ -919,7 +1031,7 @@ std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTe
 	livekit::DataPacket packet;
 	PopulateStreamPacket(packet, options);
 	auto* header = packet.mutable_stream_header();
-	PopulateStreamingHeader(*header, info);
+	PopulateStreamingHeader(*header, info, options.compress);
 	auto* text_header = header->mutable_text_header();
 	text_header->set_operation_type(options.update ? livekit::DataStream_OperationType_UPDATE
 	                                               : livekit::DataStream_OperationType_CREATE);
@@ -938,8 +1050,16 @@ std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTe
 std::unique_ptr<ByteStreamWriterInterface>
 LocalParticipant::StreamBytes(StreamBytesOptions options) {
 	if (engine_ == nullptr || options.chunk_size == 0 ||
-	    options.chunk_size > kMaximumDataStreamChunkSize) {
+	    options.chunk_size > kMaximumDataStreamChunkSize ||
+	    (options.compress && options.total_size &&
+	     *options.total_size > kMaximumCompressedDataStreamSize)) {
 		return nullptr;
+	}
+	if (options.compress) {
+		detail::DeflateRawStream validation;
+		if (!validation.IsValid()) {
+			return nullptr;
+		}
 	}
 	ByteStreamInfo info;
 	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
@@ -952,7 +1072,7 @@ LocalParticipant::StreamBytes(StreamBytesOptions options) {
 	livekit::DataPacket packet;
 	PopulateStreamPacket(packet, options);
 	auto* header = packet.mutable_stream_header();
-	PopulateStreamingHeader(*header, info);
+	PopulateStreamingHeader(*header, info, options.compress);
 	header->mutable_byte_header()->set_name(options.name);
 	if (!outgoing_stream_state_->Send(packet)) {
 		return nullptr;

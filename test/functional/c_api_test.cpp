@@ -48,22 +48,26 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_STREQ(file.topic, "files");
 	EXPECT_STREQ(file.mime_type, "application/octet-stream");
 	EXPECT_EQ(file.chunk_size, 15000u);
+	EXPECT_EQ(file.compress, 0);
 
 	lk_text_send_options_t text;
 	lk_text_send_options_init(&text);
 	EXPECT_EQ(text.struct_size, sizeof(text));
 	EXPECT_EQ(text.chunk_size, 15000u);
+	EXPECT_EQ(text.compress, 0);
 
 	lk_byte_send_options_t bytes;
 	lk_byte_send_options_init(&bytes);
 	EXPECT_EQ(bytes.struct_size, sizeof(bytes));
 	EXPECT_STREQ(bytes.mime_type, "application/octet-stream");
 	EXPECT_EQ(bytes.chunk_size, 15000u);
+	EXPECT_EQ(bytes.compress, 0);
 
 	lk_stream_text_options_t stream_text;
 	lk_stream_text_options_init(&stream_text);
 	EXPECT_EQ(stream_text.struct_size, sizeof(stream_text));
 	EXPECT_EQ(stream_text.chunk_size, 15000u);
+	EXPECT_EQ(stream_text.compress, 0);
 
 	lk_stream_bytes_options_t stream_bytes;
 	lk_stream_bytes_options_init(&stream_bytes);
@@ -71,6 +75,7 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_STREQ(stream_bytes.mime_type, "application/octet-stream");
 	EXPECT_STREQ(stream_bytes.name, "unknown");
 	EXPECT_EQ(stream_bytes.chunk_size, 15000u);
+	EXPECT_EQ(stream_bytes.compress, 0);
 
 	lk_rpc_perform_options_t rpc;
 	lk_rpc_perform_options_init(&rpc);

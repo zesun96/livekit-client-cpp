@@ -107,6 +107,7 @@ struct FileSendOptions {
 	std::vector<std::string> destination_identities;
 	std::size_t chunk_size = 15'000;
 	std::map<std::string, std::string> attributes;
+	bool compress = false;
 };
 
 struct TextSendOptions {
@@ -116,6 +117,7 @@ struct TextSendOptions {
 	std::string reply_to_stream_id;
 	std::vector<std::string> attached_stream_ids;
 	std::size_t chunk_size = 15'000;
+	bool compress = false;
 };
 
 struct ByteSendOptions {
@@ -125,6 +127,7 @@ struct ByteSendOptions {
 	std::vector<std::string> destination_identities;
 	std::map<std::string, std::string> attributes;
 	std::size_t chunk_size = 15'000;
+	bool compress = false;
 };
 
 struct TextReceivedEvent {
@@ -200,6 +203,7 @@ struct StreamTextOptions {
 	bool update = false;
 	int32_t version = 0;
 	DataStreamProgressHandler on_progress;
+	bool compress = false;
 };
 
 struct StreamBytesOptions {
@@ -212,6 +216,7 @@ struct StreamBytesOptions {
 	std::optional<uint64_t> total_size;
 	std::size_t chunk_size = 15'000;
 	DataStreamProgressHandler on_progress;
+	bool compress = false;
 };
 
 struct TextStreamEvent {

@@ -22,6 +22,7 @@
 
 #include "livekit/core/room_interface.h"
 
+#include "detail/data_stream_compression.h"
 #include "participant/local_participant.h"
 #include "participant/remote_participant.h"
 #include "track/remote_track.h"
@@ -134,7 +135,9 @@ private:
 		ByteStreamHandler handler;
 		std::optional<uint64_t> expected_length;
 		uint64_t received_length = 0;
+		uint64_t compressed_length = 0;
 		uint64_t next_chunk = 0;
+		std::unique_ptr<detail::InflateRawStream> inflater;
 	};
 	struct IncomingText {
 		TextReceivedEvent event;
@@ -142,7 +145,9 @@ private:
 		TextStreamHandler handler;
 		std::optional<uint64_t> expected_length;
 		uint64_t received_length = 0;
+		uint64_t compressed_length = 0;
 		uint64_t next_chunk = 0;
+		std::unique_ptr<detail::InflateRawStream> inflater;
 	};
 
 	RoomOptions options_;

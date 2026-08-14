@@ -4,6 +4,7 @@
 #include "../../src/core/track/remote_track_publication.h"
 #include "../../src/core/track/track.h"
 #include "../../src/core/track/track_publication.h"
+#include "data_stream_compression.h"
 
 #include "livekit_models.pb.h"
 
@@ -639,6 +640,17 @@ livekit::DataPacket FailedStreamTrailer(const std::string& id, const std::string
 	return packet;
 }
 
+std::string DeflateRaw(const std::string& input) {
+	detail::DeflateRawStream deflater;
+	std::vector<uint8_t> output;
+	if (!deflater.IsValid() ||
+	    !deflater.Write(reinterpret_cast<const uint8_t*>(input.data()), input.size(), output) ||
+	    !deflater.Finish(output)) {
+		return {};
+	}
+	return {output.begin(), output.end()};
+}
+
 TEST(DataStreamStateTest, ReassemblesTextAndByteStreams) {
 	Room room;
 	DataStreamEvents events;
@@ -704,6 +716,95 @@ TEST(DataStreamStateTest, HandlesInlineStreamsAndRejectsInvalidChunks) {
 	room.DataPacketEvent(StreamTrailer("invalid"));
 	EXPECT_TRUE(events.bytes.empty());
 	EXPECT_TRUE(events.files.empty());
+	room.RemoveEventListener();
+}
+
+TEST(DataStreamStateTest, DecompressesRawDeflateStreamsAndRejectsInvalidPayloads) {
+	Room room;
+	DataStreamEvents events;
+	room.AddEventListener(&events);
+	std::vector<TextStreamEvent> failed_events;
+	ASSERT_TRUE(room.RegisterTextStreamHandler(
+	    "stream-topic", [&](const TextStreamEvent& event) { failed_events.push_back(event); }));
+
+	const std::string text(32'000, 'a');
+	const auto compressed_text = DeflateRaw(text);
+	ASSERT_FALSE(compressed_text.empty());
+	auto text_header = StreamHeader("compressed-text", text.size());
+	text_header.mutable_stream_header()->mutable_text_header();
+	text_header.mutable_stream_header()->set_compression(
+	    livekit::DataStream_CompressionType_DEFLATE_RAW);
+	room.DataPacketEvent(text_header);
+	const auto split = compressed_text.size() / 2;
+	room.DataPacketEvent(StreamChunk("compressed-text", 0, compressed_text.substr(0, split)));
+	room.DataPacketEvent(StreamChunk("compressed-text", 1, compressed_text.substr(split)));
+	room.DataPacketEvent(StreamTrailer("compressed-text"));
+	ASSERT_GE(failed_events.size(), 4u);
+	std::string received_text;
+	for (const auto& event : failed_events) {
+		if (event.type == DataStreamEventType::Chunk) {
+			received_text += event.content;
+		}
+	}
+	EXPECT_EQ(received_text, text);
+	failed_events.clear();
+	EXPECT_TRUE(room.UnregisterTextStreamHandler("stream-topic"));
+
+	const std::string bytes(8'000, '\x5a');
+	auto inline_bytes = StreamHeader("compressed-inline", bytes.size());
+	inline_bytes.mutable_stream_header()->mutable_byte_header();
+	inline_bytes.mutable_stream_header()->set_compression(
+	    livekit::DataStream_CompressionType_DEFLATE_RAW);
+	inline_bytes.mutable_stream_header()->set_inline_content(DeflateRaw(bytes));
+	room.DataPacketEvent(inline_bytes);
+	ASSERT_EQ(events.bytes.size(), 1u);
+	EXPECT_EQ(events.bytes[0].data, std::vector<uint8_t>(bytes.begin(), bytes.end()));
+
+	// Node.js zlib.deflateRawSync golden payload, matching the browser/JS SDK deflate-raw format.
+	const uint8_t js_deflate_payload[] = {
+	    0xf3, 0xc9, 0x2c, 0x4b, 0xf5, 0xce, 0x2c, 0x51, 0x48, 0x49, 0x4d, 0xcb,
+	    0x49, 0x2c, 0x49, 0x55, 0xc8, 0xcc, 0x2b, 0x49, 0x2d, 0xca, 0x2f, 0x48,
+	    0x2d, 0x4a, 0x4c, 0xca, 0xcc, 0xc9, 0x2c, 0xa9, 0x04, 0x00,
+	};
+	auto js_header = StreamHeader("js-deflate", 32);
+	js_header.mutable_stream_header()->mutable_text_header();
+	js_header.mutable_stream_header()->set_compression(
+	    livekit::DataStream_CompressionType_DEFLATE_RAW);
+	js_header.mutable_stream_header()->set_inline_content(js_deflate_payload,
+	                                                      sizeof(js_deflate_payload));
+	room.DataPacketEvent(js_header);
+	ASSERT_EQ(events.texts.size(), 1u);
+	EXPECT_EQ(events.texts[0].text, "LiveKit deflate interoperability");
+
+	auto invalid_header = StreamHeader("invalid-compressed", 10);
+	invalid_header.mutable_stream_header()->mutable_text_header();
+	invalid_header.mutable_stream_header()->set_compression(
+	    livekit::DataStream_CompressionType_DEFLATE_RAW);
+	ASSERT_TRUE(room.RegisterTextStreamHandler(
+	    "stream-topic", [&](const TextStreamEvent& event) { failed_events.push_back(event); }));
+	room.DataPacketEvent(invalid_header);
+	room.DataPacketEvent(StreamChunk("invalid-compressed", 0, "not deflate"));
+	room.DataPacketEvent(StreamTrailer("invalid-compressed"));
+	EXPECT_EQ(events.texts.size(), 1u);
+	ASSERT_GE(failed_events.size(), 2u);
+	EXPECT_EQ(failed_events.back().type, DataStreamEventType::Failed);
+	EXPECT_EQ(failed_events.back().reason, "invalid stream chunk");
+	EXPECT_TRUE(room.UnregisterTextStreamHandler("stream-topic"));
+
+	auto oversized = StreamHeader("oversized-compressed", 64ULL * 1024 * 1024 + 1);
+	oversized.mutable_stream_header()->mutable_byte_header();
+	oversized.mutable_stream_header()->set_compression(
+	    livekit::DataStream_CompressionType_DEFLATE_RAW);
+	room.DataPacketEvent(oversized);
+	room.DataPacketEvent(StreamChunk("oversized-compressed", 0, DeflateRaw("ignored")));
+	room.DataPacketEvent(StreamTrailer("oversized-compressed"));
+	EXPECT_EQ(events.bytes.size(), 1u);
+
+	detail::InflateRawStream limited_inflater(1024);
+	std::vector<uint8_t> limited_output;
+	const auto compressed_large = DeflateRaw(std::string(2048, 'z'));
+	EXPECT_FALSE(limited_inflater.Write(reinterpret_cast<const uint8_t*>(compressed_large.data()),
+	                                    compressed_large.size(), limited_output));
 	room.RemoveEventListener();
 }
 

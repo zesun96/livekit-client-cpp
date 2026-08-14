@@ -1946,6 +1946,9 @@ lk_status_t lk_room_send_text(lk_room_t* room, const char* text,
 			if (LKC_HAS_FIELD(options, lk_text_send_options_t, chunk_size)) {
 				send_options.chunk_size = options->chunk_size;
 			}
+			if (LKC_HAS_FIELD(options, lk_text_send_options_t, compress)) {
+				send_options.compress = options->compress != 0;
+			}
 		}
 		return participant->SendText(text, std::move(send_options))
 		           ? LK_STATUS_OK
@@ -1991,6 +1994,9 @@ lk_status_t lk_room_send_bytes(lk_room_t* room, const uint8_t* data, size_t data
 			}
 			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, chunk_size)) {
 				send_options.chunk_size = options->chunk_size;
+			}
+			if (LKC_HAS_FIELD(options, lk_byte_send_options_t, compress)) {
+				send_options.compress = options->compress != 0;
 			}
 		}
 		std::vector<uint8_t> payload;
@@ -2038,6 +2044,9 @@ lk_status_t lk_room_send_file(lk_room_t* room, const char* path,
 			    !CopyAttributes(options->attributes, options->attribute_count,
 			                    send_options.attributes)) {
 				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid file attributes");
+			}
+			if (LKC_HAS_FIELD(options, lk_file_send_options_t, compress)) {
+				send_options.compress = options->compress != 0;
 			}
 		}
 		return participant->SendFile(path, std::move(send_options))
@@ -2115,6 +2124,9 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 				                                              std::optional<uint64_t> total) {
 					callback(user_data, sent, total.has_value(), total.value_or(0));
 				};
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, compress)) {
+				converted.compress = options->compress != 0;
 			}
 		}
 		auto core_writer = participant->StreamText(std::move(converted));
@@ -2242,6 +2254,9 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 				                                              std::optional<uint64_t> total) {
 					callback(user_data, sent, total.has_value(), total.value_or(0));
 				};
+			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, compress)) {
+				converted.compress = options->compress != 0;
 			}
 		}
 		auto core_writer = participant->StreamBytes(std::move(converted));
