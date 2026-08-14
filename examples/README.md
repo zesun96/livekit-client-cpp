@@ -144,6 +144,8 @@ updates dynamically activate and deactivate only those real simulcast layers.
 
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
 The SDK encodes the frames as VP8 for transport.
+The example samples `RTCStatsMonitor` every two seconds and prints normalized codec, packet, and
+bitrate values. The monitor is caller-scheduled and does not create a background thread.
 It then unpublishes the local track and renegotiates before disconnecting.
 
 The SDK automatically republishes local tracks after a full reconnect. Applications that change

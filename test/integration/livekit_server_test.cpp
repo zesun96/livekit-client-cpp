@@ -781,6 +781,11 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    },
 	    std::chrono::seconds(10)))
 	    << outbound_stats;
+	const auto outbound_snapshot = video_track->GetRTCStatsSnapshot();
+	EXPECT_TRUE(std::any_of(
+	    outbound_snapshot.streams.begin(), outbound_snapshot.streams.end(), [](const auto& stats) {
+		    return stats.direction == RTCStatsDirection::Send && stats.bytes > 0;
+	    }));
 	ASSERT_TRUE(WaitUntil(
 	    [&] { return sender_participant->GetTrackPublication(TrackSource::Camera) != nullptr; },
 	    std::chrono::seconds(10)))
@@ -796,6 +801,11 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    },
 	    std::chrono::seconds(10)))
 	    << inbound_stats;
+	const auto inbound_snapshot = video_publication->Track()->GetRTCStatsSnapshot();
+	EXPECT_TRUE(std::any_of(
+	    inbound_snapshot.streams.begin(), inbound_snapshot.streams.end(), [](const auto& stats) {
+		    return stats.direction == RTCStatsDirection::Receive && stats.bytes > 0;
+	    }));
 	EXPECT_EQ(video_publication->MimeType(), expected_video_mime_type);
 	const bool expect_simulcast = video_options.video_codec == VideoCodec::VP8 ||
 	                              video_options.video_codec == VideoCodec::H264;

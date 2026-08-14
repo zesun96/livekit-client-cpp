@@ -102,7 +102,9 @@ capture are not yet provided by the SDK.
 
 Published local tracks and subscribed remote tracks expose the selector-scoped libwebrtc
 `RTCStatsReport` as JSON through `TrackInterface::GetRTCStats()`. The C API provides the same data
-for local track handles through `lk_local_track_rtc_stats`.
+for local track handles through `lk_local_track_rtc_stats`. C++ applications can use
+`GetRTCStatsSnapshot()` for normalized RTP stream counters or caller-scheduled `RTCStatsMonitor`
+samples for bitrate, RTT, loss, jitter, audio, video, and codec metrics.
 
 ## Tests
 

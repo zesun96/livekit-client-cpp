@@ -110,6 +110,7 @@ set(
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
   src/core/track/remote_video_track.cpp
+  src/core/track/rtc_stats.cpp
   src/core/track/track_factory.cpp
   src/core/track/track.cpp
   src/core/track/track_publication.cpp
