@@ -196,9 +196,11 @@ and end-to-end audio, video, data-message, and file-transfer verification.
 
 Pure C applications include `livekit/capi/livekit.h` and link the same `livekitclient` library.
 The API uses opaque handles, caller-owned output buffers, and C function-pointer callbacks; no C++
-type or exception crosses the ABI boundary. See the [`c_sample`](examples/c_sample/sample.c) example
-for room creation, callback registration, connection, subscribed codec/quality feedback, string
-retrieval, and deterministic cleanup.
+type or exception crosses the ABI boundary. Remote participant snapshots provide immutable,
+owned enumeration of publications and attached subscribed tracks; their child handles remain valid
+until the root snapshot is destroyed. See the [`c_sample`](examples/c_sample/sample.c) example for
+room creation, callback registration, connection, snapshot enumeration, subscribed codec/quality
+feedback, string retrieval, and deterministic cleanup.
 
 ## Thanks
 

@@ -20,6 +20,21 @@
 
 namespace core = livekit::core;
 
+static lk_track_source_t SnapshotTrackSource(core::TrackSource source) {
+	switch (source) {
+	case core::TrackSource::Camera:
+		return LK_TRACK_SOURCE_CAMERA;
+	case core::TrackSource::Microphone:
+		return LK_TRACK_SOURCE_MICROPHONE;
+	case core::TrackSource::ScreenShare:
+		return LK_TRACK_SOURCE_SCREEN_SHARE;
+	case core::TrackSource::ScreenShareAudio:
+		return LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO;
+	default:
+		return LK_TRACK_SOURCE_UNKNOWN;
+	}
+}
+
 class CRoomEvents;
 
 struct RoomHandleState {
@@ -71,6 +86,56 @@ struct lk_byte_stream_writer {
 	std::unique_ptr<core::ByteStreamWriterInterface> writer;
 };
 
+struct lk_remote_track_snapshot {
+	explicit lk_remote_track_snapshot(core::RemoteTrackSnapshot source)
+	    : value(std::move(source)) {}
+	core::RemoteTrackSnapshot value;
+};
+
+struct lk_remote_track_publication_snapshot {
+	explicit lk_remote_track_publication_snapshot(core::RemoteTrackPublicationSnapshot source)
+	    : value(std::move(source)) {
+		if (value.subscribed_track.has_value()) {
+			track = std::make_unique<lk_remote_track_snapshot_t>(
+			    std::move(value.subscribed_track.value()));
+		}
+	}
+	lk_remote_track_publication_snapshot(lk_remote_track_publication_snapshot&&) noexcept = default;
+	lk_remote_track_publication_snapshot&
+	operator=(lk_remote_track_publication_snapshot&&) noexcept = default;
+	lk_remote_track_publication_snapshot(const lk_remote_track_publication_snapshot&) = delete;
+	lk_remote_track_publication_snapshot&
+	operator=(const lk_remote_track_publication_snapshot&) = delete;
+	core::RemoteTrackPublicationSnapshot value;
+	std::unique_ptr<lk_remote_track_snapshot_t> track;
+};
+
+struct lk_remote_participant_snapshot {
+	explicit lk_remote_participant_snapshot(core::RemoteParticipantSnapshot source)
+	    : value(std::move(source)) {
+		publish_sources.reserve(value.permissions.can_publish_sources.size());
+		for (const auto source : value.permissions.can_publish_sources) {
+			publish_sources.push_back(SnapshotTrackSource(source));
+		}
+		publications.reserve(value.publications.size());
+		for (auto& publication : value.publications) {
+			publications.emplace_back(std::move(publication));
+		}
+		value.publications.clear();
+	}
+	lk_remote_participant_snapshot(lk_remote_participant_snapshot&&) noexcept = default;
+	lk_remote_participant_snapshot& operator=(lk_remote_participant_snapshot&&) noexcept = default;
+	lk_remote_participant_snapshot(const lk_remote_participant_snapshot&) = delete;
+	lk_remote_participant_snapshot& operator=(const lk_remote_participant_snapshot&) = delete;
+	core::RemoteParticipantSnapshot value;
+	std::vector<lk_track_source_t> publish_sources;
+	std::vector<lk_remote_track_publication_snapshot_t> publications;
+};
+
+struct lk_remote_participant_list {
+	std::vector<lk_remote_participant_snapshot_t> participants;
+};
+
 namespace {
 
 thread_local std::string last_error;
@@ -120,6 +185,21 @@ size_t CopyString(const std::string& value, char* buffer, size_t buffer_size) no
 
 bool HasField(size_t struct_size, size_t offset, size_t field_size) {
 	return struct_size >= offset + field_size;
+}
+
+template <typename Value>
+lk_status_t CopyOutputStruct(const Value& value, Value* output, const char* description) {
+	if (output == nullptr || output->struct_size < sizeof(output->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, description);
+	}
+	const auto output_size = output->struct_size;
+	std::memcpy(output, &value, std::min(output_size, sizeof(value)));
+	return LK_STATUS_OK;
+}
+
+size_t InvalidSizeResult(const char* message) {
+	SetError(message);
+	return 0;
 }
 
 #define LKC_HAS_FIELD(value, type, field)                                                          \
@@ -200,20 +280,7 @@ lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 	}
 }
 
-lk_track_source_t ToCTrackSource(core::TrackSource source) {
-	switch (source) {
-	case core::TrackSource::Camera:
-		return LK_TRACK_SOURCE_CAMERA;
-	case core::TrackSource::Microphone:
-		return LK_TRACK_SOURCE_MICROPHONE;
-	case core::TrackSource::ScreenShare:
-		return LK_TRACK_SOURCE_SCREEN_SHARE;
-	case core::TrackSource::ScreenShareAudio:
-		return LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO;
-	default:
-		return LK_TRACK_SOURCE_UNKNOWN;
-	}
-}
+lk_track_source_t ToCTrackSource(core::TrackSource source) { return SnapshotTrackSource(source); }
 
 lk_connection_quality_t ToCConnectionQuality(core::ConnectionQuality quality) {
 	switch (quality) {
@@ -1198,6 +1265,28 @@ void lk_remote_track_settings_init(lk_remote_track_settings_t* settings) {
 	}
 }
 
+void lk_remote_participant_snapshot_info_init(lk_remote_participant_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_remote_track_publication_snapshot_info_init(
+    lk_remote_track_publication_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_remote_track_snapshot_info_init(lk_remote_track_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
 lk_status_t lk_room_create(lk_room_t** room) {
 	return Guard([&] {
 		if (room == nullptr) {
@@ -1325,6 +1414,273 @@ size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size)
 
 int lk_room_is_recording(const lk_room_t* room) {
 	return room != nullptr && room->room->IsRecording() ? 1 : 0;
+}
+
+lk_status_t lk_room_create_remote_participant_snapshot(const lk_room_t* room,
+                                                       lk_remote_participant_list_t** snapshot) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and snapshot output are required");
+		}
+		*snapshot = nullptr;
+		auto result = std::make_unique<lk_remote_participant_list_t>();
+		auto participants = room->room->GetRemoteParticipantSnapshots();
+		result->participants.reserve(participants.size());
+		for (auto& participant : participants) {
+			result->participants.emplace_back(std::move(participant));
+		}
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_remote_participant_list_destroy(lk_remote_participant_list_t* snapshot) { delete snapshot; }
+
+size_t lk_remote_participant_list_count(const lk_remote_participant_list_t* snapshot) {
+	return snapshot != nullptr ? snapshot->participants.size() : 0;
+}
+
+lk_status_t lk_remote_participant_list_at(const lk_remote_participant_list_t* snapshot,
+                                          size_t index,
+                                          const lk_remote_participant_snapshot_t** participant) {
+	return Guard([&] {
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant output is null");
+		}
+		*participant = nullptr;
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant snapshot is null");
+		}
+		if (index >= snapshot->participants.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant snapshot index is out of range");
+		}
+		*participant = &snapshot->participants[index];
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_remote_participant_snapshot_info(const lk_remote_participant_snapshot_t* participant,
+                                                lk_remote_participant_snapshot_info_t* info) {
+	return Guard([&] {
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant snapshot is null");
+		}
+		const lk_remote_participant_snapshot_info_t value{
+		    sizeof(value), participant->value.audio_level,
+		    ToCConnectionQuality(participant->value.connection_quality),
+		    participant->value.speaking ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid participant snapshot info output");
+	});
+}
+
+lk_status_t
+lk_remote_participant_snapshot_permissions(const lk_remote_participant_snapshot_t* participant,
+                                           lk_participant_permissions_t* permissions) {
+	return Guard([&] {
+		if (participant == nullptr || permissions == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant snapshot and permissions output are required");
+		}
+		const auto& source = participant->value.permissions;
+		*permissions = {source.can_subscribe ? 1 : 0,
+		                source.can_publish ? 1 : 0,
+		                source.can_publish_data ? 1 : 0,
+		                participant->publish_sources.data(),
+		                participant->publish_sources.size(),
+		                source.hidden ? 1 : 0,
+		                source.recorder ? 1 : 0,
+		                source.can_update_metadata ? 1 : 0,
+		                source.agent ? 1 : 0,
+		                source.can_subscribe_metrics ? 1 : 0,
+		                source.can_manage_agent_session ? 1 : 0};
+		return LK_STATUS_OK;
+	});
+}
+
+size_t lk_remote_participant_snapshot_sid(const lk_remote_participant_snapshot_t* participant,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.sid, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_identity(const lk_remote_participant_snapshot_t* participant,
+                                               char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.identity, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_name(const lk_remote_participant_snapshot_t* participant,
+                                           char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.name, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_metadata(const lk_remote_participant_snapshot_t* participant,
+                                               char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.metadata, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_attribute_count(
+    const lk_remote_participant_snapshot_t* participant) {
+	return participant != nullptr ? participant->value.attributes.size() : 0;
+}
+
+size_t
+lk_remote_participant_snapshot_attribute_key(const lk_remote_participant_snapshot_t* participant,
+                                             size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->first, buffer, buffer_size);
+	});
+}
+
+size_t
+lk_remote_participant_snapshot_attribute_value(const lk_remote_participant_snapshot_t* participant,
+                                               size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->second, buffer, buffer_size);
+	});
+}
+
+size_t lk_remote_participant_snapshot_publication_count(
+    const lk_remote_participant_snapshot_t* participant) {
+	return participant != nullptr ? participant->publications.size() : 0;
+}
+
+lk_status_t lk_remote_participant_snapshot_publication_at(
+    const lk_remote_participant_snapshot_t* participant, size_t index,
+    const lk_remote_track_publication_snapshot_t** publication) {
+	return Guard([&] {
+		if (publication == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "publication output is null");
+		}
+		*publication = nullptr;
+		if (participant == nullptr || index >= participant->publications.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "publication snapshot index is out of range");
+		}
+		*publication = &participant->publications[index];
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t
+lk_remote_track_publication_snapshot_info(const lk_remote_track_publication_snapshot_t* publication,
+                                          lk_remote_track_publication_snapshot_info_t* info) {
+	return Guard([&] {
+		if (publication == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "publication snapshot is null");
+		}
+		const auto& source = publication->value;
+		const lk_remote_track_publication_snapshot_info_t value{
+		    sizeof(value),
+		    ToCTrackKind(source.kind),
+		    ToCTrackSource(source.source),
+		    source.dimensions.width,
+		    source.dimensions.height,
+		    source.muted ? 1 : 0,
+		    source.simulcasted ? 1 : 0,
+		    source.subscription_allowed ? 1 : 0,
+		    ToCTrackSubscriptionStatus(source.subscription_status),
+		    source.subscription_error.has_value() ? 1 : 0,
+		    ToCSubscriptionError(
+		        source.subscription_error.value_or(core::SubscriptionError::Unknown)),
+		    publication->track != nullptr ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid publication snapshot info output");
+	});
+}
+
+size_t
+lk_remote_track_publication_snapshot_sid(const lk_remote_track_publication_snapshot_t* publication,
+                                         char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr ? CopyString(publication->value.sid, buffer, buffer_size)
+		                              : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+size_t
+lk_remote_track_publication_snapshot_name(const lk_remote_track_publication_snapshot_t* publication,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr ? CopyString(publication->value.name, buffer, buffer_size)
+		                              : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+size_t lk_remote_track_publication_snapshot_mime_type(
+    const lk_remote_track_publication_snapshot_t* publication, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr
+		           ? CopyString(publication->value.mime_type, buffer, buffer_size)
+		           : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+lk_status_t lk_remote_track_publication_snapshot_track(
+    const lk_remote_track_publication_snapshot_t* publication,
+    const lk_remote_track_snapshot_t** track) {
+	return Guard([&] {
+		if (publication == nullptr || track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "publication snapshot and track output are required");
+		}
+		*track = publication->track.get();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_remote_track_snapshot_info(const lk_remote_track_snapshot_t* track,
+                                          lk_remote_track_snapshot_info_t* info) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "remote track snapshot is null");
+		}
+		const auto& source = track->value;
+		const lk_remote_track_snapshot_info_t value{sizeof(value),
+		                                            ToCTrackKind(source.kind),
+		                                            ToCTrackSource(source.source),
+		                                            ToCTrackStreamState(source.stream_state),
+		                                            source.dimensions.width,
+		                                            source.dimensions.height,
+		                                            source.enabled ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid remote track snapshot info output");
+	});
+}
+
+size_t lk_remote_track_snapshot_sid(const lk_remote_track_snapshot_t* track, char* buffer,
+                                    size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.sid, buffer, buffer_size)
+		                        : InvalidSizeResult("remote track snapshot is null");
+	});
+}
+
+size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, char* buffer,
+                                     size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.name, buffer, buffer_size)
+		                        : InvalidSizeResult("remote track snapshot is null");
+	});
 }
 
 size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {

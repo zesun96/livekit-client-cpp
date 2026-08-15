@@ -92,6 +92,16 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(remote_settings.struct_size, sizeof(remote_settings));
 	EXPECT_EQ(remote_settings.enabled, 1);
 	EXPECT_EQ(remote_settings.has_video_quality, 0);
+
+	lk_remote_participant_snapshot_info_t participant_snapshot_info;
+	lk_remote_participant_snapshot_info_init(&participant_snapshot_info);
+	EXPECT_EQ(participant_snapshot_info.struct_size, sizeof(participant_snapshot_info));
+	lk_remote_track_publication_snapshot_info_t publication_snapshot_info;
+	lk_remote_track_publication_snapshot_info_init(&publication_snapshot_info);
+	EXPECT_EQ(publication_snapshot_info.struct_size, sizeof(publication_snapshot_info));
+	lk_remote_track_snapshot_info_t track_snapshot_info;
+	lk_remote_track_snapshot_info_init(&track_snapshot_info);
+	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -125,6 +135,13 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_track_subscription_permissions(nullptr, 1, nullptr, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_create_remote_participant_snapshot(nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_participant_list_at(nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_participant_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_track_publication_snapshot_info(nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_track_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -137,6 +154,16 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_disconnect_reason(room), LK_DISCONNECT_REASON_UNKNOWN);
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
+	lk_remote_participant_list_t* participant_snapshot = nullptr;
+	ASSERT_EQ(lk_room_create_remote_participant_snapshot(room, &participant_snapshot),
+	          LK_STATUS_OK);
+	ASSERT_NE(participant_snapshot, nullptr);
+	EXPECT_EQ(lk_remote_participant_list_count(participant_snapshot), 0u);
+	const lk_remote_participant_snapshot_t* missing_participant = nullptr;
+	EXPECT_EQ(lk_remote_participant_list_at(participant_snapshot, 0, &missing_participant),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(missing_participant, nullptr);
+	lk_remote_participant_list_destroy(participant_snapshot);
 
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);

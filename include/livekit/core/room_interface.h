@@ -23,6 +23,7 @@
 #include "option/room_option.h"
 #include "participant/local_participant_interface.h"
 #include "participant/participant_interface.h"
+#include "participant/participant_snapshot.h"
 #include "participant/remote_participant_interface.h"
 #include "protostruct/livekit_rtc_struct.h"
 #include "room_event_interface.h"
@@ -60,6 +61,8 @@ public:
 
 	virtual LocalParticipantInterface* GetLocalParticipant() = 0;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;
+	// Returns immutable values that remain valid independently of subsequent room updates.
+	std::vector<RemoteParticipantSnapshot> GetRemoteParticipantSnapshots() const;
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
 	// LiveKit identity is stable for a participant session and should normally be preferred over
 	// the mutable display name.

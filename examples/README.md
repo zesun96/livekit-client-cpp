@@ -55,7 +55,9 @@ participant, and track callbacks, connects, reads the local identity into a call
 reports subscription failures (including unsupported codecs and missing tracks), and cleans up the
 room and runtime. For remote video it requests medium quality at 24 FPS through
 `lk_room_update_remote_track_settings()`, prints track state changes, and demonstrates the opaque
-incremental text-stream writer and topic handler C APIs.
+incremental text-stream writer and topic handler C APIs. It also takes an immutable snapshot of
+remote participants, their publications, and attached subscribed tracks. Snapshot child handles
+are borrowed from the root list and all strings use caller-owned two-stage buffers.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token

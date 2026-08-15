@@ -280,6 +280,79 @@ std::vector<RemoteParticipantInterface*> Room::GetRemoteParticipants() {
 	return participants;
 }
 
+std::vector<RemoteParticipantSnapshot> Room::GetRemoteParticipantSnapshots() const {
+	std::vector<std::shared_ptr<RemoteParticipant>> participants;
+	std::map<std::string, std::shared_ptr<RemoteTrack>> tracks;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participants.reserve(remote_participants_.size());
+		for (const auto& [sid, participant] : remote_participants_) {
+			participants.push_back(participant);
+		}
+		tracks = remote_tracks_;
+	}
+
+	std::vector<RemoteParticipantSnapshot> result;
+	result.reserve(participants.size());
+	for (const auto& participant : participants) {
+		RemoteParticipantSnapshot participant_snapshot;
+		participant_snapshot.sid = participant->Sid();
+		participant_snapshot.identity = participant->Identity();
+		participant_snapshot.name = participant->Name();
+		participant_snapshot.metadata = participant->Metadata();
+		participant_snapshot.attributes = participant->Attributes();
+		participant_snapshot.audio_level = participant->AudioLevel();
+		participant_snapshot.connection_quality = participant->GetConnectionQuality();
+		participant_snapshot.speaking = participant->IsSpeaking();
+		participant_snapshot.permissions = participant->Permissions();
+
+		auto publications = participant->TrackPublicationsSnapshot();
+		participant_snapshot.publications.reserve(publications.size());
+		for (const auto& [sid, publication] : publications) {
+			RemoteTrackPublicationSnapshot publication_snapshot;
+			publication_snapshot.sid = publication->Sid();
+			publication_snapshot.name = publication->Name();
+			publication_snapshot.mime_type = publication->MimeType();
+			publication_snapshot.kind = publication->Kind();
+			publication_snapshot.source = publication->Source();
+			publication_snapshot.dimensions = publication->Dimensions();
+			publication_snapshot.muted = publication->IsMuted();
+			publication_snapshot.simulcasted = publication->IsSimulcasted();
+			publication_snapshot.subscription_allowed = publication->IsSubscriptionAllowed();
+			publication_snapshot.subscription_status = publication->SubscriptionStatus();
+			publication_snapshot.subscription_error = publication->LastSubscriptionError();
+			const auto subscribed_track = tracks.find(publication_snapshot.sid);
+			if (subscribed_track != tracks.end()) {
+				auto* track = subscribed_track->second.get();
+				RemoteTrackSnapshot track_snapshot;
+				track_snapshot.sid = track->Sid();
+				track_snapshot.name = track->Name();
+				track_snapshot.kind = track->Kind();
+				track_snapshot.source = track->Source();
+				track_snapshot.stream_state = track->StreamState();
+				track_snapshot.dimensions = track->Dimensions();
+				track_snapshot.enabled = track->IsEnabled();
+				if (track_snapshot.name.empty()) {
+					track_snapshot.name = publication_snapshot.name;
+				}
+				if (track_snapshot.kind == TrackKind::Unknown) {
+					track_snapshot.kind = publication_snapshot.kind;
+				}
+				if (track_snapshot.source == TrackSource::Unknown) {
+					track_snapshot.source = publication_snapshot.source;
+				}
+				if (track_snapshot.dimensions.width == 0 || track_snapshot.dimensions.height == 0) {
+					track_snapshot.dimensions = publication_snapshot.dimensions;
+				}
+				publication_snapshot.subscribed_track = std::move(track_snapshot);
+			}
+			participant_snapshot.publications.push_back(std::move(publication_snapshot));
+		}
+		result.push_back(std::move(participant_snapshot));
+	}
+	return result;
+}
+
 RemoteParticipantInterface* Room::GetRemoteParticipantBySid(std::string sid) {
 	std::lock_guard<std::mutex> guard(participants_mutex_);
 	auto participant = remote_participants_.find(sid);
@@ -495,6 +568,12 @@ bool Room::SimulateMediaFailureForTesting() {
 
 std::string Room::AccessTokenForReconnectForTesting() const {
 	return rtc_engine_ != nullptr ? rtc_engine_->AccessTokenForReconnect() : std::string{};
+}
+
+std::vector<RemoteParticipantSnapshot> RoomInterface::GetRemoteParticipantSnapshots() const {
+	auto* room = dynamic_cast<const Room*>(this);
+	return room != nullptr ? room->GetRemoteParticipantSnapshots()
+	                       : std::vector<RemoteParticipantSnapshot>{};
 }
 
 RoomInterface::RoomState RoomInterface::State() const {
