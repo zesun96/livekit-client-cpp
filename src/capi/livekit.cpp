@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,11 @@ static lk_track_source_t SnapshotTrackSource(core::TrackSource source) {
 
 class CRoomEvents;
 
+struct AsyncRpcTask {
+	std::atomic_bool completed{false};
+	std::jthread worker;
+};
+
 struct RoomHandleState {
 	std::atomic_bool alive{true};
 	std::atomic_bool connected{false};
@@ -48,7 +54,9 @@ struct lk_room {
 	std::mutex callbacks_mutex;
 	std::mutex callback_lifetime_mutex;
 	std::mutex local_tracks_mutex;
+	std::mutex async_tasks_mutex;
 	std::vector<lk_local_track_t*> local_tracks;
+	std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
 	lk_room_callbacks_t callbacks{};
 	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
 };
@@ -78,12 +86,24 @@ struct lk_rpc_result {
 	core::RpcResult result;
 };
 
+struct CDataStreamCompletionState {
+	std::mutex mutex;
+	lk_data_stream_completion_callback callback = nullptr;
+	void* user_data = nullptr;
+	std::string stream_id;
+	uint64_t bytes_sent = 0;
+	std::optional<uint64_t> total_size;
+	bool notified = false;
+};
+
 struct lk_text_stream_writer {
 	std::unique_ptr<core::TextStreamWriterInterface> writer;
+	std::shared_ptr<CDataStreamCompletionState> completion;
 };
 
 struct lk_byte_stream_writer {
 	std::unique_ptr<core::ByteStreamWriterInterface> writer;
+	std::shared_ptr<CDataStreamCompletionState> completion;
 };
 
 struct lk_remote_track_snapshot {
@@ -200,6 +220,51 @@ lk_status_t CopyOutputStruct(const Value& value, Value* output, const char* desc
 size_t InvalidSizeResult(const char* message) {
 	SetError(message);
 	return 0;
+}
+
+void UpdateDataStreamProgress(const std::shared_ptr<CDataStreamCompletionState>& state,
+                              uint64_t bytes_sent, std::optional<uint64_t> total_size) {
+	if (!state) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(state->mutex);
+	state->bytes_sent = bytes_sent;
+	state->total_size = total_size;
+}
+
+void NotifyDataStreamCompletion(const std::shared_ptr<CDataStreamCompletionState>& state,
+                                lk_data_stream_completion_status_t status, std::string reason) {
+	if (!state || state->callback == nullptr) {
+		return;
+	}
+	lk_data_stream_completion_callback callback = nullptr;
+	void* user_data = nullptr;
+	std::string stream_id;
+	uint64_t bytes_sent = 0;
+	std::optional<uint64_t> total_size;
+	{
+		std::lock_guard<std::mutex> guard(state->mutex);
+		if (state->notified) {
+			return;
+		}
+		state->notified = true;
+		callback = state->callback;
+		user_data = state->user_data;
+		stream_id = state->stream_id;
+		bytes_sent = state->bytes_sent;
+		total_size = state->total_size;
+	}
+	const lk_data_stream_completion_t completion{status,
+	                                             stream_id.c_str(),
+	                                             bytes_sent,
+	                                             total_size.has_value() ? 1 : 0,
+	                                             total_size.value_or(0),
+	                                             reason.c_str()};
+	try {
+		callback(user_data, &completion);
+	} catch (...) {
+		// Exceptions must never escape a C ABI callback boundary.
+	}
 }
 
 #define LKC_HAS_FIELD(value, type, field)                                                          \
@@ -1127,6 +1192,29 @@ lk_status_t PublishLocalTrack(lk_room_t* room, lk_local_track_t* track,
 	return LK_STATUS_OK;
 }
 
+lk_status_t ToCorePerformRpcParams(const lk_rpc_perform_options_t* options,
+                                   core::PerformRpcParams& params) {
+	if (options == nullptr || options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "valid RPC options are required");
+	}
+	if (!LKC_HAS_FIELD(options, lk_rpc_perform_options_t, destination_identity) ||
+	    options->destination_identity == nullptr || *options->destination_identity == '\0' ||
+	    !LKC_HAS_FIELD(options, lk_rpc_perform_options_t, method) || options->method == nullptr ||
+	    *options->method == '\0') {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC destination and method are required");
+	}
+	params.destination_identity = options->destination_identity;
+	params.method = options->method;
+	if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, payload) && options->payload != nullptr) {
+		params.payload = options->payload;
+	}
+	if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, response_timeout_ms) &&
+	    options->response_timeout_ms != 0) {
+		params.response_timeout = std::chrono::milliseconds(options->response_timeout_ms);
+	}
+	return LK_STATUS_OK;
+}
+
 } // namespace
 
 extern "C" {
@@ -1310,12 +1398,18 @@ void lk_room_destroy(lk_room_t* room) {
 		return;
 	}
 	try {
+		room->state->alive.store(false);
 		room->room->RemoveEventListener();
 		if (room->room->IsConnected()) {
 			room->room->Disconnect();
 		}
 		room->state->connected.store(false);
-		room->state->alive.store(false);
+		std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
+		{
+			std::lock_guard<std::mutex> guard(room->async_tasks_mutex);
+			async_rpc_tasks.swap(room->async_rpc_tasks);
+		}
+		async_rpc_tasks.clear();
 		{
 			std::lock_guard<std::mutex> guard(room->local_tracks_mutex);
 			for (auto* track : room->local_tracks) {
@@ -2420,6 +2514,9 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 		}
 		*writer = nullptr;
 		core::StreamTextOptions converted;
+		std::shared_ptr<CDataStreamCompletionState> completion;
+		lk_data_stream_progress_callback progress_callback = nullptr;
+		void* progress_user_data = nullptr;
 		if (options != nullptr) {
 			if (options->struct_size < sizeof(options->struct_size)) {
 				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream text options size");
@@ -2471,19 +2568,35 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, on_progress) &&
 			    options->on_progress) {
-				auto callback = options->on_progress;
-				auto* user_data =
+				progress_callback = options->on_progress;
+				progress_user_data =
 				    LKC_HAS_FIELD(options, lk_stream_text_options_t, progress_user_data)
 				        ? options->progress_user_data
 				        : nullptr;
-				converted.on_progress = [callback, user_data](uint64_t sent,
-				                                              std::optional<uint64_t> total) {
-					callback(user_data, sent, total.has_value(), total.value_or(0));
-				};
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, compress)) {
 				converted.compress = options->compress != 0;
 			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, on_complete) &&
+			    options->on_complete) {
+				completion = std::make_shared<CDataStreamCompletionState>();
+				completion->callback = options->on_complete;
+				completion->user_data =
+				    LKC_HAS_FIELD(options, lk_stream_text_options_t, completion_user_data)
+				        ? options->completion_user_data
+				        : nullptr;
+				completion->total_size = converted.total_size;
+			}
+		}
+		if (progress_callback != nullptr || completion) {
+			converted.on_progress = [progress_callback, progress_user_data,
+			                         completion](uint64_t sent, std::optional<uint64_t> total) {
+				UpdateDataStreamProgress(completion, sent, total);
+				if (progress_callback != nullptr) {
+					progress_callback(progress_user_data, sent, total.has_value(),
+					                  total.value_or(0));
+				}
+			};
 		}
 		auto core_writer = participant->StreamText(std::move(converted));
 		if (!core_writer) {
@@ -2491,6 +2604,11 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 		}
 		auto handle = std::make_unique<lk_text_stream_writer>();
 		handle->writer = std::move(core_writer);
+		handle->completion = completion;
+		if (completion) {
+			std::lock_guard<std::mutex> guard(completion->mutex);
+			completion->stream_id = handle->writer->Info().stream_id;
+		}
 		*writer = handle.release();
 		return LK_STATUS_OK;
 	});
@@ -2503,18 +2621,26 @@ lk_status_t lk_text_stream_writer_write(lk_text_stream_writer_t* writer, const c
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer and text are required");
 		}
 		const std::string value = text_size == 0 ? std::string{} : std::string(text, text_size);
-		return writer->writer->Write(value)
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write text stream");
+		if (writer->writer->Write(value)) {
+			return LK_STATUS_OK;
+		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to write text stream");
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to write text stream");
 	});
 }
 
 lk_status_t lk_text_stream_writer_close(lk_text_stream_writer_t* writer) {
 	return Guard([&] {
-		return writer && writer->writer && writer->writer->Close()
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE,
-		                     "text stream is already closed or incomplete");
+		if (writer != nullptr && writer->writer != nullptr && writer->writer->Close()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_COMPLETED, {});
+			return LK_STATUS_OK;
+		}
+		if (writer != nullptr) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "text stream is already closed or incomplete");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed or incomplete");
 	});
 }
 
@@ -2523,9 +2649,17 @@ lk_status_t lk_text_stream_writer_cancel(lk_text_stream_writer_t* writer, const 
 		if (!writer || !writer->writer) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
 		}
-		return writer->writer->Cancel(reason ? reason : "cancelled")
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
+		const std::string cancellation_reason = reason ? reason : "cancelled";
+		if (writer->writer->Cancel(cancellation_reason)) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+			                           cancellation_reason);
+			return LK_STATUS_OK;
+		}
+		if (writer->writer->IsClosed()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "failed to cancel text stream");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
 	});
 }
 
@@ -2544,6 +2678,16 @@ int lk_text_stream_writer_is_closed(const lk_text_stream_writer_t* writer) {
 
 void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer) {
 	try {
+		if (writer != nullptr && writer->writer != nullptr && !writer->writer->IsClosed()) {
+			const std::string reason = "writer destroyed before close";
+			if (writer->writer->Cancel(reason)) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+				                           reason);
+			} else if (writer->writer->IsClosed()) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+				                           "failed to cancel text stream");
+			}
+		}
 		delete writer;
 	} catch (...) {
 		SetError("exception while destroying text stream writer");
@@ -2559,6 +2703,9 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 		}
 		*writer = nullptr;
 		core::StreamBytesOptions converted;
+		std::shared_ptr<CDataStreamCompletionState> completion;
+		lk_data_stream_progress_callback progress_callback = nullptr;
+		void* progress_user_data = nullptr;
 		if (options != nullptr) {
 			if (options->struct_size < sizeof(options->struct_size)) {
 				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream byte options size");
@@ -2601,19 +2748,35 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, on_progress) &&
 			    options->on_progress) {
-				auto callback = options->on_progress;
-				auto* user_data =
+				progress_callback = options->on_progress;
+				progress_user_data =
 				    LKC_HAS_FIELD(options, lk_stream_bytes_options_t, progress_user_data)
 				        ? options->progress_user_data
 				        : nullptr;
-				converted.on_progress = [callback, user_data](uint64_t sent,
-				                                              std::optional<uint64_t> total) {
-					callback(user_data, sent, total.has_value(), total.value_or(0));
-				};
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, compress)) {
 				converted.compress = options->compress != 0;
 			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, on_complete) &&
+			    options->on_complete) {
+				completion = std::make_shared<CDataStreamCompletionState>();
+				completion->callback = options->on_complete;
+				completion->user_data =
+				    LKC_HAS_FIELD(options, lk_stream_bytes_options_t, completion_user_data)
+				        ? options->completion_user_data
+				        : nullptr;
+				completion->total_size = converted.total_size;
+			}
+		}
+		if (progress_callback != nullptr || completion) {
+			converted.on_progress = [progress_callback, progress_user_data,
+			                         completion](uint64_t sent, std::optional<uint64_t> total) {
+				UpdateDataStreamProgress(completion, sent, total);
+				if (progress_callback != nullptr) {
+					progress_callback(progress_user_data, sent, total.has_value(),
+					                  total.value_or(0));
+				}
+			};
 		}
 		auto core_writer = participant->StreamBytes(std::move(converted));
 		if (!core_writer) {
@@ -2621,6 +2784,11 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 		}
 		auto handle = std::make_unique<lk_byte_stream_writer>();
 		handle->writer = std::move(core_writer);
+		handle->completion = completion;
+		if (completion) {
+			std::lock_guard<std::mutex> guard(completion->mutex);
+			completion->stream_id = handle->writer->Info().stream_id;
+		}
 		*writer = handle.release();
 		return LK_STATUS_OK;
 	});
@@ -2636,18 +2804,26 @@ lk_status_t lk_byte_stream_writer_write(lk_byte_stream_writer_t* writer, const u
 		if (data_size != 0) {
 			value.assign(data, data + data_size);
 		}
-		return writer->writer->Write(value)
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write byte stream");
+		if (writer->writer->Write(value)) {
+			return LK_STATUS_OK;
+		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to write byte stream");
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to write byte stream");
 	});
 }
 
 lk_status_t lk_byte_stream_writer_close(lk_byte_stream_writer_t* writer) {
 	return Guard([&] {
-		return writer && writer->writer && writer->writer->Close()
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE,
-		                     "byte stream is already closed or incomplete");
+		if (writer != nullptr && writer->writer != nullptr && writer->writer->Close()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_COMPLETED, {});
+			return LK_STATUS_OK;
+		}
+		if (writer != nullptr) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "byte stream is already closed or incomplete");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed or incomplete");
 	});
 }
 
@@ -2656,9 +2832,17 @@ lk_status_t lk_byte_stream_writer_cancel(lk_byte_stream_writer_t* writer, const 
 		if (!writer || !writer->writer) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
 		}
-		return writer->writer->Cancel(reason ? reason : "cancelled")
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
+		const std::string cancellation_reason = reason ? reason : "cancelled";
+		if (writer->writer->Cancel(cancellation_reason)) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+			                           cancellation_reason);
+			return LK_STATUS_OK;
+		}
+		if (writer->writer->IsClosed()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "failed to cancel byte stream");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
 	});
 }
 
@@ -2677,6 +2861,16 @@ int lk_byte_stream_writer_is_closed(const lk_byte_stream_writer_t* writer) {
 
 void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer) {
 	try {
+		if (writer != nullptr && writer->writer != nullptr && !writer->writer->IsClosed()) {
+			const std::string reason = "writer destroyed before close";
+			if (writer->writer->Cancel(reason)) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+				                           reason);
+			} else if (writer->writer->IsClosed()) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+				                           "failed to cancel byte stream");
+			}
+		}
 		delete writer;
 	} catch (...) {
 		SetError("exception while destroying byte stream writer");
@@ -2812,27 +3006,14 @@ lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t*
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC result output is null");
 		}
 		*result = nullptr;
-		if (room == nullptr || options == nullptr ||
-		    options->struct_size < sizeof(options->struct_size)) {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and valid RPC options are required");
-		}
-		if (!LKC_HAS_FIELD(options, lk_rpc_perform_options_t, destination_identity) ||
-		    options->destination_identity == nullptr || *options->destination_identity == '\0' ||
-		    !LKC_HAS_FIELD(options, lk_rpc_perform_options_t, method) ||
-		    options->method == nullptr || *options->method == '\0') {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC destination and method are required");
+		if (room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is required");
 		}
 
 		core::PerformRpcParams params;
-		params.destination_identity = options->destination_identity;
-		params.method = options->method;
-		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, payload) &&
-		    options->payload != nullptr) {
-			params.payload = options->payload;
-		}
-		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, response_timeout_ms) &&
-		    options->response_timeout_ms != 0) {
-			params.response_timeout = std::chrono::milliseconds(options->response_timeout_ms);
+		const auto options_status = ToCorePerformRpcParams(options, params);
+		if (options_status != LK_STATUS_OK) {
+			return options_status;
 		}
 		auto* participant = LocalParticipant(room);
 		if (participant == nullptr) {
@@ -2841,6 +3022,50 @@ lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t*
 		auto owned = std::make_unique<lk_rpc_result_t>();
 		owned->result = participant->PerformRpc(params);
 		*result = owned.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_perform_rpc_async(lk_room_t* room, const lk_rpc_perform_options_t* options,
+                                      lk_rpc_completion_callback callback, void* user_data) {
+	return Guard([&] {
+		if (room == nullptr || callback == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and RPC completion callback are required");
+		}
+		core::PerformRpcParams params;
+		const auto options_status = ToCorePerformRpcParams(options, params);
+		if (options_status != LK_STATUS_OK) {
+			return options_status;
+		}
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "local participant is unavailable");
+		}
+
+		auto task = std::make_shared<AsyncRpcTask>();
+		auto* task_pointer = task.get();
+		auto state = room->state;
+		task->worker =
+		    std::jthread([task_pointer, state = std::move(state), participant,
+		                  params = std::move(params), callback, user_data, room]() mutable {
+			    lk_rpc_result_t result;
+			    result.result = participant->PerformRpc(params);
+			    if (state->alive.load()) {
+				    try {
+					    callback(user_data, room, &result);
+				    } catch (...) {
+					    // Exceptions must never escape a C ABI callback boundary.
+				    }
+			    }
+			    task_pointer->completed.store(true);
+		    });
+		{
+			std::lock_guard<std::mutex> guard(room->async_tasks_mutex);
+			std::erase_if(room->async_rpc_tasks,
+			              [](const auto& existing) { return existing->completed.load(); });
+			room->async_rpc_tasks.push_back(std::move(task));
+		}
 		return LK_STATUS_OK;
 	});
 }

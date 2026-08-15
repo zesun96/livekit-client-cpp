@@ -157,6 +157,12 @@ typedef enum lk_data_stream_event_type {
 	LK_DATA_STREAM_EVENT_FAILED = 3
 } lk_data_stream_event_type_t;
 
+typedef enum lk_data_stream_completion_status {
+	LK_DATA_STREAM_COMPLETION_COMPLETED = 0,
+	LK_DATA_STREAM_COMPLETION_CANCELLED = 1,
+	LK_DATA_STREAM_COMPLETION_FAILED = 2
+} lk_data_stream_completion_status_t;
+
 typedef struct lk_participant_info {
 	const char* sid;
 	const char* identity;
@@ -412,6 +418,15 @@ typedef struct lk_data_channel_buffer_status {
 	int backpressured;
 } lk_data_channel_buffer_status_t;
 
+typedef struct lk_data_stream_completion {
+	lk_data_stream_completion_status_t status;
+	const char* stream_id;
+	uint64_t bytes_sent;
+	int has_total_size;
+	uint64_t total_size;
+	const char* reason;
+} lk_data_stream_completion_t;
+
 typedef struct lk_attribute {
 	const char* key;
 	const char* value;
@@ -433,8 +448,14 @@ typedef struct lk_rpc_handler_result {
 
 typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
                                                   const lk_rpc_invocation_t* invocation);
+/* The result is borrowed for the callback duration. Do not destroy the room from this callback. */
+typedef void (*lk_rpc_completion_callback)(void* user_data, lk_room_t* room,
+                                           const lk_rpc_result_t* result);
 typedef void (*lk_data_stream_progress_callback)(void* user_data, uint64_t bytes_sent,
                                                  int has_total_size, uint64_t total_size);
+/* Completion data is borrowed; destroy the writer only after this callback returns. */
+typedef void (*lk_data_stream_completion_callback)(void* user_data,
+                                                   const lk_data_stream_completion_t* completion);
 typedef void (*lk_text_stream_handler)(void* user_data, lk_room_t* room,
                                        const lk_text_stream_event_t* event);
 typedef void (*lk_byte_stream_handler)(void* user_data, lk_room_t* room,
@@ -639,6 +660,8 @@ typedef struct lk_stream_text_options {
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
 	int compress;
+	lk_data_stream_completion_callback on_complete;
+	void* completion_user_data;
 } lk_stream_text_options_t;
 
 typedef struct lk_stream_bytes_options {
@@ -657,6 +680,8 @@ typedef struct lk_stream_bytes_options {
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
 	int compress;
+	lk_data_stream_completion_callback on_complete;
+	void* completion_user_data;
 } lk_stream_bytes_options_t;
 
 typedef struct lk_rpc_perform_options {
@@ -882,6 +907,9 @@ LKC_API lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* met
 LKC_API lk_status_t lk_room_unregister_rpc_method(lk_room_t* room, const char* method);
 LKC_API lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t* options,
                                         lk_rpc_result_t** result);
+LKC_API lk_status_t lk_room_perform_rpc_async(lk_room_t* room,
+                                              const lk_rpc_perform_options_t* options,
+                                              lk_rpc_completion_callback callback, void* user_data);
 LKC_API void lk_rpc_result_destroy(lk_rpc_result_t* result);
 LKC_API int lk_rpc_result_ok(const lk_rpc_result_t* result);
 LKC_API size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer,

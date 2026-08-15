@@ -203,6 +203,13 @@ static void on_metrics(void* user_data, lk_room_t* room, const lk_metrics_receiv
 	       event->event_count, event->participant_identity);
 }
 
+static void on_stream_complete(void* user_data, const lk_data_stream_completion_t* completion) {
+	(void)user_data;
+	printf("Data stream completed: id=%s, status=%d, bytes=%llu, reason=%s\n",
+	       completion->stream_id, (int)completion->status,
+	       (unsigned long long)completion->bytes_sent, completion->reason);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -377,6 +384,7 @@ int main(int argc, char** argv) {
 		lk_stream_text_options_init(&options);
 		options.topic = "c.stream-demo";
 		options.compress = 1;
+		options.on_complete = on_stream_complete;
 		options.has_total_size = 1;
 		options.total_size = strlen(first) + strlen(second);
 		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK ||

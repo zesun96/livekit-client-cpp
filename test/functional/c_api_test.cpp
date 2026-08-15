@@ -3,8 +3,11 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -15,6 +18,25 @@ lk_rpc_handler_result_t EchoRpc(void*, const lk_rpc_invocation_t* invocation) {
 
 void TextStream(void*, lk_room_t*, const lk_text_stream_event_t*) {}
 void ByteStream(void*, lk_room_t*, const lk_byte_stream_event_t*) {}
+
+struct AsyncRpcCompletion {
+	std::mutex mutex;
+	std::condition_variable condition;
+	bool called = false;
+	int ok = 0;
+	uint32_t error_code = 0;
+};
+
+void RpcCompleted(void* user_data, lk_room_t*, const lk_rpc_result_t* result) {
+	auto* completion = static_cast<AsyncRpcCompletion*>(user_data);
+	{
+		std::lock_guard<std::mutex> guard(completion->mutex);
+		completion->called = true;
+		completion->ok = lk_rpc_result_ok(result);
+		completion->error_code = lk_rpc_result_error_code(result);
+	}
+	completion->condition.notify_one();
+}
 
 TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	const auto required = lk_version(nullptr, 0);
@@ -68,6 +90,8 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(stream_text.struct_size, sizeof(stream_text));
 	EXPECT_EQ(stream_text.chunk_size, 15000u);
 	EXPECT_EQ(stream_text.compress, 0);
+	EXPECT_EQ(stream_text.on_complete, nullptr);
+	EXPECT_EQ(stream_text.completion_user_data, nullptr);
 
 	lk_stream_bytes_options_t stream_bytes;
 	lk_stream_bytes_options_init(&stream_bytes);
@@ -76,6 +100,8 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_STREQ(stream_bytes.name, "unknown");
 	EXPECT_EQ(stream_bytes.chunk_size, 15000u);
 	EXPECT_EQ(stream_bytes.compress, 0);
+	EXPECT_EQ(stream_bytes.on_complete, nullptr);
+	EXPECT_EQ(stream_bytes.completion_user_data, nullptr);
 
 	lk_rpc_perform_options_t rpc;
 	lk_rpc_perform_options_init(&rpc);
@@ -133,6 +159,8 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_register_rpc_method(nullptr, nullptr, nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_perform_rpc_async(nullptr, nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_track_subscription_permissions(nullptr, 1, nullptr, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_create_remote_participant_snapshot(nullptr, nullptr),
@@ -214,6 +242,22 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_register_rpc_method(room, "echo", EchoRpc, nullptr), LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_unregister_rpc_method(room, "echo"), LK_STATUS_INVALID_STATE);
+	lk_rpc_perform_options_t async_rpc_options;
+	lk_rpc_perform_options_init(&async_rpc_options);
+	async_rpc_options.destination_identity = "missing-participant";
+	async_rpc_options.method = "missing-method";
+	AsyncRpcCompletion async_rpc_completion;
+	ASSERT_EQ(
+	    lk_room_perform_rpc_async(room, &async_rpc_options, RpcCompleted, &async_rpc_completion),
+	    LK_STATUS_OK);
+	{
+		std::unique_lock<std::mutex> lock(async_rpc_completion.mutex);
+		ASSERT_TRUE(async_rpc_completion.condition.wait_for(
+		    lock, std::chrono::seconds(2), [&] { return async_rpc_completion.called; }));
+	}
+	EXPECT_FALSE(async_rpc_completion.ok);
+	EXPECT_EQ(async_rpc_completion.error_code,
+	          static_cast<uint32_t>(LK_RPC_ERROR_RECIPIENT_NOT_FOUND));
 	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),
 	          LK_STATUS_OK);
 	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),

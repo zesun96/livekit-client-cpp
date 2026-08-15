@@ -57,7 +57,9 @@ room and runtime. For remote video it requests medium quality at 24 FPS through
 `lk_room_update_remote_track_settings()`, prints track state changes, and demonstrates the opaque
 incremental text-stream writer and topic handler C APIs. It also takes an immutable snapshot of
 remote participants, their publications, and attached subscribed tracks. Snapshot child handles
-are borrowed from the root list and all strings use caller-owned two-stage buffers.
+are borrowed from the root list and all strings use caller-owned two-stage buffers. Incremental
+text streaming prints its structured completion status, stream ID, byte count, and failure reason.
+The C API also provides `lk_room_perform_rpc_async()` when blocking RPC results are unsuitable.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
