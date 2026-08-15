@@ -50,6 +50,8 @@ bool VideoSource::InternalSource::CaptureFrame(const VideoFrame& frame) {
 	return true;
 }
 
+void VideoSource::InternalSource::CaptureFrame(const webrtc::VideoFrame& frame) { OnFrame(frame); }
+
 VideoSource::VideoSource(VideoSourceOptions options)
     : source_(webrtc::make_ref_counted<InternalSource>(options.is_screencast)) {}
 
@@ -67,6 +69,12 @@ uint32_t VideoSource::Width() const { return width_.load(); }
 uint32_t VideoSource::Height() const { return height_.load(); }
 
 webrtc::scoped_refptr<VideoSource::InternalSource> VideoSource::Get() const { return source_; }
+
+void VideoSource::CaptureRtcFrame(const webrtc::VideoFrame& frame) {
+	source_->CaptureFrame(frame);
+	width_.store(static_cast<uint32_t>(frame.width()));
+	height_.store(static_cast<uint32_t>(frame.height()));
+}
 
 VideoSourceInterface* CreateVideoSource(VideoSourceOptions options) {
 	return new VideoSource(options);

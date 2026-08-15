@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <utility>
 #include <vector>
 
 namespace livekit::core {
@@ -62,6 +63,12 @@ TEST(PublicApiTest, EnumeratesMediaDevicesWithoutChangingClientState) {
 			EXPECT_NE(device.kind, MediaDeviceKind::VideoInput);
 		}
 	}
+}
+
+TEST(PublicApiTest, RejectsUnknownCameraDeviceWithoutAStartedSource) {
+	CameraCaptureOptions options;
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateCameraVideoSourceUnique(std::move(options)), nullptr);
 }
 
 TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {

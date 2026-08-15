@@ -176,6 +176,18 @@ common publish settings and intentionally want to rebuild every publisher sender
   $url $publisherToken
 ```
 
+### `publish_camera`
+
+Opens the first available camera, publishes its native frames for ten seconds, and then stops the
+device deterministically. Pass an optional device ID from `media_devices_cpp` as the third
+argument to select a specific camera. A running `CameraVideoSourceInterface` can switch to another
+enumerated camera with `SwitchDevice()` without recreating its LiveKit track.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_camera/Release/publish_camera.exe" `
+  $url $publisherToken "<optional-camera-device-id>"
+```
+
 ### `data_transfer`
 
 Sends raw-deflate-compressed one-shot text, in-memory bytes, the selected file, and a two-write

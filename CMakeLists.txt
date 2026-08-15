@@ -102,6 +102,7 @@ set(
 
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
+  src/core/track/camera_video_source.cpp
   src/core/track/local_audio_track.cpp
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp

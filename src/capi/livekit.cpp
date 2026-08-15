@@ -1327,6 +1327,16 @@ void lk_video_source_options_init(lk_video_source_options_t* options) {
 	}
 }
 
+void lk_camera_capture_options_init(lk_camera_capture_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->width = 1280;
+		options->height = 720;
+		options->frames_per_second = 30;
+	}
+}
+
 void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -2014,6 +2024,41 @@ lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
 	});
 }
 
+lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* options,
+                                          lk_video_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		lk_camera_capture_options_t values;
+		lk_camera_capture_options_init(&values);
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid camera options struct size");
+			}
+			std::memcpy(&values, options, std::min(options->struct_size, sizeof(values)));
+		}
+		if (values.width == 0 || values.height == 0 || values.frames_per_second == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid camera capture dimensions or rate");
+		}
+		core::CameraCaptureOptions core_options;
+		if (values.device_id != nullptr) {
+			core_options.device_id = values.device_id;
+		}
+		core_options.width = values.width;
+		core_options.height = values.height;
+		core_options.frames_per_second = values.frames_per_second;
+		auto result = std::make_unique<lk_video_source_t>();
+		result->source.reset(core::CreateCameraVideoSource(std::move(core_options)));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open camera device");
+		}
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
 	if (source == nullptr) {
 		return LK_STATUS_OK;
@@ -2040,6 +2085,78 @@ lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_
 		return source->source->CaptureFrame(frame)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture video frame");
+	});
+}
+
+lk_status_t lk_video_source_camera_start(lk_video_source_t* source) {
+	return Guard([&] {
+		auto* camera = source != nullptr
+		                   ? dynamic_cast<core::CameraVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (camera == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source is not a camera source");
+		}
+		return camera->Start()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to start camera capture");
+	});
+}
+
+lk_status_t lk_video_source_camera_stop(lk_video_source_t* source) {
+	return Guard([&] {
+		auto* camera = source != nullptr
+		                   ? dynamic_cast<core::CameraVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (camera == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source is not a camera source");
+		}
+		camera->Stop();
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_video_source_camera_is_capturing(const lk_video_source_t* source) {
+	try {
+		last_error.clear();
+		const auto* camera =
+		    source != nullptr
+		        ? dynamic_cast<const core::CameraVideoSourceInterface*>(source->source.get())
+		        : nullptr;
+		return camera != nullptr && camera->IsCapturing() ? 1 : 0;
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return 0;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return 0;
+	}
+}
+
+size_t lk_video_source_camera_device_id(const lk_video_source_t* source, char* buffer,
+                                        size_t buffer_size) {
+	return SizeGuard([&] {
+		const auto* camera =
+		    source != nullptr
+		        ? dynamic_cast<const core::CameraVideoSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (camera == nullptr) {
+			return InvalidSizeResult("video source is not a camera source");
+		}
+		return CopyString(camera->DeviceId(), buffer, buffer_size);
+	});
+}
+
+lk_status_t lk_video_source_camera_switch_device(lk_video_source_t* source, const char* device_id) {
+	return Guard([&] {
+		auto* camera = source != nullptr
+		                   ? dynamic_cast<core::CameraVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (camera == nullptr || device_id == nullptr || *device_id == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid camera source or device ID");
+		}
+		return camera->SwitchDevice(device_id)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to switch camera device");
 	});
 }
 

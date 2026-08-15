@@ -108,6 +108,14 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(rpc.struct_size, sizeof(rpc));
 	EXPECT_EQ(rpc.response_timeout_ms, 15000u);
 
+	lk_camera_capture_options_t camera;
+	lk_camera_capture_options_init(&camera);
+	EXPECT_EQ(camera.struct_size, sizeof(camera));
+	EXPECT_EQ(camera.device_id, nullptr);
+	EXPECT_EQ(camera.width, 1280u);
+	EXPECT_EQ(camera.height, 720u);
+	EXPECT_EQ(camera.frames_per_second, 30u);
+
 	lk_participant_track_permission_t permission;
 	lk_participant_track_permission_init(&permission);
 	EXPECT_EQ(permission.struct_size, sizeof(permission));
@@ -159,6 +167,23 @@ TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {
 	EXPECT_NE(std::strlen(lk_last_error()), 0u);
 	lk_media_device_list_destroy(devices);
 	EXPECT_EQ(lk_media_device_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
+	lk_video_source_t* source = nullptr;
+	ASSERT_EQ(lk_video_source_create(nullptr, &source), LK_STATUS_OK);
+	ASSERT_NE(source, nullptr);
+	EXPECT_EQ(lk_video_source_camera_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_camera_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_camera_is_capturing(source), 0);
+	EXPECT_EQ(lk_video_source_camera_device_id(source, nullptr, 0), 0u);
+	EXPECT_EQ(lk_video_source_camera_switch_device(source, "missing"), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_destroy(source), LK_STATUS_OK);
+
+	lk_camera_capture_options_t options;
+	lk_camera_capture_options_init(&options);
+	options.width = 0;
+	EXPECT_EQ(lk_video_source_create_camera(&options, &source), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
