@@ -143,6 +143,18 @@ signal resume or full reconnect:
 The C sample provides the same behavior through `LIVEKIT_ALLOWED_SUBSCRIBER` and
 `lk_room_set_track_subscription_permissions()`.
 
+### `publish_microphone`
+
+Captures the system default microphone through libwebrtc's native audio device module and
+publishes 48 kHz mono audio for ten seconds. Pass an optional audio-input ID from
+`media_devices_cpp` as the third argument. The source supports stop/restart, software mute, and
+transactional `SwitchDevice()` with restoration of the previous input when switching fails.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_microphone/Release/publish_microphone.exe" `
+  $url $publisherToken "<optional-microphone-device-id>"
+```
+
 Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
 an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
 again.

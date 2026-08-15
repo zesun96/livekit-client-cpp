@@ -1320,6 +1320,17 @@ void lk_audio_source_options_init(lk_audio_source_options_t* options) {
 	}
 }
 
+void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->queue_size_ms = 200;
+		options->echo_cancellation = 1;
+		options->auto_gain_control = 1;
+		options->noise_suppression = 1;
+	}
+}
+
 void lk_video_source_options_init(lk_video_source_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -1974,6 +1985,46 @@ lk_status_t lk_audio_source_create(const lk_audio_source_options_t* options,
 	});
 }
 
+lk_status_t lk_audio_source_create_microphone(const lk_microphone_capture_options_t* options,
+                                              lk_audio_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		lk_microphone_capture_options_t values;
+		lk_microphone_capture_options_init(&values);
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "invalid microphone options struct size");
+			}
+			std::memcpy(&values, options, std::min(options->struct_size, sizeof(values)));
+		}
+		if (values.queue_size_ms == 0 || values.queue_size_ms % 10 != 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "microphone queue must be a multiple of 10 ms");
+		}
+		core::MicrophoneCaptureOptions core_options;
+		if (values.device_id != nullptr) {
+			core_options.device_id = values.device_id;
+		}
+		core_options.queue_size_ms = values.queue_size_ms;
+		core_options.processing.echo_cancellation = values.echo_cancellation != 0;
+		core_options.processing.auto_gain_control = values.auto_gain_control != 0;
+		core_options.processing.noise_suppression = values.noise_suppression != 0;
+		auto result = std::make_unique<lk_audio_source_t>();
+		result->source.reset(core::CreateMicrophoneAudioSource(std::move(core_options)));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open microphone device");
+		}
+		result->sample_rate = 48000;
+		result->num_channels = 1;
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_audio_source_destroy(lk_audio_source_t* source) {
 	if (source == nullptr) {
 		return LK_STATUS_OK;
@@ -1996,6 +2047,107 @@ lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture audio frame");
 	});
+}
+
+lk_status_t lk_audio_source_microphone_start(lk_audio_source_t* source) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+		}
+		return microphone->Start()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to start microphone capture");
+	});
+}
+
+lk_status_t lk_audio_source_microphone_stop(lk_audio_source_t* source) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+		}
+		microphone->Stop();
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_audio_source_microphone_is_capturing(const lk_audio_source_t* source) {
+	try {
+		last_error.clear();
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		return microphone != nullptr && microphone->IsCapturing() ? 1 : 0;
+	} catch (...) {
+		SetError("failed to query microphone capture state");
+		return 0;
+	}
+}
+
+size_t lk_audio_source_microphone_device_id(const lk_audio_source_t* source, char* buffer,
+                                            size_t buffer_size) {
+	return SizeGuard([&] {
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			return InvalidSizeResult("audio source is not a microphone source");
+		}
+		return CopyString(microphone->DeviceId(), buffer, buffer_size);
+	});
+}
+
+lk_status_t lk_audio_source_microphone_switch_device(lk_audio_source_t* source,
+                                                     const char* device_id) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr || device_id == nullptr || *device_id == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid microphone source or device ID");
+		}
+		return microphone->SwitchDevice(device_id)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to switch microphone device");
+	});
+}
+
+lk_status_t lk_audio_source_microphone_set_muted(lk_audio_source_t* source, int muted) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+		}
+		microphone->SetMuted(muted != 0);
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source) {
+	try {
+		last_error.clear();
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		return microphone != nullptr && microphone->IsMuted() ? 1 : 0;
+	} catch (...) {
+		SetError("failed to query microphone mute state");
+		return 0;
+	}
 }
 
 lk_status_t lk_video_source_create(const lk_video_source_options_t* options,

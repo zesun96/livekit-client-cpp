@@ -8,6 +8,8 @@ add_subdirectory(room_event)
 
 add_subdirectory(publish_audio)
 
+add_subdirectory(publish_microphone)
+
 add_subdirectory(publish_video)
 
 add_subdirectory(publish_camera)

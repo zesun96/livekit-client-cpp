@@ -116,6 +116,15 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(camera.height, 720u);
 	EXPECT_EQ(camera.frames_per_second, 30u);
 
+	lk_microphone_capture_options_t microphone;
+	lk_microphone_capture_options_init(&microphone);
+	EXPECT_EQ(microphone.struct_size, sizeof(microphone));
+	EXPECT_EQ(microphone.device_id, nullptr);
+	EXPECT_EQ(microphone.queue_size_ms, 200u);
+	EXPECT_EQ(microphone.echo_cancellation, 1);
+	EXPECT_EQ(microphone.auto_gain_control, 1);
+	EXPECT_EQ(microphone.noise_suppression, 1);
+
 	lk_participant_track_permission_t permission;
 	lk_participant_track_permission_init(&permission);
 	EXPECT_EQ(permission.struct_size, sizeof(permission));
@@ -184,6 +193,26 @@ TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
 	lk_camera_capture_options_init(&options);
 	options.width = 0;
 	EXPECT_EQ(lk_video_source_create_camera(&options, &source), LK_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
+	lk_audio_source_t* source = nullptr;
+	ASSERT_EQ(lk_audio_source_create(nullptr, &source), LK_STATUS_OK);
+	ASSERT_NE(source, nullptr);
+	EXPECT_EQ(lk_audio_source_microphone_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_is_capturing(source), 0);
+	EXPECT_EQ(lk_audio_source_microphone_device_id(source, nullptr, 0), 0u);
+	EXPECT_EQ(lk_audio_source_microphone_switch_device(source, "missing"),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_set_muted(source, 1), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_is_muted(source), 0);
+	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
+
+	lk_microphone_capture_options_t options;
+	lk_microphone_capture_options_init(&options);
+	options.queue_size_ms = 1;
+	EXPECT_EQ(lk_audio_source_create_microphone(&options, &source), LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {

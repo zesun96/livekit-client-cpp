@@ -71,6 +71,15 @@ TEST(PublicApiTest, RejectsUnknownCameraDeviceWithoutAStartedSource) {
 	EXPECT_EQ(CreateCameraVideoSourceUnique(std::move(options)), nullptr);
 }
 
+TEST(PublicApiTest, RejectsUnknownMicrophoneDeviceWithoutAStartedSource) {
+	MicrophoneCaptureOptions options;
+	EXPECT_TRUE(options.processing.echo_cancellation);
+	EXPECT_TRUE(options.processing.auto_gain_control);
+	EXPECT_TRUE(options.processing.noise_suppression);
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateMicrophoneAudioSourceUnique(std::move(options)), nullptr);
+}
+
 TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
 	auto room = CreateRoomUnique();
 	ASSERT_NE(room, nullptr);
