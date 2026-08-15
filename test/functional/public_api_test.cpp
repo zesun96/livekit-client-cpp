@@ -50,6 +50,20 @@ TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }
 
+TEST(PublicApiTest, EnumeratesMediaDevicesWithoutChangingClientState) {
+	const auto devices = EnumerateMediaDevices();
+	for (const auto& device : devices) {
+		EXPECT_FALSE(device.id.empty());
+		EXPECT_FALSE(device.label.empty());
+		EXPECT_TRUE(device.kind == MediaDeviceKind::AudioInput ||
+		            device.kind == MediaDeviceKind::AudioOutput ||
+		            device.kind == MediaDeviceKind::VideoInput);
+		if (device.is_default) {
+			EXPECT_NE(device.kind, MediaDeviceKind::VideoInput);
+		}
+	}
+}
+
 TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
 	auto room = CreateRoomUnique();
 	ASSERT_NE(room, nullptr);

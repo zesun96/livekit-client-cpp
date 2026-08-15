@@ -44,6 +44,7 @@ typedef struct lk_remote_participant_list lk_remote_participant_list_t;
 typedef struct lk_remote_participant_snapshot lk_remote_participant_snapshot_t;
 typedef struct lk_remote_track_publication_snapshot lk_remote_track_publication_snapshot_t;
 typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
+typedef struct lk_media_device_list lk_media_device_list_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -87,6 +88,12 @@ typedef enum lk_track_kind {
 	LK_TRACK_KIND_AUDIO = 1,
 	LK_TRACK_KIND_VIDEO = 2
 } lk_track_kind_t;
+
+typedef enum lk_media_device_kind {
+	LK_MEDIA_DEVICE_KIND_AUDIO_INPUT = 0,
+	LK_MEDIA_DEVICE_KIND_AUDIO_OUTPUT = 1,
+	LK_MEDIA_DEVICE_KIND_VIDEO_INPUT = 2
+} lk_media_device_kind_t;
 
 typedef enum lk_track_source {
 	LK_TRACK_SOURCE_UNKNOWN = 0,
@@ -173,6 +180,12 @@ typedef struct lk_participant_info {
 	int is_speaking;
 	int is_local;
 } lk_participant_info_t;
+
+typedef struct lk_media_device_info {
+	size_t struct_size;
+	lk_media_device_kind_t kind;
+	int is_default;
+} lk_media_device_info_t;
 
 typedef struct lk_participant_permissions {
 	int can_subscribe;
@@ -716,6 +729,20 @@ LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
 LKC_API const char* lk_last_error(void);
+
+/*
+ * Creates a read-only snapshot of active host media devices. The list owns its strings and must
+ * be destroyed by the caller. String getters use the standard two-stage convention.
+ */
+LKC_API lk_status_t lk_media_device_list_create(lk_media_device_list_t** devices);
+LKC_API void lk_media_device_list_destroy(lk_media_device_list_t* devices);
+LKC_API size_t lk_media_device_list_count(const lk_media_device_list_t* devices);
+LKC_API lk_status_t lk_media_device_list_info(const lk_media_device_list_t* devices, size_t index,
+                                              lk_media_device_info_t* info);
+LKC_API size_t lk_media_device_list_id(const lk_media_device_list_t* devices, size_t index,
+                                       char* buffer, size_t buffer_size);
+LKC_API size_t lk_media_device_list_label(const lk_media_device_list_t* devices, size_t index,
+                                          char* buffer, size_t buffer_size);
 
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);

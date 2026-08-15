@@ -48,6 +48,20 @@ repository configuration.
 
 ## Examples
 
+### `media_devices`
+
+Enumerates active microphones, speakers, and cameras without connecting to a room or starting
+capture. Both C++ and pure C variants print the stable device ID, friendly label, kind, and default
+audio endpoint marker:
+
+```powershell
+& "out/build/vs2022-x64-release/examples/media_devices/Release/media_devices_cpp.exe"
+& "out/build/vs2022-x64-release/examples/media_devices/Release/media_devices_c.exe"
+```
+
+The returned list is a point-in-time snapshot. Enumerate again after an operating-system device
+change; selecting and switching capture devices is handled separately from discovery.
+
 ### `c_sample`
 
 A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It registers room,

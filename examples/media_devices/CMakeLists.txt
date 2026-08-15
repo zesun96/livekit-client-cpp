@@ -1,0 +1,6 @@
+add_executable(media_devices_cpp media_devices.cpp)
+target_link_libraries(media_devices_cpp PRIVATE livekitclient)
+
+add_executable(media_devices_c media_devices.c)
+target_link_libraries(media_devices_c PRIVATE livekitclient)
+set_target_properties(media_devices_c PROPERTIES LINKER_LANGUAGE CXX)

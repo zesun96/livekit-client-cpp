@@ -156,6 +156,10 @@ struct lk_remote_participant_list {
 	std::vector<lk_remote_participant_snapshot_t> participants;
 };
 
+struct lk_media_device_list {
+	std::vector<core::MediaDeviceInfo> devices;
+};
+
 namespace {
 
 thread_local std::string last_error;
@@ -1241,6 +1245,63 @@ size_t lk_version(char* buffer, size_t buffer_size) {
 }
 
 const char* lk_last_error(void) { return last_error.c_str(); }
+
+lk_status_t lk_media_device_list_create(lk_media_device_list_t** devices) {
+	return Guard([&] {
+		if (devices == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "devices output must not be null");
+		}
+		auto result = std::make_unique<lk_media_device_list_t>();
+		result->devices = core::EnumerateMediaDevices();
+		*devices = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_media_device_list_destroy(lk_media_device_list_t* devices) { delete devices; }
+
+size_t lk_media_device_list_count(const lk_media_device_list_t* devices) {
+	return SizeGuard([&] { return devices != nullptr ? devices->devices.size() : 0; });
+}
+
+lk_status_t lk_media_device_list_info(const lk_media_device_list_t* devices, size_t index,
+                                      lk_media_device_info_t* info) {
+	return Guard([&] {
+		if (devices == nullptr || index >= devices->devices.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "media device index is out of range");
+		}
+		const auto& device = devices->devices[index];
+		lk_media_device_kind_t kind = LK_MEDIA_DEVICE_KIND_AUDIO_INPUT;
+		if (device.kind == core::MediaDeviceKind::AudioOutput) {
+			kind = LK_MEDIA_DEVICE_KIND_AUDIO_OUTPUT;
+		} else if (device.kind == core::MediaDeviceKind::VideoInput) {
+			kind = LK_MEDIA_DEVICE_KIND_VIDEO_INPUT;
+		}
+		return CopyOutputStruct(
+		    lk_media_device_info_t{sizeof(lk_media_device_info_t), kind, device.is_default ? 1 : 0},
+		    info, "media device info is invalid");
+	});
+}
+
+size_t lk_media_device_list_id(const lk_media_device_list_t* devices, size_t index, char* buffer,
+                               size_t buffer_size) {
+	return SizeGuard([&] {
+		if (devices == nullptr || index >= devices->devices.size()) {
+			return InvalidSizeResult("media device index is out of range");
+		}
+		return CopyString(devices->devices[index].id, buffer, buffer_size);
+	});
+}
+
+size_t lk_media_device_list_label(const lk_media_device_list_t* devices, size_t index, char* buffer,
+                                  size_t buffer_size) {
+	return SizeGuard([&] {
+		if (devices == nullptr || index >= devices->devices.size()) {
+			return InvalidSizeResult("media device index is out of range");
+		}
+		return CopyString(devices->devices[index].label, buffer, buffer_size);
+	});
+}
 
 void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
 	if (callbacks != nullptr) {

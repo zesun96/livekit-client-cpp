@@ -130,6 +130,37 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
 }
 
+TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {
+	lk_media_device_list_t* devices = nullptr;
+	ASSERT_EQ(lk_media_device_list_create(&devices), LK_STATUS_OK);
+	ASSERT_NE(devices, nullptr);
+	const auto count = lk_media_device_list_count(devices);
+	for (size_t index = 0; index < count; ++index) {
+		lk_media_device_info_t info{};
+		info.struct_size = sizeof(info);
+		EXPECT_EQ(lk_media_device_list_info(devices, index, &info), LK_STATUS_OK);
+		EXPECT_GE(info.kind, LK_MEDIA_DEVICE_KIND_AUDIO_INPUT);
+		EXPECT_LE(info.kind, LK_MEDIA_DEVICE_KIND_VIDEO_INPUT);
+
+		const auto id_size = lk_media_device_list_id(devices, index, nullptr, 0);
+		const auto label_size = lk_media_device_list_label(devices, index, nullptr, 0);
+		ASSERT_GT(id_size, 1u);
+		ASSERT_GT(label_size, 1u);
+		std::vector<char> id(id_size);
+		std::vector<char> label(label_size);
+		EXPECT_EQ(lk_media_device_list_id(devices, index, id.data(), id.size()), id_size);
+		EXPECT_EQ(lk_media_device_list_label(devices, index, label.data(), label.size()),
+		          label_size);
+	}
+
+	lk_media_device_info_t invalid_info{};
+	invalid_info.struct_size = sizeof(invalid_info);
+	EXPECT_EQ(lk_media_device_list_info(devices, count, &invalid_info), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_NE(std::strlen(lk_last_error()), 0u);
+	lk_media_device_list_destroy(devices);
+	EXPECT_EQ(lk_media_device_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+}
+
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_NE(std::strlen(lk_last_error()), 0u);

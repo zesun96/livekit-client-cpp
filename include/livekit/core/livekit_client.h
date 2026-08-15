@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_LIVEKIT_CLIENT_H_
 #define _LKC_CORE_LIVEKIT_CLIENT_H_
 
+#include "media_device.h"
 #include "room_event_interface.h"
 #include "room_interface.h"
 

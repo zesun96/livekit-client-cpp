@@ -13,3 +13,5 @@ add_subdirectory(publish_video)
 add_subdirectory(data_transfer)
 
 add_subdirectory(rpc)
+
+add_subdirectory(media_devices)

@@ -126,6 +126,7 @@ set(
   src/core/participant/remote_participant.cpp
 
   src/core/livekit_client.cpp
+  src/core/media_device.cpp
   src/core/room.cpp
 
   src/capi/livekit.cpp
@@ -188,7 +189,11 @@ target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32 Bcrypt.lib)
+  target_link_libraries(
+    livekitclient
+    PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32
+            Userenv Ws2_32 Bcrypt.lib Ole32.lib Propsys.lib Strmiids.lib
+  )
 endif()
 
 if (WIN32)
