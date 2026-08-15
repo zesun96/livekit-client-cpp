@@ -203,6 +203,13 @@ static void on_metrics(void* user_data, lk_room_t* room, const lk_metrics_receiv
 	       event->event_count, event->participant_identity);
 }
 
+static void on_stream_complete(void* user_data, const lk_data_stream_completion_t* completion) {
+	(void)user_data;
+	printf("Data stream completed: id=%s, status=%d, bytes=%llu, reason=%s\n",
+	       completion->stream_id, (int)completion->status,
+	       (unsigned long long)completion->bytes_sent, completion->reason);
+}
+
 static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const lk_room_t* room,
                        char** output) {
 	const size_t required = getter(room, NULL, 0);
@@ -215,6 +222,48 @@ static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const 
 	}
 	getter(room, *output, required);
 	return 1;
+}
+
+static void print_remote_participant_snapshot(const lk_room_t* room) {
+	lk_remote_participant_list_t* snapshot = NULL;
+	if (lk_room_create_remote_participant_snapshot(room, &snapshot) != LK_STATUS_OK) {
+		fprintf(stderr, "Participant snapshot failed: %s\n", lk_last_error());
+		return;
+	}
+	const size_t participant_count = lk_remote_participant_list_count(snapshot);
+	printf("Remote participant snapshot: %zu participant(s)\n", participant_count);
+	for (size_t participant_index = 0; participant_index < participant_count; ++participant_index) {
+		const lk_remote_participant_snapshot_t* participant = NULL;
+		if (lk_remote_participant_list_at(snapshot, participant_index, &participant) !=
+		    LK_STATUS_OK) {
+			continue;
+		}
+		const size_t identity_size = lk_remote_participant_snapshot_identity(participant, NULL, 0);
+		char* identity = identity_size != 0 ? (char*)malloc(identity_size) : NULL;
+		if (identity != NULL) {
+			lk_remote_participant_snapshot_identity(participant, identity, identity_size);
+		}
+		const size_t publication_count =
+		    lk_remote_participant_snapshot_publication_count(participant);
+		printf("  %s: %zu publication(s)\n", identity != NULL ? identity : "<unknown>",
+		       publication_count);
+		free(identity);
+		for (size_t publication_index = 0; publication_index < publication_count;
+		     ++publication_index) {
+			const lk_remote_track_publication_snapshot_t* publication = NULL;
+			lk_remote_track_publication_snapshot_info_t info;
+			if (lk_remote_participant_snapshot_publication_at(participant, publication_index,
+			                                                  &publication) != LK_STATUS_OK) {
+				continue;
+			}
+			lk_remote_track_publication_snapshot_info_init(&info);
+			if (lk_remote_track_publication_snapshot_info(publication, &info) == LK_STATUS_OK) {
+				printf("    kind=%d source=%d subscribed=%s\n", (int)info.kind, (int)info.source,
+				       info.has_subscribed_track ? "yes" : "no");
+			}
+		}
+	}
+	lk_remote_participant_list_destroy(snapshot);
 }
 
 int main(int argc, char** argv) {
@@ -303,6 +352,7 @@ int main(int argc, char** argv) {
 		printf("Connected as %s\n", identity);
 		free(identity);
 	}
+	print_remote_participant_snapshot(room);
 	{
 		const char* digit = getenv("LIVEKIT_DTMF_DIGIT");
 		const char* code = getenv("LIVEKIT_DTMF_CODE");
@@ -334,6 +384,7 @@ int main(int argc, char** argv) {
 		lk_stream_text_options_init(&options);
 		options.topic = "c.stream-demo";
 		options.compress = 1;
+		options.on_complete = on_stream_complete;
 		options.has_total_size = 1;
 		options.total_size = strlen(first) + strlen(second);
 		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK ||

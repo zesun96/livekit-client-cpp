@@ -122,6 +122,65 @@ TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
 	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
 }
 
+TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
+	Room room;
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_snapshot");
+	info.set_identity("snapshot-identity");
+	info.set_name("Snapshot User");
+	info.set_metadata("snapshot-metadata");
+	(*info.mutable_attributes())["role"] = "speaker";
+	info.mutable_permission()->set_can_subscribe(true);
+	info.mutable_permission()->set_can_publish(true);
+	info.mutable_permission()->add_can_publish_sources(livekit::TrackSource::CAMERA);
+	*info.add_tracks() = MakeTrack("TR_snapshot", "camera", livekit::TrackType::VIDEO,
+	                               livekit::TrackSource::CAMERA, false);
+	room.ParticipantUpdateEvent({info});
+
+	livekit::SpeakerInfo speaker;
+	speaker.set_sid("PA_snapshot");
+	speaker.set_level(0.625f);
+	speaker.set_active(true);
+	room.SpeakersChangedEvent({speaker});
+	livekit::ConnectionQualityInfo quality;
+	quality.set_participant_sid("PA_snapshot");
+	quality.set_quality(livekit::ConnectionQuality::EXCELLENT);
+	room.ConnectionQualityEvent({quality});
+
+	auto snapshots = room.GetRemoteParticipantSnapshots();
+	ASSERT_EQ(snapshots.size(), 1u);
+	const auto& participant = snapshots.front();
+	EXPECT_EQ(participant.sid, "PA_snapshot");
+	EXPECT_EQ(participant.identity, "snapshot-identity");
+	EXPECT_EQ(participant.name, "Snapshot User");
+	EXPECT_EQ(participant.metadata, "snapshot-metadata");
+	EXPECT_EQ(participant.attributes.at("role"), "speaker");
+	EXPECT_FLOAT_EQ(participant.audio_level, 0.625f);
+	EXPECT_TRUE(participant.speaking);
+	EXPECT_EQ(participant.connection_quality, ConnectionQuality::Excellent);
+	EXPECT_TRUE(participant.permissions.can_subscribe);
+	EXPECT_TRUE(participant.permissions.can_publish);
+	ASSERT_EQ(participant.permissions.can_publish_sources.size(), 1u);
+	EXPECT_EQ(participant.permissions.can_publish_sources.front(), TrackSource::Camera);
+	ASSERT_EQ(participant.publications.size(), 1u);
+	const auto& publication = participant.publications.front();
+	EXPECT_EQ(publication.sid, "TR_snapshot");
+	EXPECT_EQ(publication.name, "camera");
+	EXPECT_EQ(publication.mime_type, "video/VP8");
+	EXPECT_EQ(publication.kind, TrackKind::Video);
+	EXPECT_EQ(publication.source, TrackSource::Camera);
+	EXPECT_EQ(publication.dimensions.width, 1280u);
+	EXPECT_EQ(publication.subscription_status, TrackSubscriptionStatus::Desired);
+	EXPECT_FALSE(publication.subscribed_track.has_value());
+
+	livekit::ParticipantInfo disconnected = info;
+	disconnected.set_state(livekit::ParticipantInfo::DISCONNECTED);
+	room.ParticipantUpdateEvent({disconnected});
+	EXPECT_TRUE(room.GetRemoteParticipantSnapshots().empty());
+	EXPECT_EQ(snapshots.front().identity, "snapshot-identity");
+	EXPECT_EQ(snapshots.front().publications.front().sid, "TR_snapshot");
+}
+
 class RoomStateEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}

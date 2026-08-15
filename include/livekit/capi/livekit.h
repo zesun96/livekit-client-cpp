@@ -40,6 +40,10 @@ typedef struct lk_local_track lk_local_track_t;
 typedef struct lk_rpc_result lk_rpc_result_t;
 typedef struct lk_text_stream_writer lk_text_stream_writer_t;
 typedef struct lk_byte_stream_writer lk_byte_stream_writer_t;
+typedef struct lk_remote_participant_list lk_remote_participant_list_t;
+typedef struct lk_remote_participant_snapshot lk_remote_participant_snapshot_t;
+typedef struct lk_remote_track_publication_snapshot lk_remote_track_publication_snapshot_t;
+typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -153,6 +157,12 @@ typedef enum lk_data_stream_event_type {
 	LK_DATA_STREAM_EVENT_FAILED = 3
 } lk_data_stream_event_type_t;
 
+typedef enum lk_data_stream_completion_status {
+	LK_DATA_STREAM_COMPLETION_COMPLETED = 0,
+	LK_DATA_STREAM_COMPLETION_CANCELLED = 1,
+	LK_DATA_STREAM_COMPLETION_FAILED = 2
+} lk_data_stream_completion_status_t;
+
 typedef struct lk_participant_info {
 	const char* sid;
 	const char* identity;
@@ -190,6 +200,38 @@ typedef struct lk_track_publication_info {
 	int is_simulcasted;
 	int subscription_allowed;
 } lk_track_publication_info_t;
+
+typedef struct lk_remote_participant_snapshot_info {
+	size_t struct_size;
+	float audio_level;
+	lk_connection_quality_t connection_quality;
+	int is_speaking;
+} lk_remote_participant_snapshot_info_t;
+
+typedef struct lk_remote_track_publication_snapshot_info {
+	size_t struct_size;
+	lk_track_kind_t kind;
+	lk_track_source_t source;
+	uint32_t width;
+	uint32_t height;
+	int is_muted;
+	int is_simulcasted;
+	int subscription_allowed;
+	lk_track_subscription_status_t subscription_status;
+	int has_subscription_error;
+	lk_subscription_error_t subscription_error;
+	int has_subscribed_track;
+} lk_remote_track_publication_snapshot_info_t;
+
+typedef struct lk_remote_track_snapshot_info {
+	size_t struct_size;
+	lk_track_kind_t kind;
+	lk_track_source_t source;
+	lk_track_stream_state_t stream_state;
+	uint32_t width;
+	uint32_t height;
+	int enabled;
+} lk_remote_track_snapshot_info_t;
 
 typedef struct lk_subscribed_quality {
 	lk_video_quality_t quality;
@@ -376,6 +418,15 @@ typedef struct lk_data_channel_buffer_status {
 	int backpressured;
 } lk_data_channel_buffer_status_t;
 
+typedef struct lk_data_stream_completion {
+	lk_data_stream_completion_status_t status;
+	const char* stream_id;
+	uint64_t bytes_sent;
+	int has_total_size;
+	uint64_t total_size;
+	const char* reason;
+} lk_data_stream_completion_t;
+
 typedef struct lk_attribute {
 	const char* key;
 	const char* value;
@@ -397,8 +448,14 @@ typedef struct lk_rpc_handler_result {
 
 typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
                                                   const lk_rpc_invocation_t* invocation);
+/* The result is borrowed for the callback duration. Do not destroy the room from this callback. */
+typedef void (*lk_rpc_completion_callback)(void* user_data, lk_room_t* room,
+                                           const lk_rpc_result_t* result);
 typedef void (*lk_data_stream_progress_callback)(void* user_data, uint64_t bytes_sent,
                                                  int has_total_size, uint64_t total_size);
+/* Completion data is borrowed; destroy the writer only after this callback returns. */
+typedef void (*lk_data_stream_completion_callback)(void* user_data,
+                                                   const lk_data_stream_completion_t* completion);
 typedef void (*lk_text_stream_handler)(void* user_data, lk_room_t* room,
                                        const lk_text_stream_event_t* event);
 typedef void (*lk_byte_stream_handler)(void* user_data, lk_room_t* room,
@@ -603,6 +660,8 @@ typedef struct lk_stream_text_options {
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
 	int compress;
+	lk_data_stream_completion_callback on_complete;
+	void* completion_user_data;
 } lk_stream_text_options_t;
 
 typedef struct lk_stream_bytes_options {
@@ -621,6 +680,8 @@ typedef struct lk_stream_bytes_options {
 	lk_data_stream_progress_callback on_progress;
 	void* progress_user_data;
 	int compress;
+	lk_data_stream_completion_callback on_complete;
+	void* completion_user_data;
 } lk_stream_bytes_options_t;
 
 typedef struct lk_rpc_perform_options {
@@ -669,6 +730,10 @@ LKC_API void lk_stream_bytes_options_init(lk_stream_bytes_options_t* options);
 LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
 LKC_API void lk_participant_track_permission_init(lk_participant_track_permission_t* permission);
 LKC_API void lk_remote_track_settings_init(lk_remote_track_settings_t* settings);
+LKC_API void lk_remote_participant_snapshot_info_init(lk_remote_participant_snapshot_info_t* info);
+LKC_API void
+lk_remote_track_publication_snapshot_info_init(lk_remote_track_publication_snapshot_info_t* info);
+LKC_API void lk_remote_track_snapshot_info_init(lk_remote_track_snapshot_info_t* info);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
@@ -682,6 +747,63 @@ LKC_API size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_si
 LKC_API size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API int lk_room_is_recording(const lk_room_t* room);
+
+/*
+ * The list owns every participant, publication, and subscribed-track handle returned from it.
+ * Child handles and permission source arrays remain valid until the list is destroyed. They are
+ * immutable and do not reflect later room updates. Strings use the standard two-stage getters.
+ */
+LKC_API lk_status_t lk_room_create_remote_participant_snapshot(
+    const lk_room_t* room, lk_remote_participant_list_t** snapshot);
+LKC_API void lk_remote_participant_list_destroy(lk_remote_participant_list_t* snapshot);
+LKC_API size_t lk_remote_participant_list_count(const lk_remote_participant_list_t* snapshot);
+LKC_API lk_status_t
+lk_remote_participant_list_at(const lk_remote_participant_list_t* snapshot, size_t index,
+                              const lk_remote_participant_snapshot_t** participant);
+LKC_API lk_status_t
+lk_remote_participant_snapshot_info(const lk_remote_participant_snapshot_t* participant,
+                                    lk_remote_participant_snapshot_info_t* info);
+LKC_API lk_status_t lk_remote_participant_snapshot_permissions(
+    const lk_remote_participant_snapshot_t* participant, lk_participant_permissions_t* permissions);
+LKC_API size_t lk_remote_participant_snapshot_sid(
+    const lk_remote_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_participant_snapshot_identity(
+    const lk_remote_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_participant_snapshot_name(
+    const lk_remote_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_participant_snapshot_metadata(
+    const lk_remote_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t
+lk_remote_participant_snapshot_attribute_count(const lk_remote_participant_snapshot_t* participant);
+LKC_API size_t
+lk_remote_participant_snapshot_attribute_key(const lk_remote_participant_snapshot_t* participant,
+                                             size_t index, char* buffer, size_t buffer_size);
+LKC_API size_t
+lk_remote_participant_snapshot_attribute_value(const lk_remote_participant_snapshot_t* participant,
+                                               size_t index, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_participant_snapshot_publication_count(
+    const lk_remote_participant_snapshot_t* participant);
+LKC_API lk_status_t lk_remote_participant_snapshot_publication_at(
+    const lk_remote_participant_snapshot_t* participant, size_t index,
+    const lk_remote_track_publication_snapshot_t** publication);
+LKC_API lk_status_t
+lk_remote_track_publication_snapshot_info(const lk_remote_track_publication_snapshot_t* publication,
+                                          lk_remote_track_publication_snapshot_info_t* info);
+LKC_API size_t lk_remote_track_publication_snapshot_sid(
+    const lk_remote_track_publication_snapshot_t* publication, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_track_publication_snapshot_name(
+    const lk_remote_track_publication_snapshot_t* publication, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_track_publication_snapshot_mime_type(
+    const lk_remote_track_publication_snapshot_t* publication, char* buffer, size_t buffer_size);
+LKC_API lk_status_t lk_remote_track_publication_snapshot_track(
+    const lk_remote_track_publication_snapshot_t* publication,
+    const lk_remote_track_snapshot_t** track);
+LKC_API lk_status_t lk_remote_track_snapshot_info(const lk_remote_track_snapshot_t* track,
+                                                  lk_remote_track_snapshot_info_t* info);
+LKC_API size_t lk_remote_track_snapshot_sid(const lk_remote_track_snapshot_t* track, char* buffer,
+                                            size_t buffer_size);
+LKC_API size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, char* buffer,
+                                             size_t buffer_size);
 
 LKC_API size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_local_participant_identity(const lk_room_t* room, char* buffer,
@@ -785,6 +907,9 @@ LKC_API lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* met
 LKC_API lk_status_t lk_room_unregister_rpc_method(lk_room_t* room, const char* method);
 LKC_API lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t* options,
                                         lk_rpc_result_t** result);
+LKC_API lk_status_t lk_room_perform_rpc_async(lk_room_t* room,
+                                              const lk_rpc_perform_options_t* options,
+                                              lk_rpc_completion_callback callback, void* user_data);
 LKC_API void lk_rpc_result_destroy(lk_rpc_result_t* result);
 LKC_API int lk_rpc_result_ok(const lk_rpc_result_t* result);
 LKC_API size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer,

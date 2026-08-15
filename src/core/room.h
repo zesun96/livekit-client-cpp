@@ -64,6 +64,7 @@ public:
 	bool IsRecording() override;
 	virtual LocalParticipantInterface* GetLocalParticipant() override;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() override;
+	std::vector<RemoteParticipantSnapshot> GetRemoteParticipantSnapshots() const;
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
 	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) override;
 	virtual std::vector<ParticipantInterface*> Participants() override;

@@ -961,6 +961,23 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(video_publication->Name(), "integration-video");
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());
+	const auto participant_snapshots = receiver->GetRemoteParticipantSnapshots();
+	const auto participant_snapshot =
+	    std::find_if(participant_snapshots.begin(), participant_snapshots.end(),
+	                 [&](const auto& item) { return item.sid == sender_participant->Sid(); });
+	ASSERT_NE(participant_snapshot, participant_snapshots.end());
+	const auto publication_snapshot = std::find_if(
+	    participant_snapshot->publications.begin(), participant_snapshot->publications.end(),
+	    [&](const auto& item) { return item.sid == video_publication->Sid(); });
+	ASSERT_NE(publication_snapshot, participant_snapshot->publications.end());
+	EXPECT_EQ(publication_snapshot->subscription_status, TrackSubscriptionStatus::Subscribed);
+	EXPECT_EQ(publication_snapshot->dimensions.width, 640u);
+	EXPECT_EQ(publication_snapshot->dimensions.height, 360u);
+	ASSERT_TRUE(publication_snapshot->subscribed_track.has_value());
+	EXPECT_EQ(publication_snapshot->subscribed_track->sid, video_publication->Track()->Sid());
+	EXPECT_EQ(publication_snapshot->subscribed_track->kind, TrackKind::Video);
+	EXPECT_EQ(publication_snapshot->subscribed_track->source, TrackSource::Camera);
+	EXPECT_EQ(publication_snapshot->subscribed_track->dimensions.width, 640u);
 
 	// Screen-share helpers must override a caller-provided source and advertise the correct
 	// LiveKit source without taking ownership of desktop capture.

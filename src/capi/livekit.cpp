@@ -15,12 +15,33 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace core = livekit::core;
 
+static lk_track_source_t SnapshotTrackSource(core::TrackSource source) {
+	switch (source) {
+	case core::TrackSource::Camera:
+		return LK_TRACK_SOURCE_CAMERA;
+	case core::TrackSource::Microphone:
+		return LK_TRACK_SOURCE_MICROPHONE;
+	case core::TrackSource::ScreenShare:
+		return LK_TRACK_SOURCE_SCREEN_SHARE;
+	case core::TrackSource::ScreenShareAudio:
+		return LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO;
+	default:
+		return LK_TRACK_SOURCE_UNKNOWN;
+	}
+}
+
 class CRoomEvents;
+
+struct AsyncRpcTask {
+	std::atomic_bool completed{false};
+	std::jthread worker;
+};
 
 struct RoomHandleState {
 	std::atomic_bool alive{true};
@@ -33,7 +54,9 @@ struct lk_room {
 	std::mutex callbacks_mutex;
 	std::mutex callback_lifetime_mutex;
 	std::mutex local_tracks_mutex;
+	std::mutex async_tasks_mutex;
 	std::vector<lk_local_track_t*> local_tracks;
+	std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
 	lk_room_callbacks_t callbacks{};
 	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
 };
@@ -63,12 +86,74 @@ struct lk_rpc_result {
 	core::RpcResult result;
 };
 
+struct CDataStreamCompletionState {
+	std::mutex mutex;
+	lk_data_stream_completion_callback callback = nullptr;
+	void* user_data = nullptr;
+	std::string stream_id;
+	uint64_t bytes_sent = 0;
+	std::optional<uint64_t> total_size;
+	bool notified = false;
+};
+
 struct lk_text_stream_writer {
 	std::unique_ptr<core::TextStreamWriterInterface> writer;
+	std::shared_ptr<CDataStreamCompletionState> completion;
 };
 
 struct lk_byte_stream_writer {
 	std::unique_ptr<core::ByteStreamWriterInterface> writer;
+	std::shared_ptr<CDataStreamCompletionState> completion;
+};
+
+struct lk_remote_track_snapshot {
+	explicit lk_remote_track_snapshot(core::RemoteTrackSnapshot source)
+	    : value(std::move(source)) {}
+	core::RemoteTrackSnapshot value;
+};
+
+struct lk_remote_track_publication_snapshot {
+	explicit lk_remote_track_publication_snapshot(core::RemoteTrackPublicationSnapshot source)
+	    : value(std::move(source)) {
+		if (value.subscribed_track.has_value()) {
+			track = std::make_unique<lk_remote_track_snapshot_t>(
+			    std::move(value.subscribed_track.value()));
+		}
+	}
+	lk_remote_track_publication_snapshot(lk_remote_track_publication_snapshot&&) noexcept = default;
+	lk_remote_track_publication_snapshot&
+	operator=(lk_remote_track_publication_snapshot&&) noexcept = default;
+	lk_remote_track_publication_snapshot(const lk_remote_track_publication_snapshot&) = delete;
+	lk_remote_track_publication_snapshot&
+	operator=(const lk_remote_track_publication_snapshot&) = delete;
+	core::RemoteTrackPublicationSnapshot value;
+	std::unique_ptr<lk_remote_track_snapshot_t> track;
+};
+
+struct lk_remote_participant_snapshot {
+	explicit lk_remote_participant_snapshot(core::RemoteParticipantSnapshot source)
+	    : value(std::move(source)) {
+		publish_sources.reserve(value.permissions.can_publish_sources.size());
+		for (const auto source : value.permissions.can_publish_sources) {
+			publish_sources.push_back(SnapshotTrackSource(source));
+		}
+		publications.reserve(value.publications.size());
+		for (auto& publication : value.publications) {
+			publications.emplace_back(std::move(publication));
+		}
+		value.publications.clear();
+	}
+	lk_remote_participant_snapshot(lk_remote_participant_snapshot&&) noexcept = default;
+	lk_remote_participant_snapshot& operator=(lk_remote_participant_snapshot&&) noexcept = default;
+	lk_remote_participant_snapshot(const lk_remote_participant_snapshot&) = delete;
+	lk_remote_participant_snapshot& operator=(const lk_remote_participant_snapshot&) = delete;
+	core::RemoteParticipantSnapshot value;
+	std::vector<lk_track_source_t> publish_sources;
+	std::vector<lk_remote_track_publication_snapshot_t> publications;
+};
+
+struct lk_remote_participant_list {
+	std::vector<lk_remote_participant_snapshot_t> participants;
 };
 
 namespace {
@@ -120,6 +205,66 @@ size_t CopyString(const std::string& value, char* buffer, size_t buffer_size) no
 
 bool HasField(size_t struct_size, size_t offset, size_t field_size) {
 	return struct_size >= offset + field_size;
+}
+
+template <typename Value>
+lk_status_t CopyOutputStruct(const Value& value, Value* output, const char* description) {
+	if (output == nullptr || output->struct_size < sizeof(output->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, description);
+	}
+	const auto output_size = output->struct_size;
+	std::memcpy(output, &value, std::min(output_size, sizeof(value)));
+	return LK_STATUS_OK;
+}
+
+size_t InvalidSizeResult(const char* message) {
+	SetError(message);
+	return 0;
+}
+
+void UpdateDataStreamProgress(const std::shared_ptr<CDataStreamCompletionState>& state,
+                              uint64_t bytes_sent, std::optional<uint64_t> total_size) {
+	if (!state) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(state->mutex);
+	state->bytes_sent = bytes_sent;
+	state->total_size = total_size;
+}
+
+void NotifyDataStreamCompletion(const std::shared_ptr<CDataStreamCompletionState>& state,
+                                lk_data_stream_completion_status_t status, std::string reason) {
+	if (!state || state->callback == nullptr) {
+		return;
+	}
+	lk_data_stream_completion_callback callback = nullptr;
+	void* user_data = nullptr;
+	std::string stream_id;
+	uint64_t bytes_sent = 0;
+	std::optional<uint64_t> total_size;
+	{
+		std::lock_guard<std::mutex> guard(state->mutex);
+		if (state->notified) {
+			return;
+		}
+		state->notified = true;
+		callback = state->callback;
+		user_data = state->user_data;
+		stream_id = state->stream_id;
+		bytes_sent = state->bytes_sent;
+		total_size = state->total_size;
+	}
+	const lk_data_stream_completion_t completion{status,
+	                                             stream_id.c_str(),
+	                                             bytes_sent,
+	                                             total_size.has_value() ? 1 : 0,
+	                                             total_size.value_or(0),
+	                                             reason.c_str()};
+	try {
+		callback(user_data, &completion);
+	} catch (...) {
+		// Exceptions must never escape a C ABI callback boundary.
+	}
 }
 
 #define LKC_HAS_FIELD(value, type, field)                                                          \
@@ -200,20 +345,7 @@ lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 	}
 }
 
-lk_track_source_t ToCTrackSource(core::TrackSource source) {
-	switch (source) {
-	case core::TrackSource::Camera:
-		return LK_TRACK_SOURCE_CAMERA;
-	case core::TrackSource::Microphone:
-		return LK_TRACK_SOURCE_MICROPHONE;
-	case core::TrackSource::ScreenShare:
-		return LK_TRACK_SOURCE_SCREEN_SHARE;
-	case core::TrackSource::ScreenShareAudio:
-		return LK_TRACK_SOURCE_SCREEN_SHARE_AUDIO;
-	default:
-		return LK_TRACK_SOURCE_UNKNOWN;
-	}
-}
+lk_track_source_t ToCTrackSource(core::TrackSource source) { return SnapshotTrackSource(source); }
 
 lk_connection_quality_t ToCConnectionQuality(core::ConnectionQuality quality) {
 	switch (quality) {
@@ -1060,6 +1192,29 @@ lk_status_t PublishLocalTrack(lk_room_t* room, lk_local_track_t* track,
 	return LK_STATUS_OK;
 }
 
+lk_status_t ToCorePerformRpcParams(const lk_rpc_perform_options_t* options,
+                                   core::PerformRpcParams& params) {
+	if (options == nullptr || options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "valid RPC options are required");
+	}
+	if (!LKC_HAS_FIELD(options, lk_rpc_perform_options_t, destination_identity) ||
+	    options->destination_identity == nullptr || *options->destination_identity == '\0' ||
+	    !LKC_HAS_FIELD(options, lk_rpc_perform_options_t, method) || options->method == nullptr ||
+	    *options->method == '\0') {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC destination and method are required");
+	}
+	params.destination_identity = options->destination_identity;
+	params.method = options->method;
+	if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, payload) && options->payload != nullptr) {
+		params.payload = options->payload;
+	}
+	if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, response_timeout_ms) &&
+	    options->response_timeout_ms != 0) {
+		params.response_timeout = std::chrono::milliseconds(options->response_timeout_ms);
+	}
+	return LK_STATUS_OK;
+}
+
 } // namespace
 
 extern "C" {
@@ -1198,6 +1353,28 @@ void lk_remote_track_settings_init(lk_remote_track_settings_t* settings) {
 	}
 }
 
+void lk_remote_participant_snapshot_info_init(lk_remote_participant_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_remote_track_publication_snapshot_info_init(
+    lk_remote_track_publication_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_remote_track_snapshot_info_init(lk_remote_track_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
 lk_status_t lk_room_create(lk_room_t** room) {
 	return Guard([&] {
 		if (room == nullptr) {
@@ -1221,12 +1398,18 @@ void lk_room_destroy(lk_room_t* room) {
 		return;
 	}
 	try {
+		room->state->alive.store(false);
 		room->room->RemoveEventListener();
 		if (room->room->IsConnected()) {
 			room->room->Disconnect();
 		}
 		room->state->connected.store(false);
-		room->state->alive.store(false);
+		std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
+		{
+			std::lock_guard<std::mutex> guard(room->async_tasks_mutex);
+			async_rpc_tasks.swap(room->async_rpc_tasks);
+		}
+		async_rpc_tasks.clear();
 		{
 			std::lock_guard<std::mutex> guard(room->local_tracks_mutex);
 			for (auto* track : room->local_tracks) {
@@ -1325,6 +1508,273 @@ size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size)
 
 int lk_room_is_recording(const lk_room_t* room) {
 	return room != nullptr && room->room->IsRecording() ? 1 : 0;
+}
+
+lk_status_t lk_room_create_remote_participant_snapshot(const lk_room_t* room,
+                                                       lk_remote_participant_list_t** snapshot) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and snapshot output are required");
+		}
+		*snapshot = nullptr;
+		auto result = std::make_unique<lk_remote_participant_list_t>();
+		auto participants = room->room->GetRemoteParticipantSnapshots();
+		result->participants.reserve(participants.size());
+		for (auto& participant : participants) {
+			result->participants.emplace_back(std::move(participant));
+		}
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_remote_participant_list_destroy(lk_remote_participant_list_t* snapshot) { delete snapshot; }
+
+size_t lk_remote_participant_list_count(const lk_remote_participant_list_t* snapshot) {
+	return snapshot != nullptr ? snapshot->participants.size() : 0;
+}
+
+lk_status_t lk_remote_participant_list_at(const lk_remote_participant_list_t* snapshot,
+                                          size_t index,
+                                          const lk_remote_participant_snapshot_t** participant) {
+	return Guard([&] {
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant output is null");
+		}
+		*participant = nullptr;
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant snapshot is null");
+		}
+		if (index >= snapshot->participants.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant snapshot index is out of range");
+		}
+		*participant = &snapshot->participants[index];
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_remote_participant_snapshot_info(const lk_remote_participant_snapshot_t* participant,
+                                                lk_remote_participant_snapshot_info_t* info) {
+	return Guard([&] {
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant snapshot is null");
+		}
+		const lk_remote_participant_snapshot_info_t value{
+		    sizeof(value), participant->value.audio_level,
+		    ToCConnectionQuality(participant->value.connection_quality),
+		    participant->value.speaking ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid participant snapshot info output");
+	});
+}
+
+lk_status_t
+lk_remote_participant_snapshot_permissions(const lk_remote_participant_snapshot_t* participant,
+                                           lk_participant_permissions_t* permissions) {
+	return Guard([&] {
+		if (participant == nullptr || permissions == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant snapshot and permissions output are required");
+		}
+		const auto& source = participant->value.permissions;
+		*permissions = {source.can_subscribe ? 1 : 0,
+		                source.can_publish ? 1 : 0,
+		                source.can_publish_data ? 1 : 0,
+		                participant->publish_sources.data(),
+		                participant->publish_sources.size(),
+		                source.hidden ? 1 : 0,
+		                source.recorder ? 1 : 0,
+		                source.can_update_metadata ? 1 : 0,
+		                source.agent ? 1 : 0,
+		                source.can_subscribe_metrics ? 1 : 0,
+		                source.can_manage_agent_session ? 1 : 0};
+		return LK_STATUS_OK;
+	});
+}
+
+size_t lk_remote_participant_snapshot_sid(const lk_remote_participant_snapshot_t* participant,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.sid, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_identity(const lk_remote_participant_snapshot_t* participant,
+                                               char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.identity, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_name(const lk_remote_participant_snapshot_t* participant,
+                                           char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.name, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_metadata(const lk_remote_participant_snapshot_t* participant,
+                                               char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.metadata, buffer, buffer_size)
+		                              : InvalidSizeResult("participant snapshot is null");
+	});
+}
+
+size_t lk_remote_participant_snapshot_attribute_count(
+    const lk_remote_participant_snapshot_t* participant) {
+	return participant != nullptr ? participant->value.attributes.size() : 0;
+}
+
+size_t
+lk_remote_participant_snapshot_attribute_key(const lk_remote_participant_snapshot_t* participant,
+                                             size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->first, buffer, buffer_size);
+	});
+}
+
+size_t
+lk_remote_participant_snapshot_attribute_value(const lk_remote_participant_snapshot_t* participant,
+                                               size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->second, buffer, buffer_size);
+	});
+}
+
+size_t lk_remote_participant_snapshot_publication_count(
+    const lk_remote_participant_snapshot_t* participant) {
+	return participant != nullptr ? participant->publications.size() : 0;
+}
+
+lk_status_t lk_remote_participant_snapshot_publication_at(
+    const lk_remote_participant_snapshot_t* participant, size_t index,
+    const lk_remote_track_publication_snapshot_t** publication) {
+	return Guard([&] {
+		if (publication == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "publication output is null");
+		}
+		*publication = nullptr;
+		if (participant == nullptr || index >= participant->publications.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "publication snapshot index is out of range");
+		}
+		*publication = &participant->publications[index];
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t
+lk_remote_track_publication_snapshot_info(const lk_remote_track_publication_snapshot_t* publication,
+                                          lk_remote_track_publication_snapshot_info_t* info) {
+	return Guard([&] {
+		if (publication == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "publication snapshot is null");
+		}
+		const auto& source = publication->value;
+		const lk_remote_track_publication_snapshot_info_t value{
+		    sizeof(value),
+		    ToCTrackKind(source.kind),
+		    ToCTrackSource(source.source),
+		    source.dimensions.width,
+		    source.dimensions.height,
+		    source.muted ? 1 : 0,
+		    source.simulcasted ? 1 : 0,
+		    source.subscription_allowed ? 1 : 0,
+		    ToCTrackSubscriptionStatus(source.subscription_status),
+		    source.subscription_error.has_value() ? 1 : 0,
+		    ToCSubscriptionError(
+		        source.subscription_error.value_or(core::SubscriptionError::Unknown)),
+		    publication->track != nullptr ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid publication snapshot info output");
+	});
+}
+
+size_t
+lk_remote_track_publication_snapshot_sid(const lk_remote_track_publication_snapshot_t* publication,
+                                         char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr ? CopyString(publication->value.sid, buffer, buffer_size)
+		                              : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+size_t
+lk_remote_track_publication_snapshot_name(const lk_remote_track_publication_snapshot_t* publication,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr ? CopyString(publication->value.name, buffer, buffer_size)
+		                              : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+size_t lk_remote_track_publication_snapshot_mime_type(
+    const lk_remote_track_publication_snapshot_t* publication, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return publication != nullptr
+		           ? CopyString(publication->value.mime_type, buffer, buffer_size)
+		           : InvalidSizeResult("publication snapshot is null");
+	});
+}
+
+lk_status_t lk_remote_track_publication_snapshot_track(
+    const lk_remote_track_publication_snapshot_t* publication,
+    const lk_remote_track_snapshot_t** track) {
+	return Guard([&] {
+		if (publication == nullptr || track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "publication snapshot and track output are required");
+		}
+		*track = publication->track.get();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_remote_track_snapshot_info(const lk_remote_track_snapshot_t* track,
+                                          lk_remote_track_snapshot_info_t* info) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "remote track snapshot is null");
+		}
+		const auto& source = track->value;
+		const lk_remote_track_snapshot_info_t value{sizeof(value),
+		                                            ToCTrackKind(source.kind),
+		                                            ToCTrackSource(source.source),
+		                                            ToCTrackStreamState(source.stream_state),
+		                                            source.dimensions.width,
+		                                            source.dimensions.height,
+		                                            source.enabled ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid remote track snapshot info output");
+	});
+}
+
+size_t lk_remote_track_snapshot_sid(const lk_remote_track_snapshot_t* track, char* buffer,
+                                    size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.sid, buffer, buffer_size)
+		                        : InvalidSizeResult("remote track snapshot is null");
+	});
+}
+
+size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, char* buffer,
+                                     size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.name, buffer, buffer_size)
+		                        : InvalidSizeResult("remote track snapshot is null");
+	});
 }
 
 size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
@@ -2064,6 +2514,9 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 		}
 		*writer = nullptr;
 		core::StreamTextOptions converted;
+		std::shared_ptr<CDataStreamCompletionState> completion;
+		lk_data_stream_progress_callback progress_callback = nullptr;
+		void* progress_user_data = nullptr;
 		if (options != nullptr) {
 			if (options->struct_size < sizeof(options->struct_size)) {
 				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream text options size");
@@ -2115,19 +2568,35 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, on_progress) &&
 			    options->on_progress) {
-				auto callback = options->on_progress;
-				auto* user_data =
+				progress_callback = options->on_progress;
+				progress_user_data =
 				    LKC_HAS_FIELD(options, lk_stream_text_options_t, progress_user_data)
 				        ? options->progress_user_data
 				        : nullptr;
-				converted.on_progress = [callback, user_data](uint64_t sent,
-				                                              std::optional<uint64_t> total) {
-					callback(user_data, sent, total.has_value(), total.value_or(0));
-				};
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, compress)) {
 				converted.compress = options->compress != 0;
 			}
+			if (LKC_HAS_FIELD(options, lk_stream_text_options_t, on_complete) &&
+			    options->on_complete) {
+				completion = std::make_shared<CDataStreamCompletionState>();
+				completion->callback = options->on_complete;
+				completion->user_data =
+				    LKC_HAS_FIELD(options, lk_stream_text_options_t, completion_user_data)
+				        ? options->completion_user_data
+				        : nullptr;
+				completion->total_size = converted.total_size;
+			}
+		}
+		if (progress_callback != nullptr || completion) {
+			converted.on_progress = [progress_callback, progress_user_data,
+			                         completion](uint64_t sent, std::optional<uint64_t> total) {
+				UpdateDataStreamProgress(completion, sent, total);
+				if (progress_callback != nullptr) {
+					progress_callback(progress_user_data, sent, total.has_value(),
+					                  total.value_or(0));
+				}
+			};
 		}
 		auto core_writer = participant->StreamText(std::move(converted));
 		if (!core_writer) {
@@ -2135,6 +2604,11 @@ lk_status_t lk_room_stream_text(lk_room_t* room, const lk_stream_text_options_t*
 		}
 		auto handle = std::make_unique<lk_text_stream_writer>();
 		handle->writer = std::move(core_writer);
+		handle->completion = completion;
+		if (completion) {
+			std::lock_guard<std::mutex> guard(completion->mutex);
+			completion->stream_id = handle->writer->Info().stream_id;
+		}
 		*writer = handle.release();
 		return LK_STATUS_OK;
 	});
@@ -2147,18 +2621,26 @@ lk_status_t lk_text_stream_writer_write(lk_text_stream_writer_t* writer, const c
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer and text are required");
 		}
 		const std::string value = text_size == 0 ? std::string{} : std::string(text, text_size);
-		return writer->writer->Write(value)
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write text stream");
+		if (writer->writer->Write(value)) {
+			return LK_STATUS_OK;
+		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to write text stream");
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to write text stream");
 	});
 }
 
 lk_status_t lk_text_stream_writer_close(lk_text_stream_writer_t* writer) {
 	return Guard([&] {
-		return writer && writer->writer && writer->writer->Close()
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE,
-		                     "text stream is already closed or incomplete");
+		if (writer != nullptr && writer->writer != nullptr && writer->writer->Close()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_COMPLETED, {});
+			return LK_STATUS_OK;
+		}
+		if (writer != nullptr) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "text stream is already closed or incomplete");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed or incomplete");
 	});
 }
 
@@ -2167,9 +2649,17 @@ lk_status_t lk_text_stream_writer_cancel(lk_text_stream_writer_t* writer, const 
 		if (!writer || !writer->writer) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
 		}
-		return writer->writer->Cancel(reason ? reason : "cancelled")
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
+		const std::string cancellation_reason = reason ? reason : "cancelled";
+		if (writer->writer->Cancel(cancellation_reason)) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+			                           cancellation_reason);
+			return LK_STATUS_OK;
+		}
+		if (writer->writer->IsClosed()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "failed to cancel text stream");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
 	});
 }
 
@@ -2188,6 +2678,16 @@ int lk_text_stream_writer_is_closed(const lk_text_stream_writer_t* writer) {
 
 void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer) {
 	try {
+		if (writer != nullptr && writer->writer != nullptr && !writer->writer->IsClosed()) {
+			const std::string reason = "writer destroyed before close";
+			if (writer->writer->Cancel(reason)) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+				                           reason);
+			} else if (writer->writer->IsClosed()) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+				                           "failed to cancel text stream");
+			}
+		}
 		delete writer;
 	} catch (...) {
 		SetError("exception while destroying text stream writer");
@@ -2203,6 +2703,9 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 		}
 		*writer = nullptr;
 		core::StreamBytesOptions converted;
+		std::shared_ptr<CDataStreamCompletionState> completion;
+		lk_data_stream_progress_callback progress_callback = nullptr;
+		void* progress_user_data = nullptr;
 		if (options != nullptr) {
 			if (options->struct_size < sizeof(options->struct_size)) {
 				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid stream byte options size");
@@ -2245,19 +2748,35 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, on_progress) &&
 			    options->on_progress) {
-				auto callback = options->on_progress;
-				auto* user_data =
+				progress_callback = options->on_progress;
+				progress_user_data =
 				    LKC_HAS_FIELD(options, lk_stream_bytes_options_t, progress_user_data)
 				        ? options->progress_user_data
 				        : nullptr;
-				converted.on_progress = [callback, user_data](uint64_t sent,
-				                                              std::optional<uint64_t> total) {
-					callback(user_data, sent, total.has_value(), total.value_or(0));
-				};
 			}
 			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, compress)) {
 				converted.compress = options->compress != 0;
 			}
+			if (LKC_HAS_FIELD(options, lk_stream_bytes_options_t, on_complete) &&
+			    options->on_complete) {
+				completion = std::make_shared<CDataStreamCompletionState>();
+				completion->callback = options->on_complete;
+				completion->user_data =
+				    LKC_HAS_FIELD(options, lk_stream_bytes_options_t, completion_user_data)
+				        ? options->completion_user_data
+				        : nullptr;
+				completion->total_size = converted.total_size;
+			}
+		}
+		if (progress_callback != nullptr || completion) {
+			converted.on_progress = [progress_callback, progress_user_data,
+			                         completion](uint64_t sent, std::optional<uint64_t> total) {
+				UpdateDataStreamProgress(completion, sent, total);
+				if (progress_callback != nullptr) {
+					progress_callback(progress_user_data, sent, total.has_value(),
+					                  total.value_or(0));
+				}
+			};
 		}
 		auto core_writer = participant->StreamBytes(std::move(converted));
 		if (!core_writer) {
@@ -2265,6 +2784,11 @@ lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_
 		}
 		auto handle = std::make_unique<lk_byte_stream_writer>();
 		handle->writer = std::move(core_writer);
+		handle->completion = completion;
+		if (completion) {
+			std::lock_guard<std::mutex> guard(completion->mutex);
+			completion->stream_id = handle->writer->Info().stream_id;
+		}
 		*writer = handle.release();
 		return LK_STATUS_OK;
 	});
@@ -2280,18 +2804,26 @@ lk_status_t lk_byte_stream_writer_write(lk_byte_stream_writer_t* writer, const u
 		if (data_size != 0) {
 			value.assign(data, data + data_size);
 		}
-		return writer->writer->Write(value)
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to write byte stream");
+		if (writer->writer->Write(value)) {
+			return LK_STATUS_OK;
+		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to write byte stream");
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to write byte stream");
 	});
 }
 
 lk_status_t lk_byte_stream_writer_close(lk_byte_stream_writer_t* writer) {
 	return Guard([&] {
-		return writer && writer->writer && writer->writer->Close()
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE,
-		                     "byte stream is already closed or incomplete");
+		if (writer != nullptr && writer->writer != nullptr && writer->writer->Close()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_COMPLETED, {});
+			return LK_STATUS_OK;
+		}
+		if (writer != nullptr) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "byte stream is already closed or incomplete");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed or incomplete");
 	});
 }
 
@@ -2300,9 +2832,17 @@ lk_status_t lk_byte_stream_writer_cancel(lk_byte_stream_writer_t* writer, const 
 		if (!writer || !writer->writer) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer is required");
 		}
-		return writer->writer->Cancel(reason ? reason : "cancelled")
-		           ? LK_STATUS_OK
-		           : Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
+		const std::string cancellation_reason = reason ? reason : "cancelled";
+		if (writer->writer->Cancel(cancellation_reason)) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+			                           cancellation_reason);
+			return LK_STATUS_OK;
+		}
+		if (writer->writer->IsClosed()) {
+			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+			                           "failed to cancel byte stream");
+		}
+		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
 	});
 }
 
@@ -2321,6 +2861,16 @@ int lk_byte_stream_writer_is_closed(const lk_byte_stream_writer_t* writer) {
 
 void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer) {
 	try {
+		if (writer != nullptr && writer->writer != nullptr && !writer->writer->IsClosed()) {
+			const std::string reason = "writer destroyed before close";
+			if (writer->writer->Cancel(reason)) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
+				                           reason);
+			} else if (writer->writer->IsClosed()) {
+				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+				                           "failed to cancel byte stream");
+			}
+		}
 		delete writer;
 	} catch (...) {
 		SetError("exception while destroying byte stream writer");
@@ -2456,27 +3006,14 @@ lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t*
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC result output is null");
 		}
 		*result = nullptr;
-		if (room == nullptr || options == nullptr ||
-		    options->struct_size < sizeof(options->struct_size)) {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and valid RPC options are required");
-		}
-		if (!LKC_HAS_FIELD(options, lk_rpc_perform_options_t, destination_identity) ||
-		    options->destination_identity == nullptr || *options->destination_identity == '\0' ||
-		    !LKC_HAS_FIELD(options, lk_rpc_perform_options_t, method) ||
-		    options->method == nullptr || *options->method == '\0') {
-			return Failure(LK_STATUS_INVALID_ARGUMENT, "RPC destination and method are required");
+		if (room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is required");
 		}
 
 		core::PerformRpcParams params;
-		params.destination_identity = options->destination_identity;
-		params.method = options->method;
-		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, payload) &&
-		    options->payload != nullptr) {
-			params.payload = options->payload;
-		}
-		if (LKC_HAS_FIELD(options, lk_rpc_perform_options_t, response_timeout_ms) &&
-		    options->response_timeout_ms != 0) {
-			params.response_timeout = std::chrono::milliseconds(options->response_timeout_ms);
+		const auto options_status = ToCorePerformRpcParams(options, params);
+		if (options_status != LK_STATUS_OK) {
+			return options_status;
 		}
 		auto* participant = LocalParticipant(room);
 		if (participant == nullptr) {
@@ -2485,6 +3022,50 @@ lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t*
 		auto owned = std::make_unique<lk_rpc_result_t>();
 		owned->result = participant->PerformRpc(params);
 		*result = owned.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_perform_rpc_async(lk_room_t* room, const lk_rpc_perform_options_t* options,
+                                      lk_rpc_completion_callback callback, void* user_data) {
+	return Guard([&] {
+		if (room == nullptr || callback == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and RPC completion callback are required");
+		}
+		core::PerformRpcParams params;
+		const auto options_status = ToCorePerformRpcParams(options, params);
+		if (options_status != LK_STATUS_OK) {
+			return options_status;
+		}
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "local participant is unavailable");
+		}
+
+		auto task = std::make_shared<AsyncRpcTask>();
+		auto* task_pointer = task.get();
+		auto state = room->state;
+		task->worker =
+		    std::jthread([task_pointer, state = std::move(state), participant,
+		                  params = std::move(params), callback, user_data, room]() mutable {
+			    lk_rpc_result_t result;
+			    result.result = participant->PerformRpc(params);
+			    if (state->alive.load()) {
+				    try {
+					    callback(user_data, room, &result);
+				    } catch (...) {
+					    // Exceptions must never escape a C ABI callback boundary.
+				    }
+			    }
+			    task_pointer->completed.store(true);
+		    });
+		{
+			std::lock_guard<std::mutex> guard(room->async_tasks_mutex);
+			std::erase_if(room->async_rpc_tasks,
+			              [](const auto& existing) { return existing->completed.load(); });
+			room->async_rpc_tasks.push_back(std::move(task));
+		}
 		return LK_STATUS_OK;
 	});
 }
