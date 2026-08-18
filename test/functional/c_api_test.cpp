@@ -116,6 +116,12 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(camera.height, 720u);
 	EXPECT_EQ(camera.frames_per_second, 30u);
 
+	lk_screen_capture_options_t screen;
+	lk_screen_capture_options_init(&screen);
+	EXPECT_EQ(screen.struct_size, sizeof(screen));
+	EXPECT_EQ(screen.source_id, nullptr);
+	EXPECT_EQ(screen.frames_per_second, 15u);
+
 	lk_microphone_capture_options_t microphone;
 	lk_microphone_capture_options_init(&microphone);
 	EXPECT_EQ(microphone.struct_size, sizeof(microphone));
@@ -178,6 +184,39 @@ TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {
 	EXPECT_EQ(lk_media_device_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
 }
 
+TEST(CApiTest, OwnsScreenSourceSnapshotAndValidatesIndexes) {
+	lk_screen_source_list_t* sources = nullptr;
+	ASSERT_EQ(lk_screen_source_list_create(&sources), LK_STATUS_OK);
+	ASSERT_NE(sources, nullptr);
+	const auto count = lk_screen_source_list_count(sources);
+	for (size_t index = 0; index < count; ++index) {
+		lk_screen_source_info_t info{};
+		info.struct_size = sizeof(info);
+		EXPECT_EQ(lk_screen_source_list_info(sources, index, &info), LK_STATUS_OK);
+		EXPECT_GE(info.kind, LK_SCREEN_SOURCE_KIND_MONITOR);
+		EXPECT_LE(info.kind, LK_SCREEN_SOURCE_KIND_WINDOW);
+		EXPECT_GT(info.width, 0U);
+		EXPECT_GT(info.height, 0U);
+
+		const auto id_size = lk_screen_source_list_id(sources, index, nullptr, 0);
+		const auto label_size = lk_screen_source_list_label(sources, index, nullptr, 0);
+		ASSERT_GT(id_size, 1U);
+		ASSERT_GT(label_size, 1U);
+		std::vector<char> id(id_size);
+		std::vector<char> label(label_size);
+		EXPECT_EQ(lk_screen_source_list_id(sources, index, id.data(), id.size()), id_size);
+		EXPECT_EQ(lk_screen_source_list_label(sources, index, label.data(), label.size()),
+		          label_size);
+	}
+
+	lk_screen_source_info_t invalid_info{};
+	invalid_info.struct_size = sizeof(invalid_info);
+	EXPECT_EQ(lk_screen_source_list_info(sources, count, &invalid_info),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_screen_source_list_destroy(sources);
+	EXPECT_EQ(lk_screen_source_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+}
+
 TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
 	lk_video_source_t* source = nullptr;
 	ASSERT_EQ(lk_video_source_create(nullptr, &source), LK_STATUS_OK);
@@ -187,12 +226,23 @@ TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
 	EXPECT_EQ(lk_video_source_camera_is_capturing(source), 0);
 	EXPECT_EQ(lk_video_source_camera_device_id(source, nullptr, 0), 0u);
 	EXPECT_EQ(lk_video_source_camera_switch_device(source, "missing"), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_is_capturing(source), 0);
+	EXPECT_EQ(lk_video_source_screen_source_id(source, nullptr, 0), 0U);
+	EXPECT_EQ(lk_video_source_screen_switch_source(source, "missing"), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_destroy(source), LK_STATUS_OK);
 
 	lk_camera_capture_options_t options;
 	lk_camera_capture_options_init(&options);
 	options.width = 0;
 	EXPECT_EQ(lk_video_source_create_camera(&options, &source), LK_STATUS_INVALID_ARGUMENT);
+
+	lk_screen_capture_options_t screen_options;
+	lk_screen_capture_options_init(&screen_options);
+	EXPECT_EQ(lk_video_source_create_screen(&screen_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	screen_options.source_id = "monitor:missing";
+	EXPECT_EQ(lk_video_source_create_screen(&screen_options, &source), LK_STATUS_OPERATION_FAILED);
 }
 
 TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {

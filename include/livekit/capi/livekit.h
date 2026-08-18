@@ -45,6 +45,7 @@ typedef struct lk_remote_participant_snapshot lk_remote_participant_snapshot_t;
 typedef struct lk_remote_track_publication_snapshot lk_remote_track_publication_snapshot_t;
 typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
 typedef struct lk_media_device_list lk_media_device_list_t;
+typedef struct lk_screen_source_list lk_screen_source_list_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -94,6 +95,11 @@ typedef enum lk_media_device_kind {
 	LK_MEDIA_DEVICE_KIND_AUDIO_OUTPUT = 1,
 	LK_MEDIA_DEVICE_KIND_VIDEO_INPUT = 2
 } lk_media_device_kind_t;
+
+typedef enum lk_screen_source_kind {
+	LK_SCREEN_SOURCE_KIND_MONITOR = 0,
+	LK_SCREEN_SOURCE_KIND_WINDOW = 1
+} lk_screen_source_kind_t;
 
 typedef enum lk_track_source {
 	LK_TRACK_SOURCE_UNKNOWN = 0,
@@ -186,6 +192,15 @@ typedef struct lk_media_device_info {
 	lk_media_device_kind_t kind;
 	int is_default;
 } lk_media_device_info_t;
+
+typedef struct lk_screen_source_info {
+	size_t struct_size;
+	lk_screen_source_kind_t kind;
+	int32_t x;
+	int32_t y;
+	uint32_t width;
+	uint32_t height;
+} lk_screen_source_info_t;
 
 typedef struct lk_participant_permissions {
 	int can_subscribe;
@@ -614,6 +629,12 @@ typedef struct lk_camera_capture_options {
 	uint32_t frames_per_second;
 } lk_camera_capture_options_t;
 
+typedef struct lk_screen_capture_options {
+	size_t struct_size;
+	const char* source_id;
+	uint32_t frames_per_second;
+} lk_screen_capture_options_t;
+
 typedef struct lk_track_publish_options {
 	size_t struct_size;
 	lk_track_source_t source;
@@ -761,11 +782,23 @@ LKC_API size_t lk_media_device_list_id(const lk_media_device_list_t* devices, si
 LKC_API size_t lk_media_device_list_label(const lk_media_device_list_t* devices, size_t index,
                                           char* buffer, size_t buffer_size);
 
+/* Creates a read-only snapshot of shareable monitors and windows. */
+LKC_API lk_status_t lk_screen_source_list_create(lk_screen_source_list_t** sources);
+LKC_API void lk_screen_source_list_destroy(lk_screen_source_list_t* sources);
+LKC_API size_t lk_screen_source_list_count(const lk_screen_source_list_t* sources);
+LKC_API lk_status_t lk_screen_source_list_info(const lk_screen_source_list_t* sources, size_t index,
+                                               lk_screen_source_info_t* info);
+LKC_API size_t lk_screen_source_list_id(const lk_screen_source_list_t* sources, size_t index,
+                                        char* buffer, size_t buffer_size);
+LKC_API size_t lk_screen_source_list_label(const lk_screen_source_list_t* sources, size_t index,
+                                           char* buffer, size_t buffer_size);
+
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);
 LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options);
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
+LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options);
 LKC_API void lk_track_publish_options_init(lk_track_publish_options_t* options);
 LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
@@ -885,6 +918,8 @@ LKC_API lk_status_t lk_video_source_create(const lk_video_source_options_t* opti
                                            lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* options,
                                                   lk_video_source_t** source);
+LKC_API lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* options,
+                                                  lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_destroy(lk_video_source_t* source);
 LKC_API lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,
                                                  size_t data_size, uint32_t width, uint32_t height,
@@ -896,6 +931,13 @@ LKC_API size_t lk_video_source_camera_device_id(const lk_video_source_t* source,
                                                 size_t buffer_size);
 LKC_API lk_status_t lk_video_source_camera_switch_device(lk_video_source_t* source,
                                                          const char* device_id);
+LKC_API lk_status_t lk_video_source_screen_start(lk_video_source_t* source);
+LKC_API lk_status_t lk_video_source_screen_stop(lk_video_source_t* source);
+LKC_API int lk_video_source_screen_is_capturing(const lk_video_source_t* source);
+LKC_API size_t lk_video_source_screen_source_id(const lk_video_source_t* source, char* buffer,
+                                                size_t buffer_size);
+LKC_API lk_status_t lk_video_source_screen_switch_source(lk_video_source_t* source,
+                                                         const char* source_id);
 
 LKC_API lk_status_t lk_room_create_audio_track(lk_room_t* room, const char* label,
                                                lk_audio_source_t* source, lk_local_track_t** track);

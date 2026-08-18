@@ -168,6 +168,13 @@ printed at startup. Pass one as the third argument; otherwise the first monitor 
   $url $publisherToken "<optional-monitor-or-window-id>"
 ```
 
+The C ABI example exposes the same source enumeration and screen publishing flow:
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_screen_c/Release/publish_screen_c.exe" `
+  $url $publisherToken "<optional-monitor-or-window-id>"
+```
+
 Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
 an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
 again.

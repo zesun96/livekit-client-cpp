@@ -160,6 +160,10 @@ struct lk_media_device_list {
 	std::vector<core::MediaDeviceInfo> devices;
 };
 
+struct lk_screen_source_list {
+	std::vector<core::ScreenCaptureSourceInfo> sources;
+};
+
 namespace {
 
 thread_local std::string last_error;
@@ -1303,6 +1307,62 @@ size_t lk_media_device_list_label(const lk_media_device_list_t* devices, size_t 
 	});
 }
 
+lk_status_t lk_screen_source_list_create(lk_screen_source_list_t** sources) {
+	return Guard([&] {
+		if (sources == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "sources output must not be null");
+		}
+		*sources = nullptr;
+		auto result = std::make_unique<lk_screen_source_list_t>();
+		result->sources = core::EnumerateScreenCaptureSources();
+		*sources = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_screen_source_list_destroy(lk_screen_source_list_t* sources) { delete sources; }
+
+size_t lk_screen_source_list_count(const lk_screen_source_list_t* sources) {
+	return SizeGuard([&] { return sources != nullptr ? sources->sources.size() : 0; });
+}
+
+lk_status_t lk_screen_source_list_info(const lk_screen_source_list_t* sources, size_t index,
+                                       lk_screen_source_info_t* info) {
+	return Guard([&] {
+		if (sources == nullptr || index >= sources->sources.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "screen source index is out of range");
+		}
+		const auto& source = sources->sources[index];
+		const auto kind = source.kind == core::ScreenCaptureSourceKind::Monitor
+		                      ? LK_SCREEN_SOURCE_KIND_MONITOR
+		                      : LK_SCREEN_SOURCE_KIND_WINDOW;
+		return CopyOutputStruct(lk_screen_source_info_t{sizeof(lk_screen_source_info_t), kind,
+		                                                source.x, source.y, source.width,
+		                                                source.height},
+		                        info, "screen source info is invalid");
+	});
+}
+
+size_t lk_screen_source_list_id(const lk_screen_source_list_t* sources, size_t index, char* buffer,
+                                size_t buffer_size) {
+	return SizeGuard([&] {
+		if (sources == nullptr || index >= sources->sources.size()) {
+			return InvalidSizeResult("screen source index is out of range");
+		}
+		return CopyString(sources->sources[index].id, buffer, buffer_size);
+	});
+}
+
+size_t lk_screen_source_list_label(const lk_screen_source_list_t* sources, size_t index,
+                                   char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (sources == nullptr || index >= sources->sources.size()) {
+			return InvalidSizeResult("screen source index is out of range");
+		}
+		return CopyString(sources->sources[index].label, buffer, buffer_size);
+	});
+}
+
 void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
 	if (callbacks != nullptr) {
 		*callbacks = {};
@@ -1345,6 +1405,14 @@ void lk_camera_capture_options_init(lk_camera_capture_options_t* options) {
 		options->width = 1280;
 		options->height = 720;
 		options->frames_per_second = 30;
+	}
+}
+
+void lk_screen_capture_options_init(lk_screen_capture_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->frames_per_second = 15;
 	}
 }
 
@@ -2244,6 +2312,38 @@ lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* opt
 	});
 }
 
+lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* options,
+                                          lk_video_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		lk_screen_capture_options_t values;
+		lk_screen_capture_options_init(&values);
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid screen options struct size");
+			}
+			std::memcpy(&values, options, std::min(options->struct_size, sizeof(values)));
+		}
+		if (values.source_id == nullptr || *values.source_id == '\0' ||
+		    values.frames_per_second == 0 || values.frames_per_second > 60) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid screen source ID or frame rate");
+		}
+		core::ScreenCaptureOptions core_options;
+		core_options.source_id = values.source_id;
+		core_options.frames_per_second = values.frames_per_second;
+		auto result = std::make_unique<lk_video_source_t>();
+		result->source.reset(core::CreateScreenVideoSource(std::move(core_options)));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open screen source");
+		}
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
 	if (source == nullptr) {
 		return LK_STATUS_OK;
@@ -2342,6 +2442,78 @@ lk_status_t lk_video_source_camera_switch_device(lk_video_source_t* source, cons
 		return camera->SwitchDevice(device_id)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to switch camera device");
+	});
+}
+
+lk_status_t lk_video_source_screen_start(lk_video_source_t* source) {
+	return Guard([&] {
+		auto* screen = source != nullptr
+		                   ? dynamic_cast<core::ScreenVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (screen == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source is not a screen source");
+		}
+		return screen->Start()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to start screen capture");
+	});
+}
+
+lk_status_t lk_video_source_screen_stop(lk_video_source_t* source) {
+	return Guard([&] {
+		auto* screen = source != nullptr
+		                   ? dynamic_cast<core::ScreenVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (screen == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source is not a screen source");
+		}
+		screen->Stop();
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_video_source_screen_is_capturing(const lk_video_source_t* source) {
+	try {
+		last_error.clear();
+		const auto* screen =
+		    source != nullptr
+		        ? dynamic_cast<const core::ScreenVideoSourceInterface*>(source->source.get())
+		        : nullptr;
+		return screen != nullptr && screen->IsCapturing() ? 1 : 0;
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return 0;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return 0;
+	}
+}
+
+size_t lk_video_source_screen_source_id(const lk_video_source_t* source, char* buffer,
+                                        size_t buffer_size) {
+	return SizeGuard([&] {
+		const auto* screen =
+		    source != nullptr
+		        ? dynamic_cast<const core::ScreenVideoSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (screen == nullptr) {
+			return InvalidSizeResult("video source is not a screen source");
+		}
+		return CopyString(screen->SourceId(), buffer, buffer_size);
+	});
+}
+
+lk_status_t lk_video_source_screen_switch_source(lk_video_source_t* source, const char* source_id) {
+	return Guard([&] {
+		auto* screen = source != nullptr
+		                   ? dynamic_cast<core::ScreenVideoSourceInterface*>(source->source.get())
+		                   : nullptr;
+		if (screen == nullptr || source_id == nullptr || *source_id == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid screen source or source ID");
+		}
+		return screen->SwitchSource(source_id)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to switch screen source");
 	});
 }
 

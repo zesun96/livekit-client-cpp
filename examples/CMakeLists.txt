@@ -16,6 +16,8 @@ add_subdirectory(publish_camera)
 
 add_subdirectory(publish_screen)
 
+add_subdirectory(publish_screen_c)
+
 add_subdirectory(data_transfer)
 
 add_subdirectory(rpc)
