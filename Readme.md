@@ -48,15 +48,16 @@ Because webrtc requires C++20.
 - [plog](https://github.com/SergiusTheBest/plog) (release archive via CMake FetchContent)
 - [libwebsockets](https://github.com/warmcat/libwebsockets)
 - [libwebrtc](https://github.com/livekit/rust-sdks/releases) (cmake FetchContent by default)
-- [media-capture](https://github.com/zesun96/media-capture) (audio capture abstraction; sibling
-  source tree by default)
+- [media-capture](https://github.com/zesun96/media-capture) (audio, camera, and screen capture
+  abstraction; sibling source tree by default)
 - [protobuf](https://github.com/protocolbuffers/protobuf) (cmake find_package by default)
 - [nlohmann_json](https://github.com/nlohmann/json) (header-only release archive via CMake FetchContent)
 
-The FetchContent dependencies use versioned archives with SHA-256 checksums, so Git submodules
-are not required. Set `MEDIA_CAPTURE_ROOT` when `media-capture` is not checked out next to this
-repository, or configure with `-DUSE_SYSTEM_MEDIA_CAPTURE=ON` for an installed package. Package
-manager builds can also use `-DUSE_SYSTEM_JSON=ON` and/or `-DUSE_SYSTEM_PLOG=ON`.
+FetchContent dependencies use version-pinned release sources, with SHA-256 checksums for archive
+downloads, so Git submodules are not required. Set `MEDIA_CAPTURE_ROOT` when `media-capture` is not
+checked out next to this repository, or configure with `-DUSE_SYSTEM_MEDIA_CAPTURE=ON` for an
+installed package. Package manager builds can also use `-DUSE_SYSTEM_JSON=ON` and/or
+`-DUSE_SYSTEM_PLOG=ON`.
 
 The vcpkg manifest pins protobuf 3.21.12 because newer protobuf releases bring
 their own Abseil dependency, which can conflict with the Abseil headers and ABI
@@ -75,6 +76,8 @@ cmake -S . -B out/build/vs2022-x64-release `
   -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release/webrtc `
   -DMEDIA_CAPTURE_ROOT=E:/workspace/cpp/lk-sdk/media-capture `
   -DMEDIA_CAPTURE_MINIAUDIO_ROOT=E:/workspace/cpp/lk-sdk/others/miniaudio `
+  -DMEDIA_CAPTURE_CAMERA_CAPTURE_ROOT=E:/workspace/cpp/lk-sdk/others/CameraCapture `
+  -DMEDIA_CAPTURE_SCREEN_CAPTURE_LITE_ROOT=E:/workspace/cpp/lk-sdk/others/screen_capture_lite `
   -DBUILD_EXAMPLES=ON `
   -DBUILD_TEST=ON `
   -DBUILD_FUNCTIONAL_TESTS=ON `

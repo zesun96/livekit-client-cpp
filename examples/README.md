@@ -210,10 +210,10 @@ common publish settings and intentionally want to rebuild every publisher sender
 
 ### `publish_camera`
 
-Opens the first available camera, publishes its native frames for ten seconds, and then stops the
-device deterministically. Pass an optional device ID from `media_devices_cpp` as the third
-argument to select a specific camera. A running `CameraVideoSourceInterface` can switch to another
-enumerated camera with `SwitchDevice()` without recreating its LiveKit track.
+Opens the first available camera through the media-capture CameraCapture backend, normalizes BGRA
+frames to I420, publishes them for ten seconds, and then stops the device deterministically. Pass
+an optional device ID from `media_devices_cpp` as the third argument. A running
+`CameraVideoSourceInterface` can switch devices without recreating its LiveKit track.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_camera/Release/publish_camera.exe" `

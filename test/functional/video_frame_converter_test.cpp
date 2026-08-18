@@ -1,4 +1,4 @@
-#include "screen_capture_adapter.h"
+#include "video_frame_converter.h"
 
 #include <gtest/gtest.h>
 
@@ -7,7 +7,7 @@
 namespace livekit::capture {
 namespace {
 
-TEST(ScreenCaptureAdapterTest, ConvertsBgraFramesToTightlyPackedI420) {
+TEST(VideoFrameConverterTest, ConvertsBgraFramesToTightlyPackedI420) {
 	const std::array<std::uint8_t, 24> pixels{
 	    0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
 	};
@@ -22,7 +22,7 @@ TEST(ScreenCaptureAdapterTest, ConvertsBgraFramesToTightlyPackedI420) {
 	EXPECT_EQ(frame.i420[5], 128U);
 }
 
-TEST(ScreenCaptureAdapterTest, RejectsInvalidBgraFrames) {
+TEST(VideoFrameConverterTest, RejectsInvalidBgraFrames) {
 	CapturedVideoFrame frame;
 	EXPECT_FALSE(ConvertBgraToI420(nullptr, 2, 2, 8, 0, frame));
 	const std::array<std::uint8_t, 16> pixels{};

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "video_frame_converter.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -27,17 +29,6 @@ struct ScreenSourceInfo {
 	std::uint32_t width = 0;
 	std::uint32_t height = 0;
 };
-
-struct CapturedVideoFrame {
-	std::vector<std::uint8_t> i420;
-	std::uint32_t width = 0;
-	std::uint32_t height = 0;
-	std::int64_t timestamp_us = 0;
-};
-
-bool ConvertBgraToI420(const std::uint8_t* data, std::uint32_t width, std::uint32_t height,
-                       std::uint32_t row_stride_bytes, std::int64_t timestamp_us,
-                       CapturedVideoFrame& destination);
 
 using ScreenFrameCallback = std::function<void(const CapturedVideoFrame& frame)>;
 

@@ -43,6 +43,7 @@ if(USE_SYSTEM_MEDIA_CAPTURE)
 elseif(EXISTS "${MEDIA_CAPTURE_ROOT}/CMakeLists.txt")
   set(MEDIA_CAPTURE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(MEDIA_CAPTURE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_CAMERA ON CACHE BOOL "" FORCE)
   set(MEDIA_CAPTURE_BUILD_SCREEN ON CACHE BOOL "" FORCE)
   add_subdirectory("${MEDIA_CAPTURE_ROOT}"
     "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build" EXCLUDE_FROM_ALL)
@@ -52,6 +53,9 @@ else()
 endif()
 if(NOT TARGET media_capture::screen)
   message(FATAL_ERROR "media-capture must provide the media_capture::screen component")
+endif()
+if(NOT TARGET media_capture::camera)
+  message(FATAL_ERROR "media-capture must provide the media_capture::camera component")
 endif()
 
 if(USE_SYSTEM_ABSL)
@@ -121,8 +125,10 @@ set(
 
   src/capture/audio_capture_adapter.cpp
   src/capture/audio_gain.cpp
+  src/capture/camera_capture_adapter.cpp
   src/capture/webrtc_audio_processor.cpp
   src/capture/screen_capture_adapter.cpp
+  src/capture/video_frame_converter.cpp
 
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
@@ -215,7 +221,8 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
-target_link_libraries(livekitclient PRIVATE media_capture::audio media_capture::screen)
+target_link_libraries(livekitclient PRIVATE
+  media_capture::audio media_capture::camera media_capture::screen)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 

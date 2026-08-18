@@ -17,11 +17,7 @@
 #include "livekit/core/media_device.h"
 
 #include "../capture/audio_capture_adapter.h"
-
-#include "modules/video_capture/video_capture_factory.h"
-
-#include <array>
-#include <memory>
+#include "../capture/camera_capture_adapter.h"
 #include <utility>
 #include <vector>
 
@@ -39,20 +35,9 @@ void EnumerateAudioDevices(std::vector<MediaDeviceInfo>& devices) {
 }
 
 void EnumerateVideoInputs(std::vector<MediaDeviceInfo>& devices) {
-	std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> device_info(
-	    webrtc::VideoCaptureFactory::CreateDeviceInfo());
-	if (device_info == nullptr) {
-		return;
-	}
-
-	for (uint32_t index = 0; index < device_info->NumberOfDevices(); ++index) {
-		std::array<char, 256> label{};
-		std::array<char, 512> id{};
-		if (device_info->GetDeviceName(index, label.data(), static_cast<uint32_t>(label.size()),
-		                               id.data(), static_cast<uint32_t>(id.size())) != 0) {
-			continue;
-		}
-		devices.push_back({id.data(), label.data(), MediaDeviceKind::VideoInput, false});
+	for (auto& device : capture::EnumerateCameraDevices()) {
+		devices.push_back(
+		    {std::move(device.id), std::move(device.label), MediaDeviceKind::VideoInput, false});
 	}
 }
 

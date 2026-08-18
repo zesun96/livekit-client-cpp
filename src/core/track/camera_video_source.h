@@ -15,19 +15,15 @@
 
 #include "video_source.h"
 
-#include "api/scoped_refptr.h"
-#include "api/video/video_frame.h"
-#include "api/video/video_sink_interface.h"
-#include "modules/video_capture/video_capture.h"
+#include "../../capture/camera_capture_adapter.h"
 
+#include <memory>
 #include <mutex>
 #include <string>
 
 namespace livekit::core {
 
-class CameraVideoSource final : public CameraVideoSourceInterface,
-                                public VideoSource,
-                                private webrtc::VideoSinkInterface<webrtc::VideoFrame> {
+class CameraVideoSource final : public CameraVideoSourceInterface, public VideoSource {
 public:
 	explicit CameraVideoSource(CameraCaptureOptions options);
 	~CameraVideoSource() override;
@@ -42,17 +38,12 @@ public:
 	bool SwitchDevice(const std::string& device_id) override;
 
 private:
-	void OnFrame(const webrtc::VideoFrame& frame) override;
-	bool Configure(const std::string& device_id,
-	               webrtc::scoped_refptr<webrtc::VideoCaptureModule>& module,
-	               webrtc::VideoCaptureCapability& capability, std::string& resolved_id) const;
-	bool StartLocked();
-	void StopLocked();
+	std::unique_ptr<capture::CameraCaptureAdapter> CreateAdapter(const std::string& device_id);
+	void OnFrame(const capture::CapturedVideoFrame& frame);
 
 	mutable std::mutex mutex_;
 	CameraCaptureOptions options_;
-	webrtc::scoped_refptr<webrtc::VideoCaptureModule> capture_module_;
-	webrtc::VideoCaptureCapability capability_;
+	std::unique_ptr<capture::CameraCaptureAdapter> capture_;
 };
 
 } // namespace livekit::core
