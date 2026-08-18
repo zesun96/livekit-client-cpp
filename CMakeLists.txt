@@ -43,11 +43,15 @@ if(USE_SYSTEM_MEDIA_CAPTURE)
 elseif(EXISTS "${MEDIA_CAPTURE_ROOT}/CMakeLists.txt")
   set(MEDIA_CAPTURE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(MEDIA_CAPTURE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_SCREEN ON CACHE BOOL "" FORCE)
   add_subdirectory("${MEDIA_CAPTURE_ROOT}"
     "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build" EXCLUDE_FROM_ALL)
 else()
   message(FATAL_ERROR
     "media-capture was not found. Set MEDIA_CAPTURE_ROOT or USE_SYSTEM_MEDIA_CAPTURE=ON.")
+endif()
+if(NOT TARGET media_capture::screen)
+  message(FATAL_ERROR "media-capture must provide the media_capture::screen component")
 endif()
 
 if(USE_SYSTEM_ABSL)
@@ -118,6 +122,7 @@ set(
   src/capture/audio_capture_adapter.cpp
   src/capture/audio_gain.cpp
   src/capture/webrtc_audio_processor.cpp
+  src/capture/screen_capture_adapter.cpp
 
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
@@ -128,6 +133,7 @@ set(
   src/core/track/local_video_track.cpp
   src/core/track/media_stream_track.cpp
   src/core/track/microphone_audio_source.cpp
+  src/core/track/screen_video_source.cpp
   src/core/track/remote_audio_track.cpp
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
@@ -195,6 +201,9 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
 )
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
+target_include_directories(livekitclient PRIVATE
+  ${libwebrtc_SOURCE_DIR}/include/third_party/libyuv/include
+)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
@@ -206,7 +215,7 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
-target_link_libraries(livekitclient PRIVATE media_capture::audio)
+target_link_libraries(livekitclient PRIVATE media_capture::audio media_capture::screen)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 

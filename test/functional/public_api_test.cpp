@@ -80,6 +80,16 @@ TEST(PublicApiTest, RejectsUnknownMicrophoneDeviceWithoutAStartedSource) {
 	EXPECT_EQ(CreateMicrophoneAudioSourceUnique(std::move(options)), nullptr);
 }
 
+TEST(PublicApiTest, EnumeratesAndValidatesScreenCaptureSources) {
+	for (const auto& source : EnumerateScreenCaptureSources()) {
+		EXPECT_FALSE(source.id.empty());
+		EXPECT_GT(source.width, 0U);
+		EXPECT_GT(source.height, 0U);
+	}
+	EXPECT_EQ(CreateScreenVideoSource({}), nullptr);
+	EXPECT_EQ(CreateScreenVideoSource({"monitor:missing", 15}), nullptr);
+}
+
 TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
 	auto room = CreateRoomUnique();
 	ASSERT_NE(room, nullptr);

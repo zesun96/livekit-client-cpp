@@ -157,6 +157,17 @@ when switching fails.
   $url $publisherToken "<optional-microphone-device-id>"
 ```
 
+### `publish_screen`
+
+Captures a monitor or window through the media-capture screen_capture_lite backend, converts BGRA
+frames to I420, and publishes them as a LiveKit screen-share video track. Available source IDs are
+printed at startup. Pass one as the third argument; otherwise the first monitor is selected.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_screen/Release/publish_screen.exe" `
+  $url $publisherToken "<optional-monitor-or-window-id>"
+```
+
 Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
 an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
 again.

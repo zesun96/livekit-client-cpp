@@ -4,6 +4,7 @@ add_executable(
   microphone_source_test.cpp
   participant_state_test.cpp
   public_api_test.cpp
+  screen_capture_adapter_test.cpp
   track_stats_test.cpp
   video_encoding_test.cpp
   webrtc_audio_processor_test.cpp
