@@ -16,15 +16,21 @@
 #include "audio_source.h"
 
 #include "../../capture/audio_capture_adapter.h"
+#include "../../capture/webrtc_audio_processor.h"
+#include "../detail/audio_device.h"
 
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace livekit::core {
 
-class MicrophoneAudioSource final : public MicrophoneAudioSourceInterface, public AudioSource {
+class MicrophoneAudioSource final : public MicrophoneAudioSourceInterface,
+                                    public AudioSource,
+                                    private AudioRenderObserver {
 public:
 	explicit MicrophoneAudioSource(MicrophoneCaptureOptions options);
 	~MicrophoneAudioSource() override;
@@ -38,13 +44,25 @@ public:
 	bool SwitchDevice(const std::string& device_id) override;
 	void SetMuted(bool muted) override;
 	bool IsMuted() const override;
+	bool SetVolume(float volume);
+	float Volume() const;
+	bool BindAudioDevice(webrtc::scoped_refptr<AudioDevice> audio_device);
 
 private:
 	void OnAudioFrame(const std::int16_t* samples, std::uint32_t sample_rate,
-	                  std::uint32_t channels, std::uint32_t frames_per_channel);
+	                  std::uint32_t channels, std::uint32_t frames_per_channel,
+	                  std::int64_t timestamp_us);
+	void OnRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
+	                  std::uint32_t channels, std::uint32_t frames_per_channel) override;
 
 	std::unique_ptr<capture::AudioCaptureAdapter> capture_;
+	capture::WebRtcAudioProcessor processor_;
+	std::mutex capture_buffer_mutex_;
+	std::vector<std::int16_t> capture_buffer_;
+	mutable std::mutex audio_device_mutex_;
+	webrtc::scoped_refptr<AudioDevice> audio_device_;
 	std::atomic_bool muted_{false};
+	std::atomic<float> volume_{1.0F};
 };
 
 } // namespace livekit::core

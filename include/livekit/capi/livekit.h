@@ -879,6 +879,8 @@ LKC_API lk_status_t lk_audio_source_microphone_switch_device(lk_audio_source_t* 
                                                              const char* device_id);
 LKC_API lk_status_t lk_audio_source_microphone_set_muted(lk_audio_source_t* source, int muted);
 LKC_API int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source);
+LKC_API lk_status_t lk_audio_source_microphone_set_volume(lk_audio_source_t* source, float volume);
+LKC_API float lk_audio_source_microphone_volume(const lk_audio_source_t* source);
 LKC_API lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
                                            lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* options,

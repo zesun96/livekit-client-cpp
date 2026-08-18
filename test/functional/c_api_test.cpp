@@ -207,6 +207,8 @@ TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_microphone_set_muted(source, 1), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_microphone_is_muted(source), 0);
+	EXPECT_EQ(lk_audio_source_microphone_set_volume(source, 0.5F), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_FLOAT_EQ(lk_audio_source_microphone_volume(source), 0.0F);
 	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
 
 	lk_microphone_capture_options_t options;

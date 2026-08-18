@@ -24,6 +24,7 @@
 #include "../track/audio_track.h"
 #include "../track/local_audio_track.h"
 #include "../track/local_video_track.h"
+#include "../track/microphone_audio_source.h"
 #include "../track/video_source.h"
 #include "../track/video_track.h"
 
@@ -445,6 +446,11 @@ LocalTrackInterface* LocalParticipant::CreateLocalAudioTreack(std::string label,
 	}
 	auto peer_transport_factory_ = engine_->GetSessionPeerTransportFactory();
 	if (peer_transport_factory_) {
+		if (auto* microphone = dynamic_cast<MicrophoneAudioSource*>(source);
+		    microphone != nullptr &&
+		    !microphone->BindAudioDevice(peer_transport_factory_->GetAudioDevice())) {
+			return nullptr;
+		}
 		auto peer_factory_ = webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
 		    peer_transport_factory_->GetPeerConnectFactory());
 		if (!peer_factory_) {

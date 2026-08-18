@@ -116,6 +116,8 @@ set(
   src/core/e2ee/key_provider.cpp
 
   src/capture/audio_capture_adapter.cpp
+  src/capture/audio_gain.cpp
+  src/capture/webrtc_audio_processor.cpp
 
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp

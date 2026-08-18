@@ -17,6 +17,8 @@
 
 #include "audio_device.h"
 
+#include <algorithm>
+
 namespace {
 const int kSampleRate = 48000;
 const int kChannels = 2;
@@ -43,6 +45,24 @@ int32_t AudioDevice::RegisterAudioCallback(webrtc::AudioTransport* transport) {
 	return 0;
 }
 
+void AudioDevice::AddRenderObserver(AudioRenderObserver* observer) {
+	if (observer == nullptr) {
+		return;
+	}
+	webrtc::MutexLock lock(&mutex_);
+	if (std::find(render_observers_.begin(), render_observers_.end(), observer) ==
+	    render_observers_.end()) {
+		render_observers_.push_back(observer);
+	}
+}
+
+void AudioDevice::RemoveRenderObserver(AudioRenderObserver* observer) {
+	webrtc::MutexLock lock(&mutex_);
+	render_observers_.erase(
+	    std::remove(render_observers_.begin(), render_observers_.end(), observer),
+	    render_observers_.end());
+}
+
 int32_t AudioDevice::Init() {
 	webrtc::MutexLock lock(&mutex_);
 	if (initialized_)
@@ -53,18 +73,22 @@ int32_t AudioDevice::Init() {
 
 	audio_task_ = webrtc::RepeatingTaskHandle::Start(audio_queue_.get(), [this]() {
 		webrtc::MutexLock lock(&mutex_);
-
-		if (playing_) {
-			int64_t elapsed_time_ms = -1;
-			int64_t ntp_time_ms = -1;
-			size_t n_samples_out = 0;
-			void* data = data_.data();
-
-			// Request the AudioData, otherwise WebRTC will ignore the packets.
-			// 10ms of audio data.
-			audio_transport_->NeedMorePlayData(kSamplesPer10Ms, kBytesPerSample, kChannels,
-			                                   kSampleRate, data, n_samples_out, &elapsed_time_ms,
-			                                   &ntp_time_ms);
+		if (!playing_ || audio_transport_ == nullptr) {
+			return webrtc::TimeDelta::Millis(10);
+		}
+		int64_t elapsed_time_ms = -1;
+		int64_t ntp_time_ms = -1;
+		size_t samples_out = 0;
+		audio_transport_->NeedMorePlayData(kSamplesPer10Ms, kBytesPerSample, kChannels, kSampleRate,
+		                                   data_.data(), samples_out, &elapsed_time_ms,
+		                                   &ntp_time_ms);
+		if (samples_out > 0 && samples_out <= kSamplesPer10Ms) {
+			// Observers must not call back into AudioDevice. Keeping the lock here makes
+			// RemoveRenderObserver a lifetime barrier for microphone sources.
+			for (auto* observer : render_observers_) {
+				observer->OnRenderData(data_.data(), kSampleRate, kChannels,
+				                       static_cast<std::uint32_t>(samples_out));
+			}
 		}
 
 		return webrtc::TimeDelta::Millis(10);
@@ -81,7 +105,9 @@ int32_t AudioDevice::Terminate() {
 			return 0;
 
 		initialized_ = false;
+		playing_ = false;
 	}
+	audio_task_.Stop();
 	audio_queue_ = nullptr;
 	return 0;
 }

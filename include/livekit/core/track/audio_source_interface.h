@@ -48,6 +48,10 @@ public:
 	                          uint32_t samples_per_channel) = 0;
 };
 
+class MicrophoneAudioSourceInterface;
+bool SetMicrophoneSourceVolume(MicrophoneAudioSourceInterface* source, float volume);
+float GetMicrophoneSourceVolume(const MicrophoneAudioSourceInterface* source);
+
 class MicrophoneAudioSourceInterface : public AudioSourceInterface {
 public:
 	~MicrophoneAudioSourceInterface() override = default;
@@ -59,6 +63,9 @@ public:
 	virtual bool SwitchDevice(const std::string& device_id) = 0;
 	virtual void SetMuted(bool muted) = 0;
 	virtual bool IsMuted() const = 0;
+	// Normalized software input gain. Implementations that do not support gain return false.
+	bool SetVolume(float volume) { return SetMicrophoneSourceVolume(this, volume); }
+	float Volume() const { return GetMicrophoneSourceVolume(this); }
 };
 
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,

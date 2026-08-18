@@ -145,10 +145,12 @@ The C sample provides the same behavior through `LIVEKIT_ALLOWED_SUBSCRIBER` and
 
 ### `publish_microphone`
 
-Captures the system default microphone through the media-capture miniaudio backend and
-publishes 48 kHz mono audio for ten seconds. Pass an optional audio-input ID from
-`media_devices_cpp` as the third argument. The source supports stop/restart, software mute, and
-transactional `SwitchDevice()` with restoration of the previous input when switching fails.
+Captures the system default microphone through the media-capture miniaudio backend and publishes
+48 kHz mono audio for ten seconds. Pass an optional audio-input ID from `media_devices_cpp` as the
+third argument and an optional normalized input volume (`0` to `1`) as the fourth. The source
+supports stop/restart, software mute and volume, WebRTC AEC/AGC/noise suppression configured when
+the source is created, and transactional `SwitchDevice()` with restoration of the previous input
+when switching fails.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_microphone/Release/publish_microphone.exe" `

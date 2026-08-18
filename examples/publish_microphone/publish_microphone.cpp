@@ -4,7 +4,9 @@
 #include "livekit/core/track/audio_source_interface.h"
 
 #include <chrono>
+#include <exception>
 #include <iostream>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -31,6 +33,20 @@ int main(int argc, char* argv[]) {
 		std::cerr << "Failed to start the selected microphone" << std::endl;
 		return 1;
 	}
+	if (argc > 4) {
+		try {
+			std::size_t parsed = 0;
+			const std::string value = argv[4];
+			const float volume = std::stof(value, &parsed);
+			if (parsed != value.size() || !source->SetVolume(volume)) {
+				std::cerr << "Microphone volume must be a number between 0 and 1" << std::endl;
+				return 2;
+			}
+		} catch (const std::exception&) {
+			std::cerr << "Microphone volume must be a number between 0 and 1" << std::endl;
+			return 2;
+		}
+	}
 
 	auto room = livekit::core::CreateRoomUnique();
 	if (!room->Connect(arguments.url, arguments.token) ||
@@ -49,7 +65,7 @@ int main(int argc, char* argv[]) {
 
 	std::cout << "Publishing microphone "
 	          << (source->DeviceId().empty() ? "[system default]" : source->DeviceId())
-	          << " for 10 seconds" << std::endl;
+	          << " at volume " << source->Volume() << " for 10 seconds" << std::endl;
 	std::this_thread::sleep_for(std::chrono::seconds(10));
 	room->GetLocalParticipant()->UnpublishTrack(track.get());
 	track.reset();

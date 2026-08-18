@@ -31,6 +31,13 @@
 namespace livekit {
 namespace core {
 
+class AudioRenderObserver {
+public:
+	virtual ~AudioRenderObserver() = default;
+	virtual void OnRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
+	                          std::uint32_t channels, std::uint32_t frames_per_channel) = 0;
+};
+
 class AudioDevice : public webrtc::AudioDeviceModule {
 public:
 	AudioDevice(webrtc::TaskQueueFactory* task_queue_factory);
@@ -38,6 +45,8 @@ public:
 
 	int32_t ActiveAudioLayer(AudioLayer* audioLayer) const override;
 	int32_t RegisterAudioCallback(webrtc::AudioTransport* transport) override;
+	void AddRenderObserver(AudioRenderObserver* observer);
+	void RemoveRenderObserver(AudioRenderObserver* observer);
 
 	int32_t Init() override;
 	int32_t Terminate() override;
@@ -122,7 +131,8 @@ private:
 	std::vector<int16_t> data_;
 	std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> audio_queue_;
 	webrtc::RepeatingTaskHandle audio_task_;
-	webrtc::AudioTransport* audio_transport_;
+	webrtc::AudioTransport* audio_transport_ RTC_GUARDED_BY(mutex_) = nullptr;
+	std::vector<AudioRenderObserver*> render_observers_ RTC_GUARDED_BY(mutex_);
 	webrtc::TaskQueueFactory* task_queue_factory_;
 	bool playing_{false};
 	bool initialized_{false};

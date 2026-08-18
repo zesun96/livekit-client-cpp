@@ -2150,6 +2150,39 @@ int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source) {
 	}
 }
 
+lk_status_t lk_audio_source_microphone_set_volume(lk_audio_source_t* source, float volume) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+		}
+		return microphone->SetVolume(volume) ? LK_STATUS_OK
+		                                     : Failure(LK_STATUS_INVALID_ARGUMENT,
+		                                               "microphone volume must be between 0 and 1");
+	});
+}
+
+float lk_audio_source_microphone_volume(const lk_audio_source_t* source) {
+	try {
+		last_error.clear();
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr) {
+			SetError("audio source is not a microphone source");
+			return 0.0F;
+		}
+		return microphone->Volume();
+	} catch (...) {
+		SetError("failed to query microphone volume");
+		return 0.0F;
+	}
+}
+
 lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
                                    lk_video_source_t** source) {
 	return Guard([&] {
