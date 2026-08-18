@@ -15,29 +15,16 @@
 
 #include "audio_source.h"
 
-#include "api/audio/audio_device.h"
-#include "api/audio/audio_device_defines.h"
-#include "api/scoped_refptr.h"
+#include "../../capture/audio_capture_adapter.h"
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
-#include <deque>
-#include <exception>
-#include <functional>
-#include <future>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
-#include <type_traits>
-#include <utility>
 
 namespace livekit::core {
 
-class MicrophoneAudioSource final : public MicrophoneAudioSourceInterface,
-                                    public AudioSource,
-                                    private webrtc::AudioTransport {
+class MicrophoneAudioSource final : public MicrophoneAudioSourceInterface, public AudioSource {
 public:
 	explicit MicrophoneAudioSource(MicrophoneCaptureOptions options);
 	~MicrophoneAudioSource() override;
@@ -53,55 +40,10 @@ public:
 	bool IsMuted() const override;
 
 private:
-	int32_t RecordedDataIsAvailable(const void* audio_samples, size_t samples_per_channel,
-	                                size_t bytes_per_sample, size_t channels, uint32_t sample_rate,
-	                                uint32_t total_delay_ms, int32_t clock_drift,
-	                                uint32_t current_mic_level, bool key_pressed,
-	                                uint32_t& new_mic_level) override;
-	int32_t NeedMorePlayData(size_t samples_per_channel, size_t bytes_per_sample, size_t channels,
-	                         uint32_t sample_rate, void* audio_samples, size_t& samples_out,
-	                         int64_t* elapsed_time_ms, int64_t* ntp_time_ms) override;
-	void PullRenderData(int bits_per_sample, int sample_rate, size_t channels,
-	                    size_t frames_per_channel, void* audio_data, int64_t* elapsed_time_ms,
-	                    int64_t* ntp_time_ms) override;
+	void OnAudioFrame(const std::int16_t* samples, std::uint32_t sample_rate,
+	                  std::uint32_t channels, std::uint32_t frames_per_channel);
 
-	template <typename Function> auto Invoke(Function&& function) {
-		using Result = std::invoke_result_t<Function>;
-		auto promise = std::make_shared<std::promise<Result>>();
-		auto future = promise->get_future();
-		{
-			std::lock_guard<std::mutex> guard(queue_mutex_);
-			tasks_.emplace_back([function = std::forward<Function>(function), promise]() mutable {
-				try {
-					if constexpr (std::is_void_v<Result>) {
-						function();
-						promise->set_value();
-					} else {
-						promise->set_value(function());
-					}
-				} catch (...) {
-					promise->set_exception(std::current_exception());
-				}
-			});
-		}
-		queue_condition_.notify_one();
-		return future.get();
-	}
-
-	void Run(std::stop_token stop_token);
-	bool StartOnControlThread(const std::string& device_id);
-	void StopOnControlThread();
-	bool SelectDevice(const std::string& device_id, std::string& resolved_id);
-
-	MicrophoneCaptureOptions options_;
-	std::jthread control_thread_;
-	std::mutex queue_mutex_;
-	std::condition_variable queue_condition_;
-	std::deque<std::function<void()>> tasks_;
-	webrtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_;
-	mutable std::mutex state_mutex_;
-	std::string device_id_;
-	std::atomic_bool capturing_{false};
+	std::unique_ptr<capture::AudioCaptureAdapter> capture_;
 	std::atomic_bool muted_{false};
 };
 

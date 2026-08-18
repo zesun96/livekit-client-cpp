@@ -25,6 +25,9 @@ option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
 option(USE_SYSTEM_JSON "Use system nlohmann/json" OFF)
 option(USE_SYSTEM_ABSL "Use system Abseil" OFF)
 option(USE_SYSTEM_PLOG "Use system plog" OFF)
+option(USE_SYSTEM_MEDIA_CAPTURE "Use an installed media-capture package" OFF)
+set(MEDIA_CAPTURE_ROOT "${PROJECT_SOURCE_DIR}/../media-capture" CACHE PATH
+  "Path to the media-capture source tree")
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_TEST "Build tests" ON)
 option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
@@ -34,6 +37,18 @@ option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
 include(FetchContent)
 include(cmake/Dependencies.cmake)
 include(cmake/FindWebRTC.cmake)
+
+if(USE_SYSTEM_MEDIA_CAPTURE)
+  find_package(media-capture CONFIG REQUIRED)
+elseif(EXISTS "${MEDIA_CAPTURE_ROOT}/CMakeLists.txt")
+  set(MEDIA_CAPTURE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${MEDIA_CAPTURE_ROOT}"
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build" EXCLUDE_FROM_ALL)
+else()
+  message(FATAL_ERROR
+    "media-capture was not found. Set MEDIA_CAPTURE_ROOT or USE_SYSTEM_MEDIA_CAPTURE=ON.")
+endif()
 
 if(USE_SYSTEM_ABSL)
   find_package(absl CONFIG REQUIRED)
@@ -99,6 +114,8 @@ set(
 
   src/core/e2ee/e2ee_manager.cpp
   src/core/e2ee/key_provider.cpp
+
+  src/capture/audio_capture_adapter.cpp
 
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
@@ -187,6 +204,7 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
+target_link_libraries(livekitclient PRIVATE media_capture::audio)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 
