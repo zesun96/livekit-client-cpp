@@ -19,6 +19,7 @@
 #ifndef LKC_CORE_MEDIA_DEVICE_H
 #define LKC_CORE_MEDIA_DEVICE_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,16 @@ struct MediaDeviceInfo {
 	std::string label;
 	MediaDeviceKind kind = MediaDeviceKind::AudioInput;
 	bool is_default = false;
+};
+
+struct AudioPlaybackStats {
+	std::uint64_t queued_frames = 0;
+	std::uint64_t played_frames = 0;
+	std::uint64_t dropped_frames = 0;
+	std::uint64_t underrun_frames = 0;
+	std::uint32_t buffered_duration_ms = 0;
+	std::uint32_t device_latency_ms = 0;
+	std::uint32_t estimated_delay_ms = 0;
 };
 
 // Returns the active media devices visible to the current process. An empty list is valid when

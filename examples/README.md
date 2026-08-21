@@ -157,6 +157,20 @@ when switching fails.
   $url $publisherToken "<optional-microphone-device-id>"
 ```
 
+AEC, AGC, and noise suppression can also be changed while capture is running through
+`SetProcessingOptions()` (or the corresponding C API).
+
+### `publish_system_audio`
+
+Captures 48 kHz stereo PCM from the Windows default output through WASAPI loopback and publishes it
+as a screen-share audio track. Pass an optional audio-output ID from `media_devices_cpp` as the third
+argument. The original external PCM source remains available through `CreateAudioSource()`.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_system_audio/Release/publish_system_audio.exe" `
+  $url $publisherToken "<optional-audio-output-device-id>"
+```
+
 ### `publish_screen`
 
 Captures a monitor or window through the media-capture screen_capture_lite backend, converts BGRA

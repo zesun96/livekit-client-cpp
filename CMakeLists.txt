@@ -141,6 +141,7 @@ set(
   src/core/track/media_stream_track.cpp
   src/core/track/microphone_audio_source.cpp
   src/core/track/screen_video_source.cpp
+  src/core/track/system_audio_source.cpp
   src/core/track/remote_audio_track.cpp
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp

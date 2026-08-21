@@ -33,5 +33,19 @@ TEST(WebRtcAudioProcessorTest, PreservesPcmWhenAllProcessingIsDisabled) {
 	EXPECT_FALSE(processor.ProcessRender(render, 48000, 1));
 }
 
+TEST(WebRtcAudioProcessorTest, SupportsRuntimeReconfiguration) {
+	WebRtcAudioProcessor processor(true, true, true);
+	std::array<std::int16_t, 480> capture{};
+	const std::array<std::int16_t, 960> render{};
+
+	ASSERT_TRUE(processor.ProcessRender(render, 48000, 2));
+	ASSERT_TRUE(processor.Configure(false, false, false));
+	EXPECT_FALSE(processor.ProcessRender(render, 48000, 2));
+	EXPECT_TRUE(processor.ProcessCapture(capture, 48000, 1, 20));
+	ASSERT_TRUE(processor.Configure(true, false, true));
+	EXPECT_TRUE(processor.ProcessRender(render, 48000, 2));
+	EXPECT_TRUE(processor.ProcessCapture(capture, 48000, 1, 20));
+}
+
 } // namespace
 } // namespace livekit::capture

@@ -24,7 +24,11 @@ std::optional<bool> VideoSource::InternalSource::needs_denoising() const { retur
 bool VideoSource::InternalSource::CaptureFrame(const VideoFrame& frame) {
 	if (frame.width == 0 || frame.height == 0 || frame.width % 2 != 0 || frame.height % 2 != 0 ||
 	    frame.width > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
-	    frame.height > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+	    frame.height > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
+	    (frame.rotation != VideoRotation::Rotation0 &&
+	     frame.rotation != VideoRotation::Rotation90 &&
+	     frame.rotation != VideoRotation::Rotation180 &&
+	     frame.rotation != VideoRotation::Rotation270)) {
 		return false;
 	}
 	const std::size_t y_size = static_cast<std::size_t>(frame.width) * frame.height;
@@ -44,7 +48,7 @@ bool VideoSource::InternalSource::CaptureFrame(const VideoFrame& frame) {
 	const auto rtc_frame = webrtc::VideoFrame::Builder()
 	                           .set_video_frame_buffer(buffer)
 	                           .set_timestamp_us(frame.timestamp_us)
-	                           .set_rotation(webrtc::kVideoRotation_0)
+	                           .set_rotation(static_cast<webrtc::VideoRotation>(frame.rotation))
 	                           .build();
 	OnFrame(rtc_frame);
 	return true;

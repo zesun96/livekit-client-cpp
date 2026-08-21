@@ -33,6 +33,15 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	EXPECT_EQ(room->GetRemoteParticipantByIdentity("missing"), nullptr);
 	EXPECT_FALSE(room->SetLocalTrackMuted("missing", true));
 	EXPECT_FALSE(room->SetRemoteTrackSubscribed("missing", "missing", true));
+	EXPECT_FALSE(room->SetAudioOutputDevice("missing"));
+	EXPECT_TRUE(room->AudioOutputDevice().empty());
+	EXPECT_FALSE(room->SetSpeakerVolume(0.5F));
+	EXPECT_FLOAT_EQ(room->SpeakerVolume(), 1.0F);
+	EXPECT_FALSE(room->SetSpeakerMuted(true));
+	EXPECT_FALSE(room->SpeakerMuted());
+	const auto playback_stats = room->GetAudioPlaybackStats();
+	EXPECT_EQ(playback_stats.queued_frames, 0u);
+	EXPECT_EQ(playback_stats.played_frames, 0u);
 }
 
 TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
@@ -78,6 +87,14 @@ TEST(PublicApiTest, RejectsUnknownMicrophoneDeviceWithoutAStartedSource) {
 	EXPECT_TRUE(options.processing.noise_suppression);
 	options.device_id = "livekit-device-that-does-not-exist";
 	EXPECT_EQ(CreateMicrophoneAudioSourceUnique(std::move(options)), nullptr);
+}
+
+TEST(PublicApiTest, RejectsUnknownSystemAudioOutputWithoutChangingExternalPcmSource) {
+	SystemAudioCaptureOptions options;
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateSystemAudioSourceUnique(std::move(options)), nullptr);
+	auto external = CreateAudioSourceUnique({}, 48000, 2, 200);
+	EXPECT_NE(external, nullptr);
 }
 
 TEST(PublicApiTest, EnumeratesAndValidatesScreenCaptureSources) {
@@ -146,6 +163,12 @@ TEST(MediaSourceTest, ValidatesI420VideoFrames) {
 	auto invalid_dimensions = valid;
 	invalid_dimensions.width = 3;
 	EXPECT_FALSE(source->CaptureFrame(invalid_dimensions));
+	auto rotated = valid;
+	rotated.rotation = VideoRotation::Rotation90;
+	EXPECT_TRUE(source->CaptureFrame(rotated));
+	auto invalid_rotation = valid;
+	invalid_rotation.rotation = static_cast<VideoRotation>(45);
+	EXPECT_FALSE(source->CaptureFrame(invalid_rotation));
 	source.reset();
 	EXPECT_TRUE(Destroy());
 }

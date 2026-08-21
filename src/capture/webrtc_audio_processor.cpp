@@ -18,7 +18,28 @@ namespace livekit::capture {
 class WebRtcAudioProcessor::Impl {
 public:
 	Impl(bool echo_cancellation, bool auto_gain_control, bool noise_suppression)
-	    : echo_cancellation_(echo_cancellation) {
+	    : processing_(Build(echo_cancellation, auto_gain_control, noise_suppression)),
+	      echo_cancellation_(echo_cancellation) {}
+
+	bool Configure(bool echo_cancellation, bool auto_gain_control,
+	               bool noise_suppression) noexcept {
+		try {
+			auto processing = Build(echo_cancellation, auto_gain_control, noise_suppression);
+			if (processing == nullptr) {
+				return false;
+			}
+			std::lock_guard<std::mutex> guard(processing_mutex_);
+			processing_ = std::move(processing);
+			echo_cancellation_ = echo_cancellation;
+			return true;
+		} catch (...) {
+			return false;
+		}
+	}
+
+private:
+	static webrtc::scoped_refptr<webrtc::AudioProcessing>
+	Build(bool echo_cancellation, bool auto_gain_control, bool noise_suppression) {
 		webrtc::AudioProcessing::Config config;
 		config.pipeline.maximum_internal_processing_rate = 48000;
 		config.echo_canceller.enabled = echo_cancellation;
@@ -27,19 +48,23 @@ public:
 		config.gain_controller1.enabled = auto_gain_control;
 		config.gain_controller1.mode =
 		    webrtc::AudioProcessing::Config::GainController1::kAdaptiveDigital;
-		processing_ =
-		    webrtc::BuiltinAudioProcessingBuilder(config).Build(webrtc::CreateEnvironment());
+		return webrtc::BuiltinAudioProcessingBuilder(config).Build(webrtc::CreateEnvironment());
 	}
 
+public:
 	bool ProcessCapture(std::span<std::int16_t> samples, std::uint32_t sample_rate,
-	                    std::uint32_t channels) noexcept {
-		if (!IsValidFrame(samples.size(), sample_rate, channels) || processing_ == nullptr) {
+	                    std::uint32_t channels, std::uint32_t stream_delay_ms) noexcept {
+		if (!IsValidFrame(samples.size(), sample_rate, channels)) {
 			return false;
 		}
 		std::lock_guard<std::mutex> guard(processing_mutex_);
+		if (processing_ == nullptr) {
+			return false;
+		}
 		const webrtc::StreamConfig stream(static_cast<int>(sample_rate), channels);
-		if (echo_cancellation_ &&
-		    processing_->set_stream_delay_ms(0) != webrtc::AudioProcessing::kNoError) {
+		if (echo_cancellation_ && processing_->set_stream_delay_ms(static_cast<int>(
+		                              std::min<std::uint32_t>(stream_delay_ms, 500))) !=
+		                              webrtc::AudioProcessing::kNoError) {
 			return false;
 		}
 		return processing_->ProcessStream(samples.data(), stream, stream, samples.data()) ==
@@ -48,12 +73,14 @@ public:
 
 	bool ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
 	                   std::uint32_t channels) noexcept {
-		if (!echo_cancellation_ || !IsValidFrame(samples.size(), sample_rate, channels) ||
-		    processing_ == nullptr) {
+		if (!IsValidFrame(samples.size(), sample_rate, channels)) {
 			return false;
 		}
 		try {
 			std::lock_guard<std::mutex> guard(processing_mutex_);
+			if (!echo_cancellation_ || processing_ == nullptr) {
+				return false;
+			}
 			thread_local std::vector<std::int16_t> render_buffer;
 			render_buffer.assign(samples.begin(), samples.end());
 			const webrtc::StreamConfig stream(static_cast<int>(sample_rate), channels);
@@ -85,15 +112,20 @@ WebRtcAudioProcessor::WebRtcAudioProcessor(bool echo_cancellation, bool auto_gai
 WebRtcAudioProcessor::~WebRtcAudioProcessor() = default;
 
 bool WebRtcAudioProcessor::ProcessCapture(std::span<std::int16_t> samples,
-                                          std::uint32_t sample_rate,
-                                          std::uint32_t channels) noexcept {
-	return impl_->ProcessCapture(samples, sample_rate, channels);
+                                          std::uint32_t sample_rate, std::uint32_t channels,
+                                          std::uint32_t stream_delay_ms) noexcept {
+	return impl_->ProcessCapture(samples, sample_rate, channels, stream_delay_ms);
 }
 
 bool WebRtcAudioProcessor::ProcessRender(std::span<const std::int16_t> samples,
                                          std::uint32_t sample_rate,
                                          std::uint32_t channels) noexcept {
 	return impl_->ProcessRender(samples, sample_rate, channels);
+}
+
+bool WebRtcAudioProcessor::Configure(bool echo_cancellation, bool auto_gain_control,
+                                     bool noise_suppression) noexcept {
+	return impl_->Configure(echo_cancellation, auto_gain_control, noise_suppression);
 }
 
 } // namespace livekit::capture

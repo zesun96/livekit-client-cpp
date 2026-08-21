@@ -63,7 +63,8 @@ bool LatestVideoFrameQueue::IsRunning() const noexcept { return running_.load();
 
 bool LatestVideoFrameQueue::Push(const std::uint8_t* data, std::uint32_t width,
                                  std::uint32_t height, std::uint32_t row_stride_bytes,
-                                 std::int64_t timestamp_us) noexcept {
+                                 std::int64_t timestamp_us, std::uint16_t rotation_degrees,
+                                 bool mirrored) noexcept {
 	try {
 		if (!running_.load() || data == nullptr || width == 0 || height == 0 ||
 		    width > std::numeric_limits<std::uint32_t>::max() / 4U ||
@@ -78,6 +79,8 @@ bool LatestVideoFrameQueue::Push(const std::uint8_t* data, std::uint32_t width,
 		frame.height = height;
 		frame.row_stride_bytes = row_stride_bytes;
 		frame.timestamp_us = timestamp_us;
+		frame.rotation_degrees = rotation_degrees;
+		frame.mirrored = mirrored;
 		{
 			std::lock_guard<std::mutex> guard(mutex_);
 			if (!running_.load() || stopping_) {

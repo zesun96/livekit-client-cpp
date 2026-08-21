@@ -193,6 +193,17 @@ typedef struct lk_media_device_info {
 	int is_default;
 } lk_media_device_info_t;
 
+typedef struct lk_audio_playback_stats {
+	size_t struct_size;
+	uint64_t queued_frames;
+	uint64_t played_frames;
+	uint64_t dropped_frames;
+	uint64_t underrun_frames;
+	uint32_t buffered_duration_ms;
+	uint32_t device_latency_ms;
+	uint32_t estimated_delay_ms;
+} lk_audio_playback_stats_t;
+
 typedef struct lk_screen_source_info {
 	size_t struct_size;
 	lk_screen_source_kind_t kind;
@@ -616,6 +627,12 @@ typedef struct lk_microphone_capture_options {
 	int noise_suppression;
 } lk_microphone_capture_options_t;
 
+typedef struct lk_system_audio_capture_options {
+	size_t struct_size;
+	const char* device_id;
+	uint32_t queue_size_ms;
+} lk_system_audio_capture_options_t;
+
 typedef struct lk_microphone_processing_stats {
 	size_t struct_size;
 	uint64_t capture_frames_processed;
@@ -805,8 +822,10 @@ LKC_API size_t lk_screen_source_list_label(const lk_screen_source_list_t* source
                                            char* buffer, size_t buffer_size);
 
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
+LKC_API void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);
 LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options);
+LKC_API void lk_system_audio_capture_options_init(lk_system_audio_capture_options_t* options);
 LKC_API void lk_microphone_processing_stats_init(lk_microphone_processing_stats_t* stats);
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
@@ -838,6 +857,14 @@ LKC_API size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_si
 LKC_API size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API int lk_room_is_recording(const lk_room_t* room);
+LKC_API lk_status_t lk_room_set_audio_output_device(lk_room_t* room, const char* device_id);
+LKC_API size_t lk_room_audio_output_device(const lk_room_t* room, char* buffer, size_t buffer_size);
+LKC_API lk_status_t lk_room_set_speaker_volume(lk_room_t* room, float volume);
+LKC_API float lk_room_speaker_volume(const lk_room_t* room);
+LKC_API lk_status_t lk_room_set_speaker_muted(lk_room_t* room, int muted);
+LKC_API int lk_room_speaker_is_muted(const lk_room_t* room);
+LKC_API lk_status_t lk_room_audio_playback_stats(const lk_room_t* room,
+                                                 lk_audio_playback_stats_t* stats);
 
 /*
  * The list owns every participant, publication, and subscribed-track handle returned from it.
@@ -912,6 +939,8 @@ LKC_API lk_status_t lk_audio_source_create(const lk_audio_source_options_t* opti
                                            lk_audio_source_t** source);
 LKC_API lk_status_t lk_audio_source_create_microphone(
     const lk_microphone_capture_options_t* options, lk_audio_source_t** source);
+LKC_API lk_status_t lk_audio_source_create_system_audio(
+    const lk_system_audio_capture_options_t* options, lk_audio_source_t** source);
 LKC_API lk_status_t lk_audio_source_destroy(lk_audio_source_t* source);
 LKC_API lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16_t* data,
                                                   uint32_t samples_per_channel);
@@ -926,8 +955,19 @@ LKC_API lk_status_t lk_audio_source_microphone_set_muted(lk_audio_source_t* sour
 LKC_API int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source);
 LKC_API lk_status_t lk_audio_source_microphone_set_volume(lk_audio_source_t* source, float volume);
 LKC_API float lk_audio_source_microphone_volume(const lk_audio_source_t* source);
+LKC_API lk_status_t lk_audio_source_microphone_set_processing_options(
+    lk_audio_source_t* source, const lk_audio_source_options_t* options);
+LKC_API lk_status_t lk_audio_source_microphone_processing_options(
+    const lk_audio_source_t* source, lk_audio_source_options_t* options);
 LKC_API lk_status_t lk_audio_source_microphone_processing_stats(
     const lk_audio_source_t* source, lk_microphone_processing_stats_t* stats);
+LKC_API lk_status_t lk_audio_source_system_audio_start(lk_audio_source_t* source);
+LKC_API lk_status_t lk_audio_source_system_audio_stop(lk_audio_source_t* source);
+LKC_API int lk_audio_source_system_audio_is_capturing(const lk_audio_source_t* source);
+LKC_API size_t lk_audio_source_system_audio_device_id(const lk_audio_source_t* source, char* buffer,
+                                                      size_t buffer_size);
+LKC_API lk_status_t lk_audio_source_system_audio_switch_device(lk_audio_source_t* source,
+                                                               const char* device_id);
 LKC_API lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
                                            lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* options,

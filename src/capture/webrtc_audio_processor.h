@@ -20,9 +20,10 @@ public:
 	WebRtcAudioProcessor& operator=(const WebRtcAudioProcessor&) = delete;
 
 	bool ProcessCapture(std::span<std::int16_t> samples, std::uint32_t sample_rate,
-	                    std::uint32_t channels) noexcept;
+	                    std::uint32_t channels, std::uint32_t stream_delay_ms = 0) noexcept;
 	bool ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
 	                   std::uint32_t channels) noexcept;
+	bool Configure(bool echo_cancellation, bool auto_gain_control, bool noise_suppression) noexcept;
 
 private:
 	class Impl;

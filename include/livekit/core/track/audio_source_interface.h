@@ -40,6 +40,11 @@ struct MicrophoneCaptureOptions {
 	uint32_t queue_size_ms = 200;
 };
 
+struct SystemAudioCaptureOptions {
+	std::string device_id;
+	uint32_t queue_size_ms = 200;
+};
+
 struct MicrophoneAudioProcessingStats {
 	uint64_t capture_frames_processed = 0;
 	uint64_t render_frames_processed = 0;
@@ -62,6 +67,10 @@ bool SetMicrophoneSourceVolume(MicrophoneAudioSourceInterface* source, float vol
 float GetMicrophoneSourceVolume(const MicrophoneAudioSourceInterface* source);
 MicrophoneAudioProcessingStats
 GetMicrophoneSourceProcessingStats(const MicrophoneAudioSourceInterface* source);
+bool SetMicrophoneSourceProcessingOptions(MicrophoneAudioSourceInterface* source,
+                                          AudioSourceOptions options);
+AudioSourceOptions
+GetMicrophoneSourceProcessingOptions(const MicrophoneAudioSourceInterface* source);
 
 class MicrophoneAudioSourceInterface : public AudioSourceInterface {
 public:
@@ -80,6 +89,12 @@ public:
 	MicrophoneAudioProcessingStats ProcessingStats() const {
 		return GetMicrophoneSourceProcessingStats(this);
 	}
+	bool SetProcessingOptions(AudioSourceOptions options) {
+		return SetMicrophoneSourceProcessingOptions(this, options);
+	}
+	AudioSourceOptions ProcessingOptions() const {
+		return GetMicrophoneSourceProcessingOptions(this);
+	}
 };
 
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,
@@ -88,6 +103,21 @@ AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sam
 // Creates and starts a 48 kHz mono microphone source. An empty device ID selects the system
 // default input. The existing application-provided PCM source remains available separately.
 MicrophoneAudioSourceInterface* CreateMicrophoneAudioSource(MicrophoneCaptureOptions options = {});
+
+class SystemAudioSourceInterface : public AudioSourceInterface {
+public:
+	~SystemAudioSourceInterface() override = default;
+
+	virtual bool Start() = 0;
+	virtual void Stop() = 0;
+	virtual bool IsCapturing() const = 0;
+	virtual std::string DeviceId() const = 0;
+	virtual bool SwitchDevice(const std::string& device_id) = 0;
+};
+
+// Creates and starts a 48 kHz stereo source that captures an output device. This is independent
+// from CreateAudioSource(), which continues to accept application-provided PCM.
+SystemAudioSourceInterface* CreateSystemAudioSource(SystemAudioCaptureOptions options = {});
 
 inline std::unique_ptr<AudioSourceInterface> CreateAudioSourceUnique(AudioSourceOptions options,
                                                                      uint32_t sample_rate,
@@ -101,6 +131,11 @@ inline std::unique_ptr<MicrophoneAudioSourceInterface>
 CreateMicrophoneAudioSourceUnique(MicrophoneCaptureOptions options = {}) {
 	return std::unique_ptr<MicrophoneAudioSourceInterface>(
 	    CreateMicrophoneAudioSource(std::move(options)));
+}
+
+inline std::unique_ptr<SystemAudioSourceInterface>
+CreateSystemAudioSourceUnique(SystemAudioCaptureOptions options = {}) {
+	return std::unique_ptr<SystemAudioSourceInterface>(CreateSystemAudioSource(std::move(options)));
 }
 
 } // namespace core

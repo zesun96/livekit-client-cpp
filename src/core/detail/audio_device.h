@@ -21,6 +21,9 @@
 #define _LKC_CORE_DETAIL_AUDIO_DEVICE_H_
 
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "api/task_queue/task_queue_base.h"
@@ -30,6 +33,10 @@
 #include "rtc_base/task_utils/repeating_task.h"
 
 namespace livekit {
+namespace capture {
+class AudioPlaybackAdapter;
+struct AudioPlaybackStats;
+} // namespace capture
 namespace core {
 
 class AudioDevice : public webrtc::AudioDeviceModule {
@@ -43,6 +50,10 @@ public:
 	                       std::uint32_t channels, std::uint32_t frames_per_channel) noexcept;
 	bool ReadRenderData(uint64_t& sequence, std::vector<std::int16_t>& samples,
 	                    std::uint32_t& sample_rate, std::uint32_t& channels) const;
+	bool SetPlayoutDeviceId(std::string_view device_id);
+	std::string PlayoutDeviceId() const;
+	capture::AudioPlaybackStats PlaybackStats() const;
+	std::string PlayoutError() const;
 
 	int32_t Init() override;
 	int32_t Terminate() override;
@@ -136,6 +147,8 @@ private:
 	webrtc::TaskQueueFactory* task_queue_factory_;
 	bool playing_{false};
 	bool initialized_{false};
+	bool playout_initialized_{false};
+	std::unique_ptr<capture::AudioPlaybackAdapter> playback_;
 };
 
 } // namespace core

@@ -78,6 +78,7 @@ void ScreenVideoSource::OnFrame(const capture::CapturedVideoFrame& frame) {
 	video_frame.width = frame.width;
 	video_frame.height = frame.height;
 	video_frame.timestamp_us = frame.timestamp_us;
+	video_frame.rotation = static_cast<VideoRotation>(frame.rotation_degrees);
 	VideoSource::CaptureFrame(video_frame);
 }
 

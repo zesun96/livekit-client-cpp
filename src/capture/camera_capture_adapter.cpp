@@ -22,6 +22,8 @@ public:
 		      CapturedVideoFrame converted;
 		      if (ConvertBgraToI420(frame.data.data(), frame.width, frame.height,
 		                            frame.row_stride_bytes, frame.timestamp_us, converted)) {
+			      converted.rotation_degrees = frame.rotation_degrees;
+			      converted.mirrored = frame.mirrored;
 			      callback(converted);
 		      }
 	      }) {
@@ -32,7 +34,7 @@ public:
 		config.frames_per_second = frames_per_second;
 		capture_ = media_capture::CreateCameraCapture(std::move(config), [this](const auto& frame) {
 			frame_queue_.Push(frame.data, frame.width, frame.height, frame.row_stride_bytes,
-			                  frame.timestamp_us);
+			                  frame.timestamp_us, frame.rotation_degrees, frame.mirrored);
 		});
 	}
 

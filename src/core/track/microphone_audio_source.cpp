@@ -89,13 +89,30 @@ bool MicrophoneAudioSource::SetVolume(float volume) {
 
 float MicrophoneAudioSource::Volume() const { return volume_.load(); }
 
+bool MicrophoneAudioSource::SetProcessingOptions(AudioSourceOptions options) {
+	if (!processor_.Configure(options.echo_cancellation, options.auto_gain_control,
+	                          options.noise_suppression)) {
+		return false;
+	}
+	AudioSource::SetAudioOptions(options);
+	std::lock_guard<std::mutex> guard(processing_options_mutex_);
+	processing_options_ = options;
+	return true;
+}
+
+AudioSourceOptions MicrophoneAudioSource::ProcessingOptions() const {
+	std::lock_guard<std::mutex> guard(processing_options_mutex_);
+	return processing_options_;
+}
+
 MicrophoneAudioProcessingStats MicrophoneAudioSource::ProcessingStats() const {
+	const auto options = ProcessingOptions();
 	return {capture_frames_processed_.load(),
 	        render_frames_processed_.load(),
 	        capture_processing_errors_.load(),
 	        render_processing_errors_.load(),
 	        frames_dropped_.load(),
-	        processing_options_.echo_cancellation};
+	        options.echo_cancellation};
 }
 
 bool MicrophoneAudioSource::BindAudioDevice(webrtc::scoped_refptr<AudioDevice> audio_device) {
@@ -121,20 +138,23 @@ void MicrophoneAudioSource::OnAudioFrame(const std::int16_t* samples, std::uint3
 		std::lock_guard<std::mutex> guard(capture_buffer_mutex_);
 		capture_buffer_.insert(capture_buffer_.end(), samples, samples + frames_per_channel);
 		while (capture_buffer_.size() >= kMicrophoneSampleRate / 100) {
+			const auto processing_options = ProcessingOptions();
 			std::array<std::int16_t, kMicrophoneSampleRate / 100> processed;
 			std::copy_n(capture_buffer_.begin(), processed.size(), processed.begin());
 			capture_buffer_.erase(capture_buffer_.begin(),
 			                      capture_buffer_.begin() + processed.size());
 			std::uint32_t render_sample_rate = 0;
 			std::uint32_t render_channels = 0;
+			std::uint16_t playout_delay_ms = 0;
 			webrtc::scoped_refptr<AudioDevice> audio_device;
 			{
 				std::lock_guard<std::mutex> audio_device_guard(audio_device_mutex_);
 				audio_device = audio_device_;
 			}
-			if (processing_options_.echo_cancellation && audio_device != nullptr &&
+			if (processing_options.echo_cancellation && audio_device != nullptr &&
 			    audio_device->ReadRenderData(last_render_sequence_, render_processing_buffer_,
 			                                 render_sample_rate, render_channels)) {
+				audio_device->PlayoutDelay(&playout_delay_ms);
 				if (processor_.ProcessRender(render_processing_buffer_, render_sample_rate,
 				                             render_channels)) {
 					render_frames_processed_.fetch_add(1);
@@ -142,7 +162,7 @@ void MicrophoneAudioSource::OnAudioFrame(const std::int16_t* samples, std::uint3
 					render_processing_errors_.fetch_add(1);
 				}
 			}
-			if (!processor_.ProcessCapture(processed, sample_rate, channels)) {
+			if (!processor_.ProcessCapture(processed, sample_rate, channels, playout_delay_ms)) {
 				capture_processing_errors_.fetch_add(1);
 				continue;
 			}
@@ -173,6 +193,18 @@ MicrophoneAudioProcessingStats
 GetMicrophoneSourceProcessingStats(const MicrophoneAudioSourceInterface* source) {
 	const auto* microphone = dynamic_cast<const MicrophoneAudioSource*>(source);
 	return microphone != nullptr ? microphone->ProcessingStats() : MicrophoneAudioProcessingStats{};
+}
+
+bool SetMicrophoneSourceProcessingOptions(MicrophoneAudioSourceInterface* source,
+                                          AudioSourceOptions options) {
+	auto* microphone = dynamic_cast<MicrophoneAudioSource*>(source);
+	return microphone != nullptr && microphone->SetProcessingOptions(options);
+}
+
+AudioSourceOptions
+GetMicrophoneSourceProcessingOptions(const MicrophoneAudioSourceInterface* source) {
+	const auto* microphone = dynamic_cast<const MicrophoneAudioSource*>(source);
+	return microphone != nullptr ? microphone->ProcessingOptions() : AudioSourceOptions{};
 }
 
 MicrophoneAudioSourceInterface* CreateMicrophoneAudioSource(MicrophoneCaptureOptions options) {

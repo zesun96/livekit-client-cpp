@@ -21,6 +21,8 @@ public:
 		      CapturedVideoFrame converted;
 		      if (ConvertBgraToI420(frame.data.data(), frame.width, frame.height,
 		                            frame.row_stride_bytes, frame.timestamp_us, converted)) {
+			      converted.rotation_degrees = frame.rotation_degrees;
+			      converted.mirrored = frame.mirrored;
 			      callback(converted);
 		      }
 	      }) {

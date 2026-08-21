@@ -23,6 +23,8 @@ struct OwnedBgraFrame {
 	std::uint32_t height = 0;
 	std::uint32_t row_stride_bytes = 0;
 	std::int64_t timestamp_us = 0;
+	std::uint16_t rotation_degrees = 0;
+	bool mirrored = false;
 };
 
 // Copies callback-owned BGRA frames and processes only the newest pending frame on a worker thread.
@@ -41,7 +43,8 @@ public:
 	void Stop() noexcept;
 	bool IsRunning() const noexcept;
 	bool Push(const std::uint8_t* data, std::uint32_t width, std::uint32_t height,
-	          std::uint32_t row_stride_bytes, std::int64_t timestamp_us) noexcept;
+	          std::uint32_t row_stride_bytes, std::int64_t timestamp_us,
+	          std::uint16_t rotation_degrees = 0, bool mirrored = false) noexcept;
 
 private:
 	void Run() noexcept;

@@ -44,6 +44,8 @@ public:
 	bool IsMuted() const override;
 	bool SetVolume(float volume);
 	float Volume() const;
+	bool SetProcessingOptions(AudioSourceOptions options);
+	AudioSourceOptions ProcessingOptions() const;
 	MicrophoneAudioProcessingStats ProcessingStats() const;
 	bool BindAudioDevice(webrtc::scoped_refptr<AudioDevice> audio_device);
 
@@ -52,6 +54,7 @@ private:
 	                  std::uint32_t channels, std::uint32_t frames_per_channel,
 	                  std::int64_t timestamp_us) noexcept;
 	AudioSourceOptions processing_options_;
+	mutable std::mutex processing_options_mutex_;
 	std::unique_ptr<capture::AudioCaptureAdapter> capture_;
 	capture::WebRtcAudioProcessor processor_;
 	std::mutex capture_buffer_mutex_;

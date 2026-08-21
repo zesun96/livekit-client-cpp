@@ -10,6 +10,8 @@ add_subdirectory(publish_audio)
 
 add_subdirectory(publish_microphone)
 
+add_subdirectory(publish_system_audio)
+
 add_subdirectory(publish_video)
 
 add_subdirectory(publish_camera)

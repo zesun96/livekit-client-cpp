@@ -18,16 +18,20 @@ TEST(FrameQueueTest, CopiesCallbackOwnedFrameData) {
 	std::mutex mutex;
 	std::condition_variable condition;
 	std::vector<std::uint8_t> received;
+	std::uint16_t rotation_degrees = 0;
+	bool mirrored = false;
 	LatestVideoFrameQueue queue([&](const OwnedBgraFrame& frame) {
 		{
 			std::lock_guard<std::mutex> guard(mutex);
 			received = frame.data;
+			rotation_degrees = frame.rotation_degrees;
+			mirrored = frame.mirrored;
 		}
 		condition.notify_all();
 	});
 	ASSERT_TRUE(queue.Start());
 	std::array<std::uint8_t, 8> pixels{1, 2, 3, 4, 5, 6, 7, 8};
-	ASSERT_TRUE(queue.Push(pixels.data(), 2, 1, 8, 10));
+	ASSERT_TRUE(queue.Push(pixels.data(), 2, 1, 8, 10, 90, true));
 	pixels.fill(0);
 	{
 		std::unique_lock<std::mutex> lock(mutex);
@@ -35,6 +39,8 @@ TEST(FrameQueueTest, CopiesCallbackOwnedFrameData) {
 	}
 	queue.Stop();
 	EXPECT_EQ(received, (std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6, 7, 8}));
+	EXPECT_EQ(rotation_degrees, 90);
+	EXPECT_TRUE(mirrored);
 }
 
 TEST(FrameQueueTest, KeepsOnlyNewestPendingFrame) {

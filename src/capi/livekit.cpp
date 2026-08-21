@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <map>
@@ -1370,6 +1371,13 @@ void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
 	}
 }
 
+void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats) {
+	if (stats != nullptr) {
+		*stats = {};
+		stats->struct_size = sizeof(*stats);
+	}
+}
+
 void lk_audio_source_options_init(lk_audio_source_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -1388,6 +1396,14 @@ void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options
 		options->echo_cancellation = 1;
 		options->auto_gain_control = 1;
 		options->noise_suppression = 1;
+	}
+}
+
+void lk_system_audio_capture_options_init(lk_system_audio_capture_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->queue_size_ms = 200;
 	}
 }
 
@@ -1666,6 +1682,80 @@ size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size)
 
 int lk_room_is_recording(const lk_room_t* room) {
 	return room != nullptr && room->room->IsRecording() ? 1 : 0;
+}
+
+lk_status_t lk_room_set_audio_output_device(lk_room_t* room, const char* device_id) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || device_id == nullptr ||
+		    *device_id == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and audio output device ID are required");
+		}
+		return room->room->SetAudioOutputDevice(device_id)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to select audio output device");
+	});
+}
+
+size_t lk_room_audio_output_device(const lk_room_t* room, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return room != nullptr && room->room != nullptr
+		           ? CopyString(room->room->AudioOutputDevice(), buffer, buffer_size)
+		           : 0;
+	});
+}
+
+lk_status_t lk_room_set_speaker_volume(lk_room_t* room, float volume) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || !std::isfinite(volume) || volume < 0.0F ||
+		    volume > 1.0F) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and a volume between 0 and 1 are required");
+		}
+		return room->room->SetSpeakerVolume(volume)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to set speaker volume");
+	});
+}
+
+float lk_room_speaker_volume(const lk_room_t* room) {
+	return room != nullptr && room->room != nullptr ? room->room->SpeakerVolume() : 0.0F;
+}
+
+lk_status_t lk_room_set_speaker_muted(lk_room_t* room, int muted) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is required");
+		}
+		return room->room->SetSpeakerMuted(muted != 0)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to set speaker mute state");
+	});
+}
+
+int lk_room_speaker_is_muted(const lk_room_t* room) {
+	return room != nullptr && room->room != nullptr && room->room->SpeakerMuted() ? 1 : 0;
+}
+
+lk_status_t lk_room_audio_playback_stats(const lk_room_t* room, lk_audio_playback_stats_t* stats) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || stats == nullptr ||
+		    stats->struct_size < sizeof(stats->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room and initialized stats are required");
+		}
+		const auto source = room->room->GetAudioPlaybackStats();
+		lk_audio_playback_stats_t copy{};
+		copy.struct_size = sizeof(copy);
+		copy.queued_frames = source.queued_frames;
+		copy.played_frames = source.played_frames;
+		copy.dropped_frames = source.dropped_frames;
+		copy.underrun_frames = source.underrun_frames;
+		copy.buffered_duration_ms = source.buffered_duration_ms;
+		copy.device_latency_ms = source.device_latency_ms;
+		copy.estimated_delay_ms = source.estimated_delay_ms;
+		std::memcpy(stats, &copy, std::min(stats->struct_size, sizeof(copy)));
+		return LK_STATUS_OK;
+	});
 }
 
 lk_status_t lk_room_create_remote_participant_snapshot(const lk_room_t* room,
@@ -2101,6 +2191,43 @@ lk_status_t lk_audio_source_create_microphone(const lk_microphone_capture_option
 	});
 }
 
+lk_status_t lk_audio_source_create_system_audio(const lk_system_audio_capture_options_t* options,
+                                                lk_audio_source_t** source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "source output is null");
+		}
+		*source = nullptr;
+		lk_system_audio_capture_options_t values;
+		lk_system_audio_capture_options_init(&values);
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "invalid system audio options struct size");
+			}
+			std::memcpy(&values, options, std::min(options->struct_size, sizeof(values)));
+		}
+		if (values.queue_size_ms == 0 || values.queue_size_ms % 10 != 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "system audio queue must be a multiple of 10 ms");
+		}
+		core::SystemAudioCaptureOptions core_options;
+		if (values.device_id != nullptr) {
+			core_options.device_id = values.device_id;
+		}
+		core_options.queue_size_ms = values.queue_size_ms;
+		auto result = std::make_unique<lk_audio_source_t>();
+		result->source.reset(core::CreateSystemAudioSource(std::move(core_options)));
+		if (!result->source) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open system audio output device");
+		}
+		result->sample_rate = 48000;
+		result->num_channels = 2;
+		*source = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_audio_source_destroy(lk_audio_source_t* source) {
 	if (source == nullptr) {
 		return LK_STATUS_OK;
@@ -2259,6 +2386,59 @@ float lk_audio_source_microphone_volume(const lk_audio_source_t* source) {
 	}
 }
 
+lk_status_t
+lk_audio_source_microphone_set_processing_options(lk_audio_source_t* source,
+                                                  const lk_audio_source_options_t* options) {
+	return Guard([&] {
+		auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr || options == nullptr ||
+		    options->struct_size < sizeof(options->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "microphone source and initialized processing options are required");
+		}
+		auto values = microphone->ProcessingOptions();
+		if (LKC_HAS_FIELD(options, lk_audio_source_options_t, echo_cancellation)) {
+			values.echo_cancellation = options->echo_cancellation != 0;
+		}
+		if (LKC_HAS_FIELD(options, lk_audio_source_options_t, auto_gain_control)) {
+			values.auto_gain_control = options->auto_gain_control != 0;
+		}
+		if (LKC_HAS_FIELD(options, lk_audio_source_options_t, noise_suppression)) {
+			values.noise_suppression = options->noise_suppression != 0;
+		}
+		return microphone->SetProcessingOptions(values)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED,
+		                     "failed to reconfigure microphone audio processing");
+	});
+}
+
+lk_status_t lk_audio_source_microphone_processing_options(const lk_audio_source_t* source,
+                                                          lk_audio_source_options_t* options) {
+	return Guard([&] {
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr || options == nullptr ||
+		    options->struct_size < sizeof(options->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "microphone source and initialized processing options are required");
+		}
+		const auto values = microphone->ProcessingOptions();
+		lk_audio_source_options_t result;
+		lk_audio_source_options_init(&result);
+		result.echo_cancellation = values.echo_cancellation ? 1 : 0;
+		result.auto_gain_control = values.auto_gain_control ? 1 : 0;
+		result.noise_suppression = values.noise_suppression ? 1 : 0;
+		std::memcpy(options, &result, std::min(options->struct_size, sizeof(result)));
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_audio_source_microphone_processing_stats(const lk_audio_source_t* source,
                                                         lk_microphone_processing_stats_t* stats) {
 	return Guard([&] {
@@ -2282,6 +2462,72 @@ lk_status_t lk_audio_source_microphone_processing_stats(const lk_audio_source_t*
 		result.echo_cancellation_enabled = values.echo_cancellation_enabled ? 1 : 0;
 		std::memcpy(stats, &result, std::min(stats->struct_size, sizeof(result)));
 		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_audio_source_system_audio_start(lk_audio_source_t* source) {
+	return Guard([&] {
+		auto* system_audio =
+		    source != nullptr
+		        ? dynamic_cast<core::SystemAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (system_audio == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a system audio source");
+		}
+		return system_audio->Start()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to start system audio capture");
+	});
+}
+
+lk_status_t lk_audio_source_system_audio_stop(lk_audio_source_t* source) {
+	return Guard([&] {
+		auto* system_audio =
+		    source != nullptr
+		        ? dynamic_cast<core::SystemAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (system_audio == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is not a system audio source");
+		}
+		system_audio->Stop();
+		return LK_STATUS_OK;
+	});
+}
+
+int lk_audio_source_system_audio_is_capturing(const lk_audio_source_t* source) {
+	const auto* system_audio =
+	    source != nullptr
+	        ? dynamic_cast<const core::SystemAudioSourceInterface*>(source->source.get())
+	        : nullptr;
+	return system_audio != nullptr && system_audio->IsCapturing() ? 1 : 0;
+}
+
+size_t lk_audio_source_system_audio_device_id(const lk_audio_source_t* source, char* buffer,
+                                              size_t buffer_size) {
+	return SizeGuard([&] {
+		const auto* system_audio =
+		    source != nullptr
+		        ? dynamic_cast<const core::SystemAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		return system_audio != nullptr ? CopyString(system_audio->DeviceId(), buffer, buffer_size)
+		                               : 0;
+	});
+}
+
+lk_status_t lk_audio_source_system_audio_switch_device(lk_audio_source_t* source,
+                                                       const char* device_id) {
+	return Guard([&] {
+		auto* system_audio =
+		    source != nullptr
+		        ? dynamic_cast<core::SystemAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (system_audio == nullptr || device_id == nullptr || *device_id == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "system audio source and output device ID are required");
+		}
+		return system_audio->SwitchDevice(device_id)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to switch system audio device");
 	});
 }
 
