@@ -126,6 +126,7 @@ set(
   src/capture/audio_capture_adapter.cpp
   src/capture/audio_gain.cpp
   src/capture/camera_capture_adapter.cpp
+  src/capture/frame_queue.cpp
   src/capture/webrtc_audio_processor.cpp
   src/capture/screen_capture_adapter.cpp
   src/capture/video_frame_converter.cpp

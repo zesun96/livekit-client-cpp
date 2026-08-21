@@ -26,7 +26,7 @@ uint32_t ScreenVideoSource::Height() const { return VideoSource::Height(); }
 std::unique_ptr<capture::ScreenCaptureAdapter>
 ScreenVideoSource::CreateAdapter(const std::string& source_id) {
 	return std::make_unique<capture::ScreenCaptureAdapter>(
-	    source_id, options_.frames_per_second,
+	    source_id, options_.frames_per_second, options_.include_cursor,
 	    [this](const capture::CapturedVideoFrame& frame) { OnFrame(frame); });
 }
 

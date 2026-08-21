@@ -121,6 +121,7 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(screen.struct_size, sizeof(screen));
 	EXPECT_EQ(screen.source_id, nullptr);
 	EXPECT_EQ(screen.frames_per_second, 15u);
+	EXPECT_EQ(screen.include_cursor, 1);
 
 	lk_microphone_capture_options_t microphone;
 	lk_microphone_capture_options_init(&microphone);

@@ -1413,6 +1413,7 @@ void lk_screen_capture_options_init(lk_screen_capture_options_t* options) {
 		*options = {};
 		options->struct_size = sizeof(*options);
 		options->frames_per_second = 15;
+		options->include_cursor = 1;
 	}
 }
 
@@ -2334,6 +2335,7 @@ lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* opt
 		core::ScreenCaptureOptions core_options;
 		core_options.source_id = values.source_id;
 		core_options.frames_per_second = values.frames_per_second;
+		core_options.include_cursor = values.include_cursor != 0;
 		auto result = std::make_unique<lk_video_source_t>();
 		result->source.reset(core::CreateScreenVideoSource(std::move(core_options)));
 		if (!result->source) {

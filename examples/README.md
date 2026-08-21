@@ -161,7 +161,9 @@ when switching fails.
 
 Captures a monitor or window through the media-capture screen_capture_lite backend, converts BGRA
 frames to I420, and publishes them as a LiveKit screen-share video track. Available source IDs are
-printed at startup. Pass one as the third argument; otherwise the first monitor is selected.
+printed at startup. Pass one as the third argument; otherwise the first monitor is selected. Cursor
+composition is enabled by default; set `ScreenCaptureOptions::include_cursor` to `false` in C++, or
+`lk_screen_capture_options_t.include_cursor` to `0` in C, to disable it.
 
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_screen/Release/publish_screen.exe" `

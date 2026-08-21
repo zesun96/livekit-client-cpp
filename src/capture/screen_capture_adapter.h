@@ -35,7 +35,7 @@ using ScreenFrameCallback = std::function<void(const CapturedVideoFrame& frame)>
 class ScreenCaptureAdapter {
 public:
 	ScreenCaptureAdapter(std::string source_id, std::uint32_t frames_per_second,
-	                     ScreenFrameCallback callback);
+	                     bool include_cursor, ScreenFrameCallback callback);
 	~ScreenCaptureAdapter();
 
 	ScreenCaptureAdapter(const ScreenCaptureAdapter&) = delete;

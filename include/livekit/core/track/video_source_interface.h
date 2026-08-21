@@ -42,6 +42,7 @@ struct ScreenCaptureSourceInfo {
 struct ScreenCaptureOptions {
 	std::string source_id;
 	uint32_t frames_per_second = 15;
+	bool include_cursor = true;
 };
 
 class VideoSourceInterface {

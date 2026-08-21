@@ -633,6 +633,7 @@ typedef struct lk_screen_capture_options {
 	size_t struct_size;
 	const char* source_id;
 	uint32_t frames_per_second;
+	int include_cursor;
 } lk_screen_capture_options_t;
 
 typedef struct lk_track_publish_options {
