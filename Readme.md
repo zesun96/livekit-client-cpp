@@ -105,12 +105,15 @@ layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 c
 encoding until SVC publishing is implemented.
 
 Applications can create native microphone, camera, monitor, and window sources through the C++ or
-C device APIs, then publish them with the normal local-track helpers. Applications that already
-capture I420/PCM frames can continue to use the external source APIs. `PublishScreenShareVideoTrack`
-and `PublishScreenShareAudioTrack` set the LiveKit track source; system-audio capture is not yet
-provided by the SDK. Microphone AEC/AGC/NS processing counters are available through
-`MicrophoneAudioSourceInterface::ProcessingStats()` and
-`lk_audio_source_microphone_processing_stats`.
+C device APIs, then publish them with the normal local-track helpers. Native system-audio capture
+uses the selected output endpoint on Windows, and connected rooms play WebRTC's mixed remote audio
+through a selectable output device. Applications that already capture I420/PCM frames can continue
+to use the external source APIs. `PublishScreenShareVideoTrack` and
+`PublishScreenShareAudioTrack` set the LiveKit track source. Microphone AEC/AGC/NS processing
+counters are available through `MicrophoneAudioSourceInterface::ProcessingStats()` and
+`lk_audio_source_microphone_processing_stats`. See the
+[media device design](docs/design/media-device-design.md) for device identity, lifecycle,
+threading, playback/AEC, system-audio, and validation details.
 
 Published local tracks and subscribed remote tracks expose the selector-scoped libwebrtc
 `RTCStatsReport` as JSON through `TrackInterface::GetRTCStats()`. The C API provides the same data
