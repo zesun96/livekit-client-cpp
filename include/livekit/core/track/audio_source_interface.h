@@ -40,6 +40,15 @@ struct MicrophoneCaptureOptions {
 	uint32_t queue_size_ms = 200;
 };
 
+struct MicrophoneAudioProcessingStats {
+	uint64_t capture_frames_processed = 0;
+	uint64_t render_frames_processed = 0;
+	uint64_t capture_processing_errors = 0;
+	uint64_t render_processing_errors = 0;
+	uint64_t frames_dropped = 0;
+	bool echo_cancellation_enabled = false;
+};
+
 class AudioSourceInterface {
 public:
 	virtual ~AudioSourceInterface() = default;
@@ -51,6 +60,8 @@ public:
 class MicrophoneAudioSourceInterface;
 bool SetMicrophoneSourceVolume(MicrophoneAudioSourceInterface* source, float volume);
 float GetMicrophoneSourceVolume(const MicrophoneAudioSourceInterface* source);
+MicrophoneAudioProcessingStats
+GetMicrophoneSourceProcessingStats(const MicrophoneAudioSourceInterface* source);
 
 class MicrophoneAudioSourceInterface : public AudioSourceInterface {
 public:
@@ -66,6 +77,9 @@ public:
 	// Normalized software input gain. Implementations that do not support gain return false.
 	bool SetVolume(float volume) { return SetMicrophoneSourceVolume(this, volume); }
 	float Volume() const { return GetMicrophoneSourceVolume(this); }
+	MicrophoneAudioProcessingStats ProcessingStats() const {
+		return GetMicrophoneSourceProcessingStats(this);
+	}
 };
 
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,

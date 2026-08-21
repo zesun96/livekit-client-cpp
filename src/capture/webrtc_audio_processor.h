@@ -21,7 +21,7 @@ public:
 
 	bool ProcessCapture(std::span<std::int16_t> samples, std::uint32_t sample_rate,
 	                    std::uint32_t channels) noexcept;
-	void ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
+	bool ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
 	                   std::uint32_t channels) noexcept;
 
 private:

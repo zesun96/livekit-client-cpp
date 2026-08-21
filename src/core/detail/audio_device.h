@@ -20,7 +20,8 @@
 #ifndef _LKC_CORE_DETAIL_AUDIO_DEVICE_H_
 #define _LKC_CORE_DETAIL_AUDIO_DEVICE_H_
 
-#include <atomic>
+#include <cstdint>
+#include <vector>
 
 #include "api/task_queue/task_queue_base.h"
 #include "api/task_queue/task_queue_factory.h"
@@ -31,13 +32,6 @@
 namespace livekit {
 namespace core {
 
-class AudioRenderObserver {
-public:
-	virtual ~AudioRenderObserver() = default;
-	virtual void OnRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
-	                          std::uint32_t channels, std::uint32_t frames_per_channel) = 0;
-};
-
 class AudioDevice : public webrtc::AudioDeviceModule {
 public:
 	AudioDevice(webrtc::TaskQueueFactory* task_queue_factory);
@@ -45,8 +39,10 @@ public:
 
 	int32_t ActiveAudioLayer(AudioLayer* audioLayer) const override;
 	int32_t RegisterAudioCallback(webrtc::AudioTransport* transport) override;
-	void AddRenderObserver(AudioRenderObserver* observer);
-	void RemoveRenderObserver(AudioRenderObserver* observer);
+	void DeliverRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
+	                       std::uint32_t channels, std::uint32_t frames_per_channel) noexcept;
+	bool ReadRenderData(uint64_t& sequence, std::vector<std::int16_t>& samples,
+	                    std::uint32_t& sample_rate, std::uint32_t& channels) const;
 
 	int32_t Init() override;
 	int32_t Terminate() override;
@@ -128,11 +124,15 @@ public:
 
 private:
 	mutable webrtc::Mutex mutex_;
+	mutable webrtc::Mutex render_data_mutex_;
 	std::vector<int16_t> data_;
 	std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> audio_queue_;
 	webrtc::RepeatingTaskHandle audio_task_;
 	webrtc::AudioTransport* audio_transport_ RTC_GUARDED_BY(mutex_) = nullptr;
-	std::vector<AudioRenderObserver*> render_observers_ RTC_GUARDED_BY(mutex_);
+	std::vector<std::int16_t> render_data_ RTC_GUARDED_BY(render_data_mutex_);
+	std::uint32_t render_sample_rate_ RTC_GUARDED_BY(render_data_mutex_) = 0;
+	std::uint32_t render_channels_ RTC_GUARDED_BY(render_data_mutex_) = 0;
+	uint64_t render_sequence_ RTC_GUARDED_BY(render_data_mutex_) = 0;
 	webrtc::TaskQueueFactory* task_queue_factory_;
 	bool playing_{false};
 	bool initialized_{false};

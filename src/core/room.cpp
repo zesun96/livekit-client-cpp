@@ -1061,13 +1061,26 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			return;
 		}
 		participant_sid = participant->Sid();
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found = publications.find(track_sid);
+		if (found != publications.end()) {
+			publication = found->second;
+		}
+		const std::string track_name = publication != nullptr ? publication->Name() : track_sid;
 		if (rtc_track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
+			auto audio_device = rtc_engine_->GetAudioDevice();
 			auto media =
 			    std::make_unique<AudioTrack>(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
 			        static_cast<webrtc::AudioTrackInterface*>(rtc_track.get())));
 			auto remote = std::make_shared<RemoteAudioTrack>(
-			    track_sid, track_sid, std::move(media),
-			    [this, participant_sid, track_sid](const AudioFrame& frame) {
+			    track_sid, track_name, std::move(media),
+			    [this, participant_sid, track_sid,
+			     audio_device = std::move(audio_device)](const AudioFrame& frame) {
+				    if (audio_device != nullptr && !frame.data.empty()) {
+					    audio_device->DeliverRenderData(frame.data.data(), frame.sample_rate,
+					                                    frame.num_channels,
+					                                    frame.samples_per_channel);
+				    }
 				    NotifyAudioFrame(participant_sid, track_sid, frame);
 			    });
 			subscribed_track = std::move(remote);
@@ -1077,7 +1090,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			    std::make_unique<VideoTrack>(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
 			        static_cast<webrtc::VideoTrackInterface*>(rtc_track.get())));
 			auto remote = std::make_shared<RemoteVideoTrack>(
-			    track_sid, track_sid, std::move(media),
+			    track_sid, track_name, std::move(media),
 			    [this, participant_sid, track_sid](const VideoFrame& frame) {
 				    NotifyVideoFrame(participant_sid, track_sid, frame);
 			    });
@@ -1087,10 +1100,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		if (subscribed_track) {
 			subscribed_track->SetStatsProvider(std::move(stats_provider));
 			subscribed_track->SetStreamState(TrackStreamState::Active);
-			auto publications = participant->TrackPublicationsSnapshot();
-			auto found = publications.find(track_sid);
 			if (found != publications.end()) {
-				publication = found->second;
 				if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
 					previous_status = remote->SubscriptionStatus();
 					remote->SetTrackAttached(true);

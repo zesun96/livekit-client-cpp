@@ -1391,6 +1391,13 @@ void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options
 	}
 }
 
+void lk_microphone_processing_stats_init(lk_microphone_processing_stats_t* stats) {
+	if (stats != nullptr) {
+		*stats = {};
+		stats->struct_size = sizeof(*stats);
+	}
+}
+
 void lk_video_source_options_init(lk_video_source_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -2250,6 +2257,32 @@ float lk_audio_source_microphone_volume(const lk_audio_source_t* source) {
 		SetError("failed to query microphone volume");
 		return 0.0F;
 	}
+}
+
+lk_status_t lk_audio_source_microphone_processing_stats(const lk_audio_source_t* source,
+                                                        lk_microphone_processing_stats_t* stats) {
+	return Guard([&] {
+		const auto* microphone =
+		    source != nullptr
+		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
+		        : nullptr;
+		if (microphone == nullptr || stats == nullptr ||
+		    stats->struct_size < sizeof(stats->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "invalid microphone source or processing stats output");
+		}
+		const auto values = microphone->ProcessingStats();
+		lk_microphone_processing_stats_t result;
+		lk_microphone_processing_stats_init(&result);
+		result.capture_frames_processed = values.capture_frames_processed;
+		result.render_frames_processed = values.render_frames_processed;
+		result.capture_processing_errors = values.capture_processing_errors;
+		result.render_processing_errors = values.render_processing_errors;
+		result.frames_dropped = values.frames_dropped;
+		result.echo_cancellation_enabled = values.echo_cancellation_enabled ? 1 : 0;
+		std::memcpy(stats, &result, std::min(stats->struct_size, sizeof(result)));
+		return LK_STATUS_OK;
+	});
 }
 
 lk_status_t lk_video_source_create(const lk_video_source_options_t* options,

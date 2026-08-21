@@ -10,6 +10,7 @@
 #include "api/environment/environment_factory.h"
 
 #include <algorithm>
+#include <mutex>
 #include <vector>
 
 namespace livekit::capture {
@@ -35,6 +36,7 @@ public:
 		if (!IsValidFrame(samples.size(), sample_rate, channels) || processing_ == nullptr) {
 			return false;
 		}
+		std::lock_guard<std::mutex> guard(processing_mutex_);
 		const webrtc::StreamConfig stream(static_cast<int>(sample_rate), channels);
 		if (echo_cancellation_ &&
 		    processing_->set_stream_delay_ms(0) != webrtc::AudioProcessing::kNoError) {
@@ -44,20 +46,23 @@ public:
 		       webrtc::AudioProcessing::kNoError;
 	}
 
-	void ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
+	bool ProcessRender(std::span<const std::int16_t> samples, std::uint32_t sample_rate,
 	                   std::uint32_t channels) noexcept {
 		if (!echo_cancellation_ || !IsValidFrame(samples.size(), sample_rate, channels) ||
 		    processing_ == nullptr) {
-			return;
+			return false;
 		}
 		try {
+			std::lock_guard<std::mutex> guard(processing_mutex_);
 			thread_local std::vector<std::int16_t> render_buffer;
 			render_buffer.assign(samples.begin(), samples.end());
 			const webrtc::StreamConfig stream(static_cast<int>(sample_rate), channels);
-			processing_->ProcessReverseStream(render_buffer.data(), stream, stream,
-			                                  render_buffer.data());
+			return processing_->ProcessReverseStream(render_buffer.data(), stream, stream,
+			                                         render_buffer.data()) ==
+			       webrtc::AudioProcessing::kNoError;
 		} catch (...) {
 			// Audio callbacks cannot propagate allocation failures across the device boundary.
+			return false;
 		}
 	}
 
@@ -69,6 +74,7 @@ private:
 	}
 
 	bool echo_cancellation_ = false;
+	std::mutex processing_mutex_;
 	webrtc::scoped_refptr<webrtc::AudioProcessing> processing_;
 };
 
@@ -84,10 +90,10 @@ bool WebRtcAudioProcessor::ProcessCapture(std::span<std::int16_t> samples,
 	return impl_->ProcessCapture(samples, sample_rate, channels);
 }
 
-void WebRtcAudioProcessor::ProcessRender(std::span<const std::int16_t> samples,
+bool WebRtcAudioProcessor::ProcessRender(std::span<const std::int16_t> samples,
                                          std::uint32_t sample_rate,
                                          std::uint32_t channels) noexcept {
-	impl_->ProcessRender(samples, sample_rate, channels);
+	return impl_->ProcessRender(samples, sample_rate, channels);
 }
 
 } // namespace livekit::capture

@@ -17,7 +17,9 @@
 #include <functional>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace livekit::core {
@@ -147,20 +149,30 @@ public:
 		local_tracks_unpublished_.fetch_add(1);
 	}
 
-	void OnAudioFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	void OnAudioFrame(RemoteTrackInterface* track, RemoteParticipantInterface*,
 	                  const AudioFrame& frame) override {
 		if (!frame.data.empty() && frame.sample_rate > 0 && frame.num_channels > 0) {
 			audio_frames_.fetch_add(1);
+			if (track != nullptr) {
+				std::lock_guard<std::mutex> guard(lock_);
+				++media_frames_by_name_[track->Name()];
+			}
 		}
 	}
 
-	void OnVideoFrame(RemoteTrackInterface*, RemoteParticipantInterface*,
+	void OnVideoFrame(RemoteTrackInterface* track, RemoteParticipantInterface*,
 	                  const VideoFrame& frame) override {
 		last_video_width_.store(frame.width);
 		last_video_height_.store(frame.height);
 		const auto expected_size = static_cast<std::size_t>(frame.width) * frame.height * 3 / 2;
 		if (frame.width > 0 && frame.height > 0 && frame.data.size() == expected_size) {
 			video_frames_.fetch_add(1);
+			if (track != nullptr) {
+				std::lock_guard<std::mutex> guard(lock_);
+				const auto name = track->Name();
+				++media_frames_by_name_[name];
+				video_dimensions_by_name_[name] = {frame.width, frame.height};
+			}
 		}
 	}
 
@@ -271,6 +283,16 @@ public:
 		return subscription_status_sid_ == track_sid && subscription_status_ == status &&
 		       subscription_status_count_ >= minimum_count;
 	}
+	uint64_t media_frames(const std::string& track_name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		const auto found = media_frames_by_name_.find(track_name);
+		return found != media_frames_by_name_.end() ? found->second : 0;
+	}
+	TrackDimensions video_dimensions(const std::string& track_name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		const auto found = video_dimensions_by_name_.find(track_name);
+		return found != video_dimensions_by_name_.end() ? found->second : TrackDimensions{};
+	}
 
 private:
 	std::atomic<bool> audio_subscribed_{false};
@@ -309,6 +331,8 @@ private:
 	std::string subscription_status_sid_;
 	TrackSubscriptionStatus subscription_status_ = TrackSubscriptionStatus::Unsubscribed;
 	uint64_t subscription_status_count_ = 0;
+	std::unordered_map<std::string, uint64_t> media_frames_by_name_;
+	std::unordered_map<std::string, TrackDimensions> video_dimensions_by_name_;
 };
 
 class ParticipantEvents final : public RoomEventInterface {
@@ -853,6 +877,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(audio_publication->Name(), "integration-audio");
 	EXPECT_EQ(audio_publication->Kind(), TrackKind::Audio);
 	EXPECT_FALSE(audio_publication->IsMuted());
+	ASSERT_NE(audio_publication->Track(), nullptr);
+	EXPECT_EQ(audio_publication->Track()->Name(), "integration-audio");
 	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), true));
 	ASSERT_TRUE(WaitUntil([&] { return audio_publication->IsMuted(); }));
 	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), false));
@@ -960,6 +986,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	    events.subscription_status(video_publication->Sid(), TrackSubscriptionStatus::Subscribed));
 	EXPECT_EQ(video_publication->Name(), "integration-video");
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
+	EXPECT_EQ(video_publication->Track()->Name(), "integration-video");
 	EXPECT_TRUE(sender_participant->IsCameraEnabled());
 	const auto participant_snapshots = receiver->GetRemoteParticipantSnapshots();
 	const auto participant_snapshot =
@@ -1061,6 +1088,186 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	screen_audio_source.reset();
 	audio_track.reset();
 	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, PublishesAndReceivesHardwareCapturedMedia) {
+	const char* hardware_enabled = std::getenv("LIVEKIT_HARDWARE_MEDIA");
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (hardware_enabled == nullptr || std::string_view(hardware_enabled) != "1") {
+		GTEST_SKIP() << "Set LIVEKIT_HARDWARE_MEDIA=1 to run real device capture";
+	}
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the hardware "
+		                "media integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	constexpr std::string_view microphone_name = "hardware-microphone";
+	constexpr std::string_view camera_name = "hardware-camera";
+	constexpr std::string_view screen_name = "hardware-screen";
+	constexpr std::string_view window_name = "hardware-window";
+	constexpr std::string_view aec_reference_name = "aec-reference";
+	auto microphone_source = CreateMicrophoneAudioSourceUnique();
+	ASSERT_NE(microphone_source, nullptr);
+	auto camera_source = CreateCameraVideoSourceUnique({{}, 1280, 720, 30});
+	ASSERT_NE(camera_source, nullptr);
+	ASSERT_TRUE(
+	    WaitUntil([&] { return camera_source->Width() == 1280 && camera_source->Height() == 720; },
+	              std::chrono::seconds(10)));
+
+	const auto screen_sources = EnumerateScreenCaptureSources();
+	const char* window_source_id = std::getenv("LIVEKIT_HARDWARE_WINDOW_SOURCE_ID");
+	const bool capture_window = window_source_id != nullptr && *window_source_id != '\0';
+	const auto desktop_source =
+	    std::find_if(screen_sources.begin(), screen_sources.end(), [&](const auto& source) {
+		    return capture_window ? source.id == window_source_id
+		                          : source.kind == ScreenCaptureSourceKind::Monitor;
+	    });
+	ASSERT_NE(desktop_source, screen_sources.end());
+	const std::string_view desktop_name = capture_window ? window_name : screen_name;
+	auto screen_source = CreateScreenVideoSourceUnique({desktop_source->id, 15, true});
+	ASSERT_NE(screen_source, nullptr);
+	ASSERT_TRUE(WaitUntil([&] { return screen_source->Width() > 0 && screen_source->Height() > 0; },
+	                      std::chrono::seconds(10)));
+
+	auto microphone_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(microphone_name), microphone_source.get());
+	auto camera_track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    std::string(camera_name), camera_source.get());
+	auto screen_track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    std::string(desktop_name), screen_source.get());
+	ASSERT_NE(microphone_track, nullptr);
+	ASSERT_NE(camera_track, nullptr);
+	ASSERT_NE(screen_track, nullptr);
+	auto aec_reference_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	ASSERT_NE(aec_reference_source, nullptr);
+	auto aec_reference_track = receiver->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(aec_reference_name), aec_reference_source.get());
+	ASSERT_NE(aec_reference_track, nullptr);
+	TrackPublishOptions aec_reference_options;
+	aec_reference_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(receiver->GetLocalParticipant()->PublishTrack(aec_reference_track.get(),
+	                                                          aec_reference_options));
+	std::vector<int16_t> aec_reference_samples(480, 1200);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    aec_reference_source->CaptureFrame(aec_reference_samples.data(), 48000, 1, 480);
+		    return events.media_frames(std::string(aec_reference_name)) >= 20 &&
+		           microphone_source->ProcessingStats().render_frames_processed >= 20;
+	    },
+	    std::chrono::seconds(15)))
+	    << "received AEC reference=" << events.media_frames(std::string(aec_reference_name))
+	    << ", processed render frames="
+	    << microphone_source->ProcessingStats().render_frames_processed;
+
+	TrackPublishOptions microphone_options;
+	microphone_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(
+	    sender->GetLocalParticipant()->PublishTrack(microphone_track.get(), microphone_options));
+	ASSERT_TRUE(WaitUntil([&] { return events.media_frames(std::string(microphone_name)) >= 20; },
+	                      std::chrono::seconds(15)))
+	    << "received microphone=" << events.media_frames(std::string(microphone_name))
+	    << ", total audio frames=" << events.audio_frame_count()
+	    << ", audio subscriptions=" << events.audio_subscribed_count();
+	TrackPublishOptions camera_options;
+	camera_options.source = TrackSource::Camera;
+	camera_options.simulcast = false;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(camera_track.get(), camera_options));
+	ASSERT_TRUE(WaitUntil([&] { return events.media_frames(std::string(camera_name)) >= 5; },
+	                      std::chrono::seconds(15)))
+	    << "received camera=" << events.media_frames(std::string(camera_name));
+	TrackPublishOptions screen_options;
+	screen_options.simulcast = false;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishScreenShareVideoTrack(screen_track.get(),
+	                                                                        screen_options));
+	ASSERT_TRUE(WaitUntil([&] { return events.media_frames(std::string(desktop_name)) >= 5; },
+	                      std::chrono::seconds(15)))
+	    << "received desktop=" << events.media_frames(std::string(desktop_name));
+	const auto camera_dimensions = events.video_dimensions(std::string(camera_name));
+	const auto screen_dimensions = events.video_dimensions(std::string(desktop_name));
+	EXPECT_EQ(camera_dimensions.width, 1280u);
+	EXPECT_EQ(camera_dimensions.height, 720u);
+	EXPECT_GT(screen_dimensions.width, 0u);
+	EXPECT_GT(screen_dimensions.height, 0u);
+	const auto microphone_processing = microphone_source->ProcessingStats();
+	EXPECT_TRUE(microphone_processing.echo_cancellation_enabled);
+	EXPECT_GE(microphone_processing.capture_frames_processed, 20u);
+	EXPECT_GE(microphone_processing.render_frames_processed, 20u);
+	EXPECT_EQ(microphone_processing.capture_processing_errors, 0u);
+	EXPECT_EQ(microphone_processing.render_processing_errors, 0u);
+	EXPECT_EQ(microphone_processing.frames_dropped, 0u);
+
+	const auto has_rtp_bytes = [](TrackInterface* track, RTCStatsDirection direction) {
+		if (track == nullptr) {
+			return false;
+		}
+		const auto snapshot = track->GetRTCStatsSnapshot();
+		return std::any_of(snapshot.streams.begin(), snapshot.streams.end(),
+		                   [direction](const auto& stream) {
+			                   return stream.direction == direction && stream.bytes > 0;
+		                   });
+	};
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return has_rtp_bytes(microphone_track.get(), RTCStatsDirection::Send) &&
+		           has_rtp_bytes(camera_track.get(), RTCStatsDirection::Send) &&
+		           has_rtp_bytes(screen_track.get(), RTCStatsDirection::Send);
+	    },
+	    std::chrono::seconds(10)));
+
+	auto* remote_sender = receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+	ASSERT_NE(remote_sender, nullptr);
+	auto* remote_microphone = remote_sender->GetTrackPublication(TrackSource::Microphone);
+	auto* remote_camera = remote_sender->GetTrackPublication(TrackSource::Camera);
+	auto* remote_screen = remote_sender->GetTrackPublication(TrackSource::ScreenShare);
+	ASSERT_NE(remote_microphone, nullptr);
+	ASSERT_NE(remote_camera, nullptr);
+	ASSERT_NE(remote_screen, nullptr);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return has_rtp_bytes(remote_microphone->Track(), RTCStatsDirection::Receive) &&
+		           has_rtp_bytes(remote_camera->Track(), RTCStatsDirection::Receive) &&
+		           has_rtp_bytes(remote_screen->Track(), RTCStatsDirection::Receive);
+	    },
+	    std::chrono::seconds(10)));
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(screen_track.get()));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return remote_sender->GetTrackPublication(TrackSource::ScreenShare) == nullptr; },
+	    std::chrono::seconds(10)));
+	screen_track.reset();
+	screen_source->Stop();
+	screen_source.reset();
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(camera_track.get()));
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(microphone_track.get()));
+	EXPECT_TRUE(receiver->GetLocalParticipant()->UnpublishTrack(aec_reference_track.get()));
+	aec_reference_track.reset();
+	aec_reference_source.reset();
+	camera_track.reset();
+	microphone_track.reset();
+	camera_source->Stop();
+	microphone_source->Stop();
+	camera_source.reset();
+	microphone_source.reset();
 	receiver->RemoveEventListener();
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());

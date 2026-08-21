@@ -616,6 +616,16 @@ typedef struct lk_microphone_capture_options {
 	int noise_suppression;
 } lk_microphone_capture_options_t;
 
+typedef struct lk_microphone_processing_stats {
+	size_t struct_size;
+	uint64_t capture_frames_processed;
+	uint64_t render_frames_processed;
+	uint64_t capture_processing_errors;
+	uint64_t render_processing_errors;
+	uint64_t frames_dropped;
+	int echo_cancellation_enabled;
+} lk_microphone_processing_stats_t;
+
 typedef struct lk_video_source_options {
 	size_t struct_size;
 	int is_screencast;
@@ -797,6 +807,7 @@ LKC_API size_t lk_screen_source_list_label(const lk_screen_source_list_t* source
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);
 LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options);
+LKC_API void lk_microphone_processing_stats_init(lk_microphone_processing_stats_t* stats);
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
 LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options);
@@ -915,6 +926,8 @@ LKC_API lk_status_t lk_audio_source_microphone_set_muted(lk_audio_source_t* sour
 LKC_API int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source);
 LKC_API lk_status_t lk_audio_source_microphone_set_volume(lk_audio_source_t* source, float volume);
 LKC_API float lk_audio_source_microphone_volume(const lk_audio_source_t* source);
+LKC_API lk_status_t lk_audio_source_microphone_processing_stats(
+    const lk_audio_source_t* source, lk_microphone_processing_stats_t* stats);
 LKC_API lk_status_t lk_video_source_create(const lk_video_source_options_t* options,
                                            lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_options_t* options,

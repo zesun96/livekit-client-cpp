@@ -180,7 +180,7 @@ public:
 	std::string CreateAnswer(const webrtc::PeerConnectionInterface::RTCOfferAnswerOptions& options);
 
 	void SetLocalDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
-	void SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
+	bool SetRemoteDescription(std::unique_ptr<webrtc::SessionDescriptionInterface> desc);
 
 	const std::string GetLocalDescription();
 	const std::string GetRemoteDescription();

@@ -17,8 +17,6 @@
 
 #include "audio_device.h"
 
-#include <algorithm>
-
 namespace {
 const int kSampleRate = 48000;
 const int kChannels = 2;
@@ -45,22 +43,34 @@ int32_t AudioDevice::RegisterAudioCallback(webrtc::AudioTransport* transport) {
 	return 0;
 }
 
-void AudioDevice::AddRenderObserver(AudioRenderObserver* observer) {
-	if (observer == nullptr) {
+void AudioDevice::DeliverRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
+                                    std::uint32_t channels,
+                                    std::uint32_t frames_per_channel) noexcept {
+	if (samples == nullptr || sample_rate == 0 || channels == 0 || frames_per_channel == 0) {
 		return;
 	}
-	webrtc::MutexLock lock(&mutex_);
-	if (std::find(render_observers_.begin(), render_observers_.end(), observer) ==
-	    render_observers_.end()) {
-		render_observers_.push_back(observer);
+	try {
+		webrtc::MutexLock lock(&render_data_mutex_);
+		render_data_.assign(samples, samples + frames_per_channel * channels);
+		render_sample_rate_ = sample_rate;
+		render_channels_ = channels;
+		++render_sequence_;
+	} catch (...) {
+		// Decoded audio callbacks cannot propagate allocation failures into libwebrtc.
 	}
 }
 
-void AudioDevice::RemoveRenderObserver(AudioRenderObserver* observer) {
-	webrtc::MutexLock lock(&mutex_);
-	render_observers_.erase(
-	    std::remove(render_observers_.begin(), render_observers_.end(), observer),
-	    render_observers_.end());
+bool AudioDevice::ReadRenderData(uint64_t& sequence, std::vector<std::int16_t>& samples,
+                                 std::uint32_t& sample_rate, std::uint32_t& channels) const {
+	webrtc::MutexLock lock(&render_data_mutex_);
+	if (sequence == render_sequence_ || render_data_.empty()) {
+		return false;
+	}
+	samples = render_data_;
+	sample_rate = render_sample_rate_;
+	channels = render_channels_;
+	sequence = render_sequence_;
+	return true;
 }
 
 int32_t AudioDevice::Init() {
@@ -82,14 +92,6 @@ int32_t AudioDevice::Init() {
 		audio_transport_->NeedMorePlayData(kSamplesPer10Ms, kBytesPerSample, kChannels, kSampleRate,
 		                                   data_.data(), samples_out, &elapsed_time_ms,
 		                                   &ntp_time_ms);
-		if (samples_out > 0 && samples_out <= kSamplesPer10Ms) {
-			// Observers must not call back into AudioDevice. Keeping the lock here makes
-			// RemoveRenderObserver a lifetime barrier for microphone sources.
-			for (auto* observer : render_observers_) {
-				observer->OnRenderData(data_.data(), kSampleRate, kChannels,
-				                       static_cast<std::uint32_t>(samples_out));
-			}
-		}
 
 		return webrtc::TimeDelta::Millis(10);
 	});

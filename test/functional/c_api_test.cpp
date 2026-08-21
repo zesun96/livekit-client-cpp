@@ -131,6 +131,11 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(microphone.echo_cancellation, 1);
 	EXPECT_EQ(microphone.auto_gain_control, 1);
 	EXPECT_EQ(microphone.noise_suppression, 1);
+	lk_microphone_processing_stats_t microphone_stats;
+	lk_microphone_processing_stats_init(&microphone_stats);
+	EXPECT_EQ(microphone_stats.struct_size, sizeof(microphone_stats));
+	EXPECT_EQ(microphone_stats.capture_frames_processed, 0u);
+	EXPECT_EQ(microphone_stats.render_frames_processed, 0u);
 
 	lk_participant_track_permission_t permission;
 	lk_participant_track_permission_init(&permission);
@@ -260,6 +265,12 @@ TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
 	EXPECT_EQ(lk_audio_source_microphone_is_muted(source), 0);
 	EXPECT_EQ(lk_audio_source_microphone_set_volume(source, 0.5F), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_FLOAT_EQ(lk_audio_source_microphone_volume(source), 0.0F);
+	lk_microphone_processing_stats_t stats;
+	lk_microphone_processing_stats_init(&stats);
+	EXPECT_EQ(lk_audio_source_microphone_processing_stats(source, &stats),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_processing_stats(nullptr, &stats),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
 
 	lk_microphone_capture_options_t options;

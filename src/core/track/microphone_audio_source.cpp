@@ -28,22 +28,17 @@ constexpr uint32_t kMicrophoneChannels = 1;
 MicrophoneAudioSource::MicrophoneAudioSource(MicrophoneCaptureOptions options)
     : AudioSource(options.processing, kMicrophoneSampleRate, kMicrophoneChannels,
                   options.queue_size_ms, GetGlobalTaskQueueFactory()),
+      processing_options_(options.processing),
       capture_(std::make_unique<capture::AudioCaptureAdapter>(
           std::move(options.device_id),
           [this](const std::int16_t* samples, std::uint32_t sample_rate, std::uint32_t channels,
                  std::uint32_t frames_per_channel, std::int64_t timestamp_us) {
 	          OnAudioFrame(samples, sample_rate, channels, frames_per_channel, timestamp_us);
           })),
-      processor_(options.processing.echo_cancellation, options.processing.auto_gain_control,
-                 options.processing.noise_suppression) {}
+      processor_(processing_options_.echo_cancellation, processing_options_.auto_gain_control,
+                 processing_options_.noise_suppression) {}
 
-MicrophoneAudioSource::~MicrophoneAudioSource() {
-	Stop();
-	std::lock_guard<std::mutex> guard(audio_device_mutex_);
-	if (audio_device_ != nullptr) {
-		audio_device_->RemoveRenderObserver(this);
-	}
-}
+MicrophoneAudioSource::~MicrophoneAudioSource() { Stop(); }
 
 bool MicrophoneAudioSource::CaptureFrame(void* audio_data, uint32_t sample_rate,
                                          uint32_t num_channels, uint32_t samples_per_channel) {
@@ -58,6 +53,8 @@ void MicrophoneAudioSource::Stop() {
 	}
 	std::lock_guard<std::mutex> guard(capture_buffer_mutex_);
 	capture_buffer_.clear();
+	render_processing_buffer_.clear();
+	last_render_sequence_ = 0;
 }
 
 bool MicrophoneAudioSource::IsCapturing() const { return capture_ && capture_->IsRunning(); }
@@ -73,6 +70,8 @@ bool MicrophoneAudioSource::SwitchDevice(const std::string& device_id) {
 	const bool switched = capture_->SwitchDevice(device_id);
 	std::lock_guard<std::mutex> guard(capture_buffer_mutex_);
 	capture_buffer_.clear();
+	render_processing_buffer_.clear();
+	last_render_sequence_ = 0;
 	return switched;
 }
 
@@ -90,6 +89,15 @@ bool MicrophoneAudioSource::SetVolume(float volume) {
 
 float MicrophoneAudioSource::Volume() const { return volume_.load(); }
 
+MicrophoneAudioProcessingStats MicrophoneAudioSource::ProcessingStats() const {
+	return {capture_frames_processed_.load(),
+	        render_frames_processed_.load(),
+	        capture_processing_errors_.load(),
+	        render_processing_errors_.load(),
+	        frames_dropped_.load(),
+	        processing_options_.echo_cancellation};
+}
+
 bool MicrophoneAudioSource::BindAudioDevice(webrtc::scoped_refptr<AudioDevice> audio_device) {
 	if (audio_device == nullptr) {
 		return false;
@@ -98,42 +106,57 @@ bool MicrophoneAudioSource::BindAudioDevice(webrtc::scoped_refptr<AudioDevice> a
 	if (audio_device_ != nullptr && audio_device_ != audio_device) {
 		return false;
 	}
-	if (audio_device_ == nullptr) {
-		audio_device->AddRenderObserver(this);
-	}
 	audio_device_ = std::move(audio_device);
 	return true;
 }
 
 void MicrophoneAudioSource::OnAudioFrame(const std::int16_t* samples, std::uint32_t sample_rate,
                                          std::uint32_t channels, std::uint32_t frames_per_channel,
-                                         std::int64_t) {
+                                         std::int64_t) noexcept {
 	if (samples == nullptr || sample_rate != kMicrophoneSampleRate ||
 	    channels != kMicrophoneChannels || frames_per_channel == 0) {
 		return;
 	}
-	std::lock_guard<std::mutex> guard(capture_buffer_mutex_);
-	capture_buffer_.insert(capture_buffer_.end(), samples, samples + frames_per_channel);
-	while (capture_buffer_.size() >= kMicrophoneSampleRate / 100) {
-		std::array<std::int16_t, kMicrophoneSampleRate / 100> processed;
-		std::copy_n(capture_buffer_.begin(), processed.size(), processed.begin());
-		capture_buffer_.erase(capture_buffer_.begin(), capture_buffer_.begin() + processed.size());
-		if (!processor_.ProcessCapture(processed, sample_rate, channels)) {
-			continue;
+	try {
+		std::lock_guard<std::mutex> guard(capture_buffer_mutex_);
+		capture_buffer_.insert(capture_buffer_.end(), samples, samples + frames_per_channel);
+		while (capture_buffer_.size() >= kMicrophoneSampleRate / 100) {
+			std::array<std::int16_t, kMicrophoneSampleRate / 100> processed;
+			std::copy_n(capture_buffer_.begin(), processed.size(), processed.begin());
+			capture_buffer_.erase(capture_buffer_.begin(),
+			                      capture_buffer_.begin() + processed.size());
+			std::uint32_t render_sample_rate = 0;
+			std::uint32_t render_channels = 0;
+			webrtc::scoped_refptr<AudioDevice> audio_device;
+			{
+				std::lock_guard<std::mutex> audio_device_guard(audio_device_mutex_);
+				audio_device = audio_device_;
+			}
+			if (processing_options_.echo_cancellation && audio_device != nullptr &&
+			    audio_device->ReadRenderData(last_render_sequence_, render_processing_buffer_,
+			                                 render_sample_rate, render_channels)) {
+				if (processor_.ProcessRender(render_processing_buffer_, render_sample_rate,
+				                             render_channels)) {
+					render_frames_processed_.fetch_add(1);
+				} else {
+					render_processing_errors_.fetch_add(1);
+				}
+			}
+			if (!processor_.ProcessCapture(processed, sample_rate, channels)) {
+				capture_processing_errors_.fetch_add(1);
+				continue;
+			}
+			capture_frames_processed_.fetch_add(1);
+			const float gain = muted_.load() ? 0.0F : volume_.load();
+			if (!capture::ApplyAudioGain(processed, processed, gain) ||
+			    !AudioSource::CaptureFrame(processed.data(), sample_rate, channels,
+			                               processed.size())) {
+				frames_dropped_.fetch_add(1);
+			}
 		}
-		const float gain = muted_.load() ? 0.0F : volume_.load();
-		if (capture::ApplyAudioGain(processed, processed, gain)) {
-			AudioSource::CaptureFrame(processed.data(), sample_rate, channels, processed.size());
-		}
+	} catch (...) {
+		frames_dropped_.fetch_add(1);
 	}
-}
-
-void MicrophoneAudioSource::OnRenderData(const std::int16_t* samples, std::uint32_t sample_rate,
-                                         std::uint32_t channels, std::uint32_t frames_per_channel) {
-	if (samples == nullptr || frames_per_channel == 0) {
-		return;
-	}
-	processor_.ProcessRender({samples, frames_per_channel * channels}, sample_rate, channels);
 }
 
 bool SetMicrophoneSourceVolume(MicrophoneAudioSourceInterface* source, float volume) {
@@ -144,6 +167,12 @@ bool SetMicrophoneSourceVolume(MicrophoneAudioSourceInterface* source, float vol
 float GetMicrophoneSourceVolume(const MicrophoneAudioSourceInterface* source) {
 	const auto* microphone = dynamic_cast<const MicrophoneAudioSource*>(source);
 	return microphone != nullptr ? microphone->Volume() : 1.0F;
+}
+
+MicrophoneAudioProcessingStats
+GetMicrophoneSourceProcessingStats(const MicrophoneAudioSourceInterface* source) {
+	const auto* microphone = dynamic_cast<const MicrophoneAudioSource*>(source);
+	return microphone != nullptr ? microphone->ProcessingStats() : MicrophoneAudioProcessingStats{};
 }
 
 MicrophoneAudioSourceInterface* CreateMicrophoneAudioSource(MicrophoneCaptureOptions options) {

@@ -17,6 +17,10 @@ TEST(MicrophoneSourceTest, ValidatesAndRetainsRuntimeVolume) {
 		EXPECT_FALSE(source.SetVolume(1.01F));
 		ASSERT_TRUE(source.SetVolume(0.25F));
 		EXPECT_FLOAT_EQ(source.Volume(), 0.25F);
+		const auto stats = source.ProcessingStats();
+		EXPECT_TRUE(stats.echo_cancellation_enabled);
+		EXPECT_EQ(stats.capture_processing_errors, 0u);
+		EXPECT_EQ(stats.render_processing_errors, 0u);
 	}
 	EXPECT_TRUE(Destroy());
 }

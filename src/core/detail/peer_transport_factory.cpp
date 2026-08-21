@@ -55,6 +55,9 @@ PeerTransportFactory::PeerTransportFactory() {
 	task_queue_factory_ = webrtc::CreateDefaultTaskQueueFactory();
 	audio_device_ = worker_thread_->BlockingCall(
 	    [&] { return webrtc::make_ref_counted<AudioDevice>(task_queue_factory_.get()); });
+	if (audio_device_ == nullptr) {
+		return;
+	}
 	auto audio_processing =
 	    webrtc::BuiltinAudioProcessingBuilder().Build(webrtc::CreateEnvironment());
 	peer_factory_ = webrtc::CreatePeerConnectionFactory(
