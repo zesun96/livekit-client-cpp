@@ -20,7 +20,6 @@
 #ifndef _LKC_CORE_DETAIL_RTC_SESSION_H_
 #define _LKC_CORE_DETAIL_RTC_SESSION_H_
 
-#include "debouncer.h"
 #include "livekit/core/option/option.h"
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit_rtc.pb.h"
@@ -30,6 +29,7 @@
 #include "../track/local_track.h"
 
 #include <atomic>
+#include <mutex>
 
 namespace livekit {
 namespace core {
@@ -184,6 +184,9 @@ public:
 	virtual void OnInterestingUsage(PeerTransport::Target target, int usagePattern) override;
 
 private:
+	bool RequestPublisherNegotiation(bool ice_restart);
+	void PublisherNegotiationCompleted();
+
 	std::shared_ptr<PeerTransportFactory> peer_factory_;
 	livekit::JoinResponse join_response_;
 	RtcSessionListener* observer_ = nullptr;
@@ -194,7 +197,10 @@ private:
 	std::atomic<bool> is_subscriber_connection_required_;
 	std::atomic<State> state_ = State::kNew;
 	std::atomic<bool> has_published_ = false;
-	std::unique_ptr<Debouncer> publisher_negotiation_debouncer_ = nullptr;
+	std::mutex publisher_negotiation_mutex_;
+	bool publisher_negotiation_in_flight_ = false;
+	bool publisher_negotiation_pending_ = false;
+	bool publisher_ice_restart_pending_ = false;
 };
 
 } // namespace core

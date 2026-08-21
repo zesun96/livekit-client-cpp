@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <utility>
 #include <vector>
 
 namespace livekit::core {
@@ -32,6 +33,15 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	EXPECT_EQ(room->GetRemoteParticipantByIdentity("missing"), nullptr);
 	EXPECT_FALSE(room->SetLocalTrackMuted("missing", true));
 	EXPECT_FALSE(room->SetRemoteTrackSubscribed("missing", "missing", true));
+	EXPECT_FALSE(room->SetAudioOutputDevice("missing"));
+	EXPECT_TRUE(room->AudioOutputDevice().empty());
+	EXPECT_FALSE(room->SetSpeakerVolume(0.5F));
+	EXPECT_FLOAT_EQ(room->SpeakerVolume(), 1.0F);
+	EXPECT_FALSE(room->SetSpeakerMuted(true));
+	EXPECT_FALSE(room->SpeakerMuted());
+	const auto playback_stats = room->GetAudioPlaybackStats();
+	EXPECT_EQ(playback_stats.queued_frames, 0u);
+	EXPECT_EQ(playback_stats.played_frames, 0u);
 }
 
 TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
@@ -49,6 +59,53 @@ TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
 }
 
 TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }
+
+TEST(PublicApiTest, EnumeratesMediaDevicesWithoutChangingClientState) {
+	const auto devices = EnumerateMediaDevices();
+	for (const auto& device : devices) {
+		EXPECT_FALSE(device.id.empty());
+		EXPECT_FALSE(device.label.empty());
+		EXPECT_TRUE(device.kind == MediaDeviceKind::AudioInput ||
+		            device.kind == MediaDeviceKind::AudioOutput ||
+		            device.kind == MediaDeviceKind::VideoInput);
+		if (device.is_default) {
+			EXPECT_NE(device.kind, MediaDeviceKind::VideoInput);
+		}
+	}
+}
+
+TEST(PublicApiTest, RejectsUnknownCameraDeviceWithoutAStartedSource) {
+	CameraCaptureOptions options;
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateCameraVideoSourceUnique(std::move(options)), nullptr);
+}
+
+TEST(PublicApiTest, RejectsUnknownMicrophoneDeviceWithoutAStartedSource) {
+	MicrophoneCaptureOptions options;
+	EXPECT_TRUE(options.processing.echo_cancellation);
+	EXPECT_TRUE(options.processing.auto_gain_control);
+	EXPECT_TRUE(options.processing.noise_suppression);
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateMicrophoneAudioSourceUnique(std::move(options)), nullptr);
+}
+
+TEST(PublicApiTest, RejectsUnknownSystemAudioOutputWithoutChangingExternalPcmSource) {
+	SystemAudioCaptureOptions options;
+	options.device_id = "livekit-device-that-does-not-exist";
+	EXPECT_EQ(CreateSystemAudioSourceUnique(std::move(options)), nullptr);
+	auto external = CreateAudioSourceUnique({}, 48000, 2, 200);
+	EXPECT_NE(external, nullptr);
+}
+
+TEST(PublicApiTest, EnumeratesAndValidatesScreenCaptureSources) {
+	for (const auto& source : EnumerateScreenCaptureSources()) {
+		EXPECT_FALSE(source.id.empty());
+		EXPECT_GT(source.width, 0U);
+		EXPECT_GT(source.height, 0U);
+	}
+	EXPECT_EQ(CreateScreenVideoSource({}), nullptr);
+	EXPECT_EQ(CreateScreenVideoSource({"monitor:missing", 15}), nullptr);
+}
 
 TEST(PublicApiTest, RegistersRpcMethodsAndValidatesLocalPayload) {
 	auto room = CreateRoomUnique();
@@ -106,6 +163,12 @@ TEST(MediaSourceTest, ValidatesI420VideoFrames) {
 	auto invalid_dimensions = valid;
 	invalid_dimensions.width = 3;
 	EXPECT_FALSE(source->CaptureFrame(invalid_dimensions));
+	auto rotated = valid;
+	rotated.rotation = VideoRotation::Rotation90;
+	EXPECT_TRUE(source->CaptureFrame(rotated));
+	auto invalid_rotation = valid;
+	invalid_rotation.rotation = static_cast<VideoRotation>(45);
+	EXPECT_FALSE(source->CaptureFrame(invalid_rotation));
 	source.reset();
 	EXPECT_TRUE(Destroy());
 }

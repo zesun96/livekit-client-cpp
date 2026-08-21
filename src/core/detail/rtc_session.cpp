@@ -117,7 +117,6 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 	bool subscriber_primary = join_response.subscriber_primary();
 	is_publisher_connection_required_ = !subscriber_primary;
 	is_subscriber_connection_required_ = subscriber_primary;
-	publisher_negotiation_debouncer_ = std::move(Debouncer::Create(std::chrono::milliseconds(150)));
 }
 
 RtcSession::~RtcSession() {
@@ -221,15 +220,12 @@ std::function<std::string()> RtcSession::CreateSubscriberStatsProvider(
 
 void RtcSession::PublisherNegotiationNeeded() {
 	has_published_.store(true);
-	// if (publisher_negotiation_debouncer_->lock()) {
-	// 	publisher_pc_->Negotiate();
-	// }
-	publisher_pc_->Negotiate();
+	RequestPublisherNegotiation(false);
 }
 
 void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	this->publisher_pc_->SetRemoteDescription(std::move(answer));
-	return;
+	PublisherNegotiationCompleted();
 }
 
 std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscriberAnswerFromOffer(
@@ -239,7 +235,9 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 	offer->ToString(&str_desc);
 	std::cout << "recived offer: " << str_desc << std::endl;
 
-	subscriber_pc_->SetRemoteDescription(std::move(offer));
+	if (!subscriber_pc_->SetRemoteDescription(std::move(offer))) {
+		return nullptr;
+	}
 
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
 	options.offer_to_receive_audio = true;
@@ -267,7 +265,7 @@ void RtcSession::AddIceCandidate(const std::string& candidate, const livekit::Si
 	return;
 }
 
-bool RtcSession::Negotiate() { return this->publisher_pc_->Negotiate(); }
+bool RtcSession::Negotiate() { return RequestPublisherNegotiation(false); }
 
 bool RtcSession::ShouldRestartPublisherIce() const {
 	return is_publisher_connection_required_.load() || has_published_.load();
@@ -277,7 +275,43 @@ bool RtcSession::RestartPublisherIce() {
 	if (!ShouldRestartPublisherIce()) {
 		return true;
 	}
-	return publisher_pc_ != nullptr && publisher_pc_->Negotiate(true);
+	return RequestPublisherNegotiation(true);
+}
+
+bool RtcSession::RequestPublisherNegotiation(bool ice_restart) {
+	{
+		std::lock_guard<std::mutex> guard(publisher_negotiation_mutex_);
+		if (publisher_negotiation_in_flight_) {
+			publisher_negotiation_pending_ = true;
+			publisher_ice_restart_pending_ |= ice_restart;
+			return true;
+		}
+		publisher_negotiation_in_flight_ = true;
+	}
+
+	if (publisher_pc_ != nullptr && publisher_pc_->Negotiate(ice_restart)) {
+		return true;
+	}
+
+	std::lock_guard<std::mutex> guard(publisher_negotiation_mutex_);
+	publisher_negotiation_in_flight_ = false;
+	return false;
+}
+
+void RtcSession::PublisherNegotiationCompleted() {
+	bool negotiate_again = false;
+	bool ice_restart = false;
+	{
+		std::lock_guard<std::mutex> guard(publisher_negotiation_mutex_);
+		publisher_negotiation_in_flight_ = false;
+		negotiate_again = publisher_negotiation_pending_;
+		ice_restart = publisher_ice_restart_pending_;
+		publisher_negotiation_pending_ = false;
+		publisher_ice_restart_pending_ = false;
+	}
+	if (negotiate_again) {
+		RequestPublisherNegotiation(ice_restart);
+	}
 }
 
 bool RtcSession::IsConnected() const { return state_.load() == State::kConnected; }

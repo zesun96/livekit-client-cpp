@@ -25,6 +25,7 @@ public:
 		std::optional<bool> needs_denoising() const override;
 
 		bool CaptureFrame(const VideoFrame& frame);
+		void CaptureFrame(const webrtc::VideoFrame& frame);
 
 	private:
 		bool is_screencast_;
@@ -37,6 +38,9 @@ public:
 	uint32_t Width() const override;
 	uint32_t Height() const override;
 	webrtc::scoped_refptr<InternalSource> Get() const;
+
+protected:
+	void CaptureRtcFrame(const webrtc::VideoFrame& frame);
 
 private:
 	webrtc::scoped_refptr<InternalSource> source_;

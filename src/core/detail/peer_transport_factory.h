@@ -44,6 +44,7 @@ public:
 	~PeerTransportFactory();
 
 	webrtc::PeerConnectionFactoryInterface* GetPeerConnectFactory() { return peer_factory_.get(); }
+	webrtc::scoped_refptr<AudioDevice> GetAudioDevice() const { return audio_device_; }
 
 	webrtc::Thread* network_thread() const;
 	webrtc::Thread* worker_thread() const;

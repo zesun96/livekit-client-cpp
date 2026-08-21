@@ -90,6 +90,7 @@ public:
 	void SetRoomObserver(RtcEngineListener* listener);
 
 	std::shared_ptr<PeerTransportFactory> GetSessionPeerTransportFactory();
+	webrtc::scoped_refptr<AudioDevice> GetAudioDevice();
 
 	std::optional<livekit::TrackInfo> AddTrack(const livekit::AddTrackRequest& req);
 
@@ -259,6 +260,7 @@ private:
 	std::unique_ptr<RtcSession> rtc_session_;
 	// Local media tracks are created by this factory. Keep it stable while replacing peer
 	// connections so those tracks can be republished safely after a full reconnect.
+	mutable std::mutex peer_factory_lock_;
 	std::shared_ptr<PeerTransportFactory> peer_factory_;
 	bool is_subscriber_primary_;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;

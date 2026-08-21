@@ -25,6 +25,9 @@ option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
 option(USE_SYSTEM_JSON "Use system nlohmann/json" OFF)
 option(USE_SYSTEM_ABSL "Use system Abseil" OFF)
 option(USE_SYSTEM_PLOG "Use system plog" OFF)
+option(USE_SYSTEM_MEDIA_CAPTURE "Use an installed media-capture package" OFF)
+set(MEDIA_CAPTURE_ROOT "${PROJECT_SOURCE_DIR}/../media-capture" CACHE PATH
+  "Path to the media-capture source tree")
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_TEST "Build tests" ON)
 option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
@@ -34,6 +37,26 @@ option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
 include(FetchContent)
 include(cmake/Dependencies.cmake)
 include(cmake/FindWebRTC.cmake)
+
+if(USE_SYSTEM_MEDIA_CAPTURE)
+  find_package(media-capture CONFIG REQUIRED)
+elseif(EXISTS "${MEDIA_CAPTURE_ROOT}/CMakeLists.txt")
+  set(MEDIA_CAPTURE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_CAMERA ON CACHE BOOL "" FORCE)
+  set(MEDIA_CAPTURE_BUILD_SCREEN ON CACHE BOOL "" FORCE)
+  add_subdirectory("${MEDIA_CAPTURE_ROOT}"
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build" EXCLUDE_FROM_ALL)
+else()
+  message(FATAL_ERROR
+    "media-capture was not found. Set MEDIA_CAPTURE_ROOT or USE_SYSTEM_MEDIA_CAPTURE=ON.")
+endif()
+if(NOT TARGET media_capture::screen)
+  message(FATAL_ERROR "media-capture must provide the media_capture::screen component")
+endif()
+if(NOT TARGET media_capture::camera)
+  message(FATAL_ERROR "media-capture must provide the media_capture::camera component")
+endif()
 
 if(USE_SYSTEM_ABSL)
   find_package(absl CONFIG REQUIRED)
@@ -100,13 +123,25 @@ set(
   src/core/e2ee/e2ee_manager.cpp
   src/core/e2ee/key_provider.cpp
 
+  src/capture/audio_capture_adapter.cpp
+  src/capture/audio_gain.cpp
+  src/capture/camera_capture_adapter.cpp
+  src/capture/frame_queue.cpp
+  src/capture/webrtc_audio_processor.cpp
+  src/capture/screen_capture_adapter.cpp
+  src/capture/video_frame_converter.cpp
+
   src/core/track/audio_source.cpp
   src/core/track/audio_track.cpp
+  src/core/track/camera_video_source.cpp
   src/core/track/local_audio_track.cpp
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
   src/core/track/media_stream_track.cpp
+  src/core/track/microphone_audio_source.cpp
+  src/core/track/screen_video_source.cpp
+  src/core/track/system_audio_source.cpp
   src/core/track/remote_audio_track.cpp
   src/core/track/remote_track.cpp
   src/core/track/remote_track_publication.cpp
@@ -126,6 +161,7 @@ set(
   src/core/participant/remote_participant.cpp
 
   src/core/livekit_client.cpp
+  src/core/media_device.cpp
   src/core/room.cpp
 
   src/capi/livekit.cpp
@@ -173,6 +209,9 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
 )
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
+target_include_directories(livekitclient PRIVATE
+  ${libwebrtc_SOURCE_DIR}/include/third_party/libyuv/include
+)
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
@@ -184,11 +223,17 @@ target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
+target_link_libraries(livekitclient PRIVATE
+  media_capture::audio media_capture::camera media_capture::screen)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 
 if (WIN32)
-  target_link_libraries(livekitclient PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32 Userenv Ws2_32 Bcrypt.lib)
+  target_link_libraries(
+    livekitclient
+    PRIVATE winmm.lib wmcodecdspuuid.lib dmoguids.lib Iphlpapi.lib Msdmo.lib Secur32.lib Crypt32
+            Userenv Ws2_32 Bcrypt.lib Ole32.lib Propsys.lib Strmiids.lib
+  )
 endif()
 
 if (WIN32)

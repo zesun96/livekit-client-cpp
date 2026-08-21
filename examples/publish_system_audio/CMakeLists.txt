@@ -1,0 +1,3 @@
+add_executable(publish_system_audio publish_system_audio.cpp)
+target_include_directories(publish_system_audio PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../common)
+target_link_libraries(publish_system_audio PRIVATE livekitclient)

@@ -16,6 +16,7 @@
  */
 
 #include "room.h"
+#include "../capture/audio_capture_adapter.h"
 #include "detail/converted_proto.h"
 #include "detail/rtc_engine.h"
 #include "track/audio_track.h"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <set>
 #include <tuple>
@@ -222,6 +224,61 @@ void Room::RemoveEventListener() {
 }
 
 bool Room::IsConnected() { return state_.load() == RoomState::Connected; }
+
+bool Room::SetAudioOutputDevice(std::string device_id) {
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	return audio_device && audio_device->SetPlayoutDeviceId(device_id);
+}
+
+std::string Room::AudioOutputDevice() const {
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	return audio_device ? audio_device->PlayoutDeviceId() : std::string{};
+}
+
+bool Room::SetSpeakerVolume(float volume) {
+	if (!std::isfinite(volume) || volume < 0.0F || volume > 1.0F) {
+		return false;
+	}
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	return audio_device &&
+	       audio_device->SetSpeakerVolume(static_cast<std::uint32_t>(volume * 255.0F + 0.5F)) == 0;
+}
+
+float Room::SpeakerVolume() const {
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	std::uint32_t volume = 255;
+	return audio_device && audio_device->SpeakerVolume(&volume) == 0
+	           ? static_cast<float>(volume) / 255.0F
+	           : 1.0F;
+}
+
+bool Room::SetSpeakerMuted(bool muted) {
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	return audio_device && audio_device->SetSpeakerMute(muted) == 0;
+}
+
+bool Room::SpeakerMuted() const {
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	bool muted = false;
+	return audio_device && audio_device->SpeakerMute(&muted) == 0 && muted;
+}
+
+AudioPlaybackStats Room::GetAudioPlaybackStats() const {
+	AudioPlaybackStats result;
+	auto audio_device = rtc_engine_ ? rtc_engine_->GetAudioDevice() : nullptr;
+	if (!audio_device) {
+		return result;
+	}
+	const auto stats = audio_device->PlaybackStats();
+	result.queued_frames = stats.queued_frames;
+	result.played_frames = stats.played_frames;
+	result.dropped_frames = stats.dropped_frames;
+	result.underrun_frames = stats.underrun_frames;
+	result.buffered_duration_ms = stats.buffered_duration_ms;
+	result.device_latency_ms = stats.device_latency_ms;
+	result.estimated_delay_ms = stats.estimated_delay_ms;
+	return result;
+}
 
 RoomInterface::RoomState Room::State() const { return state_.load(); }
 
@@ -1061,12 +1118,18 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			return;
 		}
 		participant_sid = participant->Sid();
+		auto publications = participant->TrackPublicationsSnapshot();
+		auto found = publications.find(track_sid);
+		if (found != publications.end()) {
+			publication = found->second;
+		}
+		const std::string track_name = publication != nullptr ? publication->Name() : track_sid;
 		if (rtc_track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
 			auto media =
 			    std::make_unique<AudioTrack>(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
 			        static_cast<webrtc::AudioTrackInterface*>(rtc_track.get())));
 			auto remote = std::make_shared<RemoteAudioTrack>(
-			    track_sid, track_sid, std::move(media),
+			    track_sid, track_name, std::move(media),
 			    [this, participant_sid, track_sid](const AudioFrame& frame) {
 				    NotifyAudioFrame(participant_sid, track_sid, frame);
 			    });
@@ -1077,7 +1140,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			    std::make_unique<VideoTrack>(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
 			        static_cast<webrtc::VideoTrackInterface*>(rtc_track.get())));
 			auto remote = std::make_shared<RemoteVideoTrack>(
-			    track_sid, track_sid, std::move(media),
+			    track_sid, track_name, std::move(media),
 			    [this, participant_sid, track_sid](const VideoFrame& frame) {
 				    NotifyVideoFrame(participant_sid, track_sid, frame);
 			    });
@@ -1087,10 +1150,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		if (subscribed_track) {
 			subscribed_track->SetStatsProvider(std::move(stats_provider));
 			subscribed_track->SetStreamState(TrackStreamState::Active);
-			auto publications = participant->TrackPublicationsSnapshot();
-			auto found = publications.find(track_sid);
 			if (found != publications.end()) {
-				publication = found->second;
 				if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
 					previous_status = remote->SubscriptionStatus();
 					remote->SetTrackAttached(true);

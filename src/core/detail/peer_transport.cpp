@@ -322,7 +322,7 @@ void PeerTransport::SetLocalDescription(std::unique_ptr<webrtc::SessionDescripti
 	return future.get();
 }
 
-void PeerTransport::SetRemoteDescription(
+bool PeerTransport::SetRemoteDescription(
     std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
 	std::lock_guard<std::mutex> guard(pc_lock_);
 	try {
@@ -334,7 +334,7 @@ void PeerTransport::SetRemoteDescription(
 		future.get();
 	} catch (const std::exception& err) {
 		std::cerr << err.what() << '\n';
-		return;
+		return false;
 	}
 
 	{
@@ -391,7 +391,7 @@ void PeerTransport::SetRemoteDescription(
 
 	this->restarting_ice_.store(false);
 
-	return;
+	return true;
 }
 
 const std::string PeerTransport::GetLocalDescription() {

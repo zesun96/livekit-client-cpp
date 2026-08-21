@@ -220,10 +220,15 @@ livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const 
 		}
 	}
 	is_subscriber_primary_ = response.subscriber_primary();
-	if (!peer_factory_) {
-		peer_factory_ = PeerTransportFactory::Create();
+	std::shared_ptr<PeerTransportFactory> peer_factory;
+	{
+		std::lock_guard<std::mutex> factory_guard(peer_factory_lock_);
+		if (!peer_factory_) {
+			peer_factory_ = PeerTransportFactory::Create();
+		}
+		peer_factory = peer_factory_;
 	}
-	rtc_session_ = RtcSession::Create(response, options, peer_factory_);
+	rtc_session_ = RtcSession::Create(response, options, std::move(peer_factory));
 	if (!rtc_session_) {
 		join_resp_.Clear();
 		return livekit::JoinResponse();
@@ -623,6 +628,12 @@ std::shared_ptr<PeerTransportFactory> RtcEngine::GetSessionPeerTransportFactory(
 		return rtc_session_->GetPeerTransportFactory();
 	}
 	return nullptr;
+}
+
+webrtc::scoped_refptr<AudioDevice> RtcEngine::GetAudioDevice() {
+	std::lock_guard<std::mutex> guard(peer_factory_lock_);
+	return peer_factory_ != nullptr ? peer_factory_->GetAudioDevice()
+	                                : webrtc::scoped_refptr<AudioDevice>{};
 }
 
 std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackRequest& req) {

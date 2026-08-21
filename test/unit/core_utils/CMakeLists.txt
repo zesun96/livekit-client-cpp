@@ -14,6 +14,8 @@ add_executable(
   websocket_data_test.cpp
   uri_test.cpp
   async_utils_test.cpp
+  audio_gain_test.cpp
+  frame_queue_test.cpp
   data_channel_backpressure_test.cpp
   reconnect_policy_test.cpp
   signal_url_test.cpp
@@ -24,6 +26,8 @@ add_executable(
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/debouncer.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_channel_backpressure.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/option/reconnect_policy.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/capture/audio_gain.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/capture/frame_queue.cpp
 )
 
 target_compile_features(livekit_core_utils_tests PRIVATE cxx_std_20)
@@ -32,6 +36,7 @@ target_include_directories(
   PRIVATE
     ${LIVEKIT_CLIENT_ROOT}/include
     ${LIVEKIT_CLIENT_ROOT}/src/core/detail
+    ${LIVEKIT_CLIENT_ROOT}/src/capture
 )
 target_link_libraries(livekit_core_utils_tests PRIVATE GTest::gtest_main)
 

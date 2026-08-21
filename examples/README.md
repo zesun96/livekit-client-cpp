@@ -48,6 +48,20 @@ repository configuration.
 
 ## Examples
 
+### `media_devices`
+
+Enumerates active microphones, speakers, and cameras without connecting to a room or starting
+capture. Both C++ and pure C variants print the stable device ID, friendly label, kind, and default
+audio endpoint marker:
+
+```powershell
+& "out/build/vs2022-x64-release/examples/media_devices/Release/media_devices_cpp.exe"
+& "out/build/vs2022-x64-release/examples/media_devices/Release/media_devices_c.exe"
+```
+
+The returned list is a point-in-time snapshot. Enumerate again after an operating-system device
+change; selecting and switching capture devices is handled separately from discovery.
+
 ### `c_sample`
 
 A pure C program using the opaque-handle C API in `livekit/capi/livekit.h`. It registers room,
@@ -129,6 +143,54 @@ signal resume or full reconnect:
 The C sample provides the same behavior through `LIVEKIT_ALLOWED_SUBSCRIBER` and
 `lk_room_set_track_subscription_permissions()`.
 
+### `publish_microphone`
+
+Captures the system default microphone through the media-capture miniaudio backend and publishes
+48 kHz mono audio for ten seconds. Pass an optional audio-input ID from `media_devices_cpp` as the
+third argument and an optional normalized input volume (`0` to `1`) as the fourth. The source
+supports stop/restart, software mute and volume, WebRTC AEC/AGC/noise suppression configured when
+the source is created, and transactional `SwitchDevice()` with restoration of the previous input
+when switching fails.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_microphone/Release/publish_microphone.exe" `
+  $url $publisherToken "<optional-microphone-device-id>"
+```
+
+AEC, AGC, and noise suppression can also be changed while capture is running through
+`SetProcessingOptions()` (or the corresponding C API).
+
+### `publish_system_audio`
+
+Captures 48 kHz stereo PCM from the Windows default output through WASAPI loopback and publishes it
+as a screen-share audio track. Pass an optional audio-output ID from `media_devices_cpp` as the third
+argument. The original external PCM source remains available through `CreateAudioSource()`.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_system_audio/Release/publish_system_audio.exe" `
+  $url $publisherToken "<optional-audio-output-device-id>"
+```
+
+### `publish_screen`
+
+Captures a monitor or window through the media-capture screen_capture_lite backend, converts BGRA
+frames to I420, and publishes them as a LiveKit screen-share video track. Available source IDs are
+printed at startup. Pass one as the third argument; otherwise the first monitor is selected. Cursor
+composition is enabled by default; set `ScreenCaptureOptions::include_cursor` to `false` in C++, or
+`lk_screen_capture_options_t.include_cursor` to `0` in C, to disable it.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_screen/Release/publish_screen.exe" `
+  $url $publisherToken "<optional-monitor-or-window-id>"
+```
+
+The C ABI example exposes the same source enumeration and screen publishing flow:
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_screen_c/Release/publish_screen_c.exe" `
+  $url $publisherToken "<optional-monitor-or-window-id>"
+```
+
 Receivers get `OnTrackSubscriptionPermissionChanged` when access changes. After access is restored,
 an application that was unsubscribed can call `SetRemoteTrackSubscribed(..., true)` to subscribe
 again.
@@ -160,6 +222,18 @@ common publish settings and intentionally want to rebuild every publisher sender
 ```powershell
 & "out/build/vs2022-x64-release/examples/publish_video/Release/publish_video.exe" `
   $url $publisherToken
+```
+
+### `publish_camera`
+
+Opens the first available camera through the media-capture CameraCapture backend, normalizes BGRA
+frames to I420, publishes them for ten seconds, and then stops the device deterministically. Pass
+an optional device ID from `media_devices_cpp` as the third argument. A running
+`CameraVideoSourceInterface` can switch devices without recreating its LiveKit track.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/publish_camera/Release/publish_camera.exe" `
+  $url $publisherToken "<optional-camera-device-id>"
 ```
 
 ### `data_transfer`

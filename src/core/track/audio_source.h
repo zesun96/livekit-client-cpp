@@ -88,7 +88,7 @@ public:
 
 	webrtc::scoped_refptr<InternalSource> Get() const;
 
-private:
+protected:
 	AudioSource(AudioSourceOptions options, uint32_t sample_rate, uint32_t num_channels,
 	            uint32_t queue_size_samples, webrtc::TaskQueueFactory* task_queue_factory);
 

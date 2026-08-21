@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_ROOM_INTERFACE_H_
 #define _LKC_CORE_ROOM_INTERFACE_H_
 
+#include "media_device.h"
 #include "option/room_option.h"
 #include "participant/local_participant_interface.h"
 #include "participant/participant_interface.h"
@@ -77,6 +78,15 @@ public:
 	virtual bool UnregisterTextStreamHandler(const std::string&) { return false; }
 	virtual bool RegisterByteStreamHandler(std::string, ByteStreamHandler) { return false; }
 	virtual bool UnregisterByteStreamHandler(const std::string&) { return false; }
+	// Audio output controls apply to the playback device owned by this room. They are available
+	// after Connect() has created the underlying peer transport factory.
+	virtual bool SetAudioOutputDevice(std::string) { return false; }
+	virtual std::string AudioOutputDevice() const { return {}; }
+	virtual bool SetSpeakerVolume(float) { return false; }
+	virtual float SpeakerVolume() const { return 1.0F; }
+	virtual bool SetSpeakerMuted(bool) { return false; }
+	virtual bool SpeakerMuted() const { return false; }
+	virtual AudioPlaybackStats GetAudioPlaybackStats() const { return {}; }
 
 	// These controls return false when the room is disconnected or the participant/track SID does
 	// not belong to the room.

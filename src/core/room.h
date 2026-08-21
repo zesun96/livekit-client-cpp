@@ -75,6 +75,13 @@ public:
 	                                      bool subscribed);
 	bool UpdateRemoteTrackSettingsInternal(std::string participant_sid, std::string track_sid,
 	                                       const RemoteTrackSettings& settings);
+	bool SetAudioOutputDevice(std::string device_id) override;
+	std::string AudioOutputDevice() const override;
+	bool SetSpeakerVolume(float volume) override;
+	float SpeakerVolume() const override;
+	bool SetSpeakerMuted(bool muted) override;
+	bool SpeakerMuted() const override;
+	AudioPlaybackStats GetAudioPlaybackStats() const override;
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
 	bool SimulateMediaFailureForTesting();

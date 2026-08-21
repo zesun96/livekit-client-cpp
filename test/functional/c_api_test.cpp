@@ -108,6 +108,50 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(rpc.struct_size, sizeof(rpc));
 	EXPECT_EQ(rpc.response_timeout_ms, 15000u);
 
+	lk_camera_capture_options_t camera;
+	lk_camera_capture_options_init(&camera);
+	EXPECT_EQ(camera.struct_size, sizeof(camera));
+	EXPECT_EQ(camera.device_id, nullptr);
+	EXPECT_EQ(camera.width, 1280u);
+	EXPECT_EQ(camera.height, 720u);
+	EXPECT_EQ(camera.frames_per_second, 30u);
+
+	lk_screen_capture_options_t screen;
+	lk_screen_capture_options_init(&screen);
+	EXPECT_EQ(screen.struct_size, sizeof(screen));
+	EXPECT_EQ(screen.source_id, nullptr);
+	EXPECT_EQ(screen.frames_per_second, 15u);
+	EXPECT_EQ(screen.include_cursor, 1);
+
+	lk_microphone_capture_options_t microphone;
+	lk_microphone_capture_options_init(&microphone);
+	EXPECT_EQ(microphone.struct_size, sizeof(microphone));
+	EXPECT_EQ(microphone.device_id, nullptr);
+	EXPECT_EQ(microphone.queue_size_ms, 200u);
+	EXPECT_EQ(microphone.echo_cancellation, 1);
+	EXPECT_EQ(microphone.auto_gain_control, 1);
+	EXPECT_EQ(microphone.noise_suppression, 1);
+	lk_system_audio_capture_options_t system_audio;
+	lk_system_audio_capture_options_init(&system_audio);
+	EXPECT_EQ(system_audio.struct_size, sizeof(system_audio));
+	EXPECT_EQ(system_audio.device_id, nullptr);
+	EXPECT_EQ(system_audio.queue_size_ms, 200u);
+	lk_microphone_processing_stats_t microphone_stats;
+	lk_microphone_processing_stats_init(&microphone_stats);
+	EXPECT_EQ(microphone_stats.struct_size, sizeof(microphone_stats));
+	EXPECT_EQ(microphone_stats.capture_frames_processed, 0u);
+	EXPECT_EQ(microphone_stats.render_frames_processed, 0u);
+	lk_audio_playback_stats_t playback_stats;
+	lk_audio_playback_stats_init(&playback_stats);
+	EXPECT_EQ(playback_stats.struct_size, sizeof(playback_stats));
+	EXPECT_EQ(playback_stats.queued_frames, 0u);
+	EXPECT_EQ(playback_stats.played_frames, 0u);
+	EXPECT_EQ(playback_stats.dropped_frames, 0u);
+	EXPECT_EQ(playback_stats.underrun_frames, 0u);
+	EXPECT_EQ(playback_stats.buffered_duration_ms, 0u);
+	EXPECT_EQ(playback_stats.device_latency_ms, 0u);
+	EXPECT_EQ(playback_stats.estimated_delay_ms, 0u);
+
 	lk_participant_track_permission_t permission;
 	lk_participant_track_permission_init(&permission);
 	EXPECT_EQ(permission.struct_size, sizeof(permission));
@@ -128,6 +172,143 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_remote_track_snapshot_info_t track_snapshot_info;
 	lk_remote_track_snapshot_info_init(&track_snapshot_info);
 	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
+}
+
+TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {
+	lk_media_device_list_t* devices = nullptr;
+	ASSERT_EQ(lk_media_device_list_create(&devices), LK_STATUS_OK);
+	ASSERT_NE(devices, nullptr);
+	const auto count = lk_media_device_list_count(devices);
+	for (size_t index = 0; index < count; ++index) {
+		lk_media_device_info_t info{};
+		info.struct_size = sizeof(info);
+		EXPECT_EQ(lk_media_device_list_info(devices, index, &info), LK_STATUS_OK);
+		EXPECT_GE(info.kind, LK_MEDIA_DEVICE_KIND_AUDIO_INPUT);
+		EXPECT_LE(info.kind, LK_MEDIA_DEVICE_KIND_VIDEO_INPUT);
+
+		const auto id_size = lk_media_device_list_id(devices, index, nullptr, 0);
+		const auto label_size = lk_media_device_list_label(devices, index, nullptr, 0);
+		ASSERT_GT(id_size, 1u);
+		ASSERT_GT(label_size, 1u);
+		std::vector<char> id(id_size);
+		std::vector<char> label(label_size);
+		EXPECT_EQ(lk_media_device_list_id(devices, index, id.data(), id.size()), id_size);
+		EXPECT_EQ(lk_media_device_list_label(devices, index, label.data(), label.size()),
+		          label_size);
+	}
+
+	lk_media_device_info_t invalid_info{};
+	invalid_info.struct_size = sizeof(invalid_info);
+	EXPECT_EQ(lk_media_device_list_info(devices, count, &invalid_info), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_NE(std::strlen(lk_last_error()), 0u);
+	lk_media_device_list_destroy(devices);
+	EXPECT_EQ(lk_media_device_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(CApiTest, OwnsScreenSourceSnapshotAndValidatesIndexes) {
+	lk_screen_source_list_t* sources = nullptr;
+	ASSERT_EQ(lk_screen_source_list_create(&sources), LK_STATUS_OK);
+	ASSERT_NE(sources, nullptr);
+	const auto count = lk_screen_source_list_count(sources);
+	for (size_t index = 0; index < count; ++index) {
+		lk_screen_source_info_t info{};
+		info.struct_size = sizeof(info);
+		EXPECT_EQ(lk_screen_source_list_info(sources, index, &info), LK_STATUS_OK);
+		EXPECT_GE(info.kind, LK_SCREEN_SOURCE_KIND_MONITOR);
+		EXPECT_LE(info.kind, LK_SCREEN_SOURCE_KIND_WINDOW);
+		EXPECT_GT(info.width, 0U);
+		EXPECT_GT(info.height, 0U);
+
+		const auto id_size = lk_screen_source_list_id(sources, index, nullptr, 0);
+		const auto label_size = lk_screen_source_list_label(sources, index, nullptr, 0);
+		ASSERT_GT(id_size, 1U);
+		ASSERT_GT(label_size, 1U);
+		std::vector<char> id(id_size);
+		std::vector<char> label(label_size);
+		EXPECT_EQ(lk_screen_source_list_id(sources, index, id.data(), id.size()), id_size);
+		EXPECT_EQ(lk_screen_source_list_label(sources, index, label.data(), label.size()),
+		          label_size);
+	}
+
+	lk_screen_source_info_t invalid_info{};
+	invalid_info.struct_size = sizeof(invalid_info);
+	EXPECT_EQ(lk_screen_source_list_info(sources, count, &invalid_info),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_screen_source_list_destroy(sources);
+	EXPECT_EQ(lk_screen_source_list_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
+	lk_video_source_t* source = nullptr;
+	ASSERT_EQ(lk_video_source_create(nullptr, &source), LK_STATUS_OK);
+	ASSERT_NE(source, nullptr);
+	EXPECT_EQ(lk_video_source_camera_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_camera_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_camera_is_capturing(source), 0);
+	EXPECT_EQ(lk_video_source_camera_device_id(source, nullptr, 0), 0u);
+	EXPECT_EQ(lk_video_source_camera_switch_device(source, "missing"), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_screen_is_capturing(source), 0);
+	EXPECT_EQ(lk_video_source_screen_source_id(source, nullptr, 0), 0U);
+	EXPECT_EQ(lk_video_source_screen_switch_source(source, "missing"), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_destroy(source), LK_STATUS_OK);
+
+	lk_camera_capture_options_t options;
+	lk_camera_capture_options_init(&options);
+	options.width = 0;
+	EXPECT_EQ(lk_video_source_create_camera(&options, &source), LK_STATUS_INVALID_ARGUMENT);
+
+	lk_screen_capture_options_t screen_options;
+	lk_screen_capture_options_init(&screen_options);
+	EXPECT_EQ(lk_video_source_create_screen(&screen_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	screen_options.source_id = "monitor:missing";
+	EXPECT_EQ(lk_video_source_create_screen(&screen_options, &source), LK_STATUS_OPERATION_FAILED);
+}
+
+TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
+	lk_audio_source_t* source = nullptr;
+	ASSERT_EQ(lk_audio_source_create(nullptr, &source), LK_STATUS_OK);
+	ASSERT_NE(source, nullptr);
+	EXPECT_EQ(lk_audio_source_microphone_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_is_capturing(source), 0);
+	EXPECT_EQ(lk_audio_source_microphone_device_id(source, nullptr, 0), 0u);
+	EXPECT_EQ(lk_audio_source_microphone_switch_device(source, "missing"),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_set_muted(source, 1), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_is_muted(source), 0);
+	EXPECT_EQ(lk_audio_source_microphone_set_volume(source, 0.5F), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_FLOAT_EQ(lk_audio_source_microphone_volume(source), 0.0F);
+	lk_audio_source_options_t processing_options;
+	lk_audio_source_options_init(&processing_options);
+	EXPECT_EQ(lk_audio_source_microphone_set_processing_options(source, &processing_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_processing_options(source, &processing_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_system_audio_start(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_system_audio_stop(source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_FALSE(lk_audio_source_system_audio_is_capturing(source));
+	EXPECT_EQ(lk_audio_source_system_audio_device_id(source, nullptr, 0), 0u);
+	EXPECT_EQ(lk_audio_source_system_audio_switch_device(source, "missing"),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_microphone_processing_stats_t stats;
+	lk_microphone_processing_stats_init(&stats);
+	EXPECT_EQ(lk_audio_source_microphone_processing_stats(source, &stats),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_microphone_processing_stats(nullptr, &stats),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
+
+	lk_microphone_capture_options_t options;
+	lk_microphone_capture_options_init(&options);
+	options.queue_size_ms = 1;
+	EXPECT_EQ(lk_audio_source_create_microphone(&options, &source), LK_STATUS_INVALID_ARGUMENT);
+	lk_system_audio_capture_options_t system_audio_options;
+	lk_system_audio_capture_options_init(&system_audio_options);
+	system_audio_options.queue_size_ms = 1;
+	EXPECT_EQ(lk_audio_source_create_system_audio(&system_audio_options, &source),
+	          LK_STATUS_INVALID_ARGUMENT);
 }
 
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
@@ -165,6 +346,15 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_create_remote_participant_snapshot(nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_set_audio_output_device(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_audio_output_device(nullptr, nullptr, 0), 0u);
+	EXPECT_EQ(lk_room_set_speaker_volume(nullptr, 0.5F), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_FLOAT_EQ(lk_room_speaker_volume(nullptr), 0.0F);
+	EXPECT_EQ(lk_room_set_speaker_muted(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_FALSE(lk_room_speaker_is_muted(nullptr));
+	lk_audio_playback_stats_t playback_stats;
+	lk_audio_playback_stats_init(&playback_stats);
+	EXPECT_EQ(lk_room_audio_playback_stats(nullptr, &playback_stats), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_remote_participant_list_at(nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_remote_participant_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_remote_track_publication_snapshot_info(nullptr, nullptr),
@@ -182,6 +372,13 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_disconnect_reason(room), LK_DISCONNECT_REASON_UNKNOWN);
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
+	EXPECT_EQ(lk_room_set_audio_output_device(room, "missing"), LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(lk_room_set_speaker_volume(room, -0.1F), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_set_speaker_volume(room, 1.1F), LK_STATUS_INVALID_ARGUMENT);
+	lk_audio_playback_stats_t playback_stats;
+	lk_audio_playback_stats_init(&playback_stats);
+	EXPECT_EQ(lk_room_audio_playback_stats(room, &playback_stats), LK_STATUS_OK);
+	EXPECT_EQ(playback_stats.queued_frames, 0u);
 	lk_remote_participant_list_t* participant_snapshot = nullptr;
 	ASSERT_EQ(lk_room_create_remote_participant_snapshot(room, &participant_snapshot),
 	          LK_STATUS_OK);
