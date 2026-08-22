@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>LiveKit C++/official JS E2EE interoperability peer</title>
+        <link rel="icon" href="data:," />
+        <script src="/official/livekit-client.umd.js"></script>
+    </head>
+    <body>
+        <pre id="status">starting</pre>
+        <script>
+            (() => {
+                const statusElement = document.getElementById("status");
+                const report = async (path, body) => {
+                    await fetch(path, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify(body),
+                    });
+                };
+                const fail = async (error) => {
+                    const message =
+                        error instanceof Error
+                            ? `${error.message}\n${error.stack ?? ""}`
+                            : String(error);
+                    statusElement.textContent = `failed: ${message}`;
+                    try {
+                        await report("/result", { ok: false, message });
+                    } catch (_) {
+                        // The Node harness owns the final timeout if reporting itself fails.
+                    }
+                };
+
+                window.addEventListener("unhandledrejection", (event) =>
+                    fail(event.reason),
+                );
+                window.addEventListener("error", (event) =>
+                    fail(event.error ?? event.message),
+                );
+
+                const run = async () => {
+                    const config = JSON.parse(
+                        new TextDecoder().decode(
+                            Uint8Array.from(
+                                atob(
+                                    location.hash
+                                        .slice(1)
+                                        .replace(/-/g, "+")
+                                        .replace(/_/g, "/"),
+                                ),
+                                (character) => character.charCodeAt(0),
+                            ),
+                        ),
+                    );
+                    const keyProvider =
+                        new LivekitClient.ExternalE2EEKeyProvider({
+                            ratchetWindowSize: 100,
+                        });
+                    await keyProvider.setKey("livekit-cpp-official-js-e2ee");
+                    const worker = new Worker(
+                        "/official/livekit-client.e2ee.worker.js",
+                    );
+                    const room = new LivekitClient.Room({
+                        encryption: { keyProvider, worker },
+                        adaptiveStream: false,
+                        dynacast: false,
+                    });
+                    const verified = {
+                        audio: false,
+                        video: false,
+                        data: false,
+                    };
+                    let resultReported = false;
+                    const mediaElements = [];
+                    const audioContexts = [];
+
+                    const maybeComplete = async () => {
+                        statusElement.textContent = JSON.stringify(verified);
+                        if (
+                            resultReported ||
+                            !verified.audio ||
+                            !verified.video ||
+                            !verified.data
+                        ) {
+                            return;
+                        }
+                        resultReported = true;
+                        await room.localParticipant.publishData(
+                            new TextEncoder().encode("js-e2ee-ok"),
+                            {
+                                reliable: true,
+                                topic: "js-e2ee-interop",
+                                destinationIdentities: [config.cppIdentity],
+                            },
+                        );
+                        await report("/result", { ok: true, verified });
+                    };
+
+                    room.on(LivekitClient.RoomEvent.EncryptionError, (error) =>
+                        fail(error),
+                    );
+                    room.on(
+                        LivekitClient.RoomEvent.DataReceived,
+                        (payload, participant, _kind, topic) => {
+                            if (
+                                participant?.identity === config.cppIdentity &&
+                                topic === "cpp-e2ee-interop" &&
+                                new TextDecoder().decode(payload) === "cpp-e2ee"
+                            ) {
+                                verified.data = true;
+                                void maybeComplete();
+                            }
+                        },
+                    );
+                    room.on(
+                        LivekitClient.RoomEvent.TrackSubscribed,
+                        (track, _publication, participant) => {
+                            if (participant.identity !== config.cppIdentity) {
+                                return;
+                            }
+                            const element = track.attach();
+                            element.autoplay = true;
+                            element.playsInline = true;
+                            element.style.position = "absolute";
+                            element.style.left = "-10000px";
+                            document.body.appendChild(element);
+                            mediaElements.push(element);
+                            void element.play().catch(() => {});
+
+                            if (track.kind === LivekitClient.Track.Kind.Video) {
+                                const inspectVideo = () => {
+                                    const decodedFrames =
+                                        element.webkitDecodedFrameCount ?? 0;
+                                    if (
+                                        element.videoWidth > 0 &&
+                                        element.videoHeight > 0 &&
+                                        decodedFrames > 0
+                                    ) {
+                                        verified.video = true;
+                                        void maybeComplete();
+                                        return;
+                                    }
+                                    if (
+                                        "requestVideoFrameCallback" in element
+                                    ) {
+                                        element.requestVideoFrameCallback(
+                                            inspectVideo,
+                                        );
+                                    } else {
+                                        setTimeout(inspectVideo, 100);
+                                    }
+                                };
+                                if ("requestVideoFrameCallback" in element) {
+                                    element.requestVideoFrameCallback(
+                                        inspectVideo,
+                                    );
+                                } else {
+                                    setTimeout(inspectVideo, 100);
+                                }
+                            } else if (
+                                track.kind === LivekitClient.Track.Kind.Audio
+                            ) {
+                                const context = new AudioContext();
+                                const source = context.createMediaStreamSource(
+                                    new MediaStream([track.mediaStreamTrack]),
+                                );
+                                const analyser = context.createAnalyser();
+                                analyser.fftSize = 256;
+                                source.connect(analyser);
+                                audioContexts.push(context);
+                                void context.resume();
+                                const samples = new Float32Array(
+                                    analyser.fftSize,
+                                );
+                                const inspectAudio = () => {
+                                    analyser.getFloatTimeDomainData(samples);
+                                    if (
+                                        samples.some(
+                                            (sample) =>
+                                                Math.abs(sample) > 0.005,
+                                        )
+                                    ) {
+                                        verified.audio = true;
+                                        void maybeComplete();
+                                        return;
+                                    }
+                                    setTimeout(inspectAudio, 50);
+                                };
+                                setTimeout(inspectAudio, 50);
+                            }
+                        },
+                    );
+
+                    await room.setE2EEEnabled(true);
+                    await room.connect(config.url, config.token, {
+                        autoSubscribe: true,
+                    });
+                    statusElement.textContent = "connected";
+                    await report("/ready", { ok: true });
+                    setTimeout(() => {
+                        if (!resultReported) {
+                            void fail(
+                                new Error(
+                                    `official JS peer timed out: ${JSON.stringify(verified)}`,
+                                ),
+                            );
+                        }
+                    }, 30000);
+                };
+
+                void run().catch(fail);
+            })();
+        </script>
+    </body>
+</html>

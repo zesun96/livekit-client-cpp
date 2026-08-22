@@ -23,6 +23,7 @@
 #include "livekit/core/room_interface.h"
 
 #include "detail/data_stream_compression.h"
+#include "livekit/core/e2ee/e2ee_manager.h"
 #include "participant/local_participant.h"
 #include "participant/remote_participant.h"
 #include "track/remote_track.h"
@@ -82,6 +83,7 @@ public:
 	bool SetSpeakerMuted(bool muted) override;
 	bool SpeakerMuted() const override;
 	AudioPlaybackStats GetAudioPlaybackStats() const override;
+	E2EEManager* GetE2EEManager() override;
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
 	bool SimulateMediaFailureForTesting();
@@ -93,6 +95,7 @@ public:
 	virtual void
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
 	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+	                     webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
 	                     std::function<std::string()> stats_provider) override;
 	void MediaTrackRemovedEvent(const std::string& track_sid) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
@@ -138,6 +141,7 @@ private:
 	CreateRemotePublicationHandlers(const std::string& participant_sid);
 	void ResendRemoteTrackPreferences();
 	void FailIncomingDataStreams(const std::string& reason);
+	void ConfigureE2ee(const std::optional<E2eeOptions>& options);
 
 	struct IncomingFile {
 		FileReceivedEvent event;
@@ -166,12 +170,14 @@ private:
 	std::atomic<bool> full_reconnect_prepared_{false};
 	std::atomic<DisconnectReason> disconnect_reason_{DisconnectReason::Unknown};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;
+	std::unique_ptr<E2EEManager> e2ee_manager_ = nullptr;
 	std::unique_ptr<LocalParticipant> local_participant_ = nullptr;
 	mutable std::mutex participants_mutex_;
 	std::map<std::string, std::shared_ptr<RemoteParticipant>> remote_participants_;
 	std::map<std::string, std::shared_ptr<RemoteTrack>> remote_tracks_;
 	struct PendingMediaTrack {
 		webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track;
+		webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver;
 		std::function<std::string()> stats_provider;
 	};
 	std::map<std::string, PendingMediaTrack> pending_media_tracks_;

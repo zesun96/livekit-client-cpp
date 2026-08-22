@@ -45,6 +45,7 @@ namespace livekit {
 namespace core {
 
 class RtcSession;
+class E2EEManager;
 
 class SignalClient;
 class RtcEngine : public SignalClientObserver, public RtcSession::RtcSessionListener {
@@ -57,6 +58,7 @@ public:
 		virtual void
 		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
 		virtual void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
+		                             webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
 		                             std::function<std::string()> stats_provider) = 0;
 		virtual void MediaTrackRemovedEvent(const std::string& track_sid) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
@@ -88,6 +90,7 @@ public:
 	void Disconnect();
 
 	void SetRoomObserver(RtcEngineListener* listener);
+	void SetE2EEManager(E2EEManager* manager, std::string local_participant_identity);
 
 	std::shared_ptr<PeerTransportFactory> GetSessionPeerTransportFactory();
 	webrtc::scoped_refptr<AudioDevice> GetAudioDevice();
@@ -254,6 +257,9 @@ private:
 
 private:
 	std::atomic<RtcEngineListener*> room_listener_{nullptr};
+	std::mutex e2ee_mutex_;
+	E2EEManager* e2ee_manager_ = nullptr;
+	std::string e2ee_local_identity_;
 	mutable std::mutex session_lock_;
 	mutable std::mutex signal_client_lock_;
 	std::shared_ptr<SignalClient> signal_client_;

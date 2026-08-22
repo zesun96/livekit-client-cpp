@@ -16,6 +16,7 @@
  */
 
 #include "rtc_engine.h"
+#include "../e2ee/e2ee_manager_internal.h"
 #include "internals.h"
 #include "rtc_session.h"
 #include "signal_client.h"
@@ -110,6 +111,58 @@ const char* ReconnectReasonName(livekit::DisconnectReason reason) {
 
 namespace livekit {
 namespace core {
+
+namespace {
+
+bool MakeEncryptablePayload(const livekit::DataPacket& packet,
+                            livekit::EncryptedPacketPayload& payload) {
+	if (packet.has_user()) {
+		payload.mutable_user()->CopyFrom(packet.user());
+	} else if (packet.has_chat_message()) {
+		payload.mutable_chat_message()->CopyFrom(packet.chat_message());
+	} else if (packet.has_rpc_request()) {
+		payload.mutable_rpc_request()->CopyFrom(packet.rpc_request());
+	} else if (packet.has_rpc_ack()) {
+		payload.mutable_rpc_ack()->CopyFrom(packet.rpc_ack());
+	} else if (packet.has_rpc_response()) {
+		payload.mutable_rpc_response()->CopyFrom(packet.rpc_response());
+	} else if (packet.has_stream_header()) {
+		payload.mutable_stream_header()->CopyFrom(packet.stream_header());
+	} else if (packet.has_stream_chunk()) {
+		payload.mutable_stream_chunk()->CopyFrom(packet.stream_chunk());
+	} else if (packet.has_stream_trailer()) {
+		payload.mutable_stream_trailer()->CopyFrom(packet.stream_trailer());
+	} else {
+		return false;
+	}
+	return true;
+}
+
+bool RestoreEncryptedPayload(const livekit::EncryptedPacketPayload& payload,
+                             livekit::DataPacket& packet) {
+	if (payload.has_user()) {
+		packet.mutable_user()->CopyFrom(payload.user());
+	} else if (payload.has_chat_message()) {
+		packet.mutable_chat_message()->CopyFrom(payload.chat_message());
+	} else if (payload.has_rpc_request()) {
+		packet.mutable_rpc_request()->CopyFrom(payload.rpc_request());
+	} else if (payload.has_rpc_ack()) {
+		packet.mutable_rpc_ack()->CopyFrom(payload.rpc_ack());
+	} else if (payload.has_rpc_response()) {
+		packet.mutable_rpc_response()->CopyFrom(payload.rpc_response());
+	} else if (payload.has_stream_header()) {
+		packet.mutable_stream_header()->CopyFrom(payload.stream_header());
+	} else if (payload.has_stream_chunk()) {
+		packet.mutable_stream_chunk()->CopyFrom(payload.stream_chunk());
+	} else if (payload.has_stream_trailer()) {
+		packet.mutable_stream_trailer()->CopyFrom(payload.stream_trailer());
+	} else {
+		return false;
+	}
+	return true;
+}
+
+} // namespace
 
 class RtcEngine::DataChannelObserverProxy final : public webrtc::DataChannelObserver {
 public:
@@ -608,6 +661,12 @@ void RtcEngine::RunRecovery() {
 
 void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_.store(listener); }
 
+void RtcEngine::SetE2EEManager(E2EEManager* manager, std::string local_participant_identity) {
+	std::lock_guard<std::mutex> guard(e2ee_mutex_);
+	e2ee_manager_ = manager;
+	e2ee_local_identity_ = std::move(local_participant_identity);
+}
+
 void RtcEngine::OnAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	{
 		std::lock_guard<std::mutex> guard(session_lock_);
@@ -740,8 +799,35 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 		return false;
 	}
 
+	livekit::DataPacket outbound(packet);
+	{
+		std::lock_guard<std::mutex> guard(e2ee_mutex_);
+		if (e2ee_manager_ != nullptr && e2ee_manager_->Enabled()) {
+			livekit::EncryptedPacketPayload payload;
+			if (MakeEncryptablePayload(packet, payload)) {
+				std::string serialized_payload;
+				if (!payload.SerializeToString(&serialized_payload)) {
+					return false;
+				}
+				const std::vector<std::uint8_t> plaintext(serialized_payload.begin(),
+				                                          serialized_payload.end());
+				auto encrypted = E2EEManagerNativeAccess::EncryptData(
+				    *e2ee_manager_, e2ee_local_identity_, plaintext);
+				if (!encrypted) {
+					return false;
+				}
+				auto* encrypted_packet = outbound.mutable_encrypted_packet();
+				encrypted_packet->set_encryption_type(livekit::Encryption_Type_GCM);
+				encrypted_packet->set_iv(encrypted->iv.data(), encrypted->iv.size());
+				encrypted_packet->set_key_index(static_cast<std::uint32_t>(encrypted->key_index));
+				encrypted_packet->set_encrypted_value(encrypted->payload.data(),
+				                                      encrypted->payload.size());
+			}
+		}
+	}
+
 	std::string serialized;
-	if (!packet.SerializeToString(&serialized)) {
+	if (!outbound.SerializeToString(&serialized)) {
 		return false;
 	}
 	std::lock_guard<std::mutex> send_guard(reliable ? reliable_data_channel_send_mutex_
@@ -1304,7 +1390,8 @@ void RtcEngine::OnTrack(PeerTransport::Target target,
 	auto track = transceiver->receiver()->track();
 	if (track) {
 		if (auto* listener = room_listener_.load()) {
-			listener->MediaTrackEvent(std::move(track), std::move(stats_provider));
+			listener->MediaTrackEvent(std::move(track), transceiver->receiver(),
+			                          std::move(stats_provider));
 		}
 	}
 }
@@ -1620,6 +1707,34 @@ void RtcEngine::OnDataChannelMessage(const webrtc::DataBuffer& buffer) {
 	livekit::DataPacket packet;
 	if (!packet.ParseFromArray(buffer.data.data(), static_cast<int>(buffer.data.size()))) {
 		return;
+	}
+	if (packet.has_encrypted_packet()) {
+		std::lock_guard<std::mutex> guard(e2ee_mutex_);
+		const auto encryption_type = packet.encrypted_packet().encryption_type();
+		// Official JS clients omit this proto3 field and rely on EncryptedPacket itself to
+		// imply AES-GCM. Accept the default NONE value for compatibility, while still
+		// rejecting explicitly unsupported algorithms.
+		if (e2ee_manager_ == nullptr || !e2ee_manager_->Enabled() ||
+		    (encryption_type != livekit::Encryption_Type_NONE &&
+		     encryption_type != livekit::Encryption_Type_GCM)) {
+			return;
+		}
+		const auto& encrypted_packet = packet.encrypted_packet();
+		E2EEManagerNativeAccess::EncryptedData encrypted{
+		    {encrypted_packet.encrypted_value().begin(), encrypted_packet.encrypted_value().end()},
+		    {encrypted_packet.iv().begin(), encrypted_packet.iv().end()},
+		    encrypted_packet.key_index()};
+		auto decrypted = E2EEManagerNativeAccess::DecryptData(
+		    *e2ee_manager_, packet.participant_identity(), encrypted);
+		if (!decrypted ||
+		    decrypted->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+			return;
+		}
+		livekit::EncryptedPacketPayload payload;
+		if (!payload.ParseFromArray(decrypted->data(), static_cast<int>(decrypted->size())) ||
+		    !RestoreEncryptedPayload(payload, packet)) {
+			return;
+		}
 	}
 	if (packet.has_rpc_request() || packet.has_rpc_ack() || packet.has_rpc_response()) {
 		HandleRpcPacket(packet);

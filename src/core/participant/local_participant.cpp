@@ -20,6 +20,7 @@
 #include "../detail/converted_proto.h"
 #include "../detail/data_stream_compression.h"
 #include "../detail/video_encoding.h"
+#include "../e2ee/e2ee_manager_internal.h"
 #include "../track/audio_source.h"
 #include "../track/audio_track.h"
 #include "../track/local_audio_track.h"
@@ -564,6 +565,12 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		if (!transceiver) {
 			return false;
 		}
+		if (e2ee_manager_ != nullptr &&
+		    !E2EEManagerNativeAccess::AttachSender(*e2ee_manager_, local_track->Sid(), Identity(),
+		                                           kind, transceiver->sender())) {
+			engine_->RemoveSender(local_track);
+			return false;
+		}
 		local_track->SetTransceiver(transceiver);
 
 		engine_->PublisherNegotiationNeeded();
@@ -604,9 +611,15 @@ bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_u
 	}
 	auto publications = TrackPublicationsSnapshot();
 	auto publication = publications.find(local_track->Sid());
-	if (publication == publications.end() || publication->second->Track() != local_track ||
-	    !engine_->RemoveSender(local_track)) {
+	if (publication == publications.end() || publication->second->Track() != local_track) {
 		return false;
+	}
+	if (!engine_->RemoveSender(local_track)) {
+		return false;
+	}
+	if (e2ee_manager_ != nullptr) {
+		E2EEManagerNativeAccess::Detach(*e2ee_manager_, local_track->Sid(),
+		                                FrameCryptorDirection::Sender);
 	}
 
 	local_track->SetTransceiver(nullptr);
@@ -732,6 +745,9 @@ void LocalParticipant::DetachTrackTransceiversForReconnect() {
 		                        ? dynamic_cast<LocalTrack*>(publication->Track())
 		                        : nullptr;
 		if (local_track != nullptr) {
+			if (e2ee_manager_ != nullptr) {
+				E2EEManagerNativeAccess::Detach(*e2ee_manager_, sid, FrameCryptorDirection::Sender);
+			}
 			local_track->SetTransceiver(nullptr);
 		}
 	}
@@ -770,6 +786,11 @@ bool LocalParticipant::RepublishAllTracksAfterReconnect() {
 
 void LocalParticipant::SetEventListener(RoomEventInterface* listener) {
 	event_listener_.store(listener);
+}
+
+void LocalParticipant::SetE2EEManager(E2EEManager* manager, EncryptionType encryption_type) {
+	e2ee_manager_ = manager;
+	encryption_type_ = encryption_type;
 }
 
 void LocalParticipant::UpdateRoomOptions(RoomOptions options) {

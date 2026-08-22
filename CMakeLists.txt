@@ -121,6 +121,7 @@ set(
   LKC_CORE_SOURCE_FILES
 
   src/core/e2ee/e2ee_manager.cpp
+  src/core/e2ee/frame_crypto_transformer.cpp
   src/core/e2ee/key_provider.cpp
 
   src/capture/audio_capture_adapter.cpp
@@ -210,6 +211,7 @@ target_include_directories(
 )
 target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE
+  ${libwebrtc_SOURCE_DIR}/include/third_party/boringssl/src/include
   ${libwebrtc_SOURCE_DIR}/include/third_party/libyuv/include
 )
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})

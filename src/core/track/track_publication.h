@@ -46,6 +46,7 @@ public:
 	TrackInterface* Track() override;
 	bool IsSubscriptionAllowed() override;
 	std::optional<SubscriptionError> LastSubscriptionError() override;
+	EncryptionType Encryption() override;
 
 	void UpdateInfo(livekit::TrackInfo info);
 	livekit::TrackInfo Info() const;

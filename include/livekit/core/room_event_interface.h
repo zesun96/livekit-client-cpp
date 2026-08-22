@@ -21,6 +21,7 @@
 #define _LKC_CORE_ROOM_EVENT_INTERFACE_H_
 
 #include "data_packet.h"
+#include "e2ee/e2ee_manager.h"
 #include "option/media_option.h"
 #include "participant/participant_interface.h"
 #include "track/audio_frame.h"
@@ -129,6 +130,7 @@ public:
 	virtual void OnLocalTrackSubscribed(TrackPublicationInterface*, ParticipantInterface*) {}
 	virtual void OnSubscribedQualityUpdate(TrackPublicationInterface*, ParticipantInterface*,
 	                                       const SubscribedQualityUpdate&) {}
+	virtual void OnEncryptionStateChanged(const EncryptionStateEvent&) {}
 };
 
 } // namespace core

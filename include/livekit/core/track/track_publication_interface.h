@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 #define _LKC_CORE_TRACK_TRACK_PUBLICATION_INTERFACE_H_
 
+#include "livekit/core/option/e2ee_option.h"
 #include "livekit/core/option/media_option.h"
 #include "livekit/core/track/subscription_error.h"
 
@@ -55,6 +56,8 @@ public:
 	virtual bool SetSubscribed(bool) { return false; }
 	virtual RemoteTrackSettings GetRemoteTrackSettings() { return {}; }
 	virtual bool UpdateRemoteTrackSettings(const RemoteTrackSettings&) { return false; }
+	// Appended for ABI compatibility. Reports the encryption declared in TrackInfo.
+	virtual EncryptionType Encryption() { return EncryptionType::None; }
 };
 
 } // namespace core
