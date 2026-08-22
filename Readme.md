@@ -157,7 +157,7 @@ the server URL and short-lived tokens in the environment:
 
 - `LIVEKIT_TOKEN_SINGLE`: a unique identity for the single-client lifecycle test.
 - `LIVEKIT_TOKEN` and `LIVEKIT_TOKEN_2`: two different identities in the same room for the
-  participant, audio, video, data-message, text/byte-stream, and file-transfer tests.
+  participant, audio, video, E2EE, data-message, text/byte-stream, and file-transfer tests.
 - `LIVEKIT_TOKEN_2_UPDATE` (optional): replaces `LIVEKIT_TOKEN_2` in the participant-state test
   and must be generated with `lk token create --allow-update-metadata`; when omitted,
   metadata/name/attribute update checks are skipped.
@@ -200,9 +200,23 @@ $apiSecret = Read-Host "LiveKit API secret"
 Run this command from an elevated PowerShell when the existing server is elevated or Windows
 Firewall requires a rule for a newly downloaded server executable. To test a different server
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
-RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart` or
-`-Scenario TokenRefresh` to run one part of the matrix. The harness verifies the listener's exact
-executable path before stopping it and never writes credentials or logs into the repository.
+RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart`,
+`-Scenario TokenRefresh`, or `-Scenario E2EE` to run one part of the matrix. The E2EE scenario
+creates two short-lived identities and verifies encrypted audio, VP8 video, data, state events, and
+automatic key ratcheting. The harness verifies the listener's exact executable path before stopping
+it and never writes credentials or logs into the repository.
+
+For official JS interoperability, build the separately downloaded `client-sdk-js` and run:
+
+```powershell
+node .\test\integration\run_js_e2ee_interop.mjs `
+  --official-js-sdk "C:\path\to\client-sdk-js" `
+  --config "C:\path\to\livekit-server-config.yaml"
+```
+
+This launches a headless browser and verifies encrypted audio, VP8 video, and data from this SDK,
+plus encrypted data in the reverse direction. The official JS package remains an external test
+fixture and is not linked into or distributed with this SDK.
 
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.

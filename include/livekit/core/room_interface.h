@@ -35,6 +35,8 @@
 namespace livekit {
 namespace core {
 
+class E2EEManager;
+
 class RoomInterface {
 public:
 	using RoomState = core::RoomState;
@@ -87,6 +89,9 @@ public:
 	virtual bool SetSpeakerMuted(bool) { return false; }
 	virtual bool SpeakerMuted() const { return false; }
 	virtual AudioPlaybackStats GetAudioPlaybackStats() const { return {}; }
+	// The returned pointer is owned by the room and remains valid until the room is reconfigured or
+	// destroyed. A null pointer means E2EE is not configured.
+	virtual E2EEManager* GetE2EEManager() { return nullptr; }
 
 	// These controls return false when the room is disconnected or the participant/track SID does
 	// not belong to the room.

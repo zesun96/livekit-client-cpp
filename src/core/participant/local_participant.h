@@ -39,6 +39,7 @@ namespace core {
 
 class RoomEventInterface;
 class OutgoingDataStreamState;
+class E2EEManager;
 
 class LocalParticipant : public Participant, public LocalParticipantInterface {
 public:
@@ -82,12 +83,14 @@ public:
 	    const std::vector<ParticipantTrackPermission>& participant_permissions) override;
 	bool ResendTrackSubscriptionPermissions();
 	void SetEventListener(RoomEventInterface* listener);
+	void SetE2EEManager(E2EEManager* manager, EncryptionType encryption_type);
 	void UpdateRoomOptions(RoomOptions options);
 	void LocalTrackSubscribed(const std::string& track_sid);
 	void SubscribedQualityUpdate(core::SubscribedQualityUpdate update);
 
 private:
 	RtcEngine* engine_;
+	E2EEManager* e2ee_manager_ = nullptr;
 	std::mutex room_options_mutex_;
 	RoomOptions options_;
 	EncryptionType encryption_type_;

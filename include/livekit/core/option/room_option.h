@@ -20,8 +20,11 @@
 #ifndef _LKC_CORE_OPTION_ROOM_OPTION_H_
 #define _LKC_CORE_OPTION_ROOM_OPTION_H_
 
+#include "e2ee_option.h"
 #include "reconnect_policy.h"
 #include "rtc_engine_option.h"
+
+#include <optional>
 
 namespace livekit {
 namespace core {
@@ -40,6 +43,7 @@ struct RoomOptions {
 	std::chrono::milliseconds reconnect_timeout{15'000};
 	std::shared_ptr<ReconnectPolicy> reconnect_policy = CreateDefaultReconnectPolicy();
 	RoomSdkOptions sdk_options;
+	std::optional<E2eeOptions> e2ee;
 };
 
 RoomOptions default_room_options();

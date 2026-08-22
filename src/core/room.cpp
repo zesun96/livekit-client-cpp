@@ -19,6 +19,7 @@
 #include "../capture/audio_capture_adapter.h"
 #include "detail/converted_proto.h"
 #include "detail/rtc_engine.h"
+#include "e2ee/e2ee_manager_internal.h"
 #include "track/audio_track.h"
 #include "track/remote_audio_track.h"
 #include "track/remote_track_publication.h"
@@ -126,9 +127,18 @@ Room::Room(RoomOptions options) : options_(options) {
 	rtc_engine_->SetRoomObserver(this);
 	local_participant_ = std::make_unique<LocalParticipant>("", "", EncryptionType::None,
 	                                                        rtc_engine_.get(), options_);
+	ConfigureE2ee(options_.e2ee);
 }
 
 Room::~Room() {
+	if (rtc_engine_) {
+		rtc_engine_->SetE2EEManager(nullptr, {});
+	}
+	if (e2ee_manager_) {
+		E2EEManagerNativeAccess::SetEnabledCallback(*e2ee_manager_, {});
+		e2ee_manager_->SetStateCallback({});
+		E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
+	}
 	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
@@ -195,6 +205,7 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	local_participant_->UpdateRoomOptions(opts);
 
 	try {
+		ConfigureE2ee(opts.e2ee);
 		EngineOptions engine_options = make_engine_config(opts);
 		livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
 		if (!join_response.has_room()) {
@@ -310,6 +321,9 @@ bool Room::Disconnect() {
 		return false;
 	}
 	SetState(RoomState::Disconnecting);
+	if (e2ee_manager_) {
+		E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
+	}
 
 	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
 	{
@@ -327,6 +341,35 @@ bool Room::Disconnect() {
 }
 
 LocalParticipantInterface* Room::GetLocalParticipant() { return this->local_participant_.get(); }
+
+E2EEManager* Room::GetE2EEManager() { return e2ee_manager_.get(); }
+
+void Room::ConfigureE2ee(const std::optional<E2eeOptions>& options) {
+	std::unique_ptr<E2EEManager> replacement;
+	EncryptionType encryption_type = EncryptionType::None;
+	if (options && options->encryption_type != EncryptionType::None) {
+		replacement = std::make_unique<E2EEManager>(*options);
+		replacement->SetStateCallback([this](const EncryptionStateEvent& event) {
+			if (auto* listener = event_listener_.load()) {
+				listener->OnEncryptionStateChanged(event);
+			}
+		});
+		E2EEManagerNativeAccess::SetEnabledCallback(*replacement, [this](bool enabled) {
+			local_participant_->SetE2EEManager(e2ee_manager_.get(), enabled ? EncryptionType::Gcm
+			                                                                : EncryptionType::None);
+			return !IsConnected() || local_participant_->RepublishAllTracks();
+		});
+		encryption_type = options->enabled ? options->encryption_type : EncryptionType::None;
+	}
+	if (e2ee_manager_) {
+		E2EEManagerNativeAccess::SetEnabledCallback(*e2ee_manager_, {});
+		e2ee_manager_->SetStateCallback({});
+		E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
+	}
+	e2ee_manager_ = std::move(replacement);
+	local_participant_->SetE2EEManager(e2ee_manager_.get(), encryption_type);
+	rtc_engine_->SetE2EEManager(e2ee_manager_.get(), local_participant_->Identity());
+}
 
 std::vector<RemoteParticipantInterface*> Room::GetRemoteParticipants() {
 	std::lock_guard<std::mutex> guard(participants_mutex_);
@@ -693,6 +736,9 @@ void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 
 void Room::ReconnectingEvent(bool full_reconnect) {
 	if (full_reconnect && !full_reconnect_prepared_.exchange(true)) {
+		if (e2ee_manager_) {
+			E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
+		}
 		local_participant_->DetachTrackTransceiversForReconnect();
 	}
 	if (!TransitionState(RoomState::Connected, RoomState::Reconnecting)) {
@@ -840,6 +886,7 @@ void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool re
 		} else {
 			local_participant_->UpdateFromInfo(join_response.participant());
 		}
+		rtc_engine_->SetE2EEManager(e2ee_manager_.get(), local_participant_->Identity());
 	}
 	{
 		std::lock_guard<std::mutex> guard(room_info_mutex_);
@@ -936,6 +983,9 @@ void Room::LocalTrackUnpublishedEvent(const std::string& sid) {
 	if (auto* local_track = dynamic_cast<LocalTrack*>(publication->Track())) {
 		if (local_participant_->UnpublishTrack(local_track, true)) {
 			return;
+		}
+		if (e2ee_manager_) {
+			E2EEManagerNativeAccess::Detach(*e2ee_manager_, sid, FrameCryptorDirection::Sender);
 		}
 		local_track->SetTransceiver(nullptr);
 		local_track->SetEnabled(false);
@@ -1096,6 +1146,7 @@ void Room::SubscriptionErrorEvent(const livekit::SubscriptionResponse& response)
 }
 
 void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> rtc_track,
+                           webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
                            std::function<std::string()> stats_provider) {
 	if (!rtc_track) {
 		return;
@@ -1111,7 +1162,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		participant = FindRemoteParticipantForTrack(track_sid);
 		if (!participant) {
-			pending_media_tracks_[track_sid] = {rtc_track, std::move(stats_provider)};
+			pending_media_tracks_[track_sid] = {rtc_track, receiver, std::move(stats_provider)};
 			return;
 		}
 		if (remote_tracks_.count(track_sid) != 0) {
@@ -1164,6 +1215,12 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		}
 	}
 	if (subscribed_track) {
+		if (e2ee_manager_ && receiver && publication &&
+		    publication->Encryption() == EncryptionType::Gcm) {
+			E2EEManagerNativeAccess::AttachReceiver(*e2ee_manager_, track_sid,
+			                                        participant->Identity(),
+			                                        subscribed_track->Kind(), std::move(receiver));
+		}
 		if (auto* listener = event_listener_.load()) {
 			listener->OnTrackSubscribed(subscribed_track.get(), participant.get());
 			if (publication && current_status != previous_status) {
@@ -1175,6 +1232,9 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 }
 
 void Room::MediaTrackRemovedEvent(const std::string& track_sid) {
+	if (e2ee_manager_) {
+		E2EEManagerNativeAccess::Detach(*e2ee_manager_, track_sid, FrameCryptorDirection::Receiver);
+	}
 	std::shared_ptr<RemoteParticipant> participant;
 	std::shared_ptr<RemoteTrack> track;
 	std::shared_ptr<TrackPublicationInterface> publication;
@@ -1884,6 +1944,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	std::vector<AttributesEvent> attributes_changed;
 	std::vector<PermissionsEvent> permissions_changed;
 	std::vector<MuteEvent> mute_changed;
+	std::vector<std::string> removed_cryptors;
 
 	auto attribute_changes = [](const std::map<std::string, std::string>& old_attributes,
 	                            const std::map<std::string, std::string>& new_attributes) {
@@ -1972,6 +2033,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 						}
 						remote_tracks_.erase(sid);
 						pending_media_tracks_.erase(sid);
+						removed_cryptors.push_back(sid);
 						if (emit_events) {
 							unpublished.push_back({publication, retained});
 						}
@@ -2053,6 +2115,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 					}
 					remote_tracks_.erase(sid);
 					pending_media_tracks_.erase(sid);
+					removed_cryptors.push_back(sid);
 					unpublished.push_back({publication, retained});
 				}
 			}
@@ -2065,6 +2128,12 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			} else {
 				++it;
 			}
+		}
+	}
+	if (e2ee_manager_) {
+		for (const auto& track_id : removed_cryptors) {
+			E2EEManagerNativeAccess::Detach(*e2ee_manager_, track_id,
+			                                FrameCryptorDirection::Receiver);
 		}
 	}
 
@@ -2111,7 +2180,8 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	}
 
 	for (auto& track : ready_tracks) {
-		MediaTrackEvent(std::move(track.track), std::move(track.stats_provider));
+		MediaTrackEvent(std::move(track.track), std::move(track.receiver),
+		                std::move(track.stats_provider));
 	}
 }
 

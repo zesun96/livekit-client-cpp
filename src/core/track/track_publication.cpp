@@ -80,6 +80,11 @@ std::optional<SubscriptionError> TrackPublication::LastSubscriptionError() {
 	return subscription_error_;
 }
 
+EncryptionType TrackPublication::Encryption() {
+	std::lock_guard<std::mutex> guard(mutex_);
+	return from_proto(info_.encryption());
+}
+
 void TrackPublication::UpdateInfo(livekit::TrackInfo info) {
 	std::lock_guard<std::mutex> guard(mutex_);
 	info_ = info;

@@ -19,7 +19,7 @@ param(
   [string]$ConfigPath = "",
   [string]$ExistingServerExecutable = "",
   [switch]$ReplaceExistingServer,
-  [ValidateSet("All", "Restart", "TokenRefresh")]
+  [ValidateSet("All", "Restart", "TokenRefresh", "E2EE")]
   [string]$Scenario = "All"
 )
 
@@ -157,6 +157,32 @@ function Invoke-CoordinatedTest(
   }
 }
 
+function Invoke-SimpleTest([string]$TestName) {
+  $stdout = Join-Path $tempRoot "$TestName.out.log"
+  $stderr = Join-Path $tempRoot "$TestName.err.log"
+  $test = Start-Process -FilePath $testExecutable `
+    -ArgumentList "--gtest_filter=LiveKitServerTest.$TestName" `
+    -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+    -WindowStyle Hidden -PassThru
+  try {
+    if (-not $test.WaitForExit(120000)) {
+      Stop-OwnedProcess $test
+      throw "$TestName timed out"
+    }
+    $test.WaitForExit()
+    $test.Refresh()
+    $passed = Select-String -LiteralPath $stdout -Pattern '^\[  PASSED  \] 1 test\.$' -Quiet
+    if (-not $passed) {
+      $details = ((Get-Content -LiteralPath $stdout -Tail 160) +
+        (Get-Content -LiteralPath $stderr -Tail 160)) -join "`n"
+      throw "$TestName failed:`n$details"
+    }
+    Write-Host "PASS $TestName"
+  } finally {
+    Stop-OwnedProcess $test
+  }
+}
+
 $serverPath = Resolve-RequiredPath $ServerExecutable "LiveKit server executable"
 $expectedExistingServerPath = $serverPath
 if (-not [string]::IsNullOrEmpty($ExistingServerExecutable)) {
@@ -218,6 +244,8 @@ $originalEnvironment = @{
   LIVEKIT_API_SECRET = $env:LIVEKIT_API_SECRET
   LIVEKIT_TOKEN_RESTART = $env:LIVEKIT_TOKEN_RESTART
   LIVEKIT_TOKEN_REFRESH = $env:LIVEKIT_TOKEN_REFRESH
+  LIVEKIT_TOKEN = $env:LIVEKIT_TOKEN
+  LIVEKIT_TOKEN_2 = $env:LIVEKIT_TOKEN_2
   LIVEKIT_SERVER_RESTART_READY_FILE = $env:LIVEKIT_SERVER_RESTART_READY_FILE
   LIVEKIT_TOKEN_REFRESH_READY_FILE = $env:LIVEKIT_TOKEN_REFRESH_READY_FILE
 }
@@ -250,6 +278,9 @@ try {
   $refreshIdentity = "refresh-client"
   $env:LIVEKIT_TOKEN_RESTART = New-ParticipantToken $room $restartIdentity
   $env:LIVEKIT_TOKEN_REFRESH = New-ParticipantToken $room $refreshIdentity
+  $e2eeRoom = "cpp-e2ee-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  $env:LIVEKIT_TOKEN = New-ParticipantToken $e2eeRoom "e2ee-sender"
+  $env:LIVEKIT_TOKEN_2 = New-ParticipantToken $e2eeRoom "e2ee-receiver"
   $env:LIVEKIT_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "restart.ready"
   $env:LIVEKIT_TOKEN_REFRESH_READY_FILE = Join-Path $tempRoot "refresh.ready"
 
@@ -270,6 +301,10 @@ try {
         # confirms that the client retained it before recovery is triggered.
         Start-Sleep -Milliseconds 100
       }
+  }
+
+  if ($Scenario -in @("All", "E2EE")) {
+    Invoke-SimpleTest "EncryptsAudioVideoAndDataEndToEnd"
   }
 } finally {
   Stop-OwnedProcess $server
