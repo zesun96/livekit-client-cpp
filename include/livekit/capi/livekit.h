@@ -135,6 +135,12 @@ typedef enum lk_video_codec {
 	LK_VIDEO_CODEC_AV1 = 3
 } lk_video_codec_t;
 
+typedef enum lk_backup_codec_policy {
+	LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION = 0,
+	LK_BACKUP_CODEC_POLICY_SIMULCAST = 1,
+	LK_BACKUP_CODEC_POLICY_REGRESSION = 2
+} lk_backup_codec_policy_t;
+
 typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_UNKNOWN = 0,
 	LK_CONNECTION_QUALITY_POOR = 1,
@@ -672,6 +678,9 @@ typedef struct lk_track_publish_options {
 	const char* stream;
 	lk_video_codec_t video_codec;
 	const char* scalability_mode;
+	int backup_video_codec_enabled;
+	lk_video_codec_t backup_video_codec;
+	lk_backup_codec_policy_t backup_codec_policy;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {

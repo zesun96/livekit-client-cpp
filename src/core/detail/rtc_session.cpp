@@ -173,13 +173,27 @@ bool RtcSession::SupportsVideoCodec(VideoCodec codec) const {
 webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 RtcSession::CreateSender(LocalTrack* track, TrackPublishOptions options,
                          std::vector<webrtc::RtpEncodingParameters> send_encodings) {
+	if (track == nullptr || track->media_track() == nullptr) {
+		return nullptr;
+	}
+	return CreateSender(track->media_track()->rtc_track(), track->Kind(), std::move(options),
+	                    std::move(send_encodings));
+}
+
+webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+RtcSession::CreateSender(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> media_track,
+                         TrackKind kind, TrackPublishOptions options,
+                         std::vector<webrtc::RtpEncodingParameters> send_encodings) {
+	if (publisher_pc_ == nullptr || media_track == nullptr) {
+		return nullptr;
+	}
 
 	auto init = webrtc::RtpTransceiverInit();
 	init.direction = webrtc::RtpTransceiverDirection::kSendOnly;
 	init.send_encodings = send_encodings;
 	is_publisher_connection_required_.store(true);
-	auto transceiver = publisher_pc_->AddTransceiver(track->media_track()->rtc_track(), init);
-	if (transceiver == nullptr || track->Kind() != TrackKind::Video) {
+	auto transceiver = publisher_pc_->AddTransceiver(std::move(media_track), init);
+	if (transceiver == nullptr || kind != TrackKind::Video) {
 		return transceiver;
 	}
 	const auto capabilities =
@@ -201,7 +215,12 @@ bool RtcSession::RemoveSender(LocalTrack* track) {
 	if (track == nullptr || publisher_pc_ == nullptr) {
 		return false;
 	}
-	return publisher_pc_->RemoveTrack(track->Transceiver());
+	return RemoveSender(track->Transceiver());
+}
+
+bool RtcSession::RemoveSender(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	return publisher_pc_ != nullptr && transceiver != nullptr &&
+	       publisher_pc_->RemoveTrack(std::move(transceiver));
 }
 
 std::function<std::string()> RtcSession::CreatePublisherStatsProvider(

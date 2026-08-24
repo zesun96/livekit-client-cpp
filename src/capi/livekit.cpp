@@ -313,6 +313,22 @@ bool ToCoreVideoCodec(lk_video_codec_t codec, core::VideoCodec& result) {
 	}
 }
 
+bool ToCoreBackupCodecPolicy(lk_backup_codec_policy_t policy, core::BackupCodecPolicy& result) {
+	switch (policy) {
+	case LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION:
+		result = core::BackupCodecPolicy::PreferRegression;
+		return true;
+	case LK_BACKUP_CODEC_POLICY_SIMULCAST:
+		result = core::BackupCodecPolicy::Simulcast;
+		return true;
+	case LK_BACKUP_CODEC_POLICY_REGRESSION:
+		result = core::BackupCodecPolicy::Regression;
+		return true;
+	default:
+		return false;
+	}
+}
+
 lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
                                       core::TrackPublishOptions& result) {
 	if (options == nullptr) {
@@ -343,6 +359,19 @@ lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
 	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, scalability_mode) &&
 	    options->scalability_mode != nullptr) {
 		result.scalability_mode = options->scalability_mode;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, backup_video_codec_enabled) &&
+	    options->backup_video_codec_enabled != 0) {
+		core::VideoCodec backup_codec;
+		if (!LKC_HAS_FIELD(options, lk_track_publish_options_t, backup_video_codec) ||
+		    !ToCoreVideoCodec(options->backup_video_codec, backup_codec)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid backup video codec");
+		}
+		result.backup_video_codec = backup_codec;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, backup_codec_policy) &&
+	    !ToCoreBackupCodecPolicy(options->backup_codec_policy, result.backup_codec_policy)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid backup codec policy");
 	}
 	return LK_STATUS_OK;
 }
@@ -1453,6 +1482,8 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->simulcast = 1;
 		options->video_codec = LK_VIDEO_CODEC_VP8;
 		options->scalability_mode = "L3T3_KEY";
+		options->backup_video_codec = LK_VIDEO_CODEC_VP8;
+		options->backup_codec_policy = LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION;
 	}
 }
 

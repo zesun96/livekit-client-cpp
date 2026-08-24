@@ -31,8 +31,11 @@
 #include "participant.h"
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <set>
+#include <thread>
 
 namespace livekit {
 namespace core {
@@ -92,6 +95,15 @@ public:
 	void LocalDataTrackUnpublished(uint16_t publisher_handle);
 
 private:
+	struct BackupCodecRequest {
+		std::string track_sid;
+		VideoCodec codec;
+	};
+
+	void QueueBackupCodec(std::string track_sid, VideoCodec codec);
+	void RunBackupCodecWorker();
+	bool PublishAdditionalCodec(const std::string& track_sid, VideoCodec codec);
+
 	RtcEngine* engine_;
 	E2EEManager* e2ee_manager_ = nullptr;
 	std::mutex room_options_mutex_;
@@ -105,6 +117,13 @@ private:
 	std::mutex local_track_subscriptions_mutex_;
 	std::set<std::string> subscribed_local_track_sids_;
 	std::set<std::string> emitted_local_track_subscriptions_;
+	std::recursive_mutex media_publish_mutex_;
+	std::mutex backup_codec_mutex_;
+	std::condition_variable backup_codec_cv_;
+	std::deque<BackupCodecRequest> backup_codec_requests_;
+	std::set<std::pair<std::string, VideoCodec>> pending_backup_codecs_;
+	bool stop_backup_codec_worker_ = false;
+	std::thread backup_codec_worker_;
 
 	// AudioSourceInterface* source_;
 };

@@ -111,6 +111,14 @@ Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and op
 layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 use a single RTP
 encoding with SVC; `TrackPublishOptions::scalability_mode` selects the mode and defaults to
 `L3T3_KEY`. The C API exposes the same setting as `lk_track_publish_options_t::scalability_mode`.
+Advanced-codec publications can opt into an H264 or VP8 fallback with
+`TrackPublishOptions::backup_video_codec`. The initial publication advertises the fallback and the
+SDK creates its independent sender only after LiveKit requests that codec. Select
+`BackupCodecPolicy::PreferRegression` (default), `Simulcast`, or `Regression` to control server
+selection; `backup_video_encoding` optionally overrides the fallback bitrate and frame rate. The C
+API appends equivalent `backup_video_codec_enabled`, `backup_video_codec`, and
+`backup_codec_policy` fields. Backup senders currently remain disabled for E2EE publications,
+matching the official client capability boundary.
 
 Applications can create native microphone, camera, monitor, and window sources through the C++ or
 C device APIs, then publish them with the normal local-track helpers. Native system-audio capture

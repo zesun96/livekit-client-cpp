@@ -111,8 +111,13 @@ public:
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	CreateSender(LocalTrack* track, TrackPublishOptions options,
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	CreateSender(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> media_track,
+	             TrackKind kind, TrackPublishOptions options,
+	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
 	bool SupportsVideoCodec(VideoCodec codec) const;
 	bool RemoveSender(LocalTrack* track);
+	bool RemoveSender(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 	std::function<std::string()> CreatePublisherStatsProvider(
 	    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const;
 	std::function<std::string()> CreateSubscriberStatsProvider(
