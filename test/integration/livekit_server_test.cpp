@@ -1,4 +1,7 @@
+#include "../../src/core/participant/local_participant.h"
 #include "../../src/core/room.h"
+#include "../../src/core/track/local_video_track.h"
+#include "../../src/core/track/track_publication.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/participant/remote_participant_interface.h"
@@ -967,6 +970,95 @@ TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
 	EXPECT_TRUE(receiver->Disconnect());
 	video_track.reset();
 	video_source.reset();
+}
+
+TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the backup "
+		                "codec integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	RoomOptions sender_options;
+	sender_options.dynacast = true;
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token, sender_options));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	VideoFrame frame;
+	frame.width = 640;
+	frame.height = 360;
+	frame.data.resize(frame.width * frame.height * 3 / 2, 128);
+	std::fill(frame.data.begin(), frame.data.begin() + frame.width * frame.height, 80);
+	frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+	                         std::chrono::steady_clock::now().time_since_epoch())
+	                         .count();
+	auto source = CreateVideoSourceUnique();
+	ASSERT_TRUE(source->CaptureFrame(frame));
+	auto track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    "integration-backup-codec-video", source.get());
+	ASSERT_NE(track, nullptr);
+	TrackPublishOptions options;
+	options.source = TrackSource::Camera;
+	options.video_codec = VideoCodec::VP9;
+	options.backup_video_codec = VideoCodec::VP8;
+	options.backup_codec_policy = BackupCodecPolicy::PreferRegression;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(track.get(), options));
+
+	auto* concrete_participant = dynamic_cast<LocalParticipant*>(sender->GetLocalParticipant());
+	auto* concrete_track = dynamic_cast<LocalVideoTrack*>(track.get());
+	ASSERT_NE(concrete_participant, nullptr);
+	ASSERT_NE(concrete_track, nullptr);
+	EXPECT_TRUE(concrete_track->AdditionalCodecs().empty());
+
+	SubscribedQualityUpdate request;
+	request.track_sid = track->Sid();
+	request.codecs = {
+	    {"video/VP9", {{VideoQuality::High, true}}},
+	    {"video/VP8",
+	     {{VideoQuality::Low, true}, {VideoQuality::Medium, true}, {VideoQuality::High, true}}},
+	};
+	concrete_participant->SubscribedQualityUpdate(std::move(request));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto codecs = concrete_track->AdditionalCodecs();
+		    return codecs.size() == 1 && codecs[0].codec == VideoCodec::VP8 &&
+		           codecs[0].transceiver != nullptr;
+	    },
+	    std::chrono::seconds(10)));
+
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    auto* remote_sender =
+		        receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+		    auto* publication = remote_sender != nullptr
+		                            ? remote_sender->GetTrackPublication(TrackSource::Camera)
+		                            : nullptr;
+		    auto* concrete_publication = dynamic_cast<TrackPublication*>(publication);
+		    if (concrete_publication == nullptr) {
+			    return false;
+		    }
+		    const auto info = concrete_publication->Info();
+		    return std::any_of(info.codecs().begin(), info.codecs().end(),
+		                       [](const auto& codec) { return codec.mime_type() == "video/VP8"; });
+	    },
+	    std::chrono::seconds(10)));
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(track.get(), false));
+	EXPECT_TRUE(concrete_track->AdditionalCodecs().empty());
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
 }
 
 TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {

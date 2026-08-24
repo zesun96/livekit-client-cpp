@@ -369,6 +369,7 @@ try {
 
   if ($Scenario -in @("All", "Media")) {
     Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
+    Invoke-SimpleTest "PublishesBackupCodecWhenRequestedByServer"
     Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
   }
 

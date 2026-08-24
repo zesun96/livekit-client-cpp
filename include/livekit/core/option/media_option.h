@@ -89,6 +89,13 @@ enum class VideoCodec {
 	AV1,
 };
 
+// Values intentionally match livekit.protocol.BackupCodecPolicy.
+enum class BackupCodecPolicy {
+	PreferRegression = 0,
+	Simulcast = 1,
+	Regression = 2,
+};
+
 struct VideoEncoding {
 	uint64_t max_bitrate = 0;
 	float max_framerate = 0.0f;
@@ -118,6 +125,9 @@ struct TrackPublishOptions {
 	TrackSource source = TrackSource::Unknown;
 	std::string stream;
 	std::string scalability_mode = "L3T3_KEY";
+	std::optional<VideoCodec> backup_video_codec;
+	VideoEncoding backup_video_encoding;
+	BackupCodecPolicy backup_codec_policy = BackupCodecPolicy::PreferRegression;
 };
 
 } // namespace core

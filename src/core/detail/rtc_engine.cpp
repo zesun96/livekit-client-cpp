@@ -813,6 +813,18 @@ std::optional<livekit::TrackInfo> RtcEngine::AddTrack(const livekit::AddTrackReq
 	}
 }
 
+bool RtcEngine::SendAdditionalCodecTrack(const livekit::AddTrackRequest& req) {
+	if (req.cid().empty() || req.sid().empty()) {
+		return false;
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return false;
+	}
+	signal_client->SendAddTrack(req);
+	return true;
+}
+
 webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
                         std::vector<webrtc::RtpEncodingParameters> send_encodings) {
@@ -827,6 +839,17 @@ RtcEngine::CreateSender(LocalTrack* track, TrackPublishOptions options,
 	return nullptr;
 }
 
+webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+RtcEngine::CreateSender(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> media_track,
+                        TrackPublishOptions options,
+                        std::vector<webrtc::RtpEncodingParameters> send_encodings) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	return rtc_session_ != nullptr
+	           ? rtc_session_->CreateSender(std::move(media_track), TrackKind::Video,
+	                                        std::move(options), std::move(send_encodings))
+	           : nullptr;
+}
+
 bool RtcEngine::SupportsVideoCodec(VideoCodec codec) const {
 	std::lock_guard<std::mutex> guard(session_lock_);
 	return rtc_session_ != nullptr && rtc_session_->SupportsVideoCodec(codec);
@@ -839,6 +862,11 @@ bool RtcEngine::RemoveSender(LocalTrack* track) {
 		track->SetStatsProvider({});
 	}
 	return removed;
+}
+
+bool RtcEngine::RemoveSender(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+	std::lock_guard<std::mutex> guard(session_lock_);
+	return rtc_session_ != nullptr && rtc_session_->RemoveSender(std::move(transceiver));
 }
 
 void RtcEngine::PublisherNegotiationNeeded() {

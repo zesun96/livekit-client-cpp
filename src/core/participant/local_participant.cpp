@@ -36,6 +36,7 @@
 #include "rtc_base/crypto_random.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -62,6 +63,30 @@ bool PublishChatMessage(RtcEngine* engine, const ChatMessage& message) {
 	chat->set_deleted(message.deleted);
 	chat->set_generated(message.generated);
 	return engine->SendDataPacket(packet, true);
+}
+
+std::optional<VideoCodec> ParseBackupVideoCodec(std::string codec) {
+	const auto slash = codec.find('/');
+	if (slash != std::string::npos) {
+		codec.erase(0, slash + 1);
+	}
+	std::transform(codec.begin(), codec.end(), codec.begin(),
+	               [](unsigned char value) { return static_cast<char>(std::toupper(value)); });
+	if (codec == "VP8") {
+		return VideoCodec::VP8;
+	}
+	if (codec == "H264") {
+		return VideoCodec::H264;
+	}
+	return std::nullopt;
+}
+
+bool IsSupportedBackupVideoCodec(VideoCodec codec) {
+	return codec == VideoCodec::VP8 || codec == VideoCodec::H264;
+}
+
+livekit::BackupCodecPolicy ToProtoBackupCodecPolicy(BackupCodecPolicy policy) {
+	return static_cast<livekit::BackupCodecPolicy>(static_cast<int>(policy));
 }
 
 } // namespace
@@ -413,9 +438,21 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity,
                   std::map<std::string, std::string>{}),
       outgoing_stream_state_(std::make_shared<OutgoingDataStreamState>(engine)) {
 	is_local_participant_ = true;
+	backup_codec_worker_ = std::thread([this] { RunBackupCodecWorker(); });
 }
 
-LocalParticipant::~LocalParticipant() { outgoing_stream_state_->Invalidate(); }
+LocalParticipant::~LocalParticipant() {
+	{
+		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+		stop_backup_codec_worker_ = true;
+		backup_codec_requests_.clear();
+	}
+	backup_codec_cv_.notify_all();
+	if (backup_codec_worker_.joinable()) {
+		backup_codec_worker_.join();
+	}
+	outgoing_stream_state_->Invalidate();
+}
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 	const auto owned_publications = TrackPublicationsSnapshot();
@@ -506,6 +543,7 @@ LocalTrackInterface* LocalParticipant::CreateLocalVideoTrack(std::string label,
 }
 
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
 		return false;
 	}
@@ -535,6 +573,13 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		if (!engine_->SupportsVideoCodec(option.video_codec)) {
 			return false;
 		}
+		if (option.backup_video_codec.has_value() &&
+		    *option.backup_video_codec != option.video_codec &&
+		    encryption_type_ == EncryptionType::None &&
+		    (!IsSupportedBackupVideoCodec(*option.backup_video_codec) ||
+		     !engine_->SupportsVideoCodec(*option.backup_video_codec))) {
+			return false;
+		}
 		req.set_width(video_track->source()->Width());
 		req.set_height(video_track->source()->Height());
 	}
@@ -554,6 +599,13 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		codec->set_video_layer_mode(video_encoding_plan.video_layer_mode);
 		for (const auto& layer : video_encoding_plan.layers) {
 			codec->add_layers()->CopyFrom(layer);
+		}
+		if (option.backup_video_codec.has_value() &&
+		    *option.backup_video_codec != option.video_codec &&
+		    encryption_type_ == EncryptionType::None) {
+			req.set_backup_codec_policy(ToProtoBackupCodecPolicy(option.backup_codec_policy));
+			auto* backup_codec = req.add_simulcast_codecs();
+			backup_codec->set_codec(VideoCodecName(*option.backup_video_codec));
 		}
 	}
 
@@ -618,6 +670,7 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 }
 
 bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
 		return false;
 	}
@@ -632,6 +685,12 @@ bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_u
 	}
 	if (!engine_->RemoveSender(local_track)) {
 		return false;
+	}
+	if (auto* video_track = dynamic_cast<LocalVideoTrack*>(local_track); video_track != nullptr) {
+		for (const auto& additional : video_track->AdditionalCodecs()) {
+			engine_->RemoveSender(additional.transceiver);
+		}
+		video_track->ClearAdditionalCodecs();
 	}
 	if (e2ee_manager_ != nullptr) {
 		E2EEManagerNativeAccess::Detach(*e2ee_manager_, local_track->Sid(),
@@ -679,6 +738,137 @@ void LocalParticipant::LocalTrackSubscribed(const std::string& track_sid) {
 	}
 }
 
+void LocalParticipant::QueueBackupCodec(std::string track_sid, VideoCodec codec) {
+	std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+	const auto key = std::make_pair(track_sid, codec);
+	if (stop_backup_codec_worker_ || !pending_backup_codecs_.insert(key).second) {
+		return;
+	}
+	backup_codec_requests_.push_back({std::move(track_sid), codec});
+	backup_codec_cv_.notify_one();
+}
+
+void LocalParticipant::RunBackupCodecWorker() {
+	for (;;) {
+		BackupCodecRequest request;
+		{
+			std::unique_lock<std::mutex> lock(backup_codec_mutex_);
+			backup_codec_cv_.wait(lock, [this] {
+				return stop_backup_codec_worker_ || !backup_codec_requests_.empty();
+			});
+			if (stop_backup_codec_worker_) {
+				return;
+			}
+			request = std::move(backup_codec_requests_.front());
+			backup_codec_requests_.pop_front();
+		}
+		try {
+			PublishAdditionalCodec(request.track_sid, request.codec);
+		} catch (const std::exception& error) {
+			std::cout << "publish backup codec error:" << error.what() << std::endl;
+		} catch (...) {
+			std::cout << "publish backup codec error:unknown error" << std::endl;
+		}
+		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+		pending_backup_codecs_.erase(std::make_pair(request.track_sid, request.codec));
+	}
+}
+
+bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, VideoCodec codec) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
+	if (engine_ == nullptr || encryption_type_ != EncryptionType::None ||
+	    !IsSupportedBackupVideoCodec(codec) || !engine_->SupportsVideoCodec(codec)) {
+		return false;
+	}
+	const auto publications = TrackPublicationsSnapshot();
+	const auto publication = publications.find(track_sid);
+	if (publication == publications.end()) {
+		return false;
+	}
+	auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication->second.get());
+	auto* local_track = local_publication != nullptr
+	                        ? dynamic_cast<LocalVideoTrack*>(local_publication->Track())
+	                        : nullptr;
+	if (local_track == nullptr || local_track->source() == nullptr ||
+	    local_track->HasAdditionalCodec(codec)) {
+		return false;
+	}
+	const auto options = local_publication->PublishOptions();
+	if (!options.backup_video_codec.has_value() || *options.backup_video_codec != codec ||
+	    options.video_codec == codec) {
+		return false;
+	}
+	auto* video_source = dynamic_cast<VideoSource*>(local_track->source());
+	if (video_source == nullptr || video_source->Width() == 0 || video_source->Height() == 0) {
+		return false;
+	}
+	auto peer_transport_factory = engine_->GetSessionPeerTransportFactory();
+	auto peer_factory = peer_transport_factory != nullptr
+	                        ? webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>(
+	                              peer_transport_factory->GetPeerConnectFactory())
+	                        : nullptr;
+	if (peer_factory == nullptr) {
+		return false;
+	}
+	auto rtc_video_track =
+	    peer_factory->CreateVideoTrack(video_source->Get(), webrtc::CreateRandomUuid());
+	if (rtc_video_track == nullptr) {
+		return false;
+	}
+	auto media_track = std::make_unique<VideoTrack>(rtc_video_track);
+	media_track->set_enabled(local_track->IsEnabled());
+
+	auto backup_options = options;
+	backup_options.video_codec = codec;
+	backup_options.video_encoding = options.backup_video_encoding;
+	if (backup_options.source == TrackSource::ScreenShare) {
+		backup_options.simulcast = false;
+	}
+	const auto encoding_plan =
+	    BuildVideoEncodingPlan(video_source->Width(), video_source->Height(),
+	                           backup_options.source == TrackSource::ScreenShare, backup_options);
+	if (!encoding_plan.valid) {
+		return false;
+	}
+
+	livekit::AddTrackRequest req;
+	req.set_cid(rtc_video_track->id());
+	req.set_sid(track_sid);
+	req.set_name(local_track->Name());
+	req.set_type(livekit::TrackType::VIDEO);
+	req.set_source(to_proto(backup_options.source));
+	req.set_muted(local_track->Muted());
+	req.set_encryption(livekit::Encryption_Type_NONE);
+	req.set_stream(backup_options.stream);
+	req.set_width(video_source->Width());
+	req.set_height(video_source->Height());
+	for (const auto& layer : encoding_plan.layers) {
+		req.add_layers()->CopyFrom(layer);
+	}
+	auto* simulcast_codec = req.add_simulcast_codecs();
+	simulcast_codec->set_codec(VideoCodecName(codec));
+	simulcast_codec->set_cid(req.cid());
+	simulcast_codec->set_video_layer_mode(encoding_plan.video_layer_mode);
+	for (const auto& layer : encoding_plan.layers) {
+		simulcast_codec->add_layers()->CopyFrom(layer);
+	}
+	if (!engine_->SendAdditionalCodecTrack(req)) {
+		return false;
+	}
+	auto transceiver =
+	    engine_->CreateSender(rtc_video_track, backup_options, encoding_plan.encodings);
+	if (transceiver == nullptr) {
+		return false;
+	}
+	if (!local_track->AddAdditionalCodec(codec, std::move(media_track), transceiver,
+	                                     encoding_plan.encodings)) {
+		engine_->RemoveSender(transceiver);
+		return false;
+	}
+	engine_->PublisherNegotiationNeeded();
+	return true;
+}
+
 void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate update) {
 	if (update.track_sid.empty()) {
 		return;
@@ -693,6 +883,18 @@ void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate upd
 		return;
 	}
 	local_publication->UpdateSubscribedQuality(update);
+	const auto publish_options = local_publication->PublishOptions();
+	if (publish_options.backup_video_codec.has_value()) {
+		for (const auto& requested_codec : update.codecs) {
+			const auto codec = ParseBackupVideoCodec(requested_codec.codec);
+			const bool enabled =
+			    std::any_of(requested_codec.qualities.begin(), requested_codec.qualities.end(),
+			                [](const auto& quality) { return quality.enabled; });
+			if (enabled && codec.has_value() && *codec == *publish_options.backup_video_codec) {
+				QueueBackupCodec(update.track_sid, *codec);
+			}
+		}
+	}
 	bool dynacast = false;
 	{
 		std::lock_guard<std::mutex> guard(room_options_mutex_);
@@ -704,10 +906,24 @@ void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate upd
 		auto sender = transceiver != nullptr ? transceiver->sender() : nullptr;
 		if (sender != nullptr) {
 			auto parameters = sender->GetParameters();
-			const auto options = local_publication->PublishOptions();
 			if (ApplySubscribedQualities(parameters.encodings, update,
-			                             VideoCodecName(options.video_codec))) {
+			                             VideoCodecName(publish_options.video_codec))) {
 				sender->SetParameters(parameters);
+			}
+		}
+		auto* video_track = dynamic_cast<LocalVideoTrack*>(local_publication->Track());
+		if (video_track != nullptr) {
+			for (const auto& additional : video_track->AdditionalCodecs()) {
+				auto additional_sender =
+				    additional.transceiver != nullptr ? additional.transceiver->sender() : nullptr;
+				if (additional_sender == nullptr) {
+					continue;
+				}
+				auto parameters = additional_sender->GetParameters();
+				if (ApplySubscribedQualities(parameters.encodings, update,
+				                             VideoCodecName(additional.codec))) {
+					additional_sender->SetParameters(parameters);
+				}
 			}
 		}
 	}
@@ -728,6 +944,7 @@ std::size_t LocalParticipant::UnpublishTracks(const std::vector<LocalTrackInterf
 }
 
 bool LocalParticipant::RepublishAllTracks() {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	struct PendingTrack {
 		LocalTrackInterface* track;
 		TrackPublishOptions options;
@@ -755,6 +972,7 @@ bool LocalParticipant::RepublishAllTracks() {
 }
 
 void LocalParticipant::DetachTrackTransceiversForReconnect() {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
 		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication.get());
 		auto* local_track = local_publication != nullptr
@@ -764,12 +982,17 @@ void LocalParticipant::DetachTrackTransceiversForReconnect() {
 			if (e2ee_manager_ != nullptr) {
 				E2EEManagerNativeAccess::Detach(*e2ee_manager_, sid, FrameCryptorDirection::Sender);
 			}
+			if (auto* video_track = dynamic_cast<LocalVideoTrack*>(local_track);
+			    video_track != nullptr) {
+				video_track->ClearAdditionalCodecs();
+			}
 			local_track->SetTransceiver(nullptr);
 		}
 	}
 }
 
 bool LocalParticipant::RepublishAllTracksAfterReconnect() {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	struct PendingTrack {
 		std::string publication_sid;
 		LocalTrack* track;
@@ -846,6 +1069,7 @@ void LocalParticipant::SetEventListener(RoomEventInterface* listener) {
 }
 
 void LocalParticipant::SetE2EEManager(E2EEManager* manager, EncryptionType encryption_type) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	e2ee_manager_ = manager;
 	encryption_type_ = encryption_type;
 }

@@ -100,12 +100,18 @@ public:
 	webrtc::scoped_refptr<AudioDevice> GetAudioDevice();
 
 	std::optional<livekit::TrackInfo> AddTrack(const livekit::AddTrackRequest& req);
+	bool SendAdditionalCodecTrack(const livekit::AddTrackRequest& req);
 
 	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
 	CreateSender(LocalTrack* track, TrackPublishOptions options,
 	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>
+	CreateSender(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> media_track,
+	             TrackPublishOptions options,
+	             std::vector<webrtc::RtpEncodingParameters> send_encodings);
 	bool SupportsVideoCodec(VideoCodec codec) const;
 	bool RemoveSender(LocalTrack* track);
+	bool RemoveSender(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);

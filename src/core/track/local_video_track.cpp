@@ -25,5 +25,50 @@ LocalVideoTrack::LocalVideoTrack(std::string name, std::unique_ptr<VideoTrack> v
     : LocalTrack("TR_unknown", std::move(name), TrackKind::Video, std::move(video_track)),
       source_(source) {}
 
+void LocalVideoTrack::SetEnabled(bool enabled) {
+	LocalTrack::SetEnabled(enabled);
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	for (auto& entry : additional_codecs_) {
+		auto& state = entry.second;
+		if (state.media_track != nullptr) {
+			state.media_track->set_enabled(enabled);
+		}
+	}
+}
+
+bool LocalVideoTrack::HasAdditionalCodec(VideoCodec codec) const {
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	return additional_codecs_.count(codec) != 0;
+}
+
+bool LocalVideoTrack::AddAdditionalCodec(
+    VideoCodec codec, std::unique_ptr<VideoTrack> media_track,
+    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
+    std::vector<webrtc::RtpEncodingParameters> encodings) {
+	if (media_track == nullptr || transceiver == nullptr) {
+		return false;
+	}
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	return additional_codecs_
+	    .emplace(codec, AdditionalCodecState{std::move(media_track), std::move(transceiver),
+	                                         std::move(encodings)})
+	    .second;
+}
+
+std::vector<LocalVideoTrack::AdditionalCodecSender> LocalVideoTrack::AdditionalCodecs() const {
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	std::vector<AdditionalCodecSender> result;
+	result.reserve(additional_codecs_.size());
+	for (const auto& [codec, state] : additional_codecs_) {
+		result.push_back({codec, state.transceiver, state.encodings});
+	}
+	return result;
+}
+
+void LocalVideoTrack::ClearAdditionalCodecs() {
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	additional_codecs_.clear();
+}
+
 } // namespace core
 } // namespace livekit

@@ -65,6 +65,9 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(publish.video_codec, LK_VIDEO_CODEC_VP8);
 	ASSERT_NE(publish.scalability_mode, nullptr);
 	EXPECT_STREQ(publish.scalability_mode, "L3T3_KEY");
+	EXPECT_EQ(publish.backup_video_codec_enabled, 0);
+	EXPECT_EQ(publish.backup_video_codec, LK_VIDEO_CODEC_VP8);
+	EXPECT_EQ(publish.backup_codec_policy, LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION);
 
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
