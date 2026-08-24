@@ -28,6 +28,8 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 bool ApplySubscribedQualities(std::vector<webrtc::RtpEncodingParameters>& encodings,
                               const SubscribedQualityUpdate& update,
                               const std::string& published_codec);
+bool ApplyVideoEncodingPlan(std::vector<webrtc::RtpEncodingParameters>& encodings,
+                            const std::vector<webrtc::RtpEncodingParameters>& planned_encodings);
 
 } // namespace core
 } // namespace livekit

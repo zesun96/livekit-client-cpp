@@ -119,6 +119,43 @@ TEST(VideoEncodingTest, NeverDisablesSingleEncodingOrMismatchedCodec) {
 	EXPECT_TRUE(simulcast[2].active);
 }
 
+TEST(VideoEncodingTest, UpdatesOnlyMutableSenderEncodingFields) {
+	TrackPublishOptions initial_options;
+	const auto initial_plan = BuildVideoEncodingPlan(1280, 720, false, initial_options);
+	auto encodings = initial_plan.encodings;
+	ASSERT_EQ(encodings.size(), 3u);
+	encodings[0].active = false;
+
+	TrackPublishOptions updated_options;
+	updated_options.video_encoding = {900000, 12};
+	const auto updated_plan = BuildVideoEncodingPlan(1280, 720, false, updated_options);
+	ASSERT_TRUE(ApplyVideoEncodingPlan(encodings, updated_plan.encodings));
+
+	EXPECT_FALSE(encodings[0].active);
+	EXPECT_TRUE(encodings[1].active);
+	EXPECT_TRUE(encodings[2].active);
+	for (std::size_t index = 0; index < encodings.size(); ++index) {
+		EXPECT_EQ(encodings[index].rid, initial_plan.encodings[index].rid);
+		EXPECT_EQ(encodings[index].scale_resolution_down_by,
+		          initial_plan.encodings[index].scale_resolution_down_by);
+		EXPECT_EQ(encodings[index].scalability_mode,
+		          initial_plan.encodings[index].scalability_mode);
+		EXPECT_EQ(encodings[index].max_bitrate_bps, updated_plan.encodings[index].max_bitrate_bps);
+		EXPECT_EQ(encodings[index].max_framerate, updated_plan.encodings[index].max_framerate);
+	}
+}
+
+TEST(VideoEncodingTest, RejectsEncodingPlanWithDifferentLayerCount) {
+	TrackPublishOptions options;
+	auto encodings = BuildVideoEncodingPlan(1280, 720, false, options).encodings;
+	options.simulcast = false;
+	const auto single = BuildVideoEncodingPlan(1280, 720, false, options).encodings;
+
+	EXPECT_FALSE(ApplyVideoEncodingPlan(encodings, single));
+	std::vector<webrtc::RtpEncodingParameters> empty;
+	EXPECT_FALSE(ApplyVideoEncodingPlan(empty, empty));
+}
+
 TEST(VideoEncodingTest, BuildsSvcLayersForSvcCodecs) {
 	for (const auto codec : {VideoCodec::VP9, VideoCodec::AV1}) {
 		TrackPublishOptions options;

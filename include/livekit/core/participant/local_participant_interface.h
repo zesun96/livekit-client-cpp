@@ -115,6 +115,13 @@ public:
 	virtual DataTrackPublishResult PublishDataTrack(DataTrackPublishOptions) {
 		return {{}, {DataTrackErrorCode::Disconnected, "data tracks are unavailable"}};
 	}
+	// Updates an already-published video sender without replacing the track or renegotiating.
+	// A zero value restores the SDK-derived bitrate or frame-rate default. When backup_codec is
+	// true, the setting is retained even if the backup sender has not been requested yet.
+	virtual bool UpdateVideoEncoding(LocalTrackInterface*, VideoEncoding,
+	                                 bool backup_codec = false) {
+		return false;
+	}
 };
 
 } // namespace core

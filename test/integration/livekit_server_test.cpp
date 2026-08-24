@@ -945,6 +945,39 @@ TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
 	std::string expected_video_mime_type;
 	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
+	auto* concrete_video_track = dynamic_cast<LocalVideoTrack*>(video_track.get());
+	ASSERT_NE(concrete_video_track, nullptr);
+	ASSERT_NE(concrete_video_track->Transceiver(), nullptr);
+	ASSERT_NE(concrete_video_track->Transceiver()->sender(), nullptr);
+	const auto initial_parameters = concrete_video_track->Transceiver()->sender()->GetParameters();
+	ASSERT_FALSE(initial_parameters.encodings.empty());
+	ASSERT_TRUE(
+	    sender->GetLocalParticipant()->UpdateVideoEncoding(video_track.get(), {900000, 12}));
+	const auto updated_parameters = concrete_video_track->Transceiver()->sender()->GetParameters();
+	ASSERT_EQ(updated_parameters.encodings.size(), initial_parameters.encodings.size());
+	for (std::size_t index = 0; index < updated_parameters.encodings.size(); ++index) {
+		EXPECT_EQ(updated_parameters.encodings[index].active,
+		          initial_parameters.encodings[index].active);
+		EXPECT_EQ(updated_parameters.encodings[index].rid, initial_parameters.encodings[index].rid);
+		EXPECT_EQ(updated_parameters.encodings[index].scale_resolution_down_by,
+		          initial_parameters.encodings[index].scale_resolution_down_by);
+		EXPECT_EQ(updated_parameters.encodings[index].scalability_mode,
+		          initial_parameters.encodings[index].scalability_mode);
+		ASSERT_TRUE(updated_parameters.encodings[index].max_framerate.has_value());
+		EXPECT_DOUBLE_EQ(*updated_parameters.encodings[index].max_framerate, 12.0);
+	}
+	ASSERT_TRUE(updated_parameters.encodings.back().max_bitrate_bps.has_value());
+	EXPECT_EQ(*updated_parameters.encodings.back().max_bitrate_bps, 900000);
+
+	ASSERT_TRUE(sender->GetLocalParticipant()->UpdateVideoEncoding(video_track.get(), {}));
+	const auto reset_parameters = concrete_video_track->Transceiver()->sender()->GetParameters();
+	ASSERT_EQ(reset_parameters.encodings.size(), initial_parameters.encodings.size());
+	for (std::size_t index = 0; index < reset_parameters.encodings.size(); ++index) {
+		EXPECT_EQ(reset_parameters.encodings[index].max_bitrate_bps,
+		          initial_parameters.encodings[index].max_bitrate_bps);
+		EXPECT_EQ(reset_parameters.encodings[index].max_framerate,
+		          initial_parameters.encodings[index].max_framerate);
+	}
 
 	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	while (!events.video_received() && std::chrono::steady_clock::now() < video_deadline) {
@@ -1014,6 +1047,8 @@ TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 	options.backup_video_codec = VideoCodec::VP8;
 	options.backup_codec_policy = BackupCodecPolicy::PreferRegression;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(track.get(), options));
+	ASSERT_TRUE(
+	    sender->GetLocalParticipant()->UpdateVideoEncoding(track.get(), {320000, 15}, true));
 
 	auto* concrete_participant = dynamic_cast<LocalParticipant*>(sender->GetLocalParticipant());
 	auto* concrete_track = dynamic_cast<LocalVideoTrack*>(track.get());
@@ -1036,6 +1071,18 @@ TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 		           codecs[0].transceiver != nullptr;
 	    },
 	    std::chrono::seconds(10)));
+	const auto additional_codecs = concrete_track->AdditionalCodecs();
+	ASSERT_EQ(additional_codecs.size(), 1u);
+	ASSERT_NE(additional_codecs[0].transceiver, nullptr);
+	ASSERT_NE(additional_codecs[0].transceiver->sender(), nullptr);
+	const auto backup_parameters = additional_codecs[0].transceiver->sender()->GetParameters();
+	ASSERT_FALSE(backup_parameters.encodings.empty());
+	ASSERT_TRUE(backup_parameters.encodings.back().max_bitrate_bps.has_value());
+	EXPECT_EQ(*backup_parameters.encodings.back().max_bitrate_bps, 320000);
+	for (const auto& encoding : backup_parameters.encodings) {
+		ASSERT_TRUE(encoding.max_framerate.has_value());
+		EXPECT_DOUBLE_EQ(*encoding.max_framerate, 15.0);
+	}
 
 	ASSERT_TRUE(WaitUntil(
 	    [&] {

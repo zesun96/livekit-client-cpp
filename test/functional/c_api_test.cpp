@@ -68,6 +68,16 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(publish.backup_video_codec_enabled, 0);
 	EXPECT_EQ(publish.backup_video_codec, LK_VIDEO_CODEC_VP8);
 	EXPECT_EQ(publish.backup_codec_policy, LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION);
+	EXPECT_EQ(publish.video_encoding.struct_size, sizeof(publish.video_encoding));
+	EXPECT_EQ(publish.video_encoding.max_bitrate, 0u);
+	EXPECT_FLOAT_EQ(publish.video_encoding.max_framerate, 0.0F);
+	EXPECT_EQ(publish.backup_video_encoding.struct_size, sizeof(publish.backup_video_encoding));
+
+	lk_video_encoding_t encoding;
+	lk_video_encoding_init(&encoding);
+	EXPECT_EQ(encoding.struct_size, sizeof(encoding));
+	EXPECT_EQ(encoding.max_bitrate, 0u);
+	EXPECT_FLOAT_EQ(encoding.max_framerate, 0.0F);
 
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
