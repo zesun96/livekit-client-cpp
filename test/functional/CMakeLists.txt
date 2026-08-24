@@ -8,6 +8,7 @@ add_executable(
   public_api_test.cpp
   video_frame_converter_test.cpp
   track_stats_test.cpp
+  video_codec_factory_test.cpp
   video_encoding_test.cpp
   webrtc_audio_processor_test.cpp
 )

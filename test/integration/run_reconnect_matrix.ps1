@@ -19,8 +19,11 @@ param(
   [string]$ConfigPath = "",
   [string]$ExistingServerExecutable = "",
   [switch]$ReplaceExistingServer,
-  [ValidateSet("All", "Restart", "TokenRefresh", "E2EE")]
-  [string]$Scenario = "All"
+  [ValidateSet("All", "Restart", "TokenRefresh", "Media", "E2EE", "OfficialCpp")]
+  [string]$Scenario = "All",
+  [ValidateSet("vp8", "h264", "vp9", "av1")]
+  [string]$VideoCodec = "vp8",
+  [string]$OfficialCppPeerExecutable = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -173,13 +176,63 @@ function Invoke-SimpleTest([string]$TestName) {
     $test.Refresh()
     $passed = Select-String -LiteralPath $stdout -Pattern '^\[  PASSED  \] 1 test\.$' -Quiet
     if (-not $passed) {
+      $assertions = Select-String -LiteralPath $stdout `
+        -Pattern 'Failure$|Value of:|Expected:|Actual:|Expected equality|Which is:' `
+        -Context 1, 3 |
+        ForEach-Object { $_.ToString() }
       $details = ((Get-Content -LiteralPath $stdout -Tail 160) +
         (Get-Content -LiteralPath $stderr -Tail 160)) -join "`n"
-      throw "$TestName failed:`n$details"
+      throw "$TestName failed:`n$($assertions -join "`n")`n$details"
     }
     Write-Host "PASS $TestName"
   } finally {
     Stop-OwnedProcess $test
+  }
+}
+
+function Invoke-OfficialCppTest {
+  $readyFile = Join-Path $tempRoot "official-cpp.ready"
+  Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
+  $stdout = Join-Path $tempRoot "official-cpp-peer.out.log"
+  $stderr = Join-Path $tempRoot "official-cpp-peer.err.log"
+  $peer = Start-Process -FilePath $officialCppPeerPath `
+    -ArgumentList @(
+      "--url", "ws://127.0.0.1:$Port",
+      "--token", $env:LIVEKIT_TOKEN_2,
+      "--sender-identity", "e2ee-sender",
+      "--ready-file", $readyFile
+    ) `
+    -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+    -WindowStyle Hidden -PassThru
+  try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    while (-not (Test-Path -LiteralPath $readyFile)) {
+      if ($peer.HasExited) {
+        $details = ((Get-Content -LiteralPath $stdout -Tail 100) +
+          (Get-Content -LiteralPath $stderr -Tail 100)) -join "`n"
+        throw "Official C++ peer exited before becoming ready:`n$details"
+      }
+      if ([DateTime]::UtcNow -ge $deadline) {
+        throw "Timed out waiting for the official C++ peer"
+      }
+      Start-Sleep -Milliseconds 50
+    }
+
+    $env:LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY = "e2ee-receiver"
+    Invoke-SimpleTest "InteroperatesWithOfficialCppE2EEPeer"
+    if (-not $peer.WaitForExit(15000)) {
+      throw "Official C++ peer timed out after the interoperability test"
+    }
+    $peer.WaitForExit()
+    $passed = Select-String -LiteralPath $stdout -Pattern '^PASS official C\+\+' -Quiet
+    if (-not $passed) {
+      $details = ((Get-Content -LiteralPath $stdout -Tail 120) +
+        (Get-Content -LiteralPath $stderr -Tail 120)) -join "`n"
+      throw "Official C++ peer failed:`n$details"
+    }
+    Write-Host "PASS official C++ E2EE peer"
+  } finally {
+    Stop-OwnedProcess $peer
   }
 }
 
@@ -194,6 +247,13 @@ $buildPath = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $testExecutable = Resolve-RequiredPath `
   (Join-Path $buildPath "test/integration/$Configuration/livekit_server_integration_tests.exe") `
   "Reconnect integration test executable"
+$officialCppPeerPath = $null
+if (-not [string]::IsNullOrEmpty($OfficialCppPeerExecutable)) {
+  $officialCppPeerPath = Resolve-RequiredPath `
+    $OfficialCppPeerExecutable "Official LiveKit C++ peer executable"
+} elseif ($Scenario -eq "OfficialCpp") {
+  throw "-OfficialCppPeerExecutable is required for -Scenario OfficialCpp"
+}
 if ([string]::IsNullOrEmpty($NodeIp)) {
   $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" |
     Sort-Object RouteMetric, InterfaceMetric |
@@ -246,6 +306,8 @@ $originalEnvironment = @{
   LIVEKIT_TOKEN_REFRESH = $env:LIVEKIT_TOKEN_REFRESH
   LIVEKIT_TOKEN = $env:LIVEKIT_TOKEN
   LIVEKIT_TOKEN_2 = $env:LIVEKIT_TOKEN_2
+  LIVEKIT_VIDEO_CODEC = $env:LIVEKIT_VIDEO_CODEC
+  LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY = $env:LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY
   LIVEKIT_SERVER_RESTART_READY_FILE = $env:LIVEKIT_SERVER_RESTART_READY_FILE
   LIVEKIT_TOKEN_REFRESH_READY_FILE = $env:LIVEKIT_TOKEN_REFRESH_READY_FILE
 }
@@ -281,6 +343,7 @@ try {
   $e2eeRoom = "cpp-e2ee-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
   $env:LIVEKIT_TOKEN = New-ParticipantToken $e2eeRoom "e2ee-sender"
   $env:LIVEKIT_TOKEN_2 = New-ParticipantToken $e2eeRoom "e2ee-receiver"
+  $env:LIVEKIT_VIDEO_CODEC = $VideoCodec
   $env:LIVEKIT_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "restart.ready"
   $env:LIVEKIT_TOKEN_REFRESH_READY_FILE = Join-Path $tempRoot "refresh.ready"
 
@@ -303,8 +366,19 @@ try {
       }
   }
 
+  if ($Scenario -in @("All", "Media")) {
+    Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
+  }
+
   if ($Scenario -in @("All", "E2EE")) {
     Invoke-SimpleTest "EncryptsAudioVideoAndDataEndToEnd"
+    Invoke-SimpleTest "PreservesE2EEAfterPublisherAndSubscriberReconnect"
+    Invoke-SimpleTest "ReportsAndRecoversFromE2EEKeyErrors"
+  }
+
+  if ($Scenario -eq "OfficialCpp" -or
+      ($Scenario -eq "All" -and $null -ne $officialCppPeerPath)) {
+    Invoke-OfficialCppTest
   }
 } finally {
   Stop-OwnedProcess $server

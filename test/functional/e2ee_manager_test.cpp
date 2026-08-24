@@ -6,6 +6,10 @@
 
 #include "api/crypto/frame_crypto_transformer.h"
 #include "api/make_ref_counted.h"
+#include "modules/rtp_rtcp/source/rtp_format.h"
+#include "modules/rtp_rtcp/source/rtp_packet_to_send.h"
+#include "modules/rtp_rtcp/source/rtp_packetizer_av1.h"
+#include "modules/rtp_rtcp/source/video_rtp_depacketizer_av1.h"
 #include "rtc_base/thread.h"
 
 #include <gtest/gtest.h>
@@ -135,6 +139,29 @@ TransformVideoFrame(const webrtc::scoped_refptr<webrtc::FrameCryptorTransformer>
 	    std::move(data), direction, codec, key_frame));
 	EXPECT_EQ(future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 	return future.get();
+}
+
+std::vector<std::uint8_t> PacketizeAndReassembleAv1(const std::vector<std::uint8_t>& frame) {
+	webrtc::RtpPacketizer::PayloadSizeLimits limits;
+	limits.max_payload_len = 1200;
+	webrtc::RtpPacketizerAv1 packetizer(frame, limits, webrtc::VideoFrameType::kVideoFrameKey,
+	                                    true);
+	std::vector<std::unique_ptr<webrtc::RtpPacketToSend>> packets;
+	while (packetizer.NumPackets() > 0) {
+		auto packet = std::make_unique<webrtc::RtpPacketToSend>(nullptr);
+		EXPECT_TRUE(packetizer.NextPacket(packet.get()));
+		packets.push_back(std::move(packet));
+	}
+	std::vector<webrtc::ArrayView<const std::uint8_t>> payloads;
+	payloads.reserve(packets.size());
+	for (const auto& packet : packets) {
+		payloads.push_back(packet->payload());
+	}
+	auto assembled = webrtc::VideoRtpDepacketizerAv1().AssembleFrame(payloads);
+	if (assembled == nullptr) {
+		return {};
+	}
+	return {assembled->data(), assembled->data() + assembled->size()};
 }
 
 TEST(E2EEManagerTest, OwnsInitialSharedKeyAndGlobalState) {
@@ -306,6 +333,10 @@ TEST(E2EEManagerTest, NativeEncodedVideoFramesRoundTripForSupportedFraming) {
 		    encryptor, plaintext, webrtc::TransformableFrameInterface::Direction::kSender, codec,
 		    true);
 		ASSERT_GT(encrypted.size(), plaintext.size());
+		if (codec == webrtc::VideoCodecType::kVideoCodecAV1) {
+			encrypted = PacketizeAndReassembleAv1(encrypted);
+			ASSERT_FALSE(encrypted.empty());
+		}
 		auto decrypted = TransformVideoFrame(
 		    decryptor, encrypted, webrtc::TransformableFrameInterface::Direction::kReceiver, codec,
 		    true);

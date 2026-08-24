@@ -84,6 +84,28 @@ VideoCodec VideoCodecFromEnvironment(std::string& mime_type) {
 	return VideoCodec::VP8;
 }
 
+E2eeKey IntegrationE2eeKey() {
+	return {
+	    0x50, 0xf7, 0x32, 0x6a, 0x9d, 0x83, 0x11, 0xc4, 0x44, 0x29, 0x7e,
+	    0x31, 0x6b, 0x05, 0xd8, 0x92, 0xa7, 0x40, 0x3c, 0xee, 0x19, 0xb1,
+	    0x67, 0x54, 0x88, 0xda, 0x2f, 0x03, 0x75, 0xbc, 0xe1, 0x9a,
+	};
+}
+
+bool HasFrameCryptorState(const E2EEManager* manager, TrackKind kind,
+                          FrameCryptorDirection direction, FrameCryptorState state) {
+	if (manager == nullptr) {
+		return false;
+	}
+	for (const auto& cryptor : manager->FrameCryptors()) {
+		if (cryptor.kind == kind && cryptor.direction == direction && cryptor.state == state &&
+		    cryptor.enabled) {
+			return true;
+		}
+	}
+	return false;
+}
+
 std::string PublicationSummary(ParticipantInterface* participant) {
 	if (participant == nullptr) {
 		return "participant is null";
@@ -839,6 +861,74 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	EXPECT_TRUE(first_room->Disconnect());
 }
 
+TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the codec "
+		                "integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	VideoFrame video_frame;
+	video_frame.width = 640;
+	video_frame.height = 360;
+	video_frame.data.resize(video_frame.width * video_frame.height * 3 / 2, 128);
+	std::fill(video_frame.data.begin(),
+	          video_frame.data.begin() + video_frame.width * video_frame.height, 72);
+	video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+	                               std::chrono::steady_clock::now().time_since_epoch())
+	                               .count();
+	auto video_source = CreateVideoSourceUnique();
+	ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+	auto video_track = sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    "integration-selected-codec-video", video_source.get());
+	ASSERT_NE(video_track, nullptr);
+	TrackPublishOptions video_options;
+	video_options.source = TrackSource::Camera;
+	video_options.simulcast = true;
+	std::string expected_video_mime_type;
+	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
+
+	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!events.video_received() && std::chrono::steady_clock::now() < video_deadline) {
+		video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                               std::chrono::steady_clock::now().time_since_epoch())
+		                               .count();
+		ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+		std::this_thread::sleep_for(std::chrono::milliseconds(33));
+	}
+	ASSERT_TRUE(events.video_received());
+
+	auto* remote_sender = receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+	ASSERT_NE(remote_sender, nullptr);
+	auto* video_publication = remote_sender->GetTrackPublication(TrackSource::Camera);
+	ASSERT_NE(video_publication, nullptr);
+	EXPECT_EQ(video_publication->MimeType(), expected_video_mime_type);
+	const bool expect_simulcast = video_options.video_codec == VideoCodec::VP8 ||
+	                              video_options.video_codec == VideoCodec::H264;
+	EXPECT_EQ(video_publication->IsSimulcasted(), expect_simulcast);
+
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+	video_track.reset();
+	video_source.reset();
+}
+
 TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	const char* url = std::getenv("LIVEKIT_URL");
 	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
@@ -1118,11 +1208,7 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 
 	ClientRuntime runtime;
 	ASSERT_TRUE(runtime.initialized());
-	const E2eeKey shared_key{
-	    0x50, 0xf7, 0x32, 0x6a, 0x9d, 0x83, 0x11, 0xc4, 0x44, 0x29, 0x7e,
-	    0x31, 0x6b, 0x05, 0xd8, 0x92, 0xa7, 0x40, 0x3c, 0xee, 0x19, 0xb1,
-	    0x67, 0x54, 0x88, 0xda, 0x2f, 0x03, 0x75, 0xbc, 0xe1, 0x9a,
-	};
+	const E2eeKey shared_key = IntegrationE2eeKey();
 	E2eeOptions e2ee;
 	e2ee.encryption_type = EncryptionType::Gcm;
 	e2ee.shared_key = shared_key;
@@ -1148,6 +1234,23 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(initial_data, data_options));
 	ASSERT_TRUE(
 	    WaitUntil([&] { return events.received_data(data_options.topic, initial_data, true); }));
+
+	const E2eeKey alternate_key{
+	    0x8d, 0x41, 0x02, 0x77, 0xc5, 0x19, 0xee, 0x64, 0x37, 0xa8, 0xf2,
+	    0x90, 0x1c, 0xb3, 0x56, 0x4a, 0x71, 0x0f, 0xd8, 0x22, 0x9b, 0x6c,
+	    0x45, 0xe1, 0xaa, 0x38, 0x73, 0x0d, 0x5f, 0xc4, 0x16, 0x99,
+	};
+	ASSERT_TRUE(sender->GetE2EEManager()->Keys().SetSharedKey(alternate_key, 1).Ok());
+	ASSERT_TRUE(receiver->GetE2EEManager()->Keys().SetSharedKey(alternate_key, 1).Ok());
+	ASSERT_TRUE(sender->GetE2EEManager()->SetDataKeyIndex(1));
+	ASSERT_TRUE(receiver->GetE2EEManager()->SetDataKeyIndex(1));
+	const std::vector<uint8_t> alternate_slot_data{'k', 'e', 'y', '-', 's',
+	                                               'l', 'o', 't', '-', '1'};
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(alternate_slot_data, data_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_data(data_options.topic, alternate_slot_data, true); }));
+	ASSERT_TRUE(sender->GetE2EEManager()->SetDataKeyIndex(0));
+	ASSERT_TRUE(receiver->GetE2EEManager()->SetDataKeyIndex(0));
 
 	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
 	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
@@ -1179,6 +1282,29 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 	ASSERT_NE(audio_publication, nullptr);
 	EXPECT_EQ(audio_publication->Encryption(), EncryptionType::Gcm);
 
+	ASSERT_TRUE(sender->GetE2EEManager()->SetFrameCryptorKeyIndex(
+	    audio_track->Sid(), FrameCryptorDirection::Sender, 1));
+	ASSERT_TRUE(receiver->GetE2EEManager()->SetFrameCryptorKeyIndex(
+	    audio_track->Sid(), FrameCryptorDirection::Receiver, 1));
+	const auto alternate_slot_audio_frames = events.audio_frame_count() + 5;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480) &&
+		           events.audio_frame_count() >= alternate_slot_audio_frames;
+	    },
+	    std::chrono::seconds(10)));
+	ASSERT_TRUE(sender->GetE2EEManager()->SetFrameCryptorKeyIndex(
+	    audio_track->Sid(), FrameCryptorDirection::Sender, 0));
+	ASSERT_TRUE(receiver->GetE2EEManager()->SetFrameCryptorKeyIndex(
+	    audio_track->Sid(), FrameCryptorDirection::Receiver, 0));
+	const auto restored_slot_audio_frames = events.audio_frame_count() + 5;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480) &&
+		           events.audio_frame_count() >= restored_slot_audio_frames;
+	    },
+	    std::chrono::seconds(10)));
+
 	const auto ratchet = sender->GetE2EEManager()->Keys().RatchetSharedKey();
 	ASSERT_TRUE(ratchet.Ok()) << (ratchet.error ? ratchet.error->message : "");
 	const std::vector<uint8_t> ratcheted_data{'r', 'a', 't', 'c', 'h', 'e', 't', 'e', 'd'};
@@ -1202,7 +1328,8 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 	ASSERT_NE(video_track, nullptr);
 	TrackPublishOptions video_options;
 	video_options.source = TrackSource::Camera;
-	video_options.video_codec = VideoCodec::VP8;
+	std::string expected_video_mime_type;
+	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
 	video_options.simulcast = false;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
 	const auto video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -1219,13 +1346,37 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 		ASSERT_TRUE(audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480));
 		std::this_thread::sleep_for(std::chrono::milliseconds(33));
 	}
-	ASSERT_TRUE(events.video_received());
+	std::ostringstream video_cryptor_summary;
+	for (const auto& cryptor : receiver->GetE2EEManager()->FrameCryptors()) {
+		if (cryptor.track_id == video_track->Sid()) {
+			video_cryptor_summary << "[direction=" << static_cast<int>(cryptor.direction)
+			                      << ", state=" << static_cast<int>(cryptor.state)
+			                      << ", enabled=" << cryptor.enabled
+			                      << ", key_index=" << cryptor.key_index << ']';
+		}
+	}
+	const std::string video_sender_stats = video_track->GetRTCStats();
+	auto* diagnostic_video_publication = remote_sender->GetTrackPublication(TrackSource::Camera);
+	const std::string video_receiver_stats =
+	    diagnostic_video_publication != nullptr && diagnostic_video_publication->Track() != nullptr
+	        ? diagnostic_video_publication->Track()->GetRTCStats()
+	        : "remote video track unavailable";
+	ASSERT_TRUE(events.video_received())
+	    << "frames=" << events.video_frame_count() << ", sender_e2ee_ok="
+	    << events.encryption_state(video_track->Sid(), FrameCryptorDirection::Sender,
+	                               FrameCryptorState::Ok)
+	    << ", receiver_e2ee_ok="
+	    << events.encryption_state(video_track->Sid(), FrameCryptorDirection::Receiver,
+	                               FrameCryptorState::Ok)
+	    << ", receiver_cryptors=" << video_cryptor_summary.str()
+	    << ", sender_stats=" << video_sender_stats << ", receiver_stats=" << video_receiver_stats;
 	ASSERT_TRUE(events.encryption_state(video_track->Sid(), FrameCryptorDirection::Sender,
 	                                    FrameCryptorState::Ok));
 	ASSERT_TRUE(events.encryption_state(video_track->Sid(), FrameCryptorDirection::Receiver,
 	                                    FrameCryptorState::Ok));
 	auto* video_publication = remote_sender->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
+	EXPECT_EQ(video_publication->MimeType(), expected_video_mime_type);
 	EXPECT_EQ(video_publication->Encryption(), EncryptionType::Gcm);
 
 	receiver->RemoveEventListener();
@@ -1236,6 +1387,201 @@ TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {
 	video_source.reset();
 	audio_track.reset();
 	audio_source.reset();
+}
+
+TEST(LiveKitServerTest, PreservesE2EEAfterPublisherAndSubscriberReconnect) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the E2EE "
+		                "reconnect integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	E2eeOptions e2ee;
+	e2ee.encryption_type = EncryptionType::Gcm;
+	e2ee.shared_key = IntegrationE2eeKey();
+	RoomOptions receiver_options;
+	receiver_options.e2ee = e2ee;
+	auto reconnect_policy = std::make_shared<RecordingReconnectPolicy>();
+	RoomOptions sender_options = receiver_options;
+	sender_options.reconnect_policy = reconnect_policy;
+
+	MediaEvents events;
+	auto receiver = CreateRoomUnique(receiver_options);
+	auto sender = CreateRoomUnique(sender_options);
+	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token, receiver_options));
+	ASSERT_TRUE(sender->Connect(url, sender_token, sender_options));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "integration-e2ee-reconnect-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions publish_options;
+	publish_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), publish_options));
+	std::vector<int16_t> samples(480, 1900);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.audio_received() &&
+		           events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Sender,
+		                                   FrameCryptorState::Ok) &&
+		           events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Receiver,
+		                                   FrameCryptorState::Ok);
+	    },
+	    std::chrono::seconds(10)));
+
+	auto publish_encrypted_data = [&](std::string topic, const std::vector<uint8_t>& payload) {
+		DataPublishOptions options;
+		options.topic = std::move(topic);
+		options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+		return sender->GetLocalParticipant()->PublishData(payload, options) &&
+		       WaitUntil([&] { return events.received_data(options.topic, payload, true); });
+	};
+
+	const auto frames_before_publisher_reconnect = events.audio_frame_count();
+	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
+	ASSERT_NE(concrete_sender, nullptr);
+	ASSERT_TRUE(concrete_sender->SimulateMediaFailureForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting(); }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	EXPECT_EQ(reconnect_policy->last_reason(), ReconnectReason::MediaFailure);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.local_tracks_published() >= 2 &&
+		           events.audio_frame_count() >= frames_before_publisher_reconnect + 3 &&
+		           HasFrameCryptorState(sender->GetE2EEManager(), TrackKind::Audio,
+		                                FrameCryptorDirection::Sender, FrameCryptorState::Ok) &&
+		           HasFrameCryptorState(receiver->GetE2EEManager(), TrackKind::Audio,
+		                                FrameCryptorDirection::Receiver, FrameCryptorState::Ok);
+	    },
+	    std::chrono::seconds(10)));
+	ASSERT_TRUE(publish_encrypted_data("e2ee-publisher-reconnected", {1, 4, 1, 5}));
+
+	const auto reconnecting_before_receiver = events.reconnecting_count();
+	const auto reconnected_before_receiver = events.reconnected_count();
+	const auto frames_before_receiver_reconnect = events.audio_frame_count();
+	auto* concrete_receiver = dynamic_cast<Room*>(receiver.get());
+	ASSERT_NE(concrete_receiver, nullptr);
+	ASSERT_TRUE(concrete_receiver->SimulateSignalDisconnectForTesting());
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.reconnecting_count() > reconnecting_before_receiver; },
+	              std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return events.reconnected_count() > reconnected_before_receiver &&
+		           receiver->IsConnected();
+	    },
+	    std::chrono::seconds(30)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.audio_frame_count() >= frames_before_receiver_reconnect + 3 &&
+		           HasFrameCryptorState(receiver->GetE2EEManager(), TrackKind::Audio,
+		                                FrameCryptorDirection::Receiver, FrameCryptorState::Ok);
+	    },
+	    std::chrono::seconds(10)));
+	ASSERT_TRUE(publish_encrypted_data("e2ee-subscriber-reconnected", {2, 7, 1, 8}));
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
+	audio_track.reset();
+	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, ReportsAndRecoversFromE2EEKeyErrors) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the E2EE key "
+		                "error integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	const E2eeKey shared_key = IntegrationE2eeKey();
+	E2eeOptions sender_e2ee;
+	sender_e2ee.encryption_type = EncryptionType::Gcm;
+	sender_e2ee.shared_key = shared_key;
+	RoomOptions sender_options;
+	sender_options.e2ee = sender_e2ee;
+	E2eeOptions receiver_e2ee;
+	receiver_e2ee.encryption_type = EncryptionType::Gcm;
+	receiver_e2ee.key_provider.ratchet_window_size = 0;
+	receiver_e2ee.key_provider.failure_tolerance = 0;
+	RoomOptions receiver_options;
+	receiver_options.e2ee = receiver_e2ee;
+
+	MediaEvents events;
+	auto receiver = CreateRoomUnique(receiver_options);
+	auto sender = CreateRoomUnique(sender_options);
+	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token, receiver_options));
+	ASSERT_TRUE(sender->Connect(url, sender_token, sender_options));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+	ASSERT_NE(receiver->GetE2EEManager(), nullptr);
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "integration-e2ee-key-error-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions publish_options;
+	publish_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), publish_options));
+	std::vector<int16_t> samples(480, 2100);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Receiver,
+		                                   FrameCryptorState::MissingKey);
+	    },
+	    std::chrono::seconds(10)));
+
+	const E2eeKey wrong_key(shared_key.size(), 0xa5);
+	ASSERT_TRUE(receiver->GetE2EEManager()->Keys().SetSharedKey(wrong_key).Ok());
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Receiver,
+		                                   FrameCryptorState::DecryptionFailed);
+	    },
+	    std::chrono::seconds(10)));
+
+	const auto frames_before_recovery = events.audio_frame_count();
+	ASSERT_TRUE(receiver->GetE2EEManager()->Keys().SetSharedKey(shared_key).Ok());
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return audio_source->CaptureFrame(samples.data(), 48000, 1, 480) &&
+		           events.audio_frame_count() >= frames_before_recovery + 5 &&
+		           events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Receiver,
+		                                   FrameCryptorState::Ok);
+	    },
+	    std::chrono::seconds(10)));
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
+	audio_track.reset();
+	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
 }
 
 TEST(LiveKitServerTest, InteroperatesWithOfficialJsE2EEPeer) {
@@ -1291,7 +1637,8 @@ TEST(LiveKitServerTest, InteroperatesWithOfficialJsE2EEPeer) {
 	ASSERT_NE(video_track, nullptr);
 	TrackPublishOptions video_options;
 	video_options.source = TrackSource::Camera;
-	video_options.video_codec = VideoCodec::VP8;
+	std::string expected_video_mime_type;
+	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
 	video_options.simulcast = false;
 	ASSERT_TRUE(room->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
 
@@ -1323,6 +1670,105 @@ TEST(LiveKitServerTest, InteroperatesWithOfficialJsE2EEPeer) {
 	}
 
 	EXPECT_TRUE(events.received_data("js-e2ee-interop", expected_ack, true));
+	EXPECT_TRUE(events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Sender,
+	                                    FrameCryptorState::Ok));
+	EXPECT_TRUE(events.encryption_state(video_track->Sid(), FrameCryptorDirection::Sender,
+	                                    FrameCryptorState::Ok));
+	room->RemoveEventListener();
+	EXPECT_TRUE(room->Disconnect());
+	video_track.reset();
+	video_source.reset();
+	audio_track.reset();
+	audio_source.reset();
+}
+
+TEST(LiveKitServerTest, InteroperatesWithOfficialCppE2EEPeer) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* token = std::getenv("LIVEKIT_TOKEN");
+	const char* peer_identity = std::getenv("LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY");
+	if (url == nullptr || token == nullptr || peer_identity == nullptr || *url == '\0' ||
+	    *token == '\0' || *peer_identity == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and "
+		                "LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY to run official C++ E2EE interop";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	constexpr std::string_view shared_passphrase = "livekit-cpp-official-cpp-e2ee";
+	E2eeOptions e2ee;
+	e2ee.encryption_type = EncryptionType::Gcm;
+	e2ee.shared_key = E2eeKey(shared_passphrase.begin(), shared_passphrase.end());
+	RoomOptions room_options;
+	room_options.e2ee = e2ee;
+
+	MediaEvents events;
+	auto room = CreateRoomUnique(room_options);
+	room->AddEventListener(&events);
+	ASSERT_TRUE(room->Connect(url, token, room_options));
+	ASSERT_TRUE(WaitUntil([&] { return room->IsConnected(); }, std::chrono::seconds(10)));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return room->GetRemoteParticipantByIdentity(peer_identity) != nullptr; },
+	              std::chrono::seconds(15)));
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "cpp-e2ee-official-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions audio_options;
+	audio_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(room->GetLocalParticipant()->PublishTrack(audio_track.get(), audio_options));
+
+	VideoFrame video_frame;
+	video_frame.width = 320;
+	video_frame.height = 180;
+	video_frame.data.resize(video_frame.width * video_frame.height * 3 / 2, 128);
+	std::fill(video_frame.data.begin(),
+	          video_frame.data.begin() + video_frame.width * video_frame.height, 72);
+	video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+	                               std::chrono::steady_clock::now().time_since_epoch())
+	                               .count();
+	auto video_source = CreateVideoSourceUnique();
+	ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+	auto video_track = room->GetLocalParticipant()->CreateLocalVideoTrackUnique(
+	    "cpp-e2ee-official-video", video_source.get());
+	ASSERT_NE(video_track, nullptr);
+	TrackPublishOptions video_options;
+	video_options.source = TrackSource::Camera;
+	std::string expected_video_mime_type;
+	video_options.video_codec = VideoCodecFromEnvironment(expected_video_mime_type);
+	video_options.simulcast = false;
+	ASSERT_TRUE(room->GetLocalParticipant()->PublishTrack(video_track.get(), video_options));
+
+	const std::vector<uint8_t> outbound_data{'c', 'p', 'p', '-', 'o', 'f', 'f', 'i', 'c',
+	                                         'i', 'a', 'l', '-', 'e', '2', 'e', 'e'};
+	const std::vector<uint8_t> expected_ack{'o', 'f', 'f', 'i', 'c', 'i', 'a', 'l', '-', 'c',
+	                                        'p', 'p', '-', 'e', '2', 'e', 'e', '-', 'o', 'k'};
+	DataPublishOptions data_options;
+	data_options.topic = "cpp-official-e2ee-interop";
+	data_options.destination_identities = {peer_identity};
+	std::vector<int16_t> audio_samples(480);
+	std::size_t audio_sample_offset = 0;
+	auto next_data_publish = std::chrono::steady_clock::time_point::min();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (!events.received_data("official-cpp-e2ee-interop", expected_ack, true) &&
+	       std::chrono::steady_clock::now() < deadline) {
+		for (std::size_t index = 0; index < audio_samples.size(); ++index) {
+			audio_samples[index] = ((audio_sample_offset + index) % 48) < 24 ? 5000 : -5000;
+		}
+		audio_sample_offset += audio_samples.size();
+		ASSERT_TRUE(audio_source->CaptureFrame(audio_samples.data(), 48000, 1, 480));
+		video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                               std::chrono::steady_clock::now().time_since_epoch())
+		                               .count();
+		ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+		if (std::chrono::steady_clock::now() >= next_data_publish) {
+			ASSERT_TRUE(room->GetLocalParticipant()->PublishData(outbound_data, data_options));
+			next_data_publish = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	EXPECT_TRUE(events.received_data("official-cpp-e2ee-interop", expected_ack, true));
 	EXPECT_TRUE(events.encryption_state(audio_track->Sid(), FrameCryptorDirection::Sender,
 	                                    FrameCryptorState::Ok));
 	EXPECT_TRUE(events.encryption_state(video_track->Sid(), FrameCryptorDirection::Sender,

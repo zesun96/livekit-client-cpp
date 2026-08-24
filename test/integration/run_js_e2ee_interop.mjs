@@ -115,6 +115,10 @@ async function main() {
     );
     const cppUrl = argument("--cpp-url", "http://127.0.0.1:7980/rtc");
     const jsUrl = argument("--js-url", "ws://127.0.0.1:7980");
+    const videoCodec = argument("--video-codec", "vp8").toLowerCase();
+    if (!new Set(["vp8", "h264", "av1"]).has(videoCodec)) {
+        throw new Error(`Unsupported E2EE interoperability codec: ${videoCodec}`);
+    }
     const requiredFiles = [
         configPath,
         testExecutable,
@@ -246,6 +250,7 @@ async function main() {
                     LIVEKIT_URL: cppUrl,
                     LIVEKIT_TOKEN: cppToken,
                     LIVEKIT_JS_PEER_IDENTITY: jsIdentity,
+                    LIVEKIT_VIDEO_CODEC: videoCodec,
                 },
                 stdio: ["ignore", "pipe", "pipe"],
                 windowsHide: true,
@@ -285,7 +290,7 @@ async function main() {
             );
         }
         process.stdout.write(
-            "PASS official JS 2.21.0 E2EE audio, VP8 video, and data interoperability\n",
+            `PASS official JS 2.21.0 E2EE audio, ${videoCodec.toUpperCase()} video, and data interoperability\n`,
         );
     } finally {
         if (testProcess && testProcess.exitCode === null) {

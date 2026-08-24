@@ -73,16 +73,29 @@ ratchet window 内尝试前向派生。`FrameCryptors()` 返回独立值快照�
 ## 验证
 
 functional 测试包含固定 PBKDF2/HKDF 向量、编码音视频 SFrame 往返、数据加密、畸形包检查、
-密钥槽位和自动 ratchet。可选的真实房间测试
+密钥槽位、自动 ratchet 和 AV1 RTP 封包/解包。可选的真实房间测试
 `LiveKitServerTest.EncryptsAudioVideoAndDataEndToEnd` 会在两个 C++ 客户端之间验证加密音频、
-VP8 视频、数据、信令加密元数据、状态事件和在线共享密钥轮换。
-该场景已在 Windows x64 的 LiveKit Server 1.13.5 上通过验证。
+VP8、H264 或 AV1 视频、数据、信令加密元数据、状态事件、媒体和数据密钥槽位从 0 切换到 1
+再切回，以及在线共享密钥轮换。配套测试还会验证 publisher 的 full/media reconnect、
+subscriber 的 signal resume、缺失密钥、错误密钥以及设置正确密钥后的恢复。三个 codec 均已在
+Windows x64 的 LiveKit Server 1.13.5 上通过验证。
 
 `LiveKitServerTest.InteroperatesWithOfficialJsE2EEPeer` 和
 `test/integration/run_js_e2ee_interop.mjs` 还会验证：官方 JS SDK 2.21.0 可以解密本 SDK 的
-音频、VP8 视频和数据，本 SDK 可以解密 JS 对端返回的数据。该测试同时覆盖官方 JS 省略
+音频、VP8 或 H264 视频和数据，本 SDK 可以解密 JS 对端返回的数据。该测试同时覆盖官方 JS 省略
 proto3 默认字段 `EncryptedPacket.encryption_type` 的线上行为，并已在 LiveKit Server 1.13.5
 上通过验证。
+
+`LiveKitServerTest.InteroperatesWithOfficialCppE2EEPeer` 会针对官方 C++ SDK v1.8.0 验证加密
+音频、VP8 或 H264 视频和双向数据。使用官方 SDK 解压目录配置并构建外部测试夹具：
+
+```powershell
+cmake -S . -B out/build/vs2022-x64-release `
+  -DBUILD_INTEGRATION_TESTS=ON `
+  -DOFFICIAL_LIVEKIT_CPP_ROOT=C:/path/to/livekit-sdk-windows-x64-1.8.0
+cmake --build out/build/vs2022-x64-release --config Release `
+  --target livekit_server_integration_tests livekit_official_cpp_e2ee_peer
+```
 
 将 `LIVEKIT_URL`、`LIVEKIT_TOKEN` 和 `LIVEKIT_TOKEN_2` 设置为同一房间内两个不同身份后，
 即可运行 integration 测试。也可以使用本地服务器测试脚本：
@@ -93,7 +106,8 @@ proto3 默认字段 `EncryptedPacket.encryption_type` 的线上行为，并已�
   -LkExecutable "C:\path\to\lk.exe" `
   -ApiKey "devkey" `
   -ApiSecret "a-development-secret-with-at-least-32-characters" `
-  -Scenario E2EE
+  -Scenario E2EE `
+  -VideoCodec h264
 ```
 
 单独下载的官方 JS SDK 安装依赖并构建后，可运行浏览器互操作夹具：
@@ -101,8 +115,24 @@ proto3 默认字段 `EncryptedPacket.encryption_type` 的线上行为，并已�
 ```powershell
 node .\test\integration\run_js_e2ee_interop.mjs `
   --official-js-sdk "C:\path\to\client-sdk-js" `
-  --config "C:\path\to\livekit-server-config.yaml"
+  --config "C:\path\to\livekit-server-config.yaml" `
+  --video-codec h264
 ```
 
-H264/AV1 和官方 C++ 对端的更大矩阵仍属于后续验收工作。官方 SDK 只作为外部测试程序；
-本 SDK 不链接它们的 Rust Core，也不采用其公开 API 或所有权模型。
+官方 C++ 夹具的运行方式：
+
+```powershell
+.\test\integration\run_reconnect_matrix.ps1 `
+  -ServerExecutable "C:\path\to\livekit-server.exe" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ApiKey "devkey" `
+  -ApiSecret "a-development-secret-with-at-least-32-characters" `
+  -Scenario OfficialCpp `
+  -VideoCodec h264 `
+  -OfficialCppPeerExecutable `
+    ".\out\build\vs2022-x64-release\test\integration\Release\livekit_official_cpp_e2ee_peer.exe"
+```
+
+AV1 E2EE 使用可路由的 AV1 OBU 封装，已在两个本 SDK 客户端之间通过验证。官方 JS SDK
+2.21.0 会拒绝 AV1 E2EE，目前也不声明与官方 C++ SDK 的 AV1 E2EE 互操作。官方 SDK 只作为
+外部测试程序；本 SDK 库不链接它们的 Rust Core，也不采用其公开 API 或所有权模型。
