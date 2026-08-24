@@ -1,8 +1,6 @@
 name: Windows integration
 
 on:
-  schedule:
-    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:

@@ -249,13 +249,12 @@ deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
 ### Continuous integration
 
 `.github/workflows/windows.yml` builds the SDK, examples, unit and functional suites, then builds
-and runs the standalone consumer project on every pull request and main-branch update. The regular
-workflow explicitly disables H264 because the public fallback libwebrtc archive does not contain
-OpenH264.
+and runs the standalone consumer project. Automatic Windows runs are currently paused; start the
+workflow explicitly with `workflow_dispatch` when needed. The regular workflow explicitly disables
+H264 because the public fallback libwebrtc archive does not contain OpenH264.
 
-The scheduled and manually dispatched `.github/workflows/windows-integration.yml` runs the real
-room media and E2EE matrix for VP8, H264, and AV1. Configure these repository variables before
-enabling it:
+The manually dispatched `.github/workflows/windows-integration.yml` runs the real room media and
+E2EE matrix for VP8, H264, and AV1. Configure these repository variables before enabling it:
 
 - `LIBWEBRTC_H264_URL`: ZIP containing an H264-enabled `include/` and `lib/` libwebrtc package.
 - `LIVEKIT_SERVER_WINDOWS_URL`: ZIP containing `livekit-server.exe`.
