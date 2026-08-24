@@ -207,6 +207,8 @@ Publishes video with the SDK's default LiveKit-compatible simulcast encoding pla
 HD resolutions uses ordered `q`/`h`/`f` layers; set `TrackPublishOptions::simulcast` to `false` for
 a single high-quality encoding. When `RoomOptions::dynacast` is enabled, server subscribed-quality
 updates dynamically activate and deactivate only those real simulcast layers.
+VP9 and AV1 instead publish one SVC encoding with `L3T3_KEY` by default; set
+`TrackPublishOptions::scalability_mode` to choose another supported WebRTC SVC mode.
 
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
 The SDK encodes the frames as VP8 for transport.

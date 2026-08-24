@@ -18,6 +18,8 @@ namespace core {
 struct VideoEncodingPlan {
 	std::vector<webrtc::RtpEncodingParameters> encodings;
 	std::vector<livekit::VideoLayer> layers;
+	livekit::VideoLayer::Mode video_layer_mode = livekit::VideoLayer::MODE_UNUSED;
+	bool valid = true;
 };
 
 const char* VideoCodecName(VideoCodec codec);

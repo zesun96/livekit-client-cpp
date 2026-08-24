@@ -340,6 +340,10 @@ lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
 	    !ToCoreVideoCodec(options->video_codec, result.video_codec)) {
 		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video codec");
 	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, scalability_mode) &&
+	    options->scalability_mode != nullptr) {
+		result.scalability_mode = options->scalability_mode;
+	}
 	return LK_STATUS_OK;
 }
 
@@ -1448,6 +1452,7 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->red = 1;
 		options->simulcast = 1;
 		options->video_codec = LK_VIDEO_CODEC_VP8;
+		options->scalability_mode = "L3T3_KEY";
 	}
 }
 

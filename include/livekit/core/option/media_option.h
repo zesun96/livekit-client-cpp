@@ -117,6 +117,7 @@ struct TrackPublishOptions {
 	bool simulcast = true;
 	TrackSource source = TrackSource::Unknown;
 	std::string stream;
+	std::string scalability_mode = "L3T3_KEY";
 };
 
 } // namespace core

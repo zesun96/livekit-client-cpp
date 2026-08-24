@@ -542,12 +542,19 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	if (kind == TrackKind::Video) {
 		video_encoding_plan = BuildVideoEncodingPlan(
 		    req.width(), req.height(), option.source == TrackSource::ScreenShare, option);
+		if (!video_encoding_plan.valid) {
+			return false;
+		}
 		for (const auto& layer : video_encoding_plan.layers) {
 			req.add_layers()->CopyFrom(layer);
 		}
 		auto* codec = req.add_simulcast_codecs();
 		codec->set_codec(VideoCodecName(option.video_codec));
 		codec->set_cid(cid);
+		codec->set_video_layer_mode(video_encoding_plan.video_layer_mode);
+		for (const auto& layer : video_encoding_plan.layers) {
+			codec->add_layers()->CopyFrom(layer);
+		}
 	}
 
 	try {

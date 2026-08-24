@@ -31,6 +31,7 @@ TEST(VideoEncodingTest, BuildsThreeOrderedLayersForHdCamera) {
 	EXPECT_EQ(plan.layers[0].width(), 320u);
 	EXPECT_EQ(plan.layers[1].height(), 360u);
 	EXPECT_EQ(plan.layers[2].bitrate(), 1700000u);
+	EXPECT_EQ(plan.video_layer_mode, livekit::VideoLayer::ONE_SPATIAL_LAYER_PER_STREAM);
 }
 
 TEST(VideoEncodingTest, BuildsSingleHighLayerWhenSimulcastIsDisabled) {
@@ -118,17 +119,56 @@ TEST(VideoEncodingTest, NeverDisablesSingleEncodingOrMismatchedCodec) {
 	EXPECT_TRUE(simulcast[2].active);
 }
 
-TEST(VideoEncodingTest, UsesSingleEncodingForSvcCodecsUntilSvcLayersAreSupported) {
+TEST(VideoEncodingTest, BuildsSvcLayersForSvcCodecs) {
 	for (const auto codec : {VideoCodec::VP9, VideoCodec::AV1}) {
 		TrackPublishOptions options;
 		options.video_codec = codec;
 		options.simulcast = true;
 		const auto plan = BuildVideoEncodingPlan(1280, 720, false, options);
+		EXPECT_TRUE(plan.valid);
 		ASSERT_EQ(plan.encodings.size(), 1u);
 		EXPECT_TRUE(plan.encodings[0].rid.empty());
-		ASSERT_EQ(plan.layers.size(), 1u);
+		EXPECT_EQ(plan.encodings[0].scalability_mode, "L3T3_KEY");
+		ASSERT_EQ(plan.layers.size(), 3u);
 		EXPECT_EQ(plan.layers[0].quality(), livekit::VideoQuality::HIGH);
+		EXPECT_EQ(plan.layers[0].width(), 1280u);
+		EXPECT_EQ(plan.layers[0].height(), 720u);
+		EXPECT_EQ(plan.layers[0].bitrate(), 1700000u);
+		EXPECT_EQ(plan.layers[1].quality(), livekit::VideoQuality::MEDIUM);
+		EXPECT_EQ(plan.layers[1].width(), 640u);
+		EXPECT_EQ(plan.layers[1].height(), 360u);
+		EXPECT_EQ(plan.layers[1].bitrate(), 566667u);
+		EXPECT_EQ(plan.layers[2].quality(), livekit::VideoQuality::LOW);
+		EXPECT_EQ(plan.layers[2].width(), 320u);
+		EXPECT_EQ(plan.layers[2].height(), 180u);
+		EXPECT_EQ(plan.layers[2].bitrate(), 188889u);
+		EXPECT_EQ(plan.video_layer_mode, livekit::VideoLayer::MULTIPLE_SPATIAL_LAYERS_PER_STREAM);
 	}
+}
+
+TEST(VideoEncodingTest, UsesRequestedSvcLayerCount) {
+	TrackPublishOptions options;
+	options.video_codec = VideoCodec::VP9;
+	options.scalability_mode = "L2T2_KEY";
+	const auto plan = BuildVideoEncodingPlan(640, 360, false, options);
+
+	ASSERT_TRUE(plan.valid);
+	ASSERT_EQ(plan.encodings.size(), 1u);
+	EXPECT_EQ(plan.encodings[0].scalability_mode, "L2T2_KEY");
+	ASSERT_EQ(plan.layers.size(), 2u);
+	EXPECT_EQ(plan.layers[0].quality(), livekit::VideoQuality::HIGH);
+	EXPECT_EQ(plan.layers[1].quality(), livekit::VideoQuality::MEDIUM);
+}
+
+TEST(VideoEncodingTest, RejectsUnsupportedSvcScalabilityMode) {
+	TrackPublishOptions options;
+	options.video_codec = VideoCodec::AV1;
+	options.scalability_mode = "L4T3";
+	const auto plan = BuildVideoEncodingPlan(1280, 720, false, options);
+
+	EXPECT_FALSE(plan.valid);
+	EXPECT_TRUE(plan.encodings.empty());
+	EXPECT_TRUE(plan.layers.empty());
 }
 
 } // namespace
