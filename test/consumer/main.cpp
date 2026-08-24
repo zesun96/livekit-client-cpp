@@ -3,10 +3,18 @@
 #include <iostream>
 
 int main() {
+	livekit::core::DataTrackSchema schema;
+	schema.id = {"consumer.schema.v1",
+	             {livekit::core::DataTrackSchemaEncodingKind::JsonSchema, {}}};
 	livekit::core::DataTrackPublishOptions data_track_options;
 	data_track_options.name = "consumer-smoke";
 	data_track_options.frame_encoding =
 	    livekit::core::DataTrackFrameEncoding{livekit::core::DataTrackFrameEncodingKind::Json, {}};
+	data_track_options.schema = schema.id;
+	const auto store_schema = &livekit::core::RoomInterface::StoreDataTrackSchema;
+	const auto get_schema = &livekit::core::RoomInterface::GetDataTrackSchema;
+	(void)store_schema;
+	(void)get_schema;
 	if (data_track_options.name.empty()) {
 		return 1;
 	}

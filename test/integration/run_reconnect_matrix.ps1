@@ -280,6 +280,7 @@ if ([string]::IsNullOrEmpty($ConfigPath)) {
   $safeSecret = "'" + $ApiSecret.Replace("'", "''") + "'"
   @(
     "port: $Port"
+    "enable_participant_data_blob: true"
     "rtc:"
     "  tcp_port: $($Port + 1)"
     "  udp_port: $($Port + 2)"

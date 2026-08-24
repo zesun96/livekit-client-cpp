@@ -117,6 +117,9 @@ public:
 	                                 const DataTrackSubscriptionOptions& options = {});
 	bool RepublishDataTracks();
 	std::optional<livekit::DataTrackInfo> PublishedDataTrackInfo(uint16_t publisher_handle) const;
+	DataTrackError StoreDataTrackSchema(const DataTrackSchema& schema);
+	DataTrackSchemaResult GetDataTrackSchema(const std::string& participant_identity,
+	                                         const DataTrackSchemaId& schema_id);
 	bool RegisterRpcMethod(std::string method, RpcHandler handler);
 	bool UnregisterRpcMethod(const std::string& method);
 	RpcResult PerformRpc(const PerformRpcParams& params);
@@ -164,6 +167,8 @@ public:
 	void OnDataTrackPublished(const livekit::PublishDataTrackResponse& response) override;
 	void OnDataTrackUnpublished(const livekit::UnpublishDataTrackResponse& response) override;
 	void OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberHandles& handles) override;
+	void OnDataBlobStored(const livekit::StoreDataBlobResponse& response) override;
+	void OnDataBlobReceived(const livekit::GetDataBlobResponse& response) override;
 
 	/* Pure virtual methods inherited from RtcSession::RtcSessionListener */
 public:
@@ -238,6 +243,7 @@ private:
 	void ResetTransport(bool send_leave);
 	std::shared_ptr<SignalClient> SignalClientSnapshot() const;
 	void StartRecovery(livekit::DisconnectReason reason, bool force_full_reconnect = false);
+	void CancelPendingDataBlobRequests(DataTrackError error);
 	void RunRecovery();
 	void StopRecovery();
 	void negotiate();
@@ -343,6 +349,14 @@ private:
 		std::string track_sid;
 		std::string publisher_identity;
 	};
+	struct PendingDataBlobRequest {
+		std::mutex mutex;
+		std::condition_variable cv;
+		bool completed = false;
+		std::optional<livekit::DataBlobKey> key;
+		std::optional<livekit::DataBlob> blob;
+		DataTrackError error;
+	};
 	mutable std::mutex data_tracks_mutex_;
 	uint32_t next_data_track_handle_ = 1;
 	std::map<uint16_t, std::shared_ptr<PendingDataTrackRequest>> pending_data_track_publishes_;
@@ -352,6 +366,7 @@ private:
 	std::map<uint16_t, IncomingDataTrackRoute> incoming_data_track_routes_;
 	std::map<std::string, detail::DataTrackDepacketizer> data_track_depacketizers_;
 	std::map<std::string, std::size_t> data_track_partial_frame_limits_;
+	std::map<uint32_t, std::shared_ptr<PendingDataBlobRequest>> pending_data_blob_requests_;
 };
 
 } // namespace core

@@ -34,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <tuple>
 
 namespace livekit {
 namespace core {
@@ -84,6 +85,9 @@ public:
 	bool SpeakerMuted() const override;
 	AudioPlaybackStats GetAudioPlaybackStats() const override;
 	E2EEManager* GetE2EEManager() override;
+	DataTrackError StoreDataTrackSchema(DataTrackSchema schema) override;
+	DataTrackSchemaResult GetDataTrackSchema(std::string participant_identity,
+	                                         DataTrackSchemaId schema_id) override;
 	bool SimulateSignalDisconnectForTesting();
 	bool SimulateFullReconnectForTesting();
 	bool SimulateMediaFailureForTesting();
@@ -194,6 +198,10 @@ private:
 	std::mutex stream_handlers_mutex_;
 	std::map<std::string, TextStreamHandler> text_stream_handlers_;
 	std::map<std::string, ByteStreamHandler> byte_stream_handlers_;
+	using DataTrackSchemaCacheKey =
+	    std::tuple<std::string, std::string, DataTrackSchemaEncodingKind, std::string>;
+	std::mutex data_track_schema_cache_mutex_;
+	std::map<DataTrackSchemaCacheKey, DataTrackSchema> data_track_schema_cache_;
 	ServerInfo server_info_;
 	mutable std::mutex room_info_mutex_;
 	livekit::Room room_info_;

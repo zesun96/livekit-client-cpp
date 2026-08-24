@@ -85,6 +85,8 @@ public:
 	virtual void OnDataTrackPublished(const livekit::PublishDataTrackResponse&) {}
 	virtual void OnDataTrackUnpublished(const livekit::UnpublishDataTrackResponse&) {}
 	virtual void OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberHandles&) {}
+	virtual void OnDataBlobStored(const livekit::StoreDataBlobResponse&) {}
+	virtual void OnDataBlobReceived(const livekit::GetDataBlobResponse&) {}
 };
 
 class SignalClient {
@@ -152,6 +154,9 @@ public:
 	void SendUnpublishDataTrack(uint32_t publisher_handle);
 	void SendUpdateDataSubscription(const std::string& track_sid, bool subscribe,
 	                                std::optional<uint32_t> target_fps = std::nullopt);
+	void SendStoreDataBlob(const livekit::StoreDataBlobRequest& request);
+	void SendGetDataBlob(const livekit::GetDataBlobRequest& request);
+	uint32_t NextRequestId();
 
 private:
 	bool init();
@@ -168,8 +173,6 @@ private:
 	void handleOnClose(std::string reason);
 	void resolveJoinResponse(const livekit::JoinResponse& response);
 	void resolveResume(bool connected);
-	uint64_t getNextRequestId();
-
 	int64_t rtt() const;
 
 private:

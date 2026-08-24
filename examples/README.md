@@ -256,6 +256,17 @@ $env:LIVEKIT_FILE = "C:/path/to/file.bin"
 & "out/build/vs2022-x64-release/examples/data_transfer/Release/data_transfer.exe"
 ```
 
+### `data_track_schema`
+
+Stores a JSON Schema definition for the local participant, publishes a typed DataTrack that
+references the schema ID, and sends one JSON frame. The LiveKit Server configuration must set
+`enable_participant_data_blob: true`.
+
+```powershell
+& "out/build/vs2022-x64-release/examples/data_track_schema/Release/data_track_schema.exe" `
+  $url $publisherToken
+```
+
 ### `rpc`
 
 Registers `example.echo` and either waits as a receiver or calls another participant. Start the

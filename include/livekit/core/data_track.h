@@ -66,6 +66,15 @@ struct DataTrackSchemaId {
 	bool operator==(const DataTrackSchemaId&) const = default;
 };
 
+inline constexpr std::size_t kMaximumDataTrackSchemaDefinitionSize = 50 * 1024;
+
+struct DataTrackSchema {
+	DataTrackSchemaId id;
+	std::vector<uint8_t> definition;
+
+	bool operator==(const DataTrackSchema&) const = default;
+};
+
 struct DataTrackInfo {
 	uint16_t publisher_handle = 0;
 	std::string sid;
@@ -96,6 +105,7 @@ enum class DataTrackErrorCode {
 	InvalidFrame,
 	ProtocolError,
 	SendFailed,
+	NotFound,
 };
 
 struct DataTrackError {
@@ -158,6 +168,13 @@ struct DataTrackPublishResult {
 	DataTrackError error;
 
 	explicit operator bool() const { return track != nullptr && !error; }
+};
+
+struct DataTrackSchemaResult {
+	std::optional<DataTrackSchema> schema;
+	DataTrackError error;
+
+	explicit operator bool() const { return schema.has_value() && !error; }
 };
 
 class RemoteDataTrackInterface : public virtual DataTrackInterface {

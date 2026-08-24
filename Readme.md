@@ -32,7 +32,7 @@ Because webrtc requires C++20.
 - [x] Audio publishing and receiving (signed 16-bit PCM)
 - [x] Video publishing and receiving (I420 with VP8, VP9, H264, or AV1)
 - [x] Reliable and lossy data messages
-- [x] Typed DataTrack publishing, pull-based subscriptions, fragmentation, and E2EE
+- [x] Typed DataTrack publishing, schema storage/lookup, pull subscriptions, fragmentation, and E2EE
 - [x] SIP DTMF publishing and receiving
 - [x] Structured chat messages with stable IDs and edits
 - [x] Transcription segment events with language and timing metadata
@@ -138,6 +138,13 @@ and invokes `RoomConnectOptions::reconnect_policy` before each full-reconnect at
 policies return a delay or `std::nullopt` to stop recovery; `join_retries` remains the maximum number
 of full-reconnect attempts. Policy callbacks run on the SDK recovery thread and should return
 quickly. The default policy retries immediately and then uses quadratic backoff capped at 7 seconds.
+
+DataTrack schema definitions are stored once by the publishing participant, then referenced by
+schema ID when a track is published. Remote participants query the definition by publisher identity;
+successful lookups are cached across connection recovery. LiveKit Server must enable
+`enable_participant_data_blob` for schema storage and lookup. See the
+[`data_track_schema`](examples/data_track_schema/data_track_schema.cpp) example for the complete
+store, publish, and frame-send flow.
 
 ## Tests
 

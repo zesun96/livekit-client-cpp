@@ -243,7 +243,7 @@ void SignalClient::SendAddTrack(const livekit::AddTrackRequest& request) {
 
 void SignalClient::SendUpdateLocalMetadata(const std::string& metadata, const std::string& name,
                                            const std::map<std::string, std::string> attributes) {
-	const uint64_t request_id = getNextRequestId();
+	const uint32_t request_id = NextRequestId();
 	livekit::SignalRequest req;
 	auto* update_msg = req.mutable_update_metadata();
 	update_msg->set_request_id(request_id);
@@ -370,6 +370,18 @@ void SignalClient::SendUpdateDataSubscription(const std::string& track_sid, bool
 	if (subscribe && target_fps) {
 		update->mutable_options()->set_target_fps(*target_fps);
 	}
+	sendRequest(signal_request);
+}
+
+void SignalClient::SendStoreDataBlob(const livekit::StoreDataBlobRequest& request) {
+	livekit::SignalRequest signal_request;
+	signal_request.mutable_store_data_blob_request()->CopyFrom(request);
+	sendRequest(signal_request);
+}
+
+void SignalClient::SendGetDataBlob(const livekit::GetDataBlobRequest& request) {
+	livekit::SignalRequest signal_request;
+	signal_request.mutable_get_data_blob_request()->CopyFrom(request);
 	sendRequest(signal_request);
 }
 
@@ -665,6 +677,18 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		}
 		break;
 	}
+	case livekit::SignalResponse::MessageCase::kStoreDataBlobResponse: {
+		if (observer_) {
+			observer_->OnDataBlobStored(resp.store_data_blob_response());
+		}
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kGetDataBlobResponse: {
+		if (observer_) {
+			observer_->OnDataBlobReceived(resp.get_data_blob_response());
+		}
+		break;
+	}
 	default: {
 		std::cout << "unsupported message(: " << resp.message_case() << std::endl;
 	}
@@ -789,9 +813,12 @@ void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue)
 	return;
 }
 
-uint64_t SignalClient::getNextRequestId() {
-	request_id_++;
-	return request_id_;
+uint32_t SignalClient::NextRequestId() {
+	auto request_id = static_cast<uint32_t>(++request_id_);
+	if (request_id == 0) {
+		request_id = static_cast<uint32_t>(++request_id_);
+	}
+	return request_id;
 }
 
 int64_t SignalClient::rtt() const { return rtt_.load(); }
