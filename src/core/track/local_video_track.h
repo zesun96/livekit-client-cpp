@@ -53,6 +53,8 @@ public:
 	                        webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
 	                        std::vector<webrtc::RtpEncodingParameters> encodings);
 	std::vector<AdditionalCodecSender> AdditionalCodecs() const;
+	bool UpdateAdditionalCodecEncodings(VideoCodec codec,
+	                                    std::vector<webrtc::RtpEncodingParameters> encodings);
 	void ClearAdditionalCodecs();
 
 private:

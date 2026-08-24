@@ -117,8 +117,13 @@ SDK creates its independent sender only after LiveKit requests that codec. Selec
 `BackupCodecPolicy::PreferRegression` (default), `Simulcast`, or `Regression` to control server
 selection; `backup_video_encoding` optionally overrides the fallback bitrate and frame rate. The C
 API appends equivalent `backup_video_codec_enabled`, `backup_video_codec`, and
-`backup_codec_policy` fields. Backup senders currently remain disabled for E2EE publications,
-matching the official client capability boundary.
+`backup_codec_policy` fields, plus `video_encoding` and `backup_video_encoding` settings. After a
+video track is published, `LocalParticipantInterface::UpdateVideoEncoding()` can change the maximum
+bitrate and frame rate on its existing primary or backup sender without replacing the track or
+renegotiating. Passing zero values restores the resolution-derived defaults; backup settings are
+retained until the server requests that sender. The C equivalent is
+`lk_local_video_track_update_encoding()`. Backup senders currently remain disabled for E2EE
+publications, matching the official client capability boundary.
 
 Applications can create native microphone, camera, monitor, and window sources through the C++ or
 C device APIs, then publish them with the normal local-track helpers. Native system-audio capture

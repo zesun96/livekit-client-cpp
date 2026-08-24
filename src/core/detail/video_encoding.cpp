@@ -282,5 +282,17 @@ bool ApplySubscribedQualities(std::vector<webrtc::RtpEncodingParameters>& encodi
 	return changed;
 }
 
+bool ApplyVideoEncodingPlan(std::vector<webrtc::RtpEncodingParameters>& encodings,
+                            const std::vector<webrtc::RtpEncodingParameters>& planned_encodings) {
+	if (encodings.empty() || encodings.size() != planned_encodings.size()) {
+		return false;
+	}
+	for (std::size_t index = 0; index < encodings.size(); ++index) {
+		encodings[index].max_bitrate_bps = planned_encodings[index].max_bitrate_bps;
+		encodings[index].max_framerate = planned_encodings[index].max_framerate;
+	}
+	return true;
+}
+
 } // namespace core
 } // namespace livekit

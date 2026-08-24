@@ -329,6 +329,22 @@ bool ToCoreBackupCodecPolicy(lk_backup_codec_policy_t policy, core::BackupCodecP
 	}
 }
 
+lk_status_t ToCoreVideoEncoding(const lk_video_encoding_t* encoding, core::VideoEncoding& result) {
+	if (encoding == nullptr || encoding->struct_size < sizeof(encoding->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video encoding struct size");
+	}
+	if (LKC_HAS_FIELD(encoding, lk_video_encoding_t, max_bitrate)) {
+		result.max_bitrate = encoding->max_bitrate;
+	}
+	if (LKC_HAS_FIELD(encoding, lk_video_encoding_t, max_framerate)) {
+		if (!std::isfinite(encoding->max_framerate) || encoding->max_framerate < 0.0F) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video encoding frame rate");
+		}
+		result.max_framerate = encoding->max_framerate;
+	}
+	return LK_STATUS_OK;
+}
+
 lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
                                       core::TrackPublishOptions& result) {
 	if (options == nullptr) {
@@ -372,6 +388,19 @@ lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
 	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, backup_codec_policy) &&
 	    !ToCoreBackupCodecPolicy(options->backup_codec_policy, result.backup_codec_policy)) {
 		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid backup codec policy");
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, video_encoding)) {
+		const auto status = ToCoreVideoEncoding(&options->video_encoding, result.video_encoding);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, backup_video_encoding)) {
+		const auto status =
+		    ToCoreVideoEncoding(&options->backup_video_encoding, result.backup_video_encoding);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
 	}
 	return LK_STATUS_OK;
 }
@@ -1473,6 +1502,13 @@ void lk_screen_capture_options_init(lk_screen_capture_options_t* options) {
 	}
 }
 
+void lk_video_encoding_init(lk_video_encoding_t* encoding) {
+	if (encoding != nullptr) {
+		*encoding = {};
+		encoding->struct_size = sizeof(*encoding);
+	}
+}
+
 void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -1484,6 +1520,8 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->scalability_mode = "L3T3_KEY";
 		options->backup_video_codec = LK_VIDEO_CODEC_VP8;
 		options->backup_codec_policy = LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION;
+		lk_video_encoding_init(&options->video_encoding);
+		lk_video_encoding_init(&options->backup_video_encoding);
 	}
 }
 
@@ -2952,6 +2990,32 @@ lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted) {
 		return track->owner->room->SetLocalTrackMuted(track->track->Sid(), muted != 0)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update track mute state");
+	});
+}
+
+lk_status_t lk_local_video_track_update_encoding(lk_local_track_t* track,
+                                                 const lk_video_encoding_t* encoding,
+                                                 int backup_codec) {
+	return Guard([&] {
+		if (track == nullptr || track->track == nullptr || track->owner == nullptr ||
+		    track->room_state == nullptr || !track->room_state->alive.load() ||
+		    track->track->Kind() != core::TrackKind::Video) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "live local video track is required");
+		}
+		if (!track->published.load()) {
+			return Failure(LK_STATUS_INVALID_STATE, "track is not published");
+		}
+		core::VideoEncoding core_encoding;
+		const auto status = ToCoreVideoEncoding(encoding, core_encoding);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+		auto* participant = LocalParticipant(track->owner);
+		if (participant == nullptr || !participant->UpdateVideoEncoding(
+		                                  track->track.get(), core_encoding, backup_codec != 0)) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to update video encoding");
+		}
+		return LK_STATUS_OK;
 	});
 }
 

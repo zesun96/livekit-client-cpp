@@ -669,6 +669,12 @@ typedef struct lk_screen_capture_options {
 	int include_cursor;
 } lk_screen_capture_options_t;
 
+typedef struct lk_video_encoding {
+	size_t struct_size;
+	uint64_t max_bitrate;
+	float max_framerate;
+} lk_video_encoding_t;
+
 typedef struct lk_track_publish_options {
 	size_t struct_size;
 	lk_track_source_t source;
@@ -681,6 +687,8 @@ typedef struct lk_track_publish_options {
 	int backup_video_codec_enabled;
 	lk_video_codec_t backup_video_codec;
 	lk_backup_codec_policy_t backup_codec_policy;
+	lk_video_encoding_t video_encoding;
+	lk_video_encoding_t backup_video_encoding;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {
@@ -840,6 +848,7 @@ LKC_API void lk_microphone_processing_stats_init(lk_microphone_processing_stats_
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
 LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options);
+LKC_API void lk_video_encoding_init(lk_video_encoding_t* encoding);
 LKC_API void lk_track_publish_options_init(lk_track_publish_options_t* options);
 LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
@@ -1017,6 +1026,9 @@ LKC_API lk_status_t lk_local_track_publish_screen_share_audio(
 LKC_API lk_status_t lk_local_track_unpublish(lk_local_track_t* track, int stop_on_unpublish);
 LKC_API lk_status_t lk_room_republish_all_tracks(lk_room_t* room);
 LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted);
+LKC_API lk_status_t lk_local_video_track_update_encoding(lk_local_track_t* track,
+                                                         const lk_video_encoding_t* encoding,
+                                                         int backup_codec);
 LKC_API size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer,
                                         size_t buffer_size);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);

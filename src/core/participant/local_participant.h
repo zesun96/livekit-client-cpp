@@ -59,6 +59,8 @@ public:
 	                                           VideoSourceInterface* source) override;
 
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
+	bool UpdateVideoEncoding(LocalTrackInterface* track, VideoEncoding encoding,
+	                         bool backup_codec = false) override;
 	bool UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) override;
 	std::size_t UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
 	                            bool stop_on_unpublish) override;

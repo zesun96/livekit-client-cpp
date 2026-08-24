@@ -65,6 +65,17 @@ std::vector<LocalVideoTrack::AdditionalCodecSender> LocalVideoTrack::AdditionalC
 	return result;
 }
 
+bool LocalVideoTrack::UpdateAdditionalCodecEncodings(
+    VideoCodec codec, std::vector<webrtc::RtpEncodingParameters> encodings) {
+	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
+	const auto state = additional_codecs_.find(codec);
+	if (state == additional_codecs_.end()) {
+		return false;
+	}
+	state->second.encodings = std::move(encodings);
+	return true;
+}
+
 void LocalVideoTrack::ClearAdditionalCodecs() {
 	std::lock_guard<std::mutex> guard(additional_codecs_mutex_);
 	additional_codecs_.clear();

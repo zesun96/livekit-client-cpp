@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <utility>
@@ -669,6 +670,83 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	return true;
 }
 
+bool LocalParticipant::UpdateVideoEncoding(LocalTrackInterface* track, VideoEncoding encoding,
+                                           bool backup_codec) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
+	if (track == nullptr || !std::isfinite(encoding.max_framerate) ||
+	    encoding.max_framerate < 0.0F) {
+		return false;
+	}
+	auto* local_track = dynamic_cast<LocalVideoTrack*>(track);
+	if (local_track == nullptr || local_track->source() == nullptr || local_track->Sid().empty()) {
+		return false;
+	}
+	const auto publications = TrackPublicationsSnapshot();
+	const auto publication = publications.find(local_track->Sid());
+	if (publication == publications.end() || publication->second->Track() != local_track) {
+		return false;
+	}
+	auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication->second.get());
+	if (local_publication == nullptr) {
+		return false;
+	}
+	auto updated_options = local_publication->PublishOptions();
+	auto encoding_options = updated_options;
+	webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver;
+	VideoCodec codec = updated_options.video_codec;
+	if (backup_codec) {
+		if (!updated_options.backup_video_codec.has_value() ||
+		    *updated_options.backup_video_codec == updated_options.video_codec) {
+			return false;
+		}
+		codec = *updated_options.backup_video_codec;
+		updated_options.backup_video_encoding = encoding;
+		encoding_options.video_codec = codec;
+		encoding_options.video_encoding = encoding;
+		if (encoding_options.source == TrackSource::ScreenShare) {
+			encoding_options.simulcast = false;
+		}
+		for (const auto& additional : local_track->AdditionalCodecs()) {
+			if (additional.codec == codec) {
+				transceiver = additional.transceiver;
+				break;
+			}
+		}
+	} else {
+		updated_options.video_encoding = encoding;
+		encoding_options.video_encoding = encoding;
+		transceiver = local_track->Transceiver();
+	}
+	const auto encoding_plan = BuildVideoEncodingPlan(
+	    local_track->source()->Width(), local_track->source()->Height(),
+	    encoding_options.source == TrackSource::ScreenShare, encoding_options);
+	if (!encoding_plan.valid || encoding_plan.encodings.empty()) {
+		return false;
+	}
+	if (transceiver == nullptr) {
+		if (!backup_codec) {
+			return false;
+		}
+		local_publication->UpdatePublishOptions(std::move(updated_options));
+		return true;
+	}
+	auto sender = transceiver->sender();
+	if (sender == nullptr) {
+		return false;
+	}
+	auto parameters = sender->GetParameters();
+	if (!ApplyVideoEncodingPlan(parameters.encodings, encoding_plan.encodings) ||
+	    !sender->SetParameters(parameters).ok()) {
+		return false;
+	}
+	if (backup_codec &&
+	    !local_track->UpdateAdditionalCodecEncodings(codec, encoding_plan.encodings)) {
+		return false;
+	}
+	local_publication->UpdatePublishOptions(std::move(updated_options));
+	return true;
+}
+
 bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) {
 	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
@@ -870,6 +948,7 @@ bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, Vide
 }
 
 void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate update) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (update.track_sid.empty()) {
 		return;
 	}

@@ -213,6 +213,10 @@ For clients that cannot decode an advanced primary codec, set `backup_video_code
 The SDK advertises the fallback at publish time and starts its separate sender on the first matching
 server request; enable `RoomOptions::dynacast` so each codec's requested layers can be managed
 independently.
+Call `LocalParticipantInterface::UpdateVideoEncoding(track, {bitrate, fps})` after publication to
+adjust sender limits without republishing. Add `true` as the third argument to target the configured
+backup codec; the SDK retains that value if its sender has not been requested yet. Zero values
+restore the SDK defaults for the current source dimensions.
 
 Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
 The SDK encodes the frames as VP8 for transport.
