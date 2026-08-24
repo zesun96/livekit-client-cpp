@@ -17,6 +17,7 @@ add_executable(
   audio_gain_test.cpp
   frame_queue_test.cpp
   data_channel_backpressure_test.cpp
+  data_track_packet_test.cpp
   reconnect_policy_test.cpp
   signal_url_test.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/signal_url.cpp
@@ -25,6 +26,7 @@ add_executable(
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_data.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/debouncer.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_channel_backpressure.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_track_packet.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/option/reconnect_policy.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/capture/audio_gain.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/capture/frame_queue.cpp

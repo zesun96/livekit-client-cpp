@@ -17,8 +17,10 @@
 
 #include "local_participant.h"
 
+#include "../data_track.h"
 #include "../detail/converted_proto.h"
 #include "../detail/data_stream_compression.h"
+#include "../detail/data_track_proto.h"
 #include "../detail/video_encoding.h"
 #include "../e2ee/e2ee_manager_internal.h"
 #include "../track/audio_source.h"
@@ -417,6 +419,7 @@ LocalParticipant::~LocalParticipant() { outgoing_stream_state_->Invalidate(); }
 
 void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 	const auto owned_publications = TrackPublicationsSnapshot();
+	const auto owned_data_tracks = DataTracksSnapshot();
 	Participant::UpdateFromInfo(info);
 	// Participant snapshots can briefly omit a newly published local track while negotiation is
 	// settling. Keep client-owned publications (and their LocalTrack pointers) until an explicit
@@ -424,6 +427,12 @@ void LocalParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 	for (const auto& [sid, publication] : owned_publications) {
 		if (dynamic_cast<LocalTrackPublication*>(publication.get()) != nullptr) {
 			AddTrackPublication(publication);
+		}
+	}
+	for (const auto& [sid, track] : owned_data_tracks) {
+		if (dynamic_cast<LocalDataTrack*>(track.get()) != nullptr &&
+		    GetDataTrackBySid(sid) == nullptr) {
+			AddDataTrack(track);
 		}
 	}
 	std::lock_guard<std::mutex> guard(participant_mutex_);
@@ -784,6 +793,47 @@ bool LocalParticipant::RepublishAllTracksAfterReconnect() {
 	return success;
 }
 
+bool LocalParticipant::RepublishAllDataTracksAfterReconnect() {
+	if (engine_ == nullptr || !engine_->RepublishDataTracks()) {
+		return false;
+	}
+	for (const auto& [sid, interface] : DataTracksSnapshot()) {
+		auto* track = dynamic_cast<LocalDataTrack*>(interface.get());
+		if (track == nullptr) {
+			continue;
+		}
+		auto info = engine_->PublishedDataTrackInfo(track->Info().publisher_handle);
+		if (!info) {
+			continue;
+		}
+		const auto old_sid = track->Info().sid;
+		track->UpdateInfo(detail::FromProto(*info));
+		if (old_sid != info->sid()) {
+			RemoveDataTrack(old_sid);
+			AddDataTrack(interface);
+		}
+	}
+	return true;
+}
+
+void LocalParticipant::LocalDataTrackUnpublished(uint16_t publisher_handle) {
+	std::shared_ptr<LocalDataTrack> unpublished;
+	for (const auto& [sid, interface] : DataTracksSnapshot()) {
+		auto track = std::dynamic_pointer_cast<LocalDataTrack>(interface);
+		if (track && track->Info().publisher_handle == publisher_handle) {
+			track->MarkUnpublished();
+			RemoveDataTrack(sid);
+			unpublished = std::move(track);
+			break;
+		}
+	}
+	if (unpublished) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnLocalDataTrackUnpublished(unpublished.get(), this);
+		}
+	}
+}
+
 void LocalParticipant::SetEventListener(RoomEventInterface* listener) {
 	event_listener_.store(listener);
 }
@@ -827,6 +877,28 @@ bool LocalParticipant::PublishData(const std::vector<uint8_t>& data, DataPublish
 		user->set_topic(std::move(options.topic));
 	}
 	return engine_->SendDataPacket(packet, options.reliable);
+}
+
+DataTrackPublishResult LocalParticipant::PublishDataTrack(DataTrackPublishOptions options) {
+	if (engine_ == nullptr) {
+		return {nullptr, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
+	const bool encrypted = encryption_type_ != EncryptionType::None;
+	auto [proto_info, error] = engine_->PublishDataTrack(options, encrypted);
+	if (!proto_info) {
+		return {nullptr, error};
+	}
+	auto track = std::make_shared<LocalDataTrack>(
+	    detail::FromProto(*proto_info),
+	    [engine = engine_](uint16_t handle, const DataTrackFrame& frame) {
+		    return engine->PushDataTrackFrame(handle, frame);
+	    },
+	    [engine = engine_](uint16_t handle) { return engine->UnpublishDataTrack(handle); });
+	AddDataTrack(track);
+	if (auto* listener = event_listener_.load()) {
+		listener->OnLocalDataTrackPublished(track.get(), this);
+	}
+	return {track, {}};
 }
 
 bool LocalParticipant::PublishDtmf(uint32_t code, std::string digit) {

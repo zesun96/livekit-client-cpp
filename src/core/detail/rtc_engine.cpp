@@ -17,6 +17,7 @@
 
 #include "rtc_engine.h"
 #include "../e2ee/e2ee_manager_internal.h"
+#include "data_track_proto.h"
 #include "internals.h"
 #include "rtc_session.h"
 #include "signal_client.h"
@@ -34,6 +35,8 @@ constexpr auto kDataChannelOpenTimeout = std::chrono::seconds(10);
 constexpr auto kDataChannelDrainTimeout = std::chrono::seconds(10);
 constexpr uint64_t kDataChannelHighWaterMark = 4ULL * 1024 * 1024;
 constexpr uint64_t kDataChannelLowWaterMark = 1ULL * 1024 * 1024;
+constexpr uint64_t kDataTrackHighWaterMark = 1ULL * 1024 * 1024;
+constexpr auto kDataTrackRequestTimeout = std::chrono::seconds(10);
 constexpr auto kRpcAckTimeout = std::chrono::milliseconds(7'000);
 constexpr auto kMinimumRpcTimeout = std::chrono::milliseconds(8'000);
 constexpr uint32_t kRpcVersion = 1;
@@ -107,6 +110,36 @@ const char* ReconnectReasonName(livekit::DisconnectReason reason) {
 	}
 	return "unknown";
 }
+
+livekit::core::DataTrackError RequestResponseError(const livekit::RequestResponse& response) {
+	using Code = livekit::core::DataTrackErrorCode;
+	Code code = Code::ProtocolError;
+	switch (response.reason()) {
+	case livekit::RequestResponse::NOT_ALLOWED:
+		code = Code::NotAllowed;
+		break;
+	case livekit::RequestResponse::LIMIT_EXCEEDED:
+		code = Code::HandleLimitReached;
+		break;
+	case livekit::RequestResponse::INVALID_HANDLE:
+	case livekit::RequestResponse::DUPLICATE_HANDLE:
+		code = Code::ProtocolError;
+		break;
+	case livekit::RequestResponse::INVALID_NAME:
+		code = Code::InvalidName;
+		break;
+	case livekit::RequestResponse::DUPLICATE_NAME:
+		code = Code::DuplicateName;
+		break;
+	case livekit::RequestResponse::INVALID_REQUEST:
+	case livekit::RequestResponse::UNSUPPORTED_TYPE:
+		code = Code::InvalidSchema;
+		break;
+	default:
+		break;
+	}
+	return {code, response.message().empty() ? "data track request rejected" : response.message()};
+}
 } // namespace
 
 namespace livekit {
@@ -177,7 +210,7 @@ public:
 	}
 
 	void OnMessage(const webrtc::DataBuffer& buffer) override {
-		engine_->OnDataChannelMessage(buffer);
+		engine_->OnDataChannelMessage(channel_, buffer);
 	}
 
 	void OnBufferedAmountChange(uint64_t) override {
@@ -401,6 +434,30 @@ void RtcEngine::Disconnect() {
 	StopRecovery();
 	ResetTransport(false);
 	CancelPendingRpc(std::nullopt, RpcErrorCode::RecipientDisconnected);
+	std::vector<std::shared_ptr<PendingDataTrackRequest>> pending_data_tracks;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		for (const auto& [handle, pending] : pending_data_track_publishes_) {
+			pending_data_tracks.push_back(pending);
+		}
+		for (const auto& [handle, pending] : pending_data_track_unpublishes_) {
+			pending_data_tracks.push_back(pending);
+		}
+		pending_data_track_publishes_.clear();
+		pending_data_track_unpublishes_.clear();
+		published_data_tracks_.clear();
+		data_track_packetizers_.clear();
+		incoming_data_track_routes_.clear();
+		data_track_depacketizers_.clear();
+	}
+	for (const auto& pending : pending_data_tracks) {
+		{
+			std::lock_guard<std::mutex> guard(pending->mutex);
+			pending->completed = true;
+			pending->error = {DataTrackErrorCode::Disconnected, "room is disconnected"};
+		}
+		pending->cv.notify_all();
+	}
 	{
 		std::lock_guard<std::mutex> guard(access_token_mutex_);
 		access_token_.clear();
@@ -440,6 +497,7 @@ void RtcEngine::ResetTransport(bool send_leave) {
 		std::lock_guard<std::mutex> guard(data_channels_lock_);
 		lossyDC_ = nullptr;
 		reliableDC_ = nullptr;
+		dataTrackDC_ = nullptr;
 	}
 
 	{
@@ -842,6 +900,258 @@ bool RtcEngine::SendDataPacket(const livekit::DataPacket& packet, bool reliable)
 	return sent;
 }
 
+std::pair<std::optional<livekit::DataTrackInfo>, DataTrackError>
+RtcEngine::PublishDataTrack(const DataTrackPublishOptions& options, bool encrypted) {
+	if (options.name.empty() || options.name.size() > 256) {
+		return {std::nullopt,
+		        {DataTrackErrorCode::InvalidName, "data track name must contain 1 to 256 bytes"}};
+	}
+	livekit::PublishDataTrackRequest request;
+	request.set_name(options.name);
+	request.set_encryption(encrypted ? livekit::Encryption_Type_GCM
+	                                 : livekit::Encryption_Type_NONE);
+	if (options.frame_encoding &&
+	    !detail::ToProto(*options.frame_encoding, *request.mutable_frame_encoding())) {
+		return {std::nullopt,
+		        {DataTrackErrorCode::InvalidSchema, "invalid data track frame encoding"}};
+	}
+	if (options.schema && !detail::ToProto(*options.schema, *request.mutable_schema())) {
+		return {std::nullopt, {DataTrackErrorCode::InvalidSchema, "invalid data track schema"}};
+	}
+
+	auto pending = std::make_shared<PendingDataTrackRequest>();
+	uint16_t handle = 0;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		for (std::size_t attempt = 0; attempt < std::numeric_limits<uint16_t>::max(); ++attempt) {
+			const auto candidate = static_cast<uint16_t>(next_data_track_handle_++);
+			if (next_data_track_handle_ > std::numeric_limits<uint16_t>::max()) {
+				next_data_track_handle_ = 1;
+			}
+			if (candidate != 0 && !published_data_tracks_.contains(candidate) &&
+			    !pending_data_track_publishes_.contains(candidate)) {
+				handle = candidate;
+				break;
+			}
+		}
+		if (handle == 0) {
+			return {std::nullopt,
+			        {DataTrackErrorCode::HandleLimitReached,
+			         "all data track publisher handles are in use"}};
+		}
+		pending_data_track_publishes_[handle] = pending;
+	}
+	request.set_pub_handle(handle);
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		pending_data_track_publishes_.erase(handle);
+		return {std::nullopt, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
+	signal_client->SendPublishDataTrack(request);
+
+	std::unique_lock<std::mutex> lock(pending->mutex);
+	if (!pending->cv.wait_for(lock, kDataTrackRequestTimeout,
+	                          [&pending]() { return pending->completed; })) {
+		lock.unlock();
+		{
+			std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+			pending_data_track_publishes_.erase(handle);
+		}
+		if (auto current_signal = SignalClientSnapshot()) {
+			current_signal->SendUnpublishDataTrack(handle);
+		}
+		return {std::nullopt, {DataTrackErrorCode::Timeout, "data track publish timed out"}};
+	}
+	return {pending->info, pending->error};
+}
+
+DataTrackError RtcEngine::UnpublishDataTrack(uint16_t publisher_handle) {
+	if (publisher_handle == 0) {
+		return {DataTrackErrorCode::Unpublished, "data track is unpublished"};
+	}
+	auto pending = std::make_shared<PendingDataTrackRequest>();
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		if (!published_data_tracks_.contains(publisher_handle)) {
+			return {DataTrackErrorCode::Unpublished, "data track is unpublished"};
+		}
+		pending_data_track_unpublishes_[publisher_handle] = pending;
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		pending_data_track_unpublishes_.erase(publisher_handle);
+		return {DataTrackErrorCode::Disconnected, "room is disconnected"};
+	}
+	signal_client->SendUnpublishDataTrack(publisher_handle);
+	std::unique_lock<std::mutex> lock(pending->mutex);
+	if (!pending->cv.wait_for(lock, kDataTrackRequestTimeout,
+	                          [&pending]() { return pending->completed; })) {
+		lock.unlock();
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		pending_data_track_unpublishes_.erase(publisher_handle);
+		return {DataTrackErrorCode::Timeout, "data track unpublish timed out"};
+	}
+	return pending->error;
+}
+
+DataTrackError RtcEngine::PushDataTrackFrame(uint16_t publisher_handle,
+                                             const DataTrackFrame& frame) {
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> channel;
+	{
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		channel = dataTrackDC_;
+	}
+	if (!channel) {
+		negotiate();
+		std::lock_guard<std::mutex> guard(data_channels_lock_);
+		channel = dataTrackDC_;
+	}
+	if (!channel) {
+		return {DataTrackErrorCode::Disconnected, "data track channel is unavailable"};
+	}
+	const auto deadline = std::chrono::steady_clock::now() + kDataChannelOpenTimeout;
+	while (channel->state() == webrtc::DataChannelInterface::kConnecting &&
+	       std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	if (channel->state() != webrtc::DataChannelInterface::kOpen) {
+		return {DataTrackErrorCode::Disconnected, "data track channel is not open"};
+	}
+
+	DataTrackFrame outbound = frame;
+	std::optional<detail::DataTrackPacketExtensions> extensions;
+	std::unique_lock<std::mutex> tracks_lock(data_tracks_mutex_);
+	auto info = published_data_tracks_.find(publisher_handle);
+	auto packetizer = data_track_packetizers_.find(publisher_handle);
+	if (info == published_data_tracks_.end() || packetizer == data_track_packetizers_.end()) {
+		return {DataTrackErrorCode::Unpublished, "data track is unpublished"};
+	}
+	if (info->second.encryption() != livekit::Encryption_Type_NONE) {
+		std::lock_guard<std::mutex> e2ee_guard(e2ee_mutex_);
+		if (e2ee_manager_ == nullptr || !e2ee_manager_->Enabled()) {
+			return {DataTrackErrorCode::SendFailed, "data track E2EE is unavailable"};
+		}
+		auto encrypted = E2EEManagerNativeAccess::EncryptData(*e2ee_manager_, e2ee_local_identity_,
+		                                                      outbound.payload);
+		if (!encrypted || encrypted->key_index > std::numeric_limits<uint8_t>::max() ||
+		    encrypted->iv.size() != 12) {
+			return {DataTrackErrorCode::SendFailed, "failed to encrypt data track frame"};
+		}
+		outbound.payload = std::move(encrypted->payload);
+		extensions.emplace();
+		extensions->key_index = static_cast<uint8_t>(encrypted->key_index);
+		extensions->iv = std::move(encrypted->iv);
+	}
+	if (outbound.user_timestamp) {
+		if (!extensions) {
+			extensions.emplace();
+		}
+		extensions->user_timestamp = outbound.user_timestamp;
+	}
+	auto packets = packetizer->second->Packetize(outbound, extensions);
+	tracks_lock.unlock();
+	if (!packets) {
+		return {DataTrackErrorCode::InvalidFrame, "data track frame exceeds protocol limits"};
+	}
+	std::size_t bytes = 0;
+	for (const auto& packet : *packets) {
+		bytes += packet.size();
+	}
+	std::lock_guard<std::mutex> send_guard(data_track_send_mutex_);
+	if (channel->buffered_amount() + bytes > kDataTrackHighWaterMark) {
+		return {DataTrackErrorCode::QueueFull, "data track channel queue is full"};
+	}
+	for (const auto& packet : *packets) {
+		if (!channel->Send(webrtc::DataBuffer(
+		        webrtc::CopyOnWriteBuffer(packet.data(), packet.size()), true))) {
+			return {DataTrackErrorCode::SendFailed, "failed to send data track packet"};
+		}
+	}
+	return {};
+}
+
+bool RtcEngine::UpdateDataTrackSubscription(const std::string& track_sid, bool subscribe,
+                                            const DataTrackSubscriptionOptions& options) {
+	if (track_sid.empty() || options.buffer_capacity == 0 || options.max_partial_frames == 0) {
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		if (subscribe) {
+			data_track_partial_frame_limits_[track_sid] = options.max_partial_frames;
+			auto found = data_track_depacketizers_.find(track_sid);
+			if (found != data_track_depacketizers_.end()) {
+				found->second.SetMaximumPartialFrames(options.max_partial_frames);
+			}
+		} else {
+			data_track_partial_frame_limits_.erase(track_sid);
+			data_track_depacketizers_.erase(track_sid);
+		}
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return false;
+	}
+	signal_client->SendUpdateDataSubscription(track_sid, subscribe, options.target_fps);
+	return true;
+}
+
+bool RtcEngine::RepublishDataTracks() {
+	std::vector<livekit::DataTrackInfo> tracks;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		for (const auto& [handle, info] : published_data_tracks_) {
+			tracks.push_back(info);
+		}
+	}
+	bool success = true;
+	for (const auto& info : tracks) {
+		livekit::PublishDataTrackRequest request;
+		request.set_pub_handle(info.pub_handle());
+		request.set_name(info.name());
+		request.set_encryption(info.encryption());
+		if (info.has_frame_encoding()) {
+			request.mutable_frame_encoding()->CopyFrom(info.frame_encoding());
+		}
+		if (info.has_schema()) {
+			request.mutable_schema()->CopyFrom(info.schema());
+		}
+		auto pending = std::make_shared<PendingDataTrackRequest>();
+		{
+			std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+			pending_data_track_publishes_[static_cast<uint16_t>(info.pub_handle())] = pending;
+		}
+		auto signal_client = SignalClientSnapshot();
+		if (!signal_client) {
+			success = false;
+			break;
+		}
+		signal_client->SendPublishDataTrack(request);
+		std::unique_lock<std::mutex> lock(pending->mutex);
+		if (!pending->cv.wait_for(lock, kDataTrackRequestTimeout,
+		                          [&pending]() { return pending->completed; }) ||
+		    pending->error) {
+			success = false;
+		}
+		{
+			std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+			pending_data_track_publishes_.erase(static_cast<uint16_t>(info.pub_handle()));
+		}
+	}
+	return success;
+}
+
+std::optional<livekit::DataTrackInfo>
+RtcEngine::PublishedDataTrackInfo(uint16_t publisher_handle) const {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	auto found = published_data_tracks_.find(publisher_handle);
+	return found == published_data_tracks_.end()
+	           ? std::optional<livekit::DataTrackInfo>{}
+	           : std::optional<livekit::DataTrackInfo>{found->second};
+}
+
 bool RtcEngine::WaitForDataChannelBuffer(
     const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable) {
 	return channel &&
@@ -1093,8 +1403,15 @@ void RtcEngine::SendSyncState(
 		sync.add_publish_tracks()->CopyFrom(track);
 	}
 	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		for (const auto& [handle, info] : published_data_tracks_) {
+			(void)handle;
+			sync.add_publish_data_tracks()->mutable_info()->CopyFrom(info);
+		}
+	}
+	{
 		std::lock_guard<std::mutex> guard(data_channels_lock_);
-		for (const auto& channel : {lossyDC_, reliableDC_}) {
+		for (const auto& channel : {lossyDC_, reliableDC_, dataTrackDC_}) {
 			if (!channel || channel->id() < 0) {
 				continue;
 			}
@@ -1278,7 +1595,122 @@ void RtcEngine::OnSubscriptionError(const livekit::SubscriptionResponse& respons
 		listener->SubscriptionErrorEvent(response);
 	}
 }
-void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) { return; }
+void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) {
+	if (response.reason() == livekit::RequestResponse::OK) {
+		return;
+	}
+	uint16_t handle = 0;
+	std::shared_ptr<PendingDataTrackRequest> pending;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		if (response.has_publish_data_track()) {
+			handle = static_cast<uint16_t>(response.publish_data_track().pub_handle());
+			auto found = pending_data_track_publishes_.find(handle);
+			if (found != pending_data_track_publishes_.end()) {
+				pending = found->second;
+				pending_data_track_publishes_.erase(found);
+			}
+		} else if (response.has_unpublish_data_track()) {
+			handle = static_cast<uint16_t>(response.unpublish_data_track().pub_handle());
+			auto found = pending_data_track_unpublishes_.find(handle);
+			if (found != pending_data_track_unpublishes_.end()) {
+				pending = found->second;
+				pending_data_track_unpublishes_.erase(found);
+			}
+		}
+	}
+	if (pending) {
+		{
+			std::lock_guard<std::mutex> guard(pending->mutex);
+			pending->completed = true;
+			pending->error = RequestResponseError(response);
+		}
+		pending->cv.notify_all();
+	}
+}
+
+void RtcEngine::OnDataTrackPublished(const livekit::PublishDataTrackResponse& response) {
+	if (!response.has_info() || response.info().pub_handle() == 0 ||
+	    response.info().pub_handle() > std::numeric_limits<uint16_t>::max()) {
+		return;
+	}
+	const auto handle = static_cast<uint16_t>(response.info().pub_handle());
+	std::shared_ptr<PendingDataTrackRequest> pending;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		auto found = pending_data_track_publishes_.find(handle);
+		if (found == pending_data_track_publishes_.end()) {
+			return;
+		}
+		pending = found->second;
+		pending_data_track_publishes_.erase(found);
+		published_data_tracks_[handle] = response.info();
+		if (!data_track_packetizers_.contains(handle)) {
+			data_track_packetizers_[handle] = std::make_unique<detail::DataTrackPacketizer>(handle);
+		}
+	}
+	{
+		std::lock_guard<std::mutex> guard(pending->mutex);
+		pending->completed = true;
+		pending->info = response.info();
+	}
+	pending->cv.notify_all();
+}
+
+void RtcEngine::OnDataTrackUnpublished(const livekit::UnpublishDataTrackResponse& response) {
+	if (!response.has_info() || response.info().pub_handle() == 0 ||
+	    response.info().pub_handle() > std::numeric_limits<uint16_t>::max()) {
+		return;
+	}
+	const auto handle = static_cast<uint16_t>(response.info().pub_handle());
+	std::shared_ptr<PendingDataTrackRequest> pending;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		auto found = pending_data_track_unpublishes_.find(handle);
+		if (found != pending_data_track_unpublishes_.end()) {
+			pending = found->second;
+			pending_data_track_unpublishes_.erase(found);
+		}
+		published_data_tracks_.erase(handle);
+		data_track_packetizers_.erase(handle);
+	}
+	if (pending) {
+		{
+			std::lock_guard<std::mutex> guard(pending->mutex);
+			pending->completed = true;
+			pending->info = response.info();
+		}
+		pending->cv.notify_all();
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->LocalDataTrackUnpublishedEvent(handle);
+	}
+}
+
+void RtcEngine::OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberHandles& handles) {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	for (const auto& [wire_handle, track] : handles.sub_handles()) {
+		if (wire_handle == 0 || wire_handle > std::numeric_limits<uint16_t>::max() ||
+		    track.track_sid().empty()) {
+			continue;
+		}
+		const auto handle = static_cast<uint16_t>(wire_handle);
+		for (auto route = incoming_data_track_routes_.begin();
+		     route != incoming_data_track_routes_.end();) {
+			if (route->first != handle && route->second.track_sid == track.track_sid()) {
+				route = incoming_data_track_routes_.erase(route);
+			} else {
+				++route;
+			}
+		}
+		incoming_data_track_routes_[handle] = {track.track_sid(), track.publisher_identity()};
+		const auto limit = data_track_partial_frame_limits_.contains(track.track_sid())
+		                       ? data_track_partial_frame_limits_[track.track_sid()]
+		                       : 1;
+		auto [found, inserted] = data_track_depacketizers_.try_emplace(track.track_sid(), limit);
+		found->second.SetMaximumPartialFrames(limit);
+	}
+}
 void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) {
 	if (track_sid.empty()) {
 		return;
@@ -1416,7 +1848,7 @@ void RtcEngine::negotiate() {
 	bool has_publisher_data_channels = false;
 	{
 		std::lock_guard<std::mutex> data_guard(data_channels_lock_);
-		has_publisher_data_channels = lossyDC_ && reliableDC_;
+		has_publisher_data_channels = lossyDC_ && reliableDC_ && dataTrackDC_;
 	}
 	if (!has_publisher_data_channels) {
 		this->createDataChannels();
@@ -1440,6 +1872,14 @@ void RtcEngine::createDataChannels() {
 	reliable_init.reliable = true;
 	auto reliable_channel = this->rtc_session_->CreateDataChannel("_reliable", &reliable_init);
 	registerDataChannel(std::move(reliable_channel), true);
+
+	struct webrtc::DataChannelInit data_track_init;
+	data_track_init.ordered = false;
+	data_track_init.reliable = false;
+	data_track_init.maxRetransmits = 0;
+	auto data_track_channel =
+	    this->rtc_session_->CreateDataChannel("_data_track", &data_track_init);
+	registerDataChannel(std::move(data_track_channel), true);
 }
 
 void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel,
@@ -1453,7 +1893,7 @@ void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInt
 			return;
 		}
 	}
-	const bool reliable = channel->label() != "_lossy";
+	const bool reliable = channel->label() == "_reliable";
 	auto observer =
 	    std::make_unique<DataChannelObserverProxy>(this, channel, reliable, publisher_channel);
 	channel->RegisterObserver(observer.get());
@@ -1463,6 +1903,8 @@ void RtcEngine::registerDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInt
 		reliableDC_ = channel;
 	} else if (publisher_channel && channel->label() == "_lossy") {
 		lossyDC_ = channel;
+	} else if (publisher_channel && channel->label() == "_data_track") {
+		dataTrackDC_ = channel;
 	}
 }
 
@@ -1476,6 +1918,7 @@ void RtcEngine::unregisterDataChannels() {
 		data_channel_observers_.clear();
 		reliableDC_ = nullptr;
 		lossyDC_ = nullptr;
+		dataTrackDC_ = nullptr;
 	}
 	data_channel_backpressure_.Reset();
 }
@@ -1700,7 +2143,13 @@ void RtcEngine::OnDataChannelStateChange(
 	}
 }
 
-void RtcEngine::OnDataChannelMessage(const webrtc::DataBuffer& buffer) {
+void RtcEngine::OnDataChannelMessage(
+    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel,
+    const webrtc::DataBuffer& buffer) {
+	if (channel && channel->label() == "_data_track") {
+		OnDataTrackMessage(buffer);
+		return;
+	}
 	if (buffer.data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
 		return;
 	}
@@ -1742,6 +2191,53 @@ void RtcEngine::OnDataChannelMessage(const webrtc::DataBuffer& buffer) {
 	}
 	if (auto* listener = room_listener_.load()) {
 		listener->DataPacketEvent(packet);
+	}
+}
+
+void RtcEngine::OnDataTrackMessage(const webrtc::DataBuffer& buffer) {
+	auto packet = detail::DeserializeDataTrackPacket(buffer.data.data(), buffer.data.size());
+	if (!packet) {
+		return;
+	}
+	detail::DataTrackAssembledFrame assembled;
+	std::string track_sid;
+	std::string publisher_identity;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		auto route = incoming_data_track_routes_.find(packet->track_handle);
+		if (route == incoming_data_track_routes_.end()) {
+			return;
+		}
+		track_sid = route->second.track_sid;
+		publisher_identity = route->second.publisher_identity;
+		const auto limit = data_track_partial_frame_limits_.contains(track_sid)
+		                       ? data_track_partial_frame_limits_[track_sid]
+		                       : 1;
+		auto [depacketizer, inserted] = data_track_depacketizers_.try_emplace(track_sid, limit);
+		auto result = depacketizer->second.Push(std::move(*packet));
+		if (!result) {
+			return;
+		}
+		assembled = std::move(*result);
+	}
+	if (assembled.extensions.key_index) {
+		std::lock_guard<std::mutex> guard(e2ee_mutex_);
+		if (e2ee_manager_ == nullptr || !e2ee_manager_->Enabled() ||
+		    assembled.extensions.iv.size() != 12) {
+			return;
+		}
+		E2EEManagerNativeAccess::EncryptedData encrypted{std::move(assembled.frame.payload),
+		                                                 assembled.extensions.iv,
+		                                                 *assembled.extensions.key_index};
+		auto decrypted =
+		    E2EEManagerNativeAccess::DecryptData(*e2ee_manager_, publisher_identity, encrypted);
+		if (!decrypted) {
+			return;
+		}
+		assembled.frame.payload = std::move(*decrypted);
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->DataTrackFrameEvent(track_sid, std::move(assembled.frame));
 	}
 }
 

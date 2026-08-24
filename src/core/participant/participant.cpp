@@ -17,7 +17,9 @@
 
 #include "participant.h"
 
+#include "../data_track.h"
 #include "../detail/converted_proto.h"
+#include "../detail/data_track_proto.h"
 #include "../track/track_publication.h"
 
 #include <set>
@@ -109,11 +111,54 @@ void Participant::UpdateFromInfo(const livekit::ParticipantInfo& info) {
 			++publication;
 		}
 	}
+	{
+		std::lock_guard<std::mutex> data_guard(data_tracks_mutex_);
+		std::set<std::string> current_data_sids;
+		for (const auto& data_info : info.data_tracks()) {
+			if (data_info.sid().empty()) {
+				continue;
+			}
+			current_data_sids.insert(data_info.sid());
+			auto found = data_tracks_.find(data_info.sid());
+			if (found == data_tracks_.end() && data_info.pub_handle() != 0) {
+				for (auto candidate = data_tracks_.begin(); candidate != data_tracks_.end();
+				     ++candidate) {
+					if (candidate->second->Info().publisher_handle == data_info.pub_handle()) {
+						auto preserved = candidate->second;
+						data_tracks_.erase(candidate);
+						found = data_tracks_.emplace(data_info.sid(), std::move(preserved)).first;
+						break;
+					}
+				}
+			}
+			if (found == data_tracks_.end()) {
+				auto created = CreateDataTrack(data_info);
+				if (created) {
+					data_tracks_.emplace(data_info.sid(), std::move(created));
+				}
+			} else if (auto* remote = dynamic_cast<RemoteDataTrack*>(found->second.get())) {
+				remote->UpdateInfo(detail::FromProto(data_info));
+			} else if (auto* local = dynamic_cast<LocalDataTrack*>(found->second.get())) {
+				local->UpdateInfo(detail::FromProto(data_info));
+			}
+		}
+		for (auto track = data_tracks_.begin(); track != data_tracks_.end();) {
+			if (current_data_sids.count(track->first) == 0) {
+				track = data_tracks_.erase(track);
+			} else {
+				++track;
+			}
+		}
+	}
 }
 
 std::shared_ptr<TrackPublicationInterface>
 Participant::CreateTrackPublication(const livekit::TrackInfo& info) {
 	return std::make_shared<TrackPublication>(info, nullptr);
+}
+
+std::shared_ptr<DataTrackInterface> Participant::CreateDataTrack(const livekit::DataTrackInfo&) {
+	return nullptr;
 }
 
 bool Participant::UpdateInfoFields(const livekit::ParticipantInfo& info) {
@@ -210,6 +255,51 @@ std::map<std::string, std::shared_ptr<TrackPublicationInterface>>
 Participant::TrackPublicationsSnapshot() {
 	std::lock_guard<std::mutex> guard(track_publications_mutex_);
 	return track_publications_;
+}
+
+std::vector<DataTrackInterface*> Participant::GetDataTracks() {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	std::vector<DataTrackInterface*> tracks;
+	tracks.reserve(data_tracks_.size());
+	for (const auto& [sid, track] : data_tracks_) {
+		tracks.push_back(track.get());
+	}
+	return tracks;
+}
+
+DataTrackInterface* Participant::GetDataTrackBySid(const std::string& sid) {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	auto found = data_tracks_.find(sid);
+	return found == data_tracks_.end() ? nullptr : found->second.get();
+}
+
+DataTrackInterface* Participant::GetDataTrackByName(const std::string& name) {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	for (const auto& [sid, track] : data_tracks_) {
+		if (track->Info().name == name) {
+			return track.get();
+		}
+	}
+	return nullptr;
+}
+
+void Participant::AddDataTrack(std::shared_ptr<DataTrackInterface> track) {
+	if (!track) {
+		return;
+	}
+	const auto info = track->Info();
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	data_tracks_[info.sid] = std::move(track);
+}
+
+void Participant::RemoveDataTrack(const std::string& sid) {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	data_tracks_.erase(sid);
+}
+
+std::map<std::string, std::shared_ptr<DataTrackInterface>> Participant::DataTracksSnapshot() {
+	std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+	return data_tracks_;
 }
 
 void Participant::SetSpeakerInfo(float audio_level, bool is_speaking) {

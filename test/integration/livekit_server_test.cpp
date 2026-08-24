@@ -435,6 +435,46 @@ private:
 	std::string attributes_identity_;
 };
 
+class DataTrackEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnReconnecting() override { reconnecting_.fetch_add(1); }
+	void OnReconnected() override { reconnected_.fetch_add(1); }
+	void OnDataTrackPublished(RemoteDataTrackInterface*, RemoteParticipantInterface*) override {
+		remote_published_.fetch_add(1);
+	}
+	void OnDataTrackUnpublished(DataTrackInterface*, RemoteParticipantInterface*) override {
+		remote_unpublished_.fetch_add(1);
+	}
+	void OnLocalDataTrackPublished(LocalDataTrackInterface*, ParticipantInterface*) override {
+		local_published_.fetch_add(1);
+	}
+	void OnLocalDataTrackUnpublished(LocalDataTrackInterface*, ParticipantInterface*) override {
+		local_unpublished_.fetch_add(1);
+	}
+	void OnDataTrackFrame(RemoteDataTrackInterface*, RemoteParticipantInterface*,
+	                      const DataTrackFrame&) override {
+		frames_.fetch_add(1);
+	}
+
+	uint32_t remote_published() const { return remote_published_.load(); }
+	uint32_t remote_unpublished() const { return remote_unpublished_.load(); }
+	uint32_t local_published() const { return local_published_.load(); }
+	uint32_t local_unpublished() const { return local_unpublished_.load(); }
+	uint32_t frames() const { return frames_.load(); }
+	uint32_t reconnecting() const { return reconnecting_.load(); }
+	uint32_t reconnected() const { return reconnected_.load(); }
+
+private:
+	std::atomic<uint32_t> remote_published_{0};
+	std::atomic<uint32_t> remote_unpublished_{0};
+	std::atomic<uint32_t> local_published_{0};
+	std::atomic<uint32_t> local_unpublished_{0};
+	std::atomic<uint32_t> frames_{0};
+	std::atomic<uint32_t> reconnecting_{0};
+	std::atomic<uint32_t> reconnected_{0};
+};
+
 class ReconnectEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}
@@ -1078,14 +1118,20 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(retained_settings.video_fps, 15u);
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
 	                                               video_publication->Sid(), false));
-	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Unsubscribed);
-	EXPECT_TRUE(events.subscription_status(video_publication->Sid(),
-	                                       TrackSubscriptionStatus::Unsubscribed));
+	ASSERT_TRUE(WaitUntil([&] {
+		return video_publication->SubscriptionStatus() == TrackSubscriptionStatus::Unsubscribed &&
+		       video_publication->Track() == nullptr &&
+		       events.subscription_status(video_publication->Sid(),
+		                                  TrackSubscriptionStatus::Unsubscribed);
+	}));
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
 	                                               video_publication->Sid(), true));
-	EXPECT_EQ(video_publication->SubscriptionStatus(), TrackSubscriptionStatus::Subscribed);
-	EXPECT_TRUE(
-	    events.subscription_status(video_publication->Sid(), TrackSubscriptionStatus::Subscribed));
+	ASSERT_TRUE(WaitUntil([&] {
+		return video_publication->SubscriptionStatus() == TrackSubscriptionStatus::Subscribed &&
+		       video_publication->Track() != nullptr &&
+		       events.subscription_status(video_publication->Sid(),
+		                                  TrackSubscriptionStatus::Subscribed);
+	}));
 	EXPECT_EQ(video_publication->Name(), "integration-video");
 	EXPECT_EQ(video_publication->Kind(), TrackKind::Video);
 	EXPECT_EQ(video_publication->Track()->Name(), "integration-video");
@@ -1117,28 +1163,32 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_NE(screen_video_track, nullptr);
 	TrackPublishOptions screen_video_options;
 	screen_video_options.source = TrackSource::Camera;
+	screen_video_options.video_codec = video_options.video_codec;
 	screen_video_options.simulcast = false;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishScreenShareVideoTrack(
 	    screen_video_track.get(), screen_video_options));
-	const auto screen_video_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (sender_participant->GetTrackPublication(TrackSource::ScreenShare) == nullptr &&
-	       std::chrono::steady_clock::now() < screen_video_deadline) {
-		video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
-		                               std::chrono::steady_clock::now().time_since_epoch())
-		                               .count();
-		ASSERT_TRUE(screen_video_source->CaptureFrame(video_frame));
-		std::this_thread::sleep_for(std::chrono::milliseconds(33));
-	}
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                                   std::chrono::steady_clock::now().time_since_epoch())
+		                                   .count();
+		    return screen_video_source->CaptureFrame(video_frame) &&
+		           events.media_frames("integration-screen-video") >= 3;
+	    },
+	    std::chrono::seconds(10)));
 	auto* screen_video_publication =
 	    sender_participant->GetTrackPublication(TrackSource::ScreenShare);
 	ASSERT_NE(screen_video_publication, nullptr);
 	EXPECT_EQ(screen_video_publication->Name(), "integration-screen-video");
 	EXPECT_EQ(screen_video_publication->Kind(), TrackKind::Video);
+	EXPECT_EQ(screen_video_publication->MimeType(), expected_video_mime_type);
 	EXPECT_TRUE(sender_participant->IsScreenShareEnabled());
 	ASSERT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(screen_video_track.get()));
-	ASSERT_TRUE(WaitUntil([&] {
-		return sender_participant->GetTrackPublication(TrackSource::ScreenShare) == nullptr;
-	}));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return sender_participant->GetTrackPublication(TrackSource::ScreenShare) == nullptr;
+	    },
+	    std::chrono::seconds(10)));
 
 	auto screen_audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
 	auto screen_audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
@@ -1190,6 +1240,142 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	screen_audio_source.reset();
 	audio_track.reset();
 	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the data "
+		                "track integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	E2eeOptions e2ee;
+	e2ee.encryption_type = EncryptionType::Gcm;
+	e2ee.shared_key = IntegrationE2eeKey();
+	RoomOptions room_options;
+	room_options.e2ee = e2ee;
+	auto receiver = CreateRoomUnique(room_options);
+	auto sender = CreateRoomUnique(room_options);
+	DataTrackEvents receiver_events;
+	DataTrackEvents sender_events;
+	receiver->AddEventListener(&receiver_events);
+	sender->AddEventListener(&sender_events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token, room_options));
+	ASSERT_TRUE(sender->Connect(url, sender_token, room_options));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	DataTrackPublishOptions publish_options;
+	publish_options.name = "integration-telemetry";
+	publish_options.frame_encoding = DataTrackFrameEncoding{DataTrackFrameEncodingKind::Json, {}};
+	auto published = sender->GetLocalParticipant()->PublishDataTrack(publish_options);
+	ASSERT_TRUE(published) << published.error.message;
+	ASSERT_NE(published.track, nullptr);
+	EXPECT_TRUE(published.track->Info().uses_e2ee);
+	EXPECT_EQ(sender_events.local_published(), 1u);
+
+	RemoteParticipantInterface* remote_sender = nullptr;
+	RemoteDataTrackInterface* remote_track = nullptr;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    remote_sender =
+		        receiver->GetRemoteParticipantBySid(sender->GetLocalParticipant()->Sid());
+		    remote_track = remote_sender != nullptr
+		                       ? dynamic_cast<RemoteDataTrackInterface*>(
+		                             remote_sender->GetDataTrackByName(publish_options.name))
+		                       : nullptr;
+		    return remote_track != nullptr && receiver_events.remote_published() >= 1;
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_TRUE(remote_track->Info().uses_e2ee);
+	DataTrackSubscriptionOptions subscription_options;
+	subscription_options.buffer_capacity = 4;
+	subscription_options.max_partial_frames = 2;
+	auto reader = remote_track->Subscribe(subscription_options);
+	ASSERT_NE(reader, nullptr);
+
+	DataTrackFrame small{{'{', '"', 'x', '"', ':', '1', '}'}, 123456};
+	DataTrackFrame received;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto error = published.track->TryPush(small);
+		    return !error && reader->TryRead(received);
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_EQ(received.payload, small.payload);
+	EXPECT_EQ(received.user_timestamp, small.user_timestamp);
+	while (reader->TryRead(received)) {
+	}
+
+	DataTrackFrame fragmented;
+	fragmented.payload.resize(40'000);
+	for (std::size_t index = 0; index < fragmented.payload.size(); ++index) {
+		fragmented.payload[index] = static_cast<uint8_t>(index % 251);
+	}
+	fragmented.user_timestamp = 987654321;
+	ASSERT_FALSE(published.track->TryPush(fragmented));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return reader->ReadFor(received, std::chrono::milliseconds(100)) &&
+		           received.user_timestamp == fragmented.user_timestamp;
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_EQ(received.payload, fragmented.payload);
+	EXPECT_EQ(received.user_timestamp, fragmented.user_timestamp);
+	EXPECT_GE(receiver_events.frames(), 2u);
+
+	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
+	ASSERT_NE(concrete_sender, nullptr);
+	ASSERT_TRUE(concrete_sender->SimulateMediaFailureForTesting());
+	ASSERT_TRUE(
+	    WaitUntil([&] { return sender_events.reconnecting() >= 1; }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnected() >= 1 && sender->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    remote_sender =
+		        receiver->GetRemoteParticipantByIdentity(sender->GetLocalParticipant()->Identity());
+		    remote_track = remote_sender != nullptr
+		                       ? dynamic_cast<RemoteDataTrackInterface*>(
+		                             remote_sender->GetDataTrackByName(publish_options.name))
+		                       : nullptr;
+		    return remote_track != nullptr && remote_track->IsPublished();
+	    },
+	    std::chrono::seconds(10)));
+	// A publisher full reconnect can surface as a replacement publication before the old
+	// publication is retired. Subscribe on the current publication either way: when the track
+	// object was preserved this adds another reader without duplicating the SFU subscription;
+	// when it was replaced this establishes the subscription for the new SID.
+	reader = remote_track->Subscribe(subscription_options);
+	ASSERT_NE(reader, nullptr);
+	DataTrackFrame after_reconnect{{9, 8, 7, 6}, 444};
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto error = published.track->TryPush(after_reconnect);
+		    return !error && reader->TryRead(received) &&
+		           received.user_timestamp == after_reconnect.user_timestamp;
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_EQ(received.payload, after_reconnect.payload);
+
+	const auto remote_sid = remote_track->Info().sid;
+	ASSERT_FALSE(published.track->Unpublish());
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return reader->IsClosed() && sender_events.local_unpublished() >= 1 &&
+		           receiver_events.remote_unpublished() >= 1;
+	    },
+	    std::chrono::seconds(10)));
+	EXPECT_EQ(remote_sender->GetDataTrackBySid(remote_sid), nullptr);
 	receiver->RemoveEventListener();
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());

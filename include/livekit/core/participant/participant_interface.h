@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_PARTICIPANT_PARTICIPANT_INTERFACE_H_
 #define _LKC_CORE_PARTICIPANT_PARTICIPANT_INTERFACE_H_
 
+#include "livekit/core/data_track.h"
 #include "livekit/core/track/track_interface.h"
 #include "livekit/core/track/track_publication_interface.h"
 
@@ -66,6 +67,9 @@ public:
 	virtual bool IsTrackPublicationEnabled(TrackPublicationInterface* publication) = 0;
 	// Appended to preserve the virtual method order of existing ParticipantInterface consumers.
 	virtual ParticipantPermissions Permissions() { return {}; }
+	virtual std::vector<DataTrackInterface*> GetDataTracks() { return {}; }
+	virtual DataTrackInterface* GetDataTrackBySid(const std::string&) { return nullptr; }
+	virtual DataTrackInterface* GetDataTrackByName(const std::string&) { return nullptr; }
 
 public:
 	virtual ~ParticipantInterface() = default;

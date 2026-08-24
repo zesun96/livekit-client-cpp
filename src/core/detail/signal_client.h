@@ -32,6 +32,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace livekit {
@@ -81,6 +82,9 @@ public:
 	virtual void OnRequestResponse(const livekit::RequestResponse& response) = 0;
 
 	virtual void OnLocalTrackSubscribed(const std::string& track_sid) = 0;
+	virtual void OnDataTrackPublished(const livekit::PublishDataTrackResponse&) {}
+	virtual void OnDataTrackUnpublished(const livekit::UnpublishDataTrackResponse&) {}
+	virtual void OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberHandles&) {}
 };
 
 class SignalClient {
@@ -144,6 +148,10 @@ public:
 	                               const std::vector<livekit::AudioTrackFeature>& features);
 
 	void SendLeave();
+	void SendPublishDataTrack(const livekit::PublishDataTrackRequest& request);
+	void SendUnpublishDataTrack(uint32_t publisher_handle);
+	void SendUpdateDataSubscription(const std::string& track_sid, bool subscribe,
+	                                std::optional<uint32_t> target_fps = std::nullopt);
 
 private:
 	bool init();
