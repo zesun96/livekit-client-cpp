@@ -42,6 +42,11 @@ TEST(PublicApiTest, CreatesOwnedDisconnectedRoom) {
 	const auto playback_stats = room->GetAudioPlaybackStats();
 	EXPECT_EQ(playback_stats.queued_frames, 0u);
 	EXPECT_EQ(playback_stats.played_frames, 0u);
+	DataTrackSchema schema{{"test.schema", {DataTrackSchemaEncodingKind::JsonSchema, {}}},
+	                       {'{', '}'}};
+	EXPECT_EQ(room->StoreDataTrackSchema(schema).code, DataTrackErrorCode::Disconnected);
+	EXPECT_EQ(room->GetDataTrackSchema("publisher", schema.id).error.code,
+	          DataTrackErrorCode::Disconnected);
 }
 
 TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {

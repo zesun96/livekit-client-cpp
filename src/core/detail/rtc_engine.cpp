@@ -115,6 +115,9 @@ livekit::core::DataTrackError RequestResponseError(const livekit::RequestRespons
 	using Code = livekit::core::DataTrackErrorCode;
 	Code code = Code::ProtocolError;
 	switch (response.reason()) {
+	case livekit::RequestResponse::NOT_FOUND:
+		code = Code::NotFound;
+		break;
 	case livekit::RequestResponse::NOT_ALLOWED:
 		code = Code::NotAllowed;
 		break;
@@ -458,6 +461,7 @@ void RtcEngine::Disconnect() {
 		}
 		pending->cv.notify_all();
 	}
+	CancelPendingDataBlobRequests({DataTrackErrorCode::Disconnected, "room is disconnected"});
 	{
 		std::lock_guard<std::mutex> guard(access_token_mutex_);
 		access_token_.clear();
@@ -466,6 +470,25 @@ void RtcEngine::Disconnect() {
 		std::lock_guard<std::mutex> guard(connection_params_mutex_);
 		connection_url_.clear();
 		connection_options_ = {};
+	}
+}
+
+void RtcEngine::CancelPendingDataBlobRequests(DataTrackError error) {
+	std::vector<std::shared_ptr<PendingDataBlobRequest>> pending_requests;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		for (const auto& [request_id, pending] : pending_data_blob_requests_) {
+			pending_requests.push_back(pending);
+		}
+		pending_data_blob_requests_.clear();
+	}
+	for (const auto& pending : pending_requests) {
+		{
+			std::lock_guard<std::mutex> guard(pending->mutex);
+			pending->completed = true;
+			pending->error = error;
+		}
+		pending->cv.notify_all();
 	}
 }
 
@@ -564,6 +587,8 @@ void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_
 	PLOG_INFO << "connection recovery started: reason=" << ReconnectReasonName(reason)
 	          << ", force_full_reconnect=" << force_full_reconnect;
 	recovering_connection_ = true;
+	CancelPendingDataBlobRequests(
+	    {DataTrackErrorCode::Disconnected, "connection is recovering; retry the schema request"});
 	{
 		std::lock_guard<std::mutex> guard(rtc_connected_mutex_);
 		rtc_connected_ = false;
@@ -1152,6 +1177,131 @@ RtcEngine::PublishedDataTrackInfo(uint16_t publisher_handle) const {
 	           : std::optional<livekit::DataTrackInfo>{found->second};
 }
 
+DataTrackError RtcEngine::StoreDataTrackSchema(const DataTrackSchema& schema) {
+	if (schema.definition.size() > kMaximumDataTrackSchemaDefinitionSize) {
+		return {DataTrackErrorCode::InvalidSchema,
+		        "data track schema definition exceeds the 50 KB protocol limit"};
+	}
+	livekit::StoreDataBlobRequest request;
+	if (!detail::ToProto(schema.id, *request.mutable_blob()->mutable_key()->mutable_schema_id())) {
+		return {DataTrackErrorCode::InvalidSchema, "invalid data track schema identifier"};
+	}
+	if (schema.definition.empty()) {
+		request.mutable_blob()->clear_contents();
+	} else {
+		request.mutable_blob()->set_contents(
+		    reinterpret_cast<const char*>(schema.definition.data()), schema.definition.size());
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return {DataTrackErrorCode::Disconnected, "room is disconnected"};
+	}
+	auto pending = std::make_shared<PendingDataBlobRequest>();
+	uint32_t request_id = 0;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		if (recovering_connection_ || recovery_stop_) {
+			return {DataTrackErrorCode::Disconnected,
+			        "connection is recovering; retry the schema request"};
+		}
+		for (std::size_t attempt = 0; attempt <= pending_data_blob_requests_.size(); ++attempt) {
+			const auto candidate = signal_client->NextRequestId();
+			if (candidate != 0 && !pending_data_blob_requests_.contains(candidate)) {
+				request_id = candidate;
+				break;
+			}
+		}
+		if (request_id == 0) {
+			return {DataTrackErrorCode::QueueFull, "data blob request identifiers are exhausted"};
+		}
+		pending_data_blob_requests_[request_id] = pending;
+	}
+	request.set_request_id(request_id);
+	signal_client->SendStoreDataBlob(request);
+	std::unique_lock<std::mutex> lock(pending->mutex);
+	if (!pending->cv.wait_for(lock, kDataTrackRequestTimeout,
+	                          [&pending]() { return pending->completed; })) {
+		lock.unlock();
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		pending_data_blob_requests_.erase(request_id);
+		return {DataTrackErrorCode::Timeout, "data track schema storage timed out"};
+	}
+	if (pending->error) {
+		return pending->error;
+	}
+	if (!pending->key || !pending->key->has_schema_id() ||
+	    detail::FromProto(pending->key->schema_id()) != schema.id) {
+		return {DataTrackErrorCode::ProtocolError,
+		        "server returned a mismatched data track schema identifier"};
+	}
+	return {};
+}
+
+DataTrackSchemaResult RtcEngine::GetDataTrackSchema(const std::string& participant_identity,
+                                                    const DataTrackSchemaId& schema_id) {
+	if (participant_identity.empty()) {
+		return {{}, {DataTrackErrorCode::InvalidSchema, "participant identity is required"}};
+	}
+	livekit::GetDataBlobRequest request;
+	request.set_participant_identity(participant_identity);
+	if (!detail::ToProto(schema_id, *request.mutable_key()->mutable_schema_id())) {
+		return {{}, {DataTrackErrorCode::InvalidSchema, "invalid data track schema identifier"}};
+	}
+	auto signal_client = SignalClientSnapshot();
+	if (!signal_client) {
+		return {{}, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
+	auto pending = std::make_shared<PendingDataBlobRequest>();
+	uint32_t request_id = 0;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		if (recovering_connection_ || recovery_stop_) {
+			return {{},
+			        {DataTrackErrorCode::Disconnected,
+			         "connection is recovering; retry the schema request"}};
+		}
+		for (std::size_t attempt = 0; attempt <= pending_data_blob_requests_.size(); ++attempt) {
+			const auto candidate = signal_client->NextRequestId();
+			if (candidate != 0 && !pending_data_blob_requests_.contains(candidate)) {
+				request_id = candidate;
+				break;
+			}
+		}
+		if (request_id == 0) {
+			return {{},
+			        {DataTrackErrorCode::QueueFull, "data blob request identifiers are exhausted"}};
+		}
+		pending_data_blob_requests_[request_id] = pending;
+	}
+	request.set_request_id(request_id);
+	signal_client->SendGetDataBlob(request);
+	std::unique_lock<std::mutex> lock(pending->mutex);
+	if (!pending->cv.wait_for(lock, kDataTrackRequestTimeout,
+	                          [&pending]() { return pending->completed; })) {
+		lock.unlock();
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		pending_data_blob_requests_.erase(request_id);
+		return {{}, {DataTrackErrorCode::Timeout, "data track schema lookup timed out"}};
+	}
+	if (pending->error) {
+		return {{}, pending->error};
+	}
+	if (!pending->blob || !pending->blob->has_key() || !pending->blob->key().has_schema_id()) {
+		return {{}, {DataTrackErrorCode::NotFound, "data track schema was not found"}};
+	}
+	const auto returned_id = detail::FromProto(pending->blob->key().schema_id());
+	if (returned_id != schema_id ||
+	    pending->blob->contents().size() > kMaximumDataTrackSchemaDefinitionSize) {
+		return {{},
+		        {DataTrackErrorCode::ProtocolError,
+		         "server returned an invalid data track schema definition"}};
+	}
+	DataTrackSchema schema;
+	schema.id = returned_id;
+	schema.definition.assign(pending->blob->contents().begin(), pending->blob->contents().end());
+	return {std::move(schema), {}};
+}
+
 bool RtcEngine::WaitForDataChannelBuffer(
     const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable) {
 	return channel &&
@@ -1601,6 +1751,7 @@ void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) {
 	}
 	uint16_t handle = 0;
 	std::shared_ptr<PendingDataTrackRequest> pending;
+	std::shared_ptr<PendingDataBlobRequest> pending_blob;
 	{
 		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
 		if (response.has_publish_data_track()) {
@@ -1617,6 +1768,12 @@ void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) {
 				pending = found->second;
 				pending_data_track_unpublishes_.erase(found);
 			}
+		} else if (response.request_id() != 0) {
+			auto found = pending_data_blob_requests_.find(response.request_id());
+			if (found != pending_data_blob_requests_.end()) {
+				pending_blob = found->second;
+				pending_data_blob_requests_.erase(found);
+			}
 		}
 	}
 	if (pending) {
@@ -1626,6 +1783,14 @@ void RtcEngine::OnRequestResponse(const livekit::RequestResponse& response) {
 			pending->error = RequestResponseError(response);
 		}
 		pending->cv.notify_all();
+	}
+	if (pending_blob) {
+		{
+			std::lock_guard<std::mutex> guard(pending_blob->mutex);
+			pending_blob->completed = true;
+			pending_blob->error = RequestResponseError(response);
+		}
+		pending_blob->cv.notify_all();
 	}
 }
 
@@ -1711,6 +1876,54 @@ void RtcEngine::OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberH
 		found->second.SetMaximumPartialFrames(limit);
 	}
 }
+
+void RtcEngine::OnDataBlobStored(const livekit::StoreDataBlobResponse& response) {
+	std::shared_ptr<PendingDataBlobRequest> pending;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		auto found = pending_data_blob_requests_.find(response.request_id());
+		if (found == pending_data_blob_requests_.end()) {
+			return;
+		}
+		pending = found->second;
+		pending_data_blob_requests_.erase(found);
+	}
+	{
+		std::lock_guard<std::mutex> guard(pending->mutex);
+		pending->completed = true;
+		if (response.has_key()) {
+			pending->key = response.key();
+		} else {
+			pending->error = {DataTrackErrorCode::ProtocolError,
+			                  "server returned an empty data blob storage response"};
+		}
+	}
+	pending->cv.notify_all();
+}
+
+void RtcEngine::OnDataBlobReceived(const livekit::GetDataBlobResponse& response) {
+	std::shared_ptr<PendingDataBlobRequest> pending;
+	{
+		std::lock_guard<std::mutex> guard(data_tracks_mutex_);
+		auto found = pending_data_blob_requests_.find(response.request_id());
+		if (found == pending_data_blob_requests_.end()) {
+			return;
+		}
+		pending = found->second;
+		pending_data_blob_requests_.erase(found);
+	}
+	{
+		std::lock_guard<std::mutex> guard(pending->mutex);
+		pending->completed = true;
+		if (response.has_blob()) {
+			pending->blob = response.blob();
+		} else {
+			pending->error = {DataTrackErrorCode::NotFound, "data blob was not found"};
+		}
+	}
+	pending->cv.notify_all();
+}
+
 void RtcEngine::OnLocalTrackSubscribed(const std::string& track_sid) {
 	if (track_sid.empty()) {
 		return;

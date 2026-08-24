@@ -2,6 +2,7 @@ add_executable(
   livekit_public_api_tests
   c_api_test.cpp
   data_track_reader_test.cpp
+  data_track_schema_test.cpp
   e2ee_manager_test.cpp
   key_provider_test.cpp
   microphone_source_test.cpp

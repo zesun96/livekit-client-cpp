@@ -187,6 +187,44 @@ bool Room::UnregisterByteStreamHandler(const std::string& topic) {
 	return byte_stream_handlers_.erase(topic) != 0;
 }
 
+DataTrackError Room::StoreDataTrackSchema(DataTrackSchema schema) {
+	if (!IsConnected() || rtc_engine_ == nullptr) {
+		return {DataTrackErrorCode::Disconnected, "room is disconnected"};
+	}
+	auto result = rtc_engine_->StoreDataTrackSchema(schema);
+	if (result) {
+		return result;
+	}
+	auto identity = local_participant_->Identity();
+	auto key = std::make_tuple(identity, schema.id.name, schema.id.encoding.kind,
+	                           schema.id.encoding.custom);
+	std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+	data_track_schema_cache_[std::move(key)] = std::move(schema);
+	return {};
+}
+
+DataTrackSchemaResult Room::GetDataTrackSchema(std::string participant_identity,
+                                               DataTrackSchemaId schema_id) {
+	auto key = std::make_tuple(participant_identity, schema_id.name, schema_id.encoding.kind,
+	                           schema_id.encoding.custom);
+	{
+		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+		auto found = data_track_schema_cache_.find(key);
+		if (found != data_track_schema_cache_.end()) {
+			return {found->second, {}};
+		}
+	}
+	if (!IsConnected() || rtc_engine_ == nullptr) {
+		return {{}, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
+	auto result = rtc_engine_->GetDataTrackSchema(participant_identity, schema_id);
+	if (result) {
+		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+		data_track_schema_cache_[std::move(key)] = *result.schema;
+	}
+	return result;
+}
+
 bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) {
 	auto expected = state_.load();
 	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {
@@ -201,6 +239,10 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	disconnected_event_emitted_ = false;
 	full_reconnect_prepared_ = false;
 	disconnect_reason_ = DisconnectReason::Unknown;
+	{
+		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+		data_track_schema_cache_.clear();
+	}
 	options_ = opts;
 	local_participant_->UpdateRoomOptions(opts);
 
@@ -345,6 +387,10 @@ bool Room::Disconnect() {
 	}
 	detached_tracks.clear();
 	rtc_engine_->Disconnect();
+	{
+		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+		data_track_schema_cache_.clear();
+	}
 	FailIncomingDataStreams("room disconnected");
 	SetState(RoomState::Disconnected);
 	NotifyDisconnectedOnce(DisconnectReason::ClientInitiated);
@@ -837,6 +883,10 @@ void Room::SignalDisconnectedEvent(livekit::DisconnectReason reason) {
 		}
 	}
 	if (current != RoomState::Disconnecting && current != RoomState::Disconnected) {
+		{
+			std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+			data_track_schema_cache_.clear();
+		}
 		FailIncomingDataStreams("connection closed");
 		NotifyDisconnectedOnce(from_disconnect_reason(reason));
 	}

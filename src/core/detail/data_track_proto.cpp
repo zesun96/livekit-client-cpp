@@ -96,12 +96,13 @@ DataTrackInfo FromProto(const livekit::DataTrackInfo& info) {
 		output.frame_encoding = FromProto(info.frame_encoding());
 	}
 	if (info.has_schema()) {
-		DataTrackSchemaId schema;
-		schema.name = info.schema().name();
-		schema.encoding = FromProto(info.schema().encoding());
-		output.schema = std::move(schema);
+		output.schema = FromProto(info.schema());
 	}
 	return output;
+}
+
+DataTrackSchemaId FromProto(const livekit::DataTrackSchemaId& schema) {
+	return {schema.name(), FromProto(schema.encoding())};
 }
 
 bool ToProto(const DataTrackFrameEncoding& encoding, livekit::DataTrackFrameEncoding& output) {

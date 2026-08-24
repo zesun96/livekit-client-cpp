@@ -92,6 +92,14 @@ public:
 	// The returned pointer is owned by the room and remains valid until the room is reconfigured or
 	// destroyed. A null pointer means E2EE is not configured.
 	virtual E2EEManager* GetE2EEManager() { return nullptr; }
+	// Schema definitions are stored by the local participant and queried by stable participant
+	// identity. Successful lookups are cached for the lifetime of this room connection.
+	virtual DataTrackError StoreDataTrackSchema(DataTrackSchema) {
+		return {DataTrackErrorCode::Disconnected, "room is disconnected"};
+	}
+	virtual DataTrackSchemaResult GetDataTrackSchema(std::string, DataTrackSchemaId) {
+		return {{}, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
 
 	// These controls return false when the room is disconnected or the participant/track SID does
 	// not belong to the room.

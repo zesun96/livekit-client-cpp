@@ -22,6 +22,8 @@ add_subdirectory(publish_screen_c)
 
 add_subdirectory(data_transfer)
 
+add_subdirectory(data_track_schema)
+
 add_subdirectory(rpc)
 
 add_subdirectory(media_devices)

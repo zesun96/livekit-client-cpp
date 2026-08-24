@@ -13,6 +13,7 @@ namespace core {
 namespace detail {
 
 DataTrackInfo FromProto(const livekit::DataTrackInfo& info);
+DataTrackSchemaId FromProto(const livekit::DataTrackSchemaId& schema);
 bool ToProto(const DataTrackFrameEncoding& encoding, livekit::DataTrackFrameEncoding& output);
 bool ToProto(const DataTrackSchemaEncoding& encoding, livekit::DataTrackSchemaEncoding& output);
 bool ToProto(const DataTrackSchemaId& schema, livekit::DataTrackSchemaId& output);

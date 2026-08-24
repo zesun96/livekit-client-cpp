@@ -1274,9 +1274,23 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(10)));
 
+	DataTrackSchema schema;
+	schema.id = {"integration.telemetry.v1", {DataTrackSchemaEncodingKind::JsonSchema, {}}};
+	const std::string schema_json =
+	    R"({"type":"object","properties":{"x":{"type":"number"}},"required":["x"]})";
+	schema.definition.assign(schema_json.begin(), schema_json.end());
+	const auto store_schema_error = sender->StoreDataTrackSchema(schema);
+	ASSERT_FALSE(store_schema_error) << store_schema_error.message;
+	DataTrackSchema oversized = schema;
+	oversized.id.name = "integration.oversized";
+	oversized.definition.resize(kMaximumDataTrackSchemaDefinitionSize + 1);
+	EXPECT_EQ(sender->StoreDataTrackSchema(std::move(oversized)).code,
+	          DataTrackErrorCode::InvalidSchema);
+
 	DataTrackPublishOptions publish_options;
 	publish_options.name = "integration-telemetry";
 	publish_options.frame_encoding = DataTrackFrameEncoding{DataTrackFrameEncodingKind::Json, {}};
+	publish_options.schema = schema.id;
 	auto published = sender->GetLocalParticipant()->PublishDataTrack(publish_options);
 	ASSERT_TRUE(published) << published.error.message;
 	ASSERT_NE(published.track, nullptr);
@@ -1297,6 +1311,20 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	    },
 	    std::chrono::seconds(10)));
 	EXPECT_TRUE(remote_track->Info().uses_e2ee);
+	ASSERT_TRUE(remote_track->Info().schema.has_value());
+	EXPECT_EQ(*remote_track->Info().schema, schema.id);
+	auto remote_schema =
+	    receiver->GetDataTrackSchema(sender->GetLocalParticipant()->Identity(), schema.id);
+	ASSERT_TRUE(remote_schema) << remote_schema.error.message;
+	EXPECT_EQ(*remote_schema.schema, schema);
+	// The second lookup is served from the room cache and remains available during recovery.
+	EXPECT_TRUE(receiver->GetDataTrackSchema(sender->GetLocalParticipant()->Identity(), schema.id));
+	auto missing_schema_id = schema.id;
+	missing_schema_id.name = "integration.missing";
+	const auto missing_schema = receiver->GetDataTrackSchema(
+	    sender->GetLocalParticipant()->Identity(), std::move(missing_schema_id));
+	EXPECT_FALSE(missing_schema);
+	EXPECT_EQ(missing_schema.error.code, DataTrackErrorCode::NotFound);
 	DataTrackSubscriptionOptions subscription_options;
 	subscription_options.buffer_capacity = 4;
 	subscription_options.max_partial_frames = 2;
