@@ -21,7 +21,9 @@
 #define _LKC_CORE_DETAIL_RTC_ENGINE_H_
 
 #include "data_channel_backpressure.h"
+#include "data_track_packet.h"
 #include "livekit/core/data_packet.h"
+#include "livekit/core/data_track.h"
 #include "livekit/core/option/rtc_engine_option.h"
 #include "livekit/core/rpc.h"
 #include "livekit/core/subscription_permission.h"
@@ -81,6 +83,8 @@ public:
 		virtual void DataChannelBufferStatusEvent(const DataChannelBufferStatus&) {}
 		virtual void LocalTrackSubscribedEvent(const std::string&) {}
 		virtual void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate&) {}
+		virtual void DataTrackFrameEvent(const std::string&, DataTrackFrame) {}
+		virtual void LocalDataTrackUnpublishedEvent(uint16_t) {}
 	};
 
 	RtcEngine();
@@ -105,6 +109,14 @@ public:
 
 	void PublisherNegotiationNeeded();
 	bool SendDataPacket(const livekit::DataPacket& packet, bool reliable);
+	std::pair<std::optional<livekit::DataTrackInfo>, DataTrackError>
+	PublishDataTrack(const DataTrackPublishOptions& options, bool encrypted);
+	DataTrackError UnpublishDataTrack(uint16_t publisher_handle);
+	DataTrackError PushDataTrackFrame(uint16_t publisher_handle, const DataTrackFrame& frame);
+	bool UpdateDataTrackSubscription(const std::string& track_sid, bool subscribe,
+	                                 const DataTrackSubscriptionOptions& options = {});
+	bool RepublishDataTracks();
+	std::optional<livekit::DataTrackInfo> PublishedDataTrackInfo(uint16_t publisher_handle) const;
 	bool RegisterRpcMethod(std::string method, RpcHandler handler);
 	bool UnregisterRpcMethod(const std::string& method);
 	RpcResult PerformRpc(const PerformRpcParams& params);
@@ -149,6 +161,9 @@ public:
 	virtual void OnSubscriptionError(const livekit::SubscriptionResponse& response) override;
 	virtual void OnRequestResponse(const livekit::RequestResponse& response) override;
 	virtual void OnLocalTrackSubscribed(const std::string& track_sid) override;
+	void OnDataTrackPublished(const livekit::PublishDataTrackResponse& response) override;
+	void OnDataTrackUnpublished(const livekit::UnpublishDataTrackResponse& response) override;
+	void OnDataTrackSubscriberHandles(const livekit::DataTrackSubscriberHandles& handles) override;
 
 	/* Pure virtual methods inherited from RtcSession::RtcSessionListener */
 public:
@@ -207,7 +222,9 @@ private:
 	void
 	OnDataChannelStateChange(const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel,
 	                         bool reliable, bool monitor_buffer);
-	void OnDataChannelMessage(const webrtc::DataBuffer& buffer);
+	void OnDataChannelMessage(const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel,
+	                          const webrtc::DataBuffer& buffer);
+	void OnDataTrackMessage(const webrtc::DataBuffer& buffer);
 	void OnDataChannelBufferedAmountChange(
 	    const webrtc::scoped_refptr<webrtc::DataChannelInterface>& channel, bool reliable,
 	    bool monitor_buffer);
@@ -271,9 +288,11 @@ private:
 	bool is_subscriber_primary_;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> lossyDC_ = nullptr;
 	webrtc::scoped_refptr<webrtc::DataChannelInterface> reliableDC_ = nullptr;
+	webrtc::scoped_refptr<webrtc::DataChannelInterface> dataTrackDC_ = nullptr;
 	std::mutex data_channels_lock_;
 	std::mutex reliable_data_channel_send_mutex_;
 	std::mutex lossy_data_channel_send_mutex_;
+	std::mutex data_track_send_mutex_;
 	std::vector<webrtc::scoped_refptr<webrtc::DataChannelInterface>> data_channels_;
 	std::vector<std::unique_ptr<DataChannelObserverProxy>> data_channel_observers_;
 	DataChannelBackpressure data_channel_backpressure_;
@@ -312,6 +331,27 @@ private:
 	std::deque<std::function<void()>> rpc_tasks_;
 	std::vector<std::thread> rpc_workers_;
 	bool rpc_workers_stopping_ = false;
+
+	struct PendingDataTrackRequest {
+		std::mutex mutex;
+		std::condition_variable cv;
+		bool completed = false;
+		std::optional<livekit::DataTrackInfo> info;
+		DataTrackError error;
+	};
+	struct IncomingDataTrackRoute {
+		std::string track_sid;
+		std::string publisher_identity;
+	};
+	mutable std::mutex data_tracks_mutex_;
+	uint32_t next_data_track_handle_ = 1;
+	std::map<uint16_t, std::shared_ptr<PendingDataTrackRequest>> pending_data_track_publishes_;
+	std::map<uint16_t, std::shared_ptr<PendingDataTrackRequest>> pending_data_track_unpublishes_;
+	std::map<uint16_t, livekit::DataTrackInfo> published_data_tracks_;
+	std::map<uint16_t, std::unique_ptr<detail::DataTrackPacketizer>> data_track_packetizers_;
+	std::map<uint16_t, IncomingDataTrackRoute> incoming_data_track_routes_;
+	std::map<std::string, detail::DataTrackDepacketizer> data_track_depacketizers_;
+	std::map<std::string, std::size_t> data_track_partial_frame_limits_;
 };
 
 } // namespace core

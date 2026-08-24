@@ -17,16 +17,26 @@
 
 #include "remote_participant.h"
 
+#include "../data_track.h"
+#include "../detail/data_track_proto.h"
+
 namespace livekit {
 namespace core {
 RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info)
     : RemoteParticipant(info, true, {}) {}
 
 RemoteParticipant::RemoteParticipant(const livekit::ParticipantInfo& info, bool auto_subscribe,
-                                     PublicationHandlers handlers)
+                                     PublicationHandlers handlers,
+                                     DataTrackSubscriptionHandler data_track_subscription)
     : Participant("", "", "", "", {}), auto_subscribe_(auto_subscribe),
-      handlers_(std::move(handlers)) {
+      handlers_(std::move(handlers)), data_track_subscription_(std::move(data_track_subscription)) {
 	Participant::UpdateFromInfo(info);
+}
+
+std::shared_ptr<DataTrackInterface>
+RemoteParticipant::CreateDataTrack(const livekit::DataTrackInfo& info) {
+	return std::make_shared<RemoteDataTrack>(detail::FromProto(info), Identity(),
+	                                         data_track_subscription_);
 }
 
 void RemoteParticipant::UpdateFromInfo(const livekit::ParticipantInfo& info) {

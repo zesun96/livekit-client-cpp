@@ -326,11 +326,22 @@ bool Room::Disconnect() {
 	}
 
 	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
+	std::vector<std::shared_ptr<RemoteParticipant>> detached_participants;
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
 		detached_tracks.swap(remote_tracks_);
 		pending_media_tracks_.clear();
+		for (const auto& [sid, participant] : remote_participants_) {
+			detached_participants.push_back(participant);
+		}
 		remote_participants_.clear();
+	}
+	for (const auto& participant : detached_participants) {
+		for (const auto& [sid, interface] : participant->DataTracksSnapshot()) {
+			if (auto* track = dynamic_cast<RemoteDataTrack*>(interface.get())) {
+				track->MarkUnpublished();
+			}
+		}
 	}
 	detached_tracks.clear();
 	rtc_engine_->Disconnect();
@@ -654,6 +665,24 @@ void Room::ResendRemoteTrackPreferences() {
 	}
 }
 
+void Room::ResendRemoteDataTrackSubscriptions() {
+	std::vector<std::shared_ptr<DataTrackInterface>> tracks;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		for (const auto& [sid, participant] : remote_participants_) {
+			auto snapshot = participant->DataTracksSnapshot();
+			for (auto& [track_sid, track] : snapshot) {
+				tracks.push_back(std::move(track));
+			}
+		}
+	}
+	for (const auto& track : tracks) {
+		if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
+			remote->ResendSubscription();
+		}
+	}
+}
+
 bool Room::SimulateSignalDisconnectForTesting() {
 	return rtc_engine_ != nullptr && rtc_engine_->SimulateSignalDisconnectForTesting();
 }
@@ -770,6 +799,7 @@ void Room::SignalResumedEvent() {
 void Room::ResumedEvent() {
 	local_participant_->ResendTrackSubscriptionPermissions();
 	ResendRemoteTrackPreferences();
+	ResendRemoteDataTrackSubscriptions();
 	if (!TransitionState(RoomState::Reconnecting, RoomState::Connected)) {
 		return;
 	}
@@ -786,6 +816,8 @@ void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
 	local_participant_->ResendTrackSubscriptionPermissions();
 	ResendRemoteTrackPreferences();
 	local_participant_->RepublishAllTracksAfterReconnect();
+	local_participant_->RepublishAllDataTracksAfterReconnect();
+	ResendRemoteDataTrackSubscriptions();
 	full_reconnect_prepared_ = false;
 	SetState(RoomState::Connected);
 	if (auto* listener = event_listener_.load()) {
@@ -1339,6 +1371,36 @@ void Room::SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate& 
 	local_participant_->SubscribedQualityUpdate(std::move(converted));
 }
 
+void Room::DataTrackFrameEvent(const std::string& track_sid, DataTrackFrame frame) {
+	std::shared_ptr<RemoteParticipant> participant;
+	std::shared_ptr<DataTrackInterface> interface;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participant = FindRemoteParticipantForDataTrack(track_sid);
+		if (!participant) {
+			return;
+		}
+		auto tracks = participant->DataTracksSnapshot();
+		auto found = tracks.find(track_sid);
+		if (found == tracks.end()) {
+			return;
+		}
+		interface = found->second;
+	}
+	auto* track = dynamic_cast<RemoteDataTrack*>(interface.get());
+	if (track == nullptr) {
+		return;
+	}
+	track->PushFrame(frame);
+	if (auto* listener = event_listener_.load()) {
+		listener->OnDataTrackFrame(track, participant.get(), frame);
+	}
+}
+
+void Room::LocalDataTrackUnpublishedEvent(uint16_t publisher_handle) {
+	local_participant_->LocalDataTrackUnpublished(publisher_handle);
+}
+
 void Room::DataPacketEvent(const livekit::DataPacket& packet) {
 	if (packet.has_user()) {
 		DataReceivedEvent event;
@@ -1860,6 +1922,16 @@ Room::FindRemoteParticipantForTrack(const std::string& track_sid) {
 	return nullptr;
 }
 
+std::shared_ptr<RemoteParticipant>
+Room::FindRemoteParticipantForDataTrack(const std::string& track_sid) {
+	for (auto& [sid, participant] : remote_participants_) {
+		if (participant->GetDataTrackBySid(track_sid) != nullptr) {
+			return participant;
+		}
+	}
+	return nullptr;
+}
+
 void Room::NotifyAudioFrame(const std::string& participant_sid, const std::string& track_sid,
                             const AudioFrame& frame) {
 	std::shared_ptr<RemoteParticipant> participant;
@@ -1932,6 +2004,10 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		bool status_changed = false;
 		TrackSubscriptionStatus status = TrackSubscriptionStatus::Unsubscribed;
 	};
+	struct DataTrackEvent {
+		std::shared_ptr<DataTrackInterface> track;
+		std::shared_ptr<RemoteParticipant> participant;
+	};
 
 	std::vector<PendingMediaTrack> ready_tracks;
 	std::vector<std::shared_ptr<RemoteParticipant>> connected;
@@ -1939,6 +2015,8 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	std::vector<PublicationEvent> published;
 	std::vector<PublicationEvent> unpublished;
 	std::vector<UnsubscriptionEvent> unsubscribed;
+	std::vector<DataTrackEvent> data_tracks_published;
+	std::vector<DataTrackEvent> data_tracks_unpublished;
 	std::vector<ParticipantValueEvent> metadata_changed;
 	std::vector<ParticipantValueEvent> name_changed;
 	std::vector<AttributesEvent> attributes_changed;
@@ -2015,6 +2093,14 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			if (info.state() == livekit::ParticipantInfo_State_DISCONNECTED) {
 				if (participant != remote_participants_.end()) {
 					auto retained = participant->second;
+					for (const auto& [sid, track] : retained->DataTracksSnapshot()) {
+						if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
+							remote->MarkUnpublished();
+						}
+						if (emit_events) {
+							data_tracks_unpublished.push_back({track, retained});
+						}
+					}
 					for (const auto& [sid, publication] : retained->TrackPublicationsSnapshot()) {
 						auto track = remote_tracks_.find(sid);
 						if (track != remote_tracks_.end() && emit_events) {
@@ -2048,12 +2134,20 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 
 			if (participant == remote_participants_.end()) {
 				auto added = std::make_shared<RemoteParticipant>(
-				    info, options_.auto_subscribe, CreateRemotePublicationHandlers(info.sid()));
+				    info, options_.auto_subscribe, CreateRemotePublicationHandlers(info.sid()),
+				    [this](const std::string& track_sid, bool subscribe,
+				           const DataTrackSubscriptionOptions& options) {
+					    return rtc_engine_->UpdateDataTrackSubscription(track_sid, subscribe,
+					                                                    options);
+				    });
 				remote_participants_.emplace(info.sid(), added);
 				if (emit_events) {
 					connected.push_back(added);
 					for (const auto& [sid, publication] : added->TrackPublicationsSnapshot()) {
 						published.push_back({publication, added});
+					}
+					for (const auto& [sid, track] : added->DataTracksSnapshot()) {
+						data_tracks_published.push_back({track, added});
 					}
 				}
 				continue;
@@ -2065,12 +2159,14 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			const auto old_attributes = retained->Attributes();
 			const auto old_permissions = retained->Permissions();
 			const auto old_publications = retained->TrackPublicationsSnapshot();
+			const auto old_data_tracks = retained->DataTracksSnapshot();
 			std::map<std::string, bool> old_mutes;
 			for (const auto& [sid, publication] : old_publications) {
 				old_mutes[sid] = publication->IsMuted();
 			}
 			retained->UpdateFromInfo(info);
 			const auto new_publications = retained->TrackPublicationsSnapshot();
+			const auto new_data_tracks = retained->DataTracksSnapshot();
 			if (!emit_events) {
 				continue;
 			}
@@ -2119,6 +2215,19 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 					unpublished.push_back({publication, retained});
 				}
 			}
+			for (const auto& [sid, track] : new_data_tracks) {
+				if (!old_data_tracks.contains(sid)) {
+					data_tracks_published.push_back({track, retained});
+				}
+			}
+			for (const auto& [sid, track] : old_data_tracks) {
+				if (!new_data_tracks.contains(sid)) {
+					if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
+						remote->MarkUnpublished();
+					}
+					data_tracks_unpublished.push_back({track, retained});
+				}
+			}
 		}
 
 		for (auto it = pending_media_tracks_.begin(); it != pending_media_tracks_.end();) {
@@ -2161,6 +2270,14 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		}
 		for (const auto& event : unpublished) {
 			listener->OnTrackUnpublished(event.publication.get(), event.participant.get());
+		}
+		for (const auto& event : data_tracks_published) {
+			listener->OnDataTrackPublished(
+			    dynamic_cast<RemoteDataTrackInterface*>(event.track.get()),
+			    event.participant.get());
+		}
+		for (const auto& event : data_tracks_unpublished) {
+			listener->OnDataTrackUnpublished(event.track.get(), event.participant.get());
 		}
 		for (const auto& event : metadata_changed) {
 			listener->OnParticipantMetadataChanged(event.value, event.participant);

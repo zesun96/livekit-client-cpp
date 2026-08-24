@@ -112,6 +112,8 @@ public:
 	void DataChannelBufferStatusEvent(const DataChannelBufferStatus& status) override;
 	void LocalTrackSubscribedEvent(const std::string& track_sid) override;
 	void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate& update) override;
+	void DataTrackFrameEvent(const std::string& track_sid, DataTrackFrame frame) override;
+	void LocalDataTrackUnpublishedEvent(uint16_t publisher_handle) override;
 	void SignalDisconnectedEvent(livekit::DisconnectReason reason) override;
 	void ReconnectingEvent(bool full_reconnect) override;
 	void SignalResumedEvent() override;
@@ -123,6 +125,8 @@ private:
 	                             bool emit_events = true);
 	void ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting);
 	std::shared_ptr<RemoteParticipant> FindRemoteParticipantForTrack(const std::string& track_sid);
+	std::shared_ptr<RemoteParticipant>
+	FindRemoteParticipantForDataTrack(const std::string& track_sid);
 	void NotifyAudioFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const AudioFrame& frame);
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
@@ -140,6 +144,7 @@ private:
 	RemoteParticipant::PublicationHandlers
 	CreateRemotePublicationHandlers(const std::string& participant_sid);
 	void ResendRemoteTrackPreferences();
+	void ResendRemoteDataTrackSubscriptions();
 	void FailIncomingDataStreams(const std::string& reason);
 	void ConfigureE2ee(const std::optional<E2eeOptions>& options);
 

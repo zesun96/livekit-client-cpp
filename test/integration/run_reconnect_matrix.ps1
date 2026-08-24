@@ -19,7 +19,7 @@ param(
   [string]$ConfigPath = "",
   [string]$ExistingServerExecutable = "",
   [switch]$ReplaceExistingServer,
-  [ValidateSet("All", "Restart", "TokenRefresh", "Media", "E2EE", "OfficialCpp")]
+  [ValidateSet("All", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "OfficialCpp")]
   [string]$Scenario = "All",
   [ValidateSet("vp8", "h264", "vp9", "av1")]
   [string]$VideoCodec = "vp8",
@@ -368,12 +368,17 @@ try {
 
   if ($Scenario -in @("All", "Media")) {
     Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
+    Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
   }
 
   if ($Scenario -in @("All", "E2EE")) {
     Invoke-SimpleTest "EncryptsAudioVideoAndDataEndToEnd"
     Invoke-SimpleTest "PreservesE2EEAfterPublisherAndSubscriberReconnect"
     Invoke-SimpleTest "ReportsAndRecoversFromE2EEKeyErrors"
+  }
+
+  if ($Scenario -in @("All", "DataTrack")) {
+    Invoke-SimpleTest "PublishesReadsAndUnpublishesEncryptedDataTrack"
   }
 
   if ($Scenario -eq "OfficialCpp" -or

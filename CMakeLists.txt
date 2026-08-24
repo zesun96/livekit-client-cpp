@@ -164,6 +164,7 @@ set(
   src/core/participant/participant.cpp
   src/core/participant/remote_participant.cpp
 
+  src/core/data_track.cpp
   src/core/livekit_client.cpp
   src/core/media_device.cpp
   src/core/room.cpp
@@ -173,6 +174,8 @@ set(
   src/core/detail/audio_device.cpp
   src/core/detail/converted_proto.cpp
   src/core/detail/data_channel_backpressure.cpp
+  src/core/detail/data_track_packet.cpp
+  src/core/detail/data_track_proto.cpp
   src/core/detail/data_stream_compression.cpp
   src/core/detail/debouncer.cpp
   src/core/detail/internals.cpp

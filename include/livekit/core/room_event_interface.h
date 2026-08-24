@@ -131,6 +131,12 @@ public:
 	virtual void OnSubscribedQualityUpdate(TrackPublicationInterface*, ParticipantInterface*,
 	                                       const SubscribedQualityUpdate&) {}
 	virtual void OnEncryptionStateChanged(const EncryptionStateEvent&) {}
+	virtual void OnDataTrackPublished(RemoteDataTrackInterface*, RemoteParticipantInterface*) {}
+	virtual void OnDataTrackUnpublished(DataTrackInterface*, RemoteParticipantInterface*) {}
+	virtual void OnLocalDataTrackPublished(LocalDataTrackInterface*, ParticipantInterface*) {}
+	virtual void OnLocalDataTrackUnpublished(LocalDataTrackInterface*, ParticipantInterface*) {}
+	virtual void OnDataTrackFrame(RemoteDataTrackInterface*, RemoteParticipantInterface*,
+	                              const DataTrackFrame&) {}
 };
 
 } // namespace core

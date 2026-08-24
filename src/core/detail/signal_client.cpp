@@ -349,6 +349,30 @@ void SignalClient::SendLeave() {
 	wsc_->flush(std::chrono::milliseconds(250));
 }
 
+void SignalClient::SendPublishDataTrack(const livekit::PublishDataTrackRequest& request) {
+	livekit::SignalRequest signal_request;
+	signal_request.mutable_publish_data_track_request()->CopyFrom(request);
+	sendRequest(signal_request);
+}
+
+void SignalClient::SendUnpublishDataTrack(uint32_t publisher_handle) {
+	livekit::SignalRequest signal_request;
+	signal_request.mutable_unpublish_data_track_request()->set_pub_handle(publisher_handle);
+	sendRequest(signal_request);
+}
+
+void SignalClient::SendUpdateDataSubscription(const std::string& track_sid, bool subscribe,
+                                              std::optional<uint32_t> target_fps) {
+	livekit::SignalRequest signal_request;
+	auto* update = signal_request.mutable_update_data_subscription()->add_updates();
+	update->set_track_sid(track_sid);
+	update->set_subscribe(subscribe);
+	if (subscribe && target_fps) {
+		update->mutable_options()->set_target_fps(*target_fps);
+	}
+	sendRequest(signal_request);
+}
+
 void SignalClient::onWsMessage(const WebsocketData& data) {
 	if (data.type() == WebsocketDataType::Binary) {
 		std::cout << "WebSocket binary message, len:" << data.size() << std::endl;
@@ -620,6 +644,24 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		if (observer_) {
 			auto& track_sid = resp.track_subscribed().track_sid();
 			observer_->OnLocalTrackSubscribed(track_sid);
+		}
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kPublishDataTrackResponse: {
+		if (observer_) {
+			observer_->OnDataTrackPublished(resp.publish_data_track_response());
+		}
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kUnpublishDataTrackResponse: {
+		if (observer_) {
+			observer_->OnDataTrackUnpublished(resp.unpublish_data_track_response());
+		}
+		break;
+	}
+	case livekit::SignalResponse::MessageCase::kDataTrackSubscriberHandles: {
+		if (observer_) {
+			observer_->OnDataTrackSubscriberHandles(resp.data_track_subscriber_handles());
 		}
 		break;
 	}

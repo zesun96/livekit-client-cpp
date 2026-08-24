@@ -46,6 +46,9 @@ public:
 	ConnectionQuality GetConnectionQuality() override;
 	virtual bool IsLocalParticipant() override;
 	ParticipantPermissions Permissions() override;
+	std::vector<DataTrackInterface*> GetDataTracks() override;
+	DataTrackInterface* GetDataTrackBySid(const std::string& sid) override;
+	DataTrackInterface* GetDataTrackByName(const std::string& name) override;
 
 	std::vector<TrackPublicationInterface*> GetTrackPublications() override;
 	TrackPublicationInterface* GetTrackPublication(const TrackSource& source) override;
@@ -61,12 +64,16 @@ public:
 	void RemoveTrackPublication(std::string track_sid);
 	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> TrackPublicationsSnapshot();
 	bool HasTrackSid(const std::string& track_sid);
+	void AddDataTrack(std::shared_ptr<DataTrackInterface> track);
+	void RemoveDataTrack(const std::string& sid);
+	std::map<std::string, std::shared_ptr<DataTrackInterface>> DataTracksSnapshot();
 	void SetSpeakerInfo(float audio_level, bool is_speaking);
 	void SetConnectionQuality(ConnectionQuality quality);
 
 protected:
 	virtual std::shared_ptr<TrackPublicationInterface>
 	CreateTrackPublication(const livekit::TrackInfo& info);
+	virtual std::shared_ptr<DataTrackInterface> CreateDataTrack(const livekit::DataTrackInfo& info);
 	// Updates participant identity and metadata without reconciling track publications. A full
 	// reconnect needs this split so locally owned tracks survive the replacement JoinResponse and
 	// can be published on the new PeerConnection.
@@ -85,6 +92,8 @@ protected:
 	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> track_publications_;
 	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> audio_track_publications_;
 	std::map<std::string, std::shared_ptr<TrackPublicationInterface>> video_track_publications_;
+	std::mutex data_tracks_mutex_;
+	std::map<std::string, std::shared_ptr<DataTrackInterface>> data_tracks_;
 	float audio_level_ = 0.0f;
 	int64_t last_spoke_at_ = 0;
 	ParticipantPermissions permissions_;

@@ -112,6 +112,9 @@ public:
 	virtual std::optional<ChatMessage> EditChatMessage(std::string, const ChatMessage&) {
 		return std::nullopt;
 	}
+	virtual DataTrackPublishResult PublishDataTrack(DataTrackPublishOptions) {
+		return {{}, {DataTrackErrorCode::Disconnected, "data tracks are unavailable"}};
+	}
 };
 
 } // namespace core

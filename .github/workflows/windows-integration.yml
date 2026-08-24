@@ -1,0 +1,179 @@
+name: Windows integration
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-room-e2ee:
+    if: >-
+      ${{ vars.LIBWEBRTC_H264_URL != '' &&
+          vars.LIVEKIT_SERVER_WINDOWS_URL != '' &&
+          vars.LK_CLI_WINDOWS_URL != '' }}
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      SOURCE_ROOT: ${{ github.workspace }}\source\livekit-client-cpp
+      MEDIA_CAPTURE_ROOT: ${{ github.workspace }}\source\media-capture
+      BUILD_ROOT: ${{ github.workspace }}\build
+      FIXTURE_ROOT: ${{ github.workspace }}\fixtures
+
+    steps:
+      - name: Check out SDK
+        uses: actions/checkout@v4
+        with:
+          path: source/livekit-client-cpp
+
+      - name: Check out media-capture
+        uses: actions/checkout@v4
+        with:
+          repository: zesun96/media-capture
+          ref: c901af5630be86fc8e14f1c6090cd4489a3bbbbc
+          path: source/media-capture
+
+      - name: Check out vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: b545373a9a536dc559dac8583467a21497a0e897
+          path: vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+
+      - name: Download integration fixtures
+        shell: pwsh
+        env:
+          LIBWEBRTC_URL: ${{ vars.LIBWEBRTC_H264_URL }}
+          LIVEKIT_SERVER_URL: ${{ vars.LIVEKIT_SERVER_WINDOWS_URL }}
+          LK_CLI_URL: ${{ vars.LK_CLI_WINDOWS_URL }}
+          OFFICIAL_CPP_URL: ${{ vars.OFFICIAL_LIVEKIT_CPP_WINDOWS_URL }}
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:FIXTURE_ROOT | Out-Null
+          $downloads = @(
+            @{ Name = "libwebrtc"; Url = $env:LIBWEBRTC_URL },
+            @{ Name = "livekit-server"; Url = $env:LIVEKIT_SERVER_URL },
+            @{ Name = "lk"; Url = $env:LK_CLI_URL }
+          )
+          if ($env:OFFICIAL_CPP_URL) {
+            $downloads += @{ Name = "official-cpp"; Url = $env:OFFICIAL_CPP_URL }
+          }
+          foreach ($download in $downloads) {
+            $archive = Join-Path $env:FIXTURE_ROOT "$($download.Name).zip"
+            Invoke-WebRequest -Uri $download.Url -OutFile $archive
+            Expand-Archive -LiteralPath $archive `
+              -DestinationPath (Join-Path $env:FIXTURE_ROOT $download.Name) -Force
+          }
+          $webrtcRoot = Get-ChildItem (Join-Path $env:FIXTURE_ROOT "libwebrtc") `
+              -Directory -Recurse |
+            Where-Object {
+              (Test-Path (Join-Path $_.FullName "include")) -and
+              (Test-Path (Join-Path $_.FullName "lib"))
+            } | Select-Object -First 1 -ExpandProperty FullName
+          $server = Get-ChildItem (Join-Path $env:FIXTURE_ROOT "livekit-server") `
+            -Filter "livekit-server.exe" -File -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          $lk = Get-ChildItem (Join-Path $env:FIXTURE_ROOT "lk") `
+            -Filter "lk.exe" -File -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $webrtcRoot -or -not $server -or -not $lk) {
+            throw "An integration fixture archive has an unexpected layout"
+          }
+          "LIBWEBRTC_ROOT=$webrtcRoot" | Out-File $env:GITHUB_ENV -Append
+          "LIVEKIT_SERVER_EXE=$server" | Out-File $env:GITHUB_ENV -Append
+          "LK_EXE=$lk" | Out-File $env:GITHUB_ENV -Append
+          if ($env:OFFICIAL_CPP_URL) {
+            $officialRoot = Get-ChildItem (Join-Path $env:FIXTURE_ROOT "official-cpp") `
+                -Directory -Recurse |
+              Where-Object {
+                (Test-Path (Join-Path $_.FullName "include")) -and
+                (Test-Path (Join-Path $_.FullName "lib/cmake/LiveKit"))
+              } | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $officialRoot) {
+              throw "The official C++ SDK archive has an unexpected layout"
+            }
+            "OFFICIAL_CPP_ROOT=$officialRoot" | Out-File $env:GITHUB_ENV -Append
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $arguments = @(
+            "-S", $env:SOURCE_ROOT,
+            "-B", $env:BUILD_ROOT,
+            "-G", "Visual Studio 17 2022",
+            "-A", "x64",
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=x64-windows-static",
+            "-DMEDIA_CAPTURE_ROOT=$env:MEDIA_CAPTURE_ROOT",
+            "-DLIBWEBRTC_ROOT=$env:LIBWEBRTC_ROOT",
+            "-DLIBWEBRTC_USE_H264=ON",
+            "-DBUILD_EXAMPLES=OFF",
+            "-DBUILD_TEST=ON",
+            "-DBUILD_FUNCTIONAL_TESTS=ON",
+            "-DBUILD_INTEGRATION_TESTS=ON"
+          )
+          if ($env:OFFICIAL_CPP_ROOT) {
+            $arguments += "-DOFFICIAL_LIVEKIT_CPP_ROOT=$env:OFFICIAL_CPP_ROOT"
+          }
+          & cmake @arguments
+
+      - name: Build integration targets
+        shell: pwsh
+        run: cmake --build $env:BUILD_ROOT --config Release --parallel
+
+      - name: Local test suites
+        shell: pwsh
+        run: ctest --test-dir $env:BUILD_ROOT -C Release --output-on-failure
+
+      - name: Codec and E2EE matrix
+        shell: pwsh
+        working-directory: ${{ env.SOURCE_ROOT }}
+        run: |
+          $common = @{
+            ServerExecutable = $env:LIVEKIT_SERVER_EXE
+            LkExecutable = $env:LK_EXE
+            ApiKey = "devkey"
+            ApiSecret = "ci-ephemeral-secret-with-at-least-32-characters"
+            NodeIp = "127.0.0.1"
+            BuildDirectory = $env:BUILD_ROOT
+          }
+          $port = 17880
+          foreach ($codec in @("vp8", "h264", "av1")) {
+            & .\test\integration\run_reconnect_matrix.ps1 @common `
+              -Scenario Media -VideoCodec $codec -Port $port
+            $port += 10
+            & .\test\integration\run_reconnect_matrix.ps1 @common `
+              -Scenario E2EE -VideoCodec $codec -Port $port
+            $port += 10
+          }
+          & .\test\integration\run_reconnect_matrix.ps1 @common `
+            -Scenario DataTrack -VideoCodec vp8 -Port $port
+
+      - name: Official C++ interoperability
+        if: ${{ vars.OFFICIAL_LIVEKIT_CPP_WINDOWS_URL != '' }}
+        shell: pwsh
+        working-directory: ${{ env.SOURCE_ROOT }}
+        run: |
+          $peer = Join-Path $env:BUILD_ROOT `
+            "test/integration/Release/livekit_official_cpp_e2ee_peer.exe"
+          $common = @{
+            ServerExecutable = $env:LIVEKIT_SERVER_EXE
+            LkExecutable = $env:LK_EXE
+            ApiKey = "devkey"
+            ApiSecret = "ci-ephemeral-secret-with-at-least-32-characters"
+            NodeIp = "127.0.0.1"
+            BuildDirectory = $env:BUILD_ROOT
+            Scenario = "OfficialCpp"
+            OfficialCppPeerExecutable = $peer
+          }
+          & .\test\integration\run_reconnect_matrix.ps1 @common `
+            -VideoCodec vp8 -Port 17980
+          & .\test\integration\run_reconnect_matrix.ps1 @common `
+            -VideoCodec h264 -Port 17990

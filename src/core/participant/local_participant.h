@@ -72,6 +72,7 @@ public:
 	std::optional<ChatMessage> SendChatMessage(std::string message) override;
 	std::optional<ChatMessage> EditChatMessage(std::string message,
 	                                           const ChatMessage& original) override;
+	DataTrackPublishResult PublishDataTrack(DataTrackPublishOptions options) override;
 	bool SendText(const std::string& text, TextSendOptions options) override;
 	bool SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) override;
 	bool SendFile(const std::string& path, FileSendOptions options) override;
@@ -87,6 +88,8 @@ public:
 	void UpdateRoomOptions(RoomOptions options);
 	void LocalTrackSubscribed(const std::string& track_sid);
 	void SubscribedQualityUpdate(core::SubscribedQualityUpdate update);
+	bool RepublishAllDataTracksAfterReconnect();
+	void LocalDataTrackUnpublished(uint16_t publisher_handle);
 
 private:
 	RtcEngine* engine_;

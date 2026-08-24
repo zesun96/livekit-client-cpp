@@ -1,0 +1,88 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      SOURCE_ROOT: ${{ github.workspace }}\source\livekit-client-cpp
+      MEDIA_CAPTURE_ROOT: ${{ github.workspace }}\source\media-capture
+      BUILD_ROOT: ${{ github.workspace }}\build
+
+    steps:
+      - name: Check out SDK
+        uses: actions/checkout@v4
+        with:
+          path: source/livekit-client-cpp
+
+      - name: Check out media-capture
+        uses: actions/checkout@v4
+        with:
+          repository: zesun96/media-capture
+          ref: c901af5630be86fc8e14f1c6090cd4489a3bbbbc
+          path: source/media-capture
+
+      - name: Check out vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: b545373a9a536dc559dac8583467a21497a0e897
+          path: vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S $env:SOURCE_ROOT -B $env:BUILD_ROOT `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DMEDIA_CAPTURE_ROOT="$env:MEDIA_CAPTURE_ROOT" `
+            -DLIBWEBRTC_USE_H264=OFF `
+            -DBUILD_EXAMPLES=ON `
+            -DBUILD_TEST=ON `
+            -DBUILD_FUNCTIONAL_TESTS=ON `
+            -DBUILD_INTEGRATION_TESTS=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build $env:BUILD_ROOT --config Release --parallel
+
+      - name: Unit tests
+        shell: pwsh
+        run: ctest --test-dir $env:BUILD_ROOT -C Release -L unit --output-on-failure
+
+      - name: Functional tests
+        shell: pwsh
+        run: ctest --test-dir $env:BUILD_ROOT -C Release -L functional --output-on-failure
+
+      - name: Configure add-subdirectory consumer
+        shell: pwsh
+        run: |
+          cmake -S "$env:SOURCE_ROOT/test/consumer" -B "$env:BUILD_ROOT-consumer" `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DLIVEKIT_CLIENT_CPP_SOURCE_DIR="$env:SOURCE_ROOT" `
+            -DMEDIA_CAPTURE_ROOT="$env:MEDIA_CAPTURE_ROOT" `
+            -DLIBWEBRTC_USE_H264=OFF
+
+      - name: Build and run consumer
+        shell: pwsh
+        run: |
+          cmake --build "$env:BUILD_ROOT-consumer" --config Release `
+            --target livekit_consumer_smoke --parallel
+          & "$env:BUILD_ROOT-consumer\Release\livekit_consumer_smoke.exe"

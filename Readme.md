@@ -30,8 +30,9 @@ Because webrtc requires C++20.
 - [x] Remote video quality/dimensions/FPS preferences and subscription/stream state events
 - [x] Stable C ABI with opaque handles and callbacks
 - [x] Audio publishing and receiving (signed 16-bit PCM)
-- [x] Video publishing and receiving (I420/VP8)
+- [x] Video publishing and receiving (I420 with VP8, VP9, H264, or AV1)
 - [x] Reliable and lossy data messages
+- [x] Typed DataTrack publishing, pull-based subscriptions, fragmentation, and E2EE
 - [x] SIP DTMF publishing and receiving
 - [x] Structured chat messages with stable IDs and edits
 - [x] Transcription segment events with language and timing metadata
@@ -40,7 +41,7 @@ Because webrtc requires C++20.
 - [x] Incremental text/byte stream writers and topic-scoped chunk handlers
 - [x] Bounded DataChannel backpressure with high/low-water events
 - [x] Participant RPC with ACK/response timeouts, standard errors, and C API support
-- [ ] E2ee
+- [x] Pure C++ E2EE for media and data, with key rotation and reconnect recovery
 
 ## Dependencies
 
@@ -93,7 +94,10 @@ The resulting static library is
 libwebsockets is intentionally kept in a DLL so its mbedTLS symbols remain
 isolated from the BoringSSL symbols embedded in `webrtc.lib`. CMake copies
 `websockets.dll` next to SDK executables automatically; applications consuming
-the static library must deploy that DLL with their executable.
+the static library must deploy that DLL with their executable. Consumers must also use the static
+MSVC runtime (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) to match the
+packaged libwebrtc library. `test/consumer` is a standalone `add_subdirectory` smoke project that
+checks these downstream configure, link, and runtime requirements.
 
 Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected
 `TrackPublishOptions::video_codec` (or `lk_track_publish_options_t::video_codec` in C) is applied as
@@ -234,6 +238,25 @@ the AV1 interoperability boundary.
 
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
+
+### Continuous integration
+
+`.github/workflows/windows.yml` builds the SDK, examples, unit and functional suites, then builds
+and runs the standalone consumer project on every pull request and main-branch update. The regular
+workflow explicitly disables H264 because the public fallback libwebrtc archive does not contain
+OpenH264.
+
+The scheduled and manually dispatched `.github/workflows/windows-integration.yml` runs the real
+room media and E2EE matrix for VP8, H264, and AV1. Configure these repository variables before
+enabling it:
+
+- `LIBWEBRTC_H264_URL`: ZIP containing an H264-enabled `include/` and `lib/` libwebrtc package.
+- `LIVEKIT_SERVER_WINDOWS_URL`: ZIP containing `livekit-server.exe`.
+- `LK_CLI_WINDOWS_URL`: ZIP containing `lk.exe`.
+- `OFFICIAL_LIVEKIT_CPP_WINDOWS_URL` (optional): official C++ SDK ZIP; enables VP8/H264 interop.
+
+The integration job is skipped when any required fixture URL is absent. It uses only ephemeral
+local credentials generated inside the job; no API secret is stored in source or workflow files.
 
 ## Examples
 
