@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <string_view>
 #include <utility>
 
 namespace livekit {
@@ -37,6 +38,11 @@ constexpr std::array<Preset, 8> kStandardPresets{{
     {960, 720, 1300000, 30},
     {1440, 1080, 2300000, 30},
     {1920, 1440, 3800000, 30},
+}};
+constexpr std::array<std::string_view, 22> kSvcScalabilityModes{{
+    "L1T1",     "L1T2",           "L1T3",     "L2T1",  "L2T1h",    "L2T1_KEY", "L2T2",  "L2T2h",
+    "L2T2_KEY", "L2T2_KEY_SHIFT", "L2T3",     "L2T3h", "L2T3_KEY", "L3T1",     "L3T1h", "L3T1_KEY",
+    "L3T2",     "L3T2h",          "L3T2_KEY", "L3T3",  "L3T3h",    "L3T3_KEY",
 }};
 
 bool IsWide(uint32_t width, uint32_t height) {
@@ -107,6 +113,34 @@ std::string NormalizeCodec(std::string codec) {
 	return codec;
 }
 
+bool IsSvcCodec(VideoCodec codec) { return codec == VideoCodec::VP9 || codec == VideoCodec::AV1; }
+
+std::optional<uint32_t> SvcSpatialLayerCount(std::string_view scalability_mode) {
+	if (std::find(kSvcScalabilityModes.begin(), kSvcScalabilityModes.end(), scalability_mode) ==
+	    kSvcScalabilityModes.end()) {
+		return std::nullopt;
+	}
+	return static_cast<uint32_t>(scalability_mode[1] - '0');
+}
+
+void AddSvcLayers(VideoEncodingPlan& result, uint32_t width, uint32_t height, uint64_t bitrate,
+                  uint32_t spatial_layers) {
+	constexpr std::array<uint64_t, 3> kBitrateDivisors{1, 3, 9};
+	for (uint32_t index = 0; index < spatial_layers; ++index) {
+		const auto resolution_divisor = 1u << index;
+		livekit::VideoLayer layer;
+		layer.set_quality(static_cast<livekit::VideoQuality>(static_cast<int>(VideoQuality::High) -
+		                                                     static_cast<int>(index)));
+		layer.set_width(std::max(1u, width / resolution_divisor));
+		layer.set_height(std::max(1u, height / resolution_divisor));
+		layer.set_bitrate(static_cast<uint32_t>(
+		    std::min<uint64_t>(static_cast<uint64_t>(std::ceil(static_cast<double>(bitrate) /
+		                                                       kBitrateDivisors[index])),
+		                       static_cast<uint64_t>(UINT32_MAX))));
+		result.layers.push_back(std::move(layer));
+	}
+}
+
 } // namespace
 
 const char* VideoCodecName(VideoCodec codec) {
@@ -130,6 +164,28 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 		return result;
 	}
 	const auto original = OriginalPreset(width, height, screen_share, options);
+	if (IsSvcCodec(options.video_codec)) {
+		const auto spatial_layers = SvcSpatialLayerCount(options.scalability_mode);
+		if (!spatial_layers.has_value()) {
+			result.valid = false;
+			return result;
+		}
+		webrtc::RtpEncodingParameters encoding;
+		encoding.scalability_mode = options.scalability_mode;
+		if (original.bitrate != 0) {
+			encoding.max_bitrate_bps = static_cast<int>(
+			    std::min<uint64_t>(original.bitrate, static_cast<uint64_t>(INT32_MAX)));
+		}
+		if (original.framerate > 0) {
+			encoding.max_framerate = original.framerate;
+		}
+		result.encodings.push_back(std::move(encoding));
+		AddSvcLayers(result, width, height, original.bitrate, *spatial_layers);
+		result.video_layer_mode = *spatial_layers > 1
+		                              ? livekit::VideoLayer::MULTIPLE_SPATIAL_LAYERS_PER_STREAM
+		                              : livekit::VideoLayer::ONE_SPATIAL_LAYER_PER_STREAM;
+		return result;
+	}
 	std::vector<Preset> presets;
 	const bool supports_simulcast =
 	    options.video_codec == VideoCodec::VP8 || options.video_codec == VideoCodec::H264;
@@ -184,6 +240,7 @@ VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool s
 		layer.set_rid(encoding.rid);
 		result.layers.push_back(std::move(layer));
 	}
+	result.video_layer_mode = livekit::VideoLayer::ONE_SPATIAL_LAYER_PER_STREAM;
 	return result;
 }
 

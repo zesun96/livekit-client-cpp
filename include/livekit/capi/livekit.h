@@ -671,6 +671,7 @@ typedef struct lk_track_publish_options {
 	int simulcast;
 	const char* stream;
 	lk_video_codec_t video_codec;
+	const char* scalability_mode;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {

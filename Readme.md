@@ -108,8 +108,9 @@ project with `-DLIBWEBRTC_USE_H264=ON`. The package capability and consumer opti
 H264 is enabled by default; pass `-DLIBWEBRTC_USE_H264=OFF` only when consuming a libwebrtc package
 built without H264.
 Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and optional dynacast
-layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 currently use one
-encoding until SVC publishing is implemented.
+layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 use a single RTP
+encoding with SVC; `TrackPublishOptions::scalability_mode` selects the mode and defaults to
+`L3T3_KEY`. The C API exposes the same setting as `lk_track_publish_options_t::scalability_mode`.
 
 Applications can create native microphone, camera, monitor, and window sources through the C++ or
 C device APIs, then publish them with the normal local-track helpers. Native system-audio capture
@@ -249,13 +250,12 @@ deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
 ### Continuous integration
 
 `.github/workflows/windows.yml` builds the SDK, examples, unit and functional suites, then builds
-and runs the standalone consumer project on every pull request and main-branch update. The regular
-workflow explicitly disables H264 because the public fallback libwebrtc archive does not contain
-OpenH264.
+and runs the standalone consumer project. Automatic Windows runs are currently paused; start the
+workflow explicitly with `workflow_dispatch` when needed. The regular workflow explicitly disables
+H264 because the public fallback libwebrtc archive does not contain OpenH264.
 
-The scheduled and manually dispatched `.github/workflows/windows-integration.yml` runs the real
-room media and E2EE matrix for VP8, H264, and AV1. Configure these repository variables before
-enabling it:
+The manually dispatched `.github/workflows/windows-integration.yml` runs the real room media and
+E2EE matrix for VP8, H264, and AV1. Configure these repository variables before enabling it:
 
 - `LIBWEBRTC_H264_URL`: ZIP containing an H264-enabled `include/` and `lib/` libwebrtc package.
 - `LIVEKIT_SERVER_WINDOWS_URL`: ZIP containing `livekit-server.exe`.
