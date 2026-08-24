@@ -33,6 +33,9 @@ option(BUILD_TEST "Build tests" ON)
 option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
 option(BUILD_INTEGRATION_TESTS "Build tests that connect to a LiveKit server" OFF)
 option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
+option(LIBWEBRTC_USE_H264 "Enable H264 adapters from an H264-enabled libwebrtc package" ON)
+set(OFFICIAL_LIVEKIT_CPP_ROOT "" CACHE PATH
+    "Optional extracted official LiveKit C++ SDK root for interoperability tests")
 
 include(FetchContent)
 include(cmake/Dependencies.cmake)
@@ -229,6 +232,10 @@ target_link_libraries(livekitclient PRIVATE
   media_capture::audio media_capture::camera media_capture::screen)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
+
+if(LIBWEBRTC_USE_H264)
+  target_compile_definitions(livekitclient PUBLIC WEBRTC_USE_H264)
+endif()
 
 if (WIN32)
   target_link_libraries(

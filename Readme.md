@@ -74,6 +74,7 @@ cmake -S . -B out/build/vs2022-x64-release `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows-static `
   -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release/webrtc `
+  -DLIBWEBRTC_USE_H264=ON `
   -DMEDIA_CAPTURE_ROOT=E:/workspace/cpp/lk-sdk/media-capture `
   -DMEDIA_CAPTURE_MINIAUDIO_ROOT=E:/workspace/cpp/lk-sdk/others/miniaudio `
   -DMEDIA_CAPTURE_CAMERA_CAPTURE_ROOT=E:/workspace/cpp/lk-sdk/others/CameraCapture `
@@ -97,9 +98,11 @@ the static library must deploy that DLL with their executable.
 Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected
 `TrackPublishOptions::video_codec` (or `lk_track_publish_options_t::video_codec` in C) is applied as
 the transceiver codec preference; publishing fails instead of silently negotiating another codec
-when the linked libwebrtc package lacks it. The default `webrtc-build` package enables VP8, VP9,
-and AV1 but builds with `rtc_use_h264=false`; rebuild libwebrtc with H264 enabled before selecting
-H264.
+when the linked libwebrtc package lacks it. To select H264, build libwebrtc with
+`rtc_use_h264=true`, `proprietary_codecs=true`, and `ffmpeg_branding="Chrome"`, then configure this
+project with `-DLIBWEBRTC_USE_H264=ON`. The package capability and consumer option must match.
+H264 is enabled by default; pass `-DLIBWEBRTC_USE_H264=OFF` only when consuming a libwebrtc package
+built without H264.
 Video publishing supports LiveKit-compatible `q`/`h`/`f` simulcast layers and optional dynacast
 layer activation through `RoomOptions::dynacast` for VP8 and H264. VP9 and AV1 currently use one
 encoding until SVC publishing is implemented.
@@ -201,22 +204,33 @@ Run this command from an elevated PowerShell when the existing server is elevate
 Firewall requires a rule for a newly downloaded server executable. To test a different server
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
 RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart`,
-`-Scenario TokenRefresh`, or `-Scenario E2EE` to run one part of the matrix. The E2EE scenario
-creates two short-lived identities and verifies encrypted audio, VP8 video, data, state events, and
-automatic key ratcheting. The harness verifies the listener's exact executable path before stopping
-it and never writes credentials or logs into the repository.
+`-Scenario TokenRefresh`, `-Scenario Media`, or `-Scenario E2EE` to run one part of the matrix.
+`-VideoCodec vp8` is the default; VP8, H264, and AV1 are supported by the media and E2EE scenarios.
+The E2EE scenario creates two short-lived identities and verifies encrypted audio, the selected
+video codec, data, state events, key-slot switching, automatic key ratcheting, reconnect recovery,
+and missing/wrong-key recovery. The harness verifies the listener's exact executable path before
+stopping it and never writes credentials or logs into the repository.
 
 For official JS interoperability, build the separately downloaded `client-sdk-js` and run:
 
 ```powershell
 node .\test\integration\run_js_e2ee_interop.mjs `
   --official-js-sdk "C:\path\to\client-sdk-js" `
-  --config "C:\path\to\livekit-server-config.yaml"
+  --config "C:\path\to\livekit-server-config.yaml" `
+  --video-codec h264
 ```
 
-This launches a headless browser and verifies encrypted audio, VP8 video, and data from this SDK,
-plus encrypted data in the reverse direction. The official JS package remains an external test
-fixture and is not linked into or distributed with this SDK.
+This launches a headless browser and verifies encrypted audio, the selected VP8 or H264 video, and
+data from this SDK, plus encrypted data in the reverse direction. The official JS package remains
+an external test fixture and is not linked into or distributed with this SDK.
+
+The integration build can also create a peer linked only to the official C++ SDK v1.8.0. Point
+`OFFICIAL_LIVEKIT_CPP_ROOT` at its extracted binary package, build
+`livekit_official_cpp_e2ee_peer`, then run `run_reconnect_matrix.ps1` with
+`-Scenario OfficialCpp`, `-OfficialCppPeerExecutable <path>`, and `-VideoCodec vp8` or
+`-VideoCodec h264`. This verifies encrypted audio, video, and bidirectional data without linking the
+official SDK into `livekitclient`. See [docs/E2EE.md](docs/E2EE.md) for the complete commands and
+the AV1 interoperability boundary.
 
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.

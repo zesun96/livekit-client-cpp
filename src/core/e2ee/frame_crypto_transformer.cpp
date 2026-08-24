@@ -28,6 +28,7 @@
 #ifdef RTC_ENABLE_H265
 #include "common_video/h265/h265_common.h"
 #endif // RTC_ENABLE_H265
+#include "modules/rtp_rtcp/source/leb128.h"
 #include "modules/rtp_rtcp/source/rtp_format_h264.h"
 #include "rtc_base/byte_buffer.h"
 #include "rtc_base/crypto_random.h"
@@ -35,6 +36,12 @@
 #include "rtc_base/time_utils.h"
 
 enum class EncryptOrDecrypt { kEncrypt = 0, kDecrypt };
+
+constexpr size_t kFrameTrailerSize = 2;
+constexpr size_t kGcmTagSize = 16;
+constexpr uint8_t kAv1SequenceHeaderObuWithSizeHeader = 0x0a;
+constexpr uint8_t kAv1FrameObuWithSizeHeader = 0x32;
+constexpr uint8_t kAv1RoutingFrameHeader = 0x00;
 
 #define Success                     0
 #define ErrorUnexpected             -1
@@ -76,6 +83,59 @@ inline bool FrameIsH264(webrtc::TransformableFrameInterface* frame,
 	default:
 		return false;
 	}
+}
+
+inline bool FrameIsAV1(webrtc::TransformableFrameInterface* frame,
+                       webrtc::FrameCryptorTransformer::MediaType type) {
+	switch (type) {
+	case webrtc::FrameCryptorTransformer::MediaType::kVideoFrame: {
+		auto videoFrame = static_cast<webrtc::TransformableVideoFrameInterface*>(frame);
+		return videoFrame->header().codec == webrtc::VideoCodecType::kVideoCodecAV1;
+	}
+	default:
+		return false;
+	}
+}
+
+webrtc::Buffer MakeAv1EncryptedFrameHeader(size_t encrypted_payload_size, bool key_frame) {
+	const size_t sequence_header_size = key_frame ? 2 : 0;
+	const size_t frame_obu_payload_size = 1 + encrypted_payload_size;
+	webrtc::Buffer header(sequence_header_size + 1 + webrtc::Leb128Size(frame_obu_payload_size) +
+	                      1);
+	size_t offset = 0;
+	if (key_frame) {
+		header[offset++] = kAv1SequenceHeaderObuWithSizeHeader;
+		header[offset++] = 0;
+	}
+	header[offset++] = kAv1FrameObuWithSizeHeader;
+	offset += webrtc::WriteLeb128(frame_obu_payload_size, header.data() + offset);
+	header[offset] = kAv1RoutingFrameHeader;
+	return header;
+}
+
+bool ParseAv1EncryptedFrameHeader(webrtc::ArrayView<const uint8_t> data, size_t& header_size) {
+	if (data.empty()) {
+		return false;
+	}
+	const uint8_t* read_at = data.data();
+	const uint8_t* end = data.data() + data.size();
+	if (*read_at == kAv1SequenceHeaderObuWithSizeHeader) {
+		++read_at;
+		const uint64_t sequence_header_payload_size = webrtc::ReadLeb128(read_at, end);
+		if (read_at == nullptr || sequence_header_payload_size != 0) {
+			return false;
+		}
+	}
+	if (read_at == end || *read_at++ != kAv1FrameObuWithSizeHeader) {
+		return false;
+	}
+	const uint64_t frame_obu_payload_size = webrtc::ReadLeb128(read_at, end);
+	if (read_at == nullptr || frame_obu_payload_size != static_cast<uint64_t>(end - read_at) ||
+	    frame_obu_payload_size < 1 || *read_at++ != kAv1RoutingFrameHeader) {
+		return false;
+	}
+	header_size = static_cast<size_t>(read_at - data.data());
+	return true;
 }
 
 inline bool FrameIsH265(webrtc::TransformableFrameInterface* frame,
@@ -414,7 +474,8 @@ void FrameCryptorTransformer::encryptFrame(
 	}
 
 	auto key_set = key_handler->GetKeySet(key_index);
-	uint8_t unencrypted_bytes = get_unencrypted_bytes(frame.get(), type_);
+	const bool is_av1 = FrameIsAV1(frame.get(), type_);
+	size_t unencrypted_bytes = get_unencrypted_bytes(frame.get(), type_);
 	if (unencrypted_bytes > data_in.size()) {
 		if (last_enc_error_ != FrameCryptionState::kEncryptionFailed) {
 			last_enc_error_ = FrameCryptionState::kEncryptionFailed;
@@ -423,12 +484,19 @@ void FrameCryptorTransformer::encryptFrame(
 		return;
 	}
 
-	webrtc::Buffer frame_header(unencrypted_bytes);
-	for (size_t i = 0; i < unencrypted_bytes; i++) {
-		frame_header[i] = data_in[i];
+	webrtc::Buffer frame_header;
+	if (is_av1) {
+		const size_t encrypted_obu_payload_size =
+		    data_in.size() + kGcmTagSize + getIvSize() + kFrameTrailerSize;
+		const auto* video_frame =
+		    static_cast<webrtc::TransformableVideoFrameInterface*>(frame.get());
+		frame_header =
+		    MakeAv1EncryptedFrameHeader(encrypted_obu_payload_size, video_frame->IsKeyFrame());
+	} else {
+		frame_header.SetData(data_in.subview(0, unencrypted_bytes));
 	}
 
-	webrtc::Buffer frame_trailer(2);
+	webrtc::Buffer frame_trailer(kFrameTrailerSize);
 	frame_trailer[0] = getIvSize();
 	frame_trailer[1] = static_cast<std::uint8_t>(key_index);
 	webrtc::Buffer iv = makeIv(frame->GetSsrc(), frame->GetTimestamp());
@@ -537,7 +605,18 @@ void FrameCryptorTransformer::decryptFrame(
 		}
 	}
 
-	uint8_t unencrypted_bytes = get_unencrypted_bytes(frame.get(), type_);
+	const bool is_av1 = FrameIsAV1(frame.get(), type_);
+	size_t unencrypted_bytes = get_unencrypted_bytes(frame.get(), type_);
+	if (is_av1 && !ParseAv1EncryptedFrameHeader(data_in, unencrypted_bytes)) {
+		RTC_LOG(LS_WARNING) << "FrameCryptorTransformer::decryptFrame() invalid AV1 encrypted "
+		                       "frame envelope, size="
+		                    << data_in.size() << ", first_byte=" << static_cast<int>(data_in[0]);
+		if (last_dec_error_ != FrameCryptionState::kDecryptionFailed) {
+			last_dec_error_ = FrameCryptionState::kDecryptionFailed;
+			onFrameCryptionStateChanged(last_dec_error_);
+		}
+		return;
+	}
 
 	if (unencrypted_bytes > data_in.size()) {
 		if (last_dec_error_ != FrameCryptionState::kDecryptionFailed) {
@@ -567,9 +646,7 @@ void FrameCryptorTransformer::decryptFrame(
 #endif // RTC_ENABLE_H265
 	}
 
-	constexpr size_t kTrailerSize = 2;
-	constexpr size_t kGcmTagSize = 16;
-	if (encrypted_buffer.size() < kTrailerSize) {
+	if (encrypted_buffer.size() < kFrameTrailerSize) {
 		if (last_dec_error_ != FrameCryptionState::kDecryptionFailed) {
 			last_dec_error_ = FrameCryptionState::kDecryptionFailed;
 			onFrameCryptionStateChanged(last_dec_error_);
@@ -579,7 +656,7 @@ void FrameCryptorTransformer::decryptFrame(
 	uint8_t ivLength = encrypted_buffer[encrypted_buffer.size() - 2];
 	uint8_t key_index = encrypted_buffer[encrypted_buffer.size() - 1];
 	if (ivLength != getIvSize() ||
-	    encrypted_buffer.size() < kTrailerSize + ivLength + kGcmTagSize) {
+	    encrypted_buffer.size() < kFrameTrailerSize + ivLength + kGcmTagSize) {
 		if (last_dec_error_ != FrameCryptionState::kDecryptionFailed) {
 			last_dec_error_ = FrameCryptionState::kDecryptionFailed;
 			onFrameCryptionStateChanged(last_dec_error_);
@@ -605,10 +682,10 @@ void FrameCryptorTransformer::decryptFrame(
 
 	webrtc::Buffer iv(ivLength);
 	for (size_t i = 0; i < ivLength; i++) {
-		iv[i] = encrypted_buffer[encrypted_buffer.size() - kTrailerSize - ivLength + i];
+		iv[i] = encrypted_buffer[encrypted_buffer.size() - kFrameTrailerSize - ivLength + i];
 	}
 
-	webrtc::Buffer encrypted_payload(encrypted_buffer.size() - ivLength - kTrailerSize);
+	webrtc::Buffer encrypted_payload(encrypted_buffer.size() - ivLength - kFrameTrailerSize);
 	for (size_t i = 0; i < encrypted_payload.size(); i++) {
 		encrypted_payload[i] = encrypted_buffer[i];
 	}
@@ -683,7 +760,9 @@ void FrameCryptorTransformer::decryptFrame(
 
 	webrtc::Buffer payload(buffer.data(), buffer.size());
 	webrtc::Buffer data_out;
-	data_out.AppendData(frame_header);
+	if (!is_av1) {
+		data_out.AppendData(frame_header);
+	}
 	data_out.AppendData(payload);
 	frame->SetData(data_out);
 

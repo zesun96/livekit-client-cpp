@@ -80,16 +80,32 @@ analysis protection.
 ## Verification
 
 The functional suite includes fixed PBKDF2/HKDF vectors, encoded audio/video SFrame round trips,
-data encryption, malformed-packet checks, key slots, and automatic ratcheting. The opt-in real-room
-test `LiveKitServerTest.EncryptsAudioVideoAndDataEndToEnd` verifies encrypted audio, VP8 video, data,
-signaled encryption metadata, state events, and a live shared-key ratchet between two C++ clients.
-This scenario has been verified against LiveKit Server 1.13.5 on Windows x64.
+data encryption, malformed-packet checks, key slots, automatic ratcheting, and AV1 RTP
+packetization/depacketization. The opt-in real-room test
+`LiveKitServerTest.EncryptsAudioVideoAndDataEndToEnd` verifies encrypted audio, VP8, H264, or AV1
+video, data, signaled encryption metadata, state events, switching media and data key slots from 0
+to 1 and back, and a live shared-key ratchet between two C++ clients. The companion reconnect and
+key-error tests verify E2EE after publisher full/media reconnect, subscriber signal resume, missing
+keys, incorrect keys, and recovery after the correct key is installed. All three codecs have been
+verified against LiveKit Server 1.13.5 on Windows x64.
 
 `LiveKitServerTest.InteroperatesWithOfficialJsE2EEPeer` and
 `test/integration/run_js_e2ee_interop.mjs` additionally verify that the official JS SDK 2.21.0 can
-decrypt this SDK's audio, VP8 video, and data, and that this SDK can decrypt data returned by the JS
-peer. This test also covers the official JS wire behavior that omits the proto3-default
+decrypt this SDK's audio, VP8 or H264 video, and data, and that this SDK can decrypt data returned
+by the JS peer. This test also covers the official JS wire behavior that omits the proto3-default
 `EncryptedPacket.encryption_type` field. It has been verified against LiveKit Server 1.13.5.
+
+`LiveKitServerTest.InteroperatesWithOfficialCppE2EEPeer` verifies encrypted audio, VP8 or H264
+video, and bidirectional data against the official C++ SDK v1.8.0. Configure the external fixture
+from an extracted official SDK archive and build both test executables:
+
+```powershell
+cmake -S . -B out/build/vs2022-x64-release `
+  -DBUILD_INTEGRATION_TESTS=ON `
+  -DOFFICIAL_LIVEKIT_CPP_ROOT=C:/path/to/livekit-sdk-windows-x64-1.8.0
+cmake --build out/build/vs2022-x64-release --config Release `
+  --target livekit_server_integration_tests livekit_official_cpp_e2ee_peer
+```
 
 Set `LIVEKIT_URL`, `LIVEKIT_TOKEN`, and `LIVEKIT_TOKEN_2` to two different identities in the same
 room, then run the integration test. Alternatively, use the local-server harness:
@@ -100,7 +116,8 @@ room, then run the integration test. Alternatively, use the local-server harness
   -LkExecutable "C:\path\to\lk.exe" `
   -ApiKey "devkey" `
   -ApiSecret "a-development-secret-with-at-least-32-characters" `
-  -Scenario E2EE
+  -Scenario E2EE `
+  -VideoCodec h264
 ```
 
 After installing and building the separately downloaded official JS SDK, run its browser-based
@@ -109,9 +126,25 @@ interoperability fixture with:
 ```powershell
 node .\test\integration\run_js_e2ee_interop.mjs `
   --official-js-sdk "C:\path\to\client-sdk-js" `
-  --config "C:\path\to\livekit-server-config.yaml"
+  --config "C:\path\to\livekit-server-config.yaml" `
+  --video-codec h264
 ```
 
-The broader H264/AV1 and official C++ peer matrix remains an acceptance task. Official peers are
-external test programs only; this SDK never links their Rust Core or adopts their public
-API/ownership model.
+Run the official C++ fixture with:
+
+```powershell
+.\test\integration\run_reconnect_matrix.ps1 `
+  -ServerExecutable "C:\path\to\livekit-server.exe" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ApiKey "devkey" `
+  -ApiSecret "a-development-secret-with-at-least-32-characters" `
+  -Scenario OfficialCpp `
+  -VideoCodec h264 `
+  -OfficialCppPeerExecutable `
+    ".\out\build\vs2022-x64-release\test\integration\Release\livekit_official_cpp_e2ee_peer.exe"
+```
+
+AV1 E2EE uses a routeable AV1 OBU envelope and is verified between two clients built from this SDK.
+The official JS SDK 2.21.0 rejects AV1 E2EE, and official C++ AV1 E2EE interoperability is not
+claimed. Official peers are external test programs only; this SDK never links their Rust Core into
+the library or adopts their public API/ownership model.
