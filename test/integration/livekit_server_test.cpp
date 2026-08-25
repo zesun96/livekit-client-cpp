@@ -64,6 +64,111 @@ struct CApiE2eeEvents {
 	std::atomic_bool receiver_cryptor_ok{false};
 };
 
+class CApiParticipantEvents {
+public:
+	void Connected(const lk_participant_info_t* participant) {
+		if (participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		connected_identity_ = participant->identity;
+	}
+
+	void MetadataChanged(const char* previous_metadata, const lk_participant_info_t* participant) {
+		if (previous_metadata == nullptr || participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		metadata_identity_ = participant->identity;
+		previous_metadata_ = previous_metadata;
+		metadata_ = participant->metadata;
+	}
+
+	void NameChanged(const char* name, const lk_participant_info_t* participant) {
+		if (name == nullptr || participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		name_identity_ = participant->identity;
+		name_ = name;
+		participant_name_ = participant->name;
+	}
+
+	void AttributesChanged(const lk_attribute_t* changes, size_t change_count,
+	                       const lk_participant_info_t* participant) {
+		if ((changes == nullptr && change_count != 0) || participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		attributes_identity_ = participant->identity;
+		attribute_changes_.clear();
+		for (size_t index = 0; index < change_count; ++index) {
+			attribute_changes_[changes[index].key] = changes[index].value;
+		}
+		++attribute_event_count_;
+	}
+
+	bool connected(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return connected_identity_ == identity;
+	}
+
+	bool metadata_changed(const std::string& identity, const std::string& previous,
+	                      const std::string& current) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return metadata_identity_ == identity && previous_metadata_ == previous &&
+		       metadata_ == current;
+	}
+
+	bool name_changed(const std::string& identity, const std::string& name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return name_identity_ == identity && name_ == name && participant_name_ == name;
+	}
+
+	bool attributes_changed(const std::string& identity,
+	                        const std::map<std::string, std::string>& expected,
+	                        uint64_t minimum_event_count) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return attributes_identity_ == identity && attribute_changes_ == expected &&
+		       attribute_event_count_ >= minimum_event_count;
+	}
+
+private:
+	std::mutex lock_;
+	std::string connected_identity_;
+	std::string metadata_identity_;
+	std::string previous_metadata_;
+	std::string metadata_;
+	std::string name_identity_;
+	std::string name_;
+	std::string participant_name_;
+	std::string attributes_identity_;
+	std::map<std::string, std::string> attribute_changes_;
+	uint64_t attribute_event_count_ = 0;
+};
+
+void OnCApiParticipantConnected(void* user_data, lk_room_t*,
+                                const lk_participant_info_t* participant) {
+	static_cast<CApiParticipantEvents*>(user_data)->Connected(participant);
+}
+
+void OnCApiParticipantMetadataChanged(void* user_data, lk_room_t*, const char* previous_metadata,
+                                      const lk_participant_info_t* participant) {
+	static_cast<CApiParticipantEvents*>(user_data)->MetadataChanged(previous_metadata, participant);
+}
+
+void OnCApiParticipantNameChanged(void* user_data, lk_room_t*, const char* name,
+                                  const lk_participant_info_t* participant) {
+	static_cast<CApiParticipantEvents*>(user_data)->NameChanged(name, participant);
+}
+
+void OnCApiParticipantAttributesChanged(void* user_data, lk_room_t*, const lk_attribute_t* changes,
+                                        size_t change_count,
+                                        const lk_participant_info_t* participant) {
+	static_cast<CApiParticipantEvents*>(user_data)->AttributesChanged(changes, change_count,
+	                                                                  participant);
+}
+
 void OnCApiE2eeAudioFrame(void* user_data, lk_room_t*, const lk_track_publication_info_t*,
                           const lk_participant_info_t*, const lk_audio_frame_t*) {
 	static_cast<CApiE2eeEvents*>(user_data)->audio_frames.fetch_add(1);
@@ -1581,6 +1686,85 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, CApiReportsParticipantProfileChanges) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the C API "
+		                "participant event integration test";
+	}
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };
+	lk_room_t* receiver_handle = nullptr;
+	lk_room_t* sender_handle = nullptr;
+	ASSERT_EQ(lk_room_create(&receiver_handle), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_create(&sender_handle), LK_STATUS_OK) << lk_last_error();
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> receiver(receiver_handle, room_deleter);
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> sender(sender_handle, room_deleter);
+
+	CApiParticipantEvents events;
+	lk_room_callbacks_t callbacks;
+	lk_room_callbacks_init(&callbacks);
+	callbacks.user_data = &events;
+	callbacks.on_participant_connected = OnCApiParticipantConnected;
+	callbacks.on_participant_metadata_changed = OnCApiParticipantMetadataChanged;
+	callbacks.on_participant_name_changed = OnCApiParticipantNameChanged;
+	callbacks.on_participant_attributes_changed = OnCApiParticipantAttributesChanged;
+	ASSERT_EQ(lk_room_set_callbacks(receiver.get(), &callbacks), LK_STATUS_OK) << lk_last_error();
+
+	ASSERT_EQ(lk_room_connect(receiver.get(), url, receiver_token), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect(sender.get(), url, sender_token), LK_STATUS_OK) << lk_last_error();
+	const auto identity_size = lk_local_participant_identity(sender.get(), nullptr, 0);
+	ASSERT_GT(identity_size, 1u);
+	std::vector<char> sender_identity(identity_size);
+	ASSERT_EQ(
+	    lk_local_participant_identity(sender.get(), sender_identity.data(), sender_identity.size()),
+	    sender_identity.size());
+	ASSERT_TRUE(WaitUntil([&] { return events.connected(sender_identity.data()); },
+	                      std::chrono::seconds(10)));
+
+	ASSERT_EQ(lk_local_participant_set_metadata(sender.get(), "c-api-metadata"), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.metadata_changed(sender_identity.data(), "", "c-api-metadata"); },
+	    std::chrono::seconds(10)));
+	ASSERT_EQ(lk_local_participant_set_name(sender.get(), "c-api-sender"), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.name_changed(sender_identity.data(), "c-api-sender"); },
+	              std::chrono::seconds(10)));
+	const std::array<lk_attribute_t, 2> initial_attributes{
+	    {{"language", "zh-CN"}, {"role", "publisher"}}};
+	ASSERT_EQ(lk_local_participant_set_attributes(sender.get(), initial_attributes.data(),
+	                                              initial_attributes.size()),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return events.attributes_changed(sender_identity.data(),
+		                                     {{"language", "zh-CN"}, {"role", "publisher"}}, 1);
+	    },
+	    std::chrono::seconds(10)));
+
+	const lk_attribute_t removed_attribute{"role", ""};
+	ASSERT_EQ(lk_local_participant_set_attributes(sender.get(), &removed_attribute, 1),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.attributes_changed(sender_identity.data(), {{"role", ""}}, 2); },
+	    std::chrono::seconds(10)));
+
+	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
+	sender.reset();
+	receiver.reset();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK);
 }
 
 TEST(LiveKitServerTest, CApiEncryptsAudioAndDataAndControlsKeys) {

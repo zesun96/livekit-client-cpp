@@ -915,6 +915,46 @@ public:
 		            participant);
 	}
 
+	void OnParticipantMetadataChanged(const std::string& previous_metadata,
+	                                  core::ParticipantInterface* participant) override {
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_metadata_changed != nullptr) {
+				callbacks.on_participant_metadata_changed(callbacks.user_data, owner_,
+				                                          previous_metadata.c_str(),
+				                                          &owned_participant.info);
+			}
+		});
+	}
+
+	void OnParticipantNameChanged(const std::string& name,
+	                              core::ParticipantInterface* participant) override {
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_name_changed != nullptr) {
+				callbacks.on_participant_name_changed(callbacks.user_data, owner_, name.c_str(),
+				                                      &owned_participant.info);
+			}
+		});
+	}
+
+	void OnParticipantAttributesChanged(const std::map<std::string, std::string>& changes,
+	                                    core::ParticipantInterface* participant) override {
+		std::vector<lk_attribute_t> converted;
+		converted.reserve(changes.size());
+		for (const auto& [key, value] : changes) {
+			converted.push_back({key.c_str(), value.c_str()});
+		}
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_attributes_changed != nullptr) {
+				callbacks.on_participant_attributes_changed(callbacks.user_data, owner_,
+				                                            converted.data(), converted.size(),
+				                                            &owned_participant.info);
+			}
+		});
+	}
+
 	void OnParticipantPermissionsChanged(const core::ParticipantPermissions& previous_permissions,
 	                                     core::ParticipantInterface* participant) override {
 		OwnedParticipantPermissions previous(previous_permissions);

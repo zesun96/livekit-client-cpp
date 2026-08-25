@@ -465,6 +465,9 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_local_track_subscribed, nullptr);
 	EXPECT_EQ(callbacks.on_subscribed_quality_update, nullptr);
 	EXPECT_EQ(callbacks.on_encryption_state_changed, nullptr);
+	EXPECT_EQ(callbacks.on_participant_metadata_changed, nullptr);
+	EXPECT_EQ(callbacks.on_participant_name_changed, nullptr);
+	EXPECT_EQ(callbacks.on_participant_attributes_changed, nullptr);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);

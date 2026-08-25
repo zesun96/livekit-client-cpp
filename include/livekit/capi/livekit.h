@@ -555,6 +555,20 @@ typedef void (*lk_room_disconnected_callback)(void* user_data, lk_room_t* room,
                                               lk_disconnect_reason_t reason);
 typedef void (*lk_participant_event_callback)(void* user_data, lk_room_t* room,
                                               const lk_participant_info_t* participant);
+/*
+ * Strings and attribute entries are borrowed for the callback duration. The participant contains
+ * current values; previous_metadata is the replaced value, name is the current display name, and
+ * an attribute change with an empty value removes that key.
+ */
+typedef void (*lk_participant_metadata_changed_callback)(void* user_data, lk_room_t* room,
+                                                         const char* previous_metadata,
+                                                         const lk_participant_info_t* participant);
+typedef void (*lk_participant_name_changed_callback)(void* user_data, lk_room_t* room,
+                                                     const char* name,
+                                                     const lk_participant_info_t* participant);
+typedef void (*lk_participant_attributes_changed_callback)(
+    void* user_data, lk_room_t* room, const lk_attribute_t* changes, size_t change_count,
+    const lk_participant_info_t* participant);
 typedef void (*lk_participant_permissions_callback)(
     void* user_data, lk_room_t* room, const lk_participant_permissions_t* previous_permissions,
     const lk_participant_permissions_t* permissions, const lk_participant_info_t* participant);
@@ -655,6 +669,9 @@ typedef struct lk_room_callbacks {
 	lk_track_event_callback on_local_track_subscribed;
 	lk_subscribed_quality_update_callback on_subscribed_quality_update;
 	lk_encryption_state_callback on_encryption_state_changed;
+	lk_participant_metadata_changed_callback on_participant_metadata_changed;
+	lk_participant_name_changed_callback on_participant_name_changed;
+	lk_participant_attributes_changed_callback on_participant_attributes_changed;
 } lk_room_callbacks_t;
 
 typedef struct lk_e2ee_options {

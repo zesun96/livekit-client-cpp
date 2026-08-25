@@ -212,6 +212,33 @@ static void on_encryption_state(void* user_data, lk_room_t* room,
 	       (int)state->state);
 }
 
+static void on_participant_metadata_changed(void* user_data, lk_room_t* room,
+                                            const char* previous_metadata,
+                                            const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("Participant %s metadata changed: %s -> %s\n", participant->identity, previous_metadata,
+	       participant->metadata);
+}
+
+static void on_participant_name_changed(void* user_data, lk_room_t* room, const char* name,
+                                        const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("Participant %s name changed: %s\n", participant->identity, name);
+}
+
+static void on_participant_attributes_changed(void* user_data, lk_room_t* room,
+                                              const lk_attribute_t* changes, size_t change_count,
+                                              const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	for (size_t index = 0; index < change_count; ++index) {
+		printf("Participant %s attribute changed: %s=%s\n", participant->identity,
+		       changes[index].key, changes[index].value);
+	}
+}
+
 static void on_stream_complete(void* user_data, const lk_data_stream_completion_t* completion) {
 	(void)user_data;
 	printf("Data stream completed: id=%s, status=%d, bytes=%llu, reason=%s\n",
@@ -318,6 +345,9 @@ int main(int argc, char** argv) {
 	callbacks.on_recording_status_changed = on_recording_status;
 	callbacks.on_metrics_received = on_metrics;
 	callbacks.on_encryption_state_changed = on_encryption_state;
+	callbacks.on_participant_metadata_changed = on_participant_metadata_changed;
+	callbacks.on_participant_name_changed = on_participant_name_changed;
+	callbacks.on_participant_attributes_changed = on_participant_attributes_changed;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");
