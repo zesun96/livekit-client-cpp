@@ -17,6 +17,53 @@ static void sleep_ms(unsigned milliseconds) {
 }
 #endif
 
+static const char* log_level_name(lk_log_level_t level) {
+	switch (level) {
+	case LK_LOG_LEVEL_TRACE:
+		return "trace";
+	case LK_LOG_LEVEL_DEBUG:
+		return "debug";
+	case LK_LOG_LEVEL_INFO:
+		return "info";
+	case LK_LOG_LEVEL_WARNING:
+		return "warning";
+	case LK_LOG_LEVEL_ERROR:
+		return "error";
+	case LK_LOG_LEVEL_OFF:
+		return "off";
+	default:
+		return "unknown";
+	}
+}
+
+static const char* log_source_name(lk_log_source_t source) {
+	switch (source) {
+	case LK_LOG_SOURCE_LIVEKIT:
+		return "livekit";
+	case LK_LOG_SOURCE_WEBRTC:
+		return "webrtc";
+	case LK_LOG_SOURCE_WEBSOCKET:
+		return "websocket";
+	default:
+		return "unknown";
+	}
+}
+
+static void on_log(void* user_data, const lk_log_record_t* record) {
+	FILE* output = user_data != NULL ? (FILE*)user_data : stderr;
+	if (record != NULL) {
+		fprintf(output, "[%s][%s] %s\n", log_source_name(record->source),
+		        log_level_name(record->level), record->message != NULL ? record->message : "");
+	}
+}
+
+static void shutdown_livekit(void) {
+	if (lk_shutdown() != LK_STATUS_OK) {
+		fprintf(stderr, "LiveKit shutdown failed: %s\n", lk_last_error());
+	}
+	lk_log_set_callback(NULL, NULL);
+}
+
 static void on_connected(void* user_data, lk_room_t* room) {
 	(void)user_data;
 	(void)room;
@@ -335,16 +382,25 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "Usage: %s <url> <token>\n", argv[0]);
 		return 2;
 	}
+	lk_log_options_t log_options;
+	lk_log_options_init(&log_options);
+	log_options.websocket_level = LK_LOG_LEVEL_INFO;
+	if (lk_log_set_options(&log_options) != LK_STATUS_OK ||
+	    lk_log_set_callback(on_log, stderr) != LK_STATUS_OK) {
+		fprintf(stderr, "LiveKit logging setup failed: %s\n", lk_last_error());
+		return 1;
+	}
 
 	if (lk_init() != LK_STATUS_OK) {
 		fprintf(stderr, "LiveKit initialization failed: %s\n", lk_last_error());
+		lk_log_set_callback(NULL, NULL);
 		return 1;
 	}
 
 	lk_room_t* room = NULL;
 	if (lk_room_create(&room) != LK_STATUS_OK) {
 		fprintf(stderr, "Room creation failed: %s\n", lk_last_error());
-		lk_shutdown();
+		shutdown_livekit();
 		return 1;
 	}
 
@@ -415,7 +471,7 @@ int main(int argc, char** argv) {
 	if (connect_status != LK_STATUS_OK) {
 		fprintf(stderr, "Connection failed: %s\n", lk_last_error());
 		lk_room_destroy(room);
-		lk_shutdown();
+		shutdown_livekit();
 		return 1;
 	}
 
@@ -425,7 +481,7 @@ int main(int argc, char** argv) {
 	if (!lk_room_is_connected(room)) {
 		fprintf(stderr, "Timed out waiting for the RTC connection\n");
 		lk_room_destroy(room);
-		lk_shutdown();
+		shutdown_livekit();
 		return 1;
 	}
 
@@ -503,6 +559,6 @@ int main(int argc, char** argv) {
 
 	lk_room_disconnect(room);
 	lk_room_destroy(room);
-	lk_shutdown();
+	shutdown_livekit();
 	return 0;
 }

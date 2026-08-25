@@ -96,5 +96,32 @@ TEST(LoggingTest, ProvidesStableNames) {
 	EXPECT_STREQ(LogSourceName(LogSource::WebSocket), "websocket");
 }
 
+TEST(LoggingTest, RedactsCredentialsAndConnectionDescriptions) {
+	LoggingStateGuard restore;
+	auto sink = std::make_shared<CapturingLogSink>();
+	SetLogSink(sink);
+	LogOptions options;
+	options.livekit_level = LogLevel::Trace;
+	options.webrtc_level = LogLevel::Trace;
+	options.websocket_level = LogLevel::Trace;
+	SetLogOptions(options);
+
+	detail::EmitLog(LogLevel::Info, LogSource::LiveKit,
+	                "url=wss://host/rtc?access_token=secret&auto_subscribe=1");
+	detail::EmitLog(LogLevel::Info, LogSource::LiveKit, "Authorization: Bearer secret");
+	detail::EmitLog(LogLevel::Info, LogSource::WebRTC,
+	                "candidate:1 1 UDP 1 192.0.2.1 5000 typ host");
+	detail::EmitLog(LogLevel::Info, LogSource::WebRTC,
+	                "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:secret\r\n");
+	detail::EmitLog(LogLevel::Info, LogSource::WebSocket, "token eyJabc.def.ghi");
+
+	EXPECT_FALSE(sink->Contains(LogSource::LiveKit, LogLevel::Info, "secret"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "192.0.2.1"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "m=audio"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebSocket, LogLevel::Info, "eyJabc.def.ghi"));
+	EXPECT_TRUE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "ICE details redacted"));
+	EXPECT_TRUE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "SDP redacted"));
+}
+
 } // namespace
 } // namespace livekit::core

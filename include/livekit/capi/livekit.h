@@ -60,6 +60,45 @@ typedef enum lk_status {
 	LK_STATUS_EXCEPTION = 4
 } lk_status_t;
 
+typedef enum lk_log_level {
+	LK_LOG_LEVEL_TRACE = 0,
+	LK_LOG_LEVEL_DEBUG = 1,
+	LK_LOG_LEVEL_INFO = 2,
+	LK_LOG_LEVEL_WARNING = 3,
+	LK_LOG_LEVEL_ERROR = 4,
+	LK_LOG_LEVEL_OFF = 5
+} lk_log_level_t;
+
+typedef enum lk_log_source {
+	LK_LOG_SOURCE_LIVEKIT = 0,
+	LK_LOG_SOURCE_WEBRTC = 1,
+	LK_LOG_SOURCE_WEBSOCKET = 2
+} lk_log_source_t;
+
+/* Strings are borrowed and remain valid only for the duration of the callback. */
+typedef struct lk_log_record {
+	size_t struct_size;
+	lk_log_level_t level;
+	lk_log_source_t source;
+	const char* message;
+	const char* file;
+	int32_t line;
+} lk_log_record_t;
+
+typedef struct lk_log_options {
+	size_t struct_size;
+	lk_log_level_t livekit_level;
+	lk_log_level_t webrtc_level;
+	lk_log_level_t websocket_level;
+} lk_log_options_t;
+
+/*
+ * Invoked synchronously from SDK, WebRTC, and WebSocket threads. The callback must be thread-safe
+ * and return quickly. Do not call a logging configuration function, lk_init(), or lk_shutdown()
+ * from this callback. Exceptions must not cross the C ABI boundary.
+ */
+typedef void (*lk_log_callback)(void* user_data, const lk_log_record_t* record);
+
 typedef enum lk_room_state {
 	LK_ROOM_STATE_CONNECTING = 0,
 	LK_ROOM_STATE_CONNECTED = 1,
@@ -1010,6 +1049,15 @@ LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
 LKC_API const char* lk_last_error(void);
+
+LKC_API void lk_log_options_init(lk_log_options_t* options);
+LKC_API lk_status_t lk_log_set_options(const lk_log_options_t* options);
+LKC_API lk_status_t lk_log_get_options(lk_log_options_t* options);
+/*
+ * Replaces the process-wide log sink. Passing NULL unregisters it and waits for callbacks already
+ * in progress before returning, after which the previous user_data may be released.
+ */
+LKC_API lk_status_t lk_log_set_callback(lk_log_callback callback, void* user_data);
 
 /*
  * Creates a read-only snapshot of active host media devices. The list owns its strings and must
