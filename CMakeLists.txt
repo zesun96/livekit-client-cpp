@@ -24,7 +24,7 @@ set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
 option(USE_SYSTEM_PROTOBUF "Use system protobuf" ON)
 option(USE_SYSTEM_JSON "Use system nlohmann/json" OFF)
 option(USE_SYSTEM_ABSL "Use system Abseil" OFF)
-option(USE_SYSTEM_PLOG "Use system plog" OFF)
+option(USE_SYSTEM_PLOG "Use system plog for examples" OFF)
 option(USE_SYSTEM_MEDIA_CAPTURE "Use an installed media-capture package" OFF)
 set(MEDIA_CAPTURE_ROOT "${PROJECT_SOURCE_DIR}/../media-capture" CACHE PATH
   "Path to the media-capture source tree")
@@ -97,7 +97,9 @@ endif()
 
 
 message(STATUS "libwebrtc source dir: ${libwebrtc_SOURCE_DIR}")
-message(STATUS "plog source dir: ${plog_SOURCE_DIR}")
+if(BUILD_EXAMPLES)
+  message(STATUS "plog example source dir: ${plog_SOURCE_DIR}")
+endif()
 message(STATUS "libwebsockets include dir: ${LIBWEBSOCKETS_INCLUDE_DIRS}")
 message(STATUS "libwebsockets lib: ${LIBWEBSOCKETS_LIBRARIES}")
 message(STATUS "protobuf include dir: ${PROTOBUF_INCLUDE_DIRS}")
@@ -179,6 +181,7 @@ set(
   src/core/detail/data_stream_compression.cpp
   src/core/detail/debouncer.cpp
   src/core/detail/internals.cpp
+  src/core/detail/logging.cpp
   src/core/detail/global_task_queue.cpp
   src/core/detail/peer_transport.cpp
   src/core/detail/peer_transport_factory.cpp
@@ -225,8 +228,6 @@ target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINAR
 
 target_link_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/lib)
 target_link_libraries(livekitclient PUBLIC webrtc)
-target_link_libraries(livekitclient PRIVATE
-  $<BUILD_INTERFACE:plog::plog>)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
 target_link_libraries(livekitclient PUBLIC livekit_proto)
 target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)

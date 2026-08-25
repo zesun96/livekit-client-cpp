@@ -5,7 +5,7 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-if(NOT TARGET plog::plog)
+if(BUILD_EXAMPLES AND NOT TARGET plog::plog)
   if(USE_SYSTEM_PLOG)
     find_package(plog CONFIG REQUIRED)
   else()

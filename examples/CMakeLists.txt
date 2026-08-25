@@ -1,5 +1,9 @@
 # build examples
 
+add_library(livekit_example_common INTERFACE)
+target_include_directories(livekit_example_common INTERFACE ${CMAKE_CURRENT_LIST_DIR}/common)
+target_link_libraries(livekit_example_common INTERFACE livekitclient plog::plog)
+
 add_subdirectory(cpp_sample)
 
 add_subdirectory(c_sample)

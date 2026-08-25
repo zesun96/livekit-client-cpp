@@ -238,7 +238,7 @@ RtcEngine::RtcEngine()
 }
 
 RtcEngine::~RtcEngine() {
-	std::cout << "RtcEngine::~RtcEngine()" << std::endl;
+	LKC_LOG_DEBUG << "RTC engine shutdown";
 	room_listener_.store(nullptr);
 	Disconnect();
 	StopRpcWorkers();
@@ -266,7 +266,7 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 	}
 
 	livekit::JoinResponse response = ConnectTransport(url, token, options);
-	PLOG_DEBUG << "received JoinResponse: " << response.room().name();
+	LKC_LOG_DEBUG << "received join response for room=" << response.room().name();
 	if (!response.has_room()) {
 		ResetTransport(false);
 		return response;
@@ -584,8 +584,8 @@ void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_
 		}
 		return;
 	}
-	PLOG_INFO << "connection recovery started: reason=" << ReconnectReasonName(reason)
-	          << ", force_full_reconnect=" << force_full_reconnect;
+	LKC_LOG_INFO << "connection recovery started: reason=" << ReconnectReasonName(reason)
+	             << ", force_full_reconnect=" << force_full_reconnect;
 	recovering_connection_ = true;
 	CancelPendingDataBlobRequests(
 	    {DataTrackErrorCode::Disconnected, "connection is recovering; retry the schema request"});
@@ -634,7 +634,7 @@ void RtcEngine::RunRecovery() {
 			recovered = ResumeTransport(url, token, options, recovery_failure_reason_.load());
 		}
 		if (recovered && !force_full_reconnect_) {
-			PLOG_INFO << "connection recovery completed with signal resume";
+			LKC_LOG_INFO << "connection recovery completed with signal resume";
 			if (auto* listener = room_listener_.load()) {
 				listener->ResumedEvent();
 			}
@@ -665,19 +665,19 @@ void RtcEngine::RunRecovery() {
 			                  ? options.reconnect_policy->NextRetryDelay(context)
 			                  : CreateDefaultReconnectPolicy()->NextRetryDelay(context);
 		} catch (const std::exception& error) {
-			PLOG_ERROR << "connection recovery policy failed: " << error.what();
+			LKC_LOG_ERROR << "connection recovery policy failed: " << error.what();
 			break;
 		} catch (...) {
-			PLOG_ERROR << "connection recovery policy failed with an unknown exception";
+			LKC_LOG_ERROR << "connection recovery policy failed with an unknown exception";
 			break;
 		}
 		if (!retry_delay.has_value()) {
-			PLOG_WARNING << "connection recovery policy stopped retries after " << attempt
-			             << " attempt(s)";
+			LKC_LOG_WARNING << "connection recovery policy stopped retries after " << attempt
+			                << " attempt(s)";
 			break;
 		}
-		PLOG_INFO << "full reconnect attempt " << (attempt + 1) << "/" << attempts
-		          << ", delay_ms=" << retry_delay->count();
+		LKC_LOG_INFO << "full reconnect attempt " << (attempt + 1) << "/" << attempts
+		             << ", delay_ms=" << retry_delay->count();
 		if (*retry_delay > std::chrono::milliseconds::zero()) {
 			std::unique_lock<std::mutex> guard(rtc_connected_mutex_);
 			rtc_connected_cv_.wait_for(guard, *retry_delay,
@@ -717,20 +717,20 @@ void RtcEngine::RunRecovery() {
 	}
 
 	if (recovered) {
-		PLOG_INFO << "connection recovery completed with full reconnect in "
-		          << std::chrono::duration_cast<std::chrono::milliseconds>(
-		                 std::chrono::steady_clock::now() - recovery_started)
-		                 .count()
-		          << "ms";
+		LKC_LOG_INFO << "connection recovery completed with full reconnect in "
+		             << std::chrono::duration_cast<std::chrono::milliseconds>(
+		                    std::chrono::steady_clock::now() - recovery_started)
+		                    .count()
+		             << "ms";
 		if (auto* listener = room_listener_.load()) {
 			listener->ReconnectedEvent(std::move(recovered_response));
 		}
 	} else if (!recovery_stop_) {
-		PLOG_ERROR << "connection recovery exhausted after "
-		           << std::chrono::duration_cast<std::chrono::milliseconds>(
-		                  std::chrono::steady_clock::now() - recovery_started)
-		                  .count()
-		           << "ms";
+		LKC_LOG_ERROR << "connection recovery exhausted after "
+		              << std::chrono::duration_cast<std::chrono::milliseconds>(
+		                     std::chrono::steady_clock::now() - recovery_started)
+		                     .count()
+		              << "ms";
 		ResetTransport(false);
 		recovery_allowed_ = false;
 		if (auto* listener = room_listener_.load()) {
@@ -1646,15 +1646,15 @@ void RtcEngine::OnLeave(const livekit::LeaveRequest leave) {
 }
 
 void RtcEngine::OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) {
-	std::cout << "received trackPublishedResponse:" << response.cid() << "; "
-	          << response.track().sid() << std::endl;
+	LKC_LOG_DEBUG << "received track publication: cid=" << response.cid()
+	              << ", sid=" << response.track().sid();
 
 	auto& cid = response.cid();
 	{
 		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
 		auto it = pending_track_resolvers_.find(cid);
 		if (it == pending_track_resolvers_.end()) {
-			std::cerr << "missing track resolver for " << cid << std::endl;
+			LKC_LOG_WARNING << "missing track resolver for cid=" << cid;
 			return;
 		}
 		auto& promise = it->second;
@@ -1971,7 +1971,8 @@ void RtcEngine::OnLocalOffer(PeerTransport::Target target,
 void RtcEngine::OnStateChange(RtcSession::State connection_state,
                               webrtc::PeerConnectionInterface::PeerConnectionState pub_state,
                               webrtc::PeerConnectionInterface::PeerConnectionState sub_state) {
-	std::cout << "RtcEngine::OnStateChange()" << int(connection_state) << std::endl;
+	LKC_LOG_DEBUG << "RTC session state changed: state=" << int(connection_state)
+	              << ", publisher=" << int(pub_state) << ", subscriber=" << int(sub_state);
 	if (connection_state == RtcSession::State::kConnected) {
 		{
 			std::lock_guard<std::mutex> guard(rtc_connected_mutex_);

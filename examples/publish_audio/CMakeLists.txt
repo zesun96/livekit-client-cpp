@@ -10,4 +10,4 @@ target_include_directories(
     ${CMAKE_CURRENT_LIST_DIR}/../common
 )
  
-target_link_libraries(publish_audio PRIVATE livekitclient)
+target_link_libraries(publish_audio PRIVATE livekit_example_common)

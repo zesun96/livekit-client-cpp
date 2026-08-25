@@ -1,5 +1,6 @@
 #pragma once
 
+#include "example_logging.h"
 #include "livekit/core/livekit_client.h"
 
 #include <chrono>
@@ -56,16 +57,20 @@ inline bool WaitUntil(const std::function<bool()>& predicate,
 
 class ClientRuntime {
 public:
-	ClientRuntime() : initialized_(livekit::core::Init()) {}
+	ClientRuntime() : log_sink_(ConfigureExampleLogging()), initialized_(livekit::core::Init()) {}
 	~ClientRuntime() {
 		if (initialized_) {
 			livekit::core::Destroy();
+		}
+		if (livekit::core::GetLogSink() == log_sink_) {
+			livekit::core::SetLogSink(nullptr);
 		}
 	}
 
 	bool initialized() const { return initialized_; }
 
 private:
+	std::shared_ptr<livekit::core::LogSinkInterface> log_sink_;
 	bool initialized_;
 };
 
