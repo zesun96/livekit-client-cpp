@@ -86,6 +86,14 @@ struct DataTrackInfo {
 	bool operator==(const DataTrackInfo&) const = default;
 };
 
+struct RemoteDataTrackSnapshot {
+	DataTrackInfo info;
+	std::string publisher_identity;
+	bool published = false;
+
+	bool operator==(const RemoteDataTrackSnapshot&) const = default;
+};
+
 struct DataTrackFrame {
 	std::vector<uint8_t> payload;
 	std::optional<uint64_t> user_timestamp;

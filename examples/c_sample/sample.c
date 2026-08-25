@@ -375,6 +375,60 @@ static void print_remote_participant_snapshot(const lk_room_t* room) {
 	lk_remote_participant_list_destroy(snapshot);
 }
 
+typedef size_t (*remote_data_track_string_getter)(const lk_remote_data_track_snapshot_t*, char*,
+                                                  size_t);
+
+static char* read_remote_data_track_string(const lk_remote_data_track_snapshot_t* track,
+                                           remote_data_track_string_getter getter) {
+	const size_t required = getter(track, NULL, 0);
+	char* value = required != 0 ? (char*)malloc(required) : NULL;
+	if (value != NULL) {
+		getter(track, value, required);
+	}
+	return value;
+}
+
+static void print_remote_data_track_snapshot(lk_room_t* room) {
+	lk_remote_data_track_list_t* snapshot = NULL;
+	if (lk_room_create_remote_data_track_snapshot(room, &snapshot) != LK_STATUS_OK) {
+		fprintf(stderr, "Remote DataTrack snapshot failed: %s\n", lk_last_error());
+		return;
+	}
+	const size_t track_count = lk_remote_data_track_list_count(snapshot);
+	printf("Remote DataTrack snapshot: %zu track(s)\n", track_count);
+	for (size_t index = 0; index < track_count; ++index) {
+		const lk_remote_data_track_snapshot_t* track = NULL;
+		lk_data_track_snapshot_info_t info;
+		if (lk_remote_data_track_list_at(snapshot, index, &track) != LK_STATUS_OK) {
+			continue;
+		}
+		lk_data_track_snapshot_info_init(&info);
+		if (lk_remote_data_track_snapshot_info(track, &info) != LK_STATUS_OK) {
+			continue;
+		}
+		char* identity =
+		    read_remote_data_track_string(track, lk_remote_data_track_snapshot_publisher_identity);
+		char* sid = read_remote_data_track_string(track, lk_remote_data_track_snapshot_sid);
+		char* name = read_remote_data_track_string(track, lk_remote_data_track_snapshot_name);
+		printf("  %s/%s: %s, published=%s, e2ee=%s\n", identity != NULL ? identity : "<unknown>",
+		       sid != NULL ? sid : "<unknown>", name != NULL ? name : "<unnamed>",
+		       info.is_published ? "yes" : "no", info.uses_e2ee ? "yes" : "no");
+		if (identity != NULL && sid != NULL) {
+			lk_data_track_subscription_options_t options;
+			lk_data_track_subscription_options_init(&options);
+			options.buffer_capacity = 32;
+			if (lk_room_update_data_track_subscription_options(room, identity, sid, &options) !=
+			    LK_DATA_TRACK_ERROR_NONE) {
+				fprintf(stderr, "Remote DataTrack option update failed: %s\n", lk_last_error());
+			}
+		}
+		free(identity);
+		free(sid);
+		free(name);
+	}
+	lk_remote_data_track_list_destroy(snapshot);
+}
+
 int main(int argc, char** argv) {
 	const char* url = argc > 1 ? argv[1] : getenv("LIVEKIT_URL");
 	const char* token = argc > 2 ? argv[2] : getenv("LIVEKIT_TOKEN");
@@ -491,6 +545,7 @@ int main(int argc, char** argv) {
 		free(identity);
 	}
 	print_remote_participant_snapshot(room);
+	print_remote_data_track_snapshot(room);
 	{
 		const char* digit = getenv("LIVEKIT_DTMF_DIGIT");
 		const char* code = getenv("LIVEKIT_DTMF_CODE");

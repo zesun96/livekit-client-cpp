@@ -510,6 +510,53 @@ std::vector<RemoteParticipantSnapshot> Room::GetRemoteParticipantSnapshots() con
 	return result;
 }
 
+std::vector<RemoteDataTrackSnapshot> Room::GetRemoteDataTrackSnapshots() const {
+	std::vector<std::shared_ptr<RemoteParticipant>> participants;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		participants.reserve(remote_participants_.size());
+		for (const auto& [sid, participant] : remote_participants_) {
+			participants.push_back(participant);
+		}
+	}
+
+	std::vector<RemoteDataTrackSnapshot> result;
+	for (const auto& participant : participants) {
+		for (const auto& [sid, track] : participant->DataTracksSnapshot()) {
+			if (auto remote = std::dynamic_pointer_cast<RemoteDataTrackInterface>(track)) {
+				result.push_back(
+				    {remote->Info(), remote->PublisherIdentity(), remote->IsPublished()});
+			}
+		}
+	}
+	std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+		return std::tie(left.publisher_identity, left.info.sid) <
+		       std::tie(right.publisher_identity, right.info.sid);
+	});
+	return result;
+}
+
+std::shared_ptr<RemoteDataTrackInterface> Room::GetRemoteDataTrack(std::string participant_identity,
+                                                                   std::string track_sid) {
+	std::shared_ptr<RemoteParticipant> participant;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		const auto found = std::find_if(remote_participants_.begin(), remote_participants_.end(),
+		                                [&participant_identity](const auto& entry) {
+			                                return entry.second->Identity() == participant_identity;
+		                                });
+		if (found == remote_participants_.end()) {
+			return nullptr;
+		}
+		participant = found->second;
+	}
+	const auto tracks = participant->DataTracksSnapshot();
+	const auto found = tracks.find(track_sid);
+	return found != tracks.end()
+	           ? std::dynamic_pointer_cast<RemoteDataTrackInterface>(found->second)
+	           : nullptr;
+}
+
 RemoteParticipantInterface* Room::GetRemoteParticipantBySid(std::string sid) {
 	std::lock_guard<std::mutex> guard(participants_mutex_);
 	auto participant = remote_participants_.find(sid);
@@ -749,6 +796,20 @@ std::vector<RemoteParticipantSnapshot> RoomInterface::GetRemoteParticipantSnapsh
 	auto* room = dynamic_cast<const Room*>(this);
 	return room != nullptr ? room->GetRemoteParticipantSnapshots()
 	                       : std::vector<RemoteParticipantSnapshot>{};
+}
+
+std::vector<RemoteDataTrackSnapshot> RoomInterface::GetRemoteDataTrackSnapshots() const {
+	auto* room = dynamic_cast<const Room*>(this);
+	return room != nullptr ? room->GetRemoteDataTrackSnapshots()
+	                       : std::vector<RemoteDataTrackSnapshot>{};
+}
+
+std::shared_ptr<RemoteDataTrackInterface>
+RoomInterface::GetRemoteDataTrack(std::string participant_identity, std::string track_sid) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr
+	           ? room->GetRemoteDataTrack(std::move(participant_identity), std::move(track_sid))
+	           : nullptr;
 }
 
 RoomInterface::RoomState RoomInterface::State() const {

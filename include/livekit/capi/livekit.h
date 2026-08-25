@@ -48,6 +48,8 @@ typedef struct lk_media_device_list lk_media_device_list_t;
 typedef struct lk_screen_source_list lk_screen_source_list_t;
 typedef struct lk_frame_cryptor_list lk_frame_cryptor_list_t;
 typedef struct lk_local_data_track lk_local_data_track_t;
+typedef struct lk_remote_data_track_list lk_remote_data_track_list_t;
+typedef struct lk_remote_data_track_snapshot lk_remote_data_track_snapshot_t;
 typedef struct lk_data_track_reader lk_data_track_reader_t;
 typedef struct lk_data_track_frame lk_data_track_frame_t;
 typedef struct lk_data_track_schema lk_data_track_schema_t;
@@ -483,6 +485,7 @@ typedef struct lk_data_track_snapshot_info {
 	lk_data_track_frame_encoding_t frame_encoding;
 	int has_schema;
 	lk_data_track_schema_encoding_t schema_encoding;
+	int is_published;
 } lk_data_track_snapshot_info_t;
 
 typedef struct lk_sip_dtmf {
@@ -1386,9 +1389,37 @@ LKC_API size_t lk_local_data_track_schema_name(const lk_local_data_track_t* trac
                                                size_t buffer_size);
 LKC_API size_t lk_local_data_track_custom_schema_encoding(const lk_local_data_track_t* track,
                                                           char* buffer, size_t buffer_size);
+/*
+ * The list owns immutable remote DataTrack snapshots. Items returned by at() are borrowed until
+ * the list is destroyed and do not reflect later publication or reconnect updates.
+ */
+LKC_API lk_status_t lk_room_create_remote_data_track_snapshot(
+    const lk_room_t* room, lk_remote_data_track_list_t** snapshot);
+LKC_API void lk_remote_data_track_list_destroy(lk_remote_data_track_list_t* snapshot);
+LKC_API size_t lk_remote_data_track_list_count(const lk_remote_data_track_list_t* snapshot);
+LKC_API lk_status_t lk_remote_data_track_list_at(const lk_remote_data_track_list_t* snapshot,
+                                                 size_t index,
+                                                 const lk_remote_data_track_snapshot_t** track);
+LKC_API lk_status_t lk_remote_data_track_snapshot_info(const lk_remote_data_track_snapshot_t* track,
+                                                       lk_data_track_snapshot_info_t* info);
+LKC_API size_t lk_remote_data_track_snapshot_publisher_identity(
+    const lk_remote_data_track_snapshot_t* track, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_data_track_snapshot_sid(const lk_remote_data_track_snapshot_t* track,
+                                                 char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_data_track_snapshot_name(const lk_remote_data_track_snapshot_t* track,
+                                                  char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_data_track_snapshot_custom_frame_encoding(
+    const lk_remote_data_track_snapshot_t* track, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_data_track_snapshot_schema_name(
+    const lk_remote_data_track_snapshot_t* track, char* buffer, size_t buffer_size);
+LKC_API size_t lk_remote_data_track_snapshot_custom_schema_encoding(
+    const lk_remote_data_track_snapshot_t* track, char* buffer, size_t buffer_size);
 LKC_API lk_data_track_error_code_t lk_room_subscribe_data_track(
     lk_room_t* room, const char* participant_identity, const char* track_sid,
     const lk_data_track_subscription_options_t* options, lk_data_track_reader_t** reader);
+LKC_API lk_data_track_error_code_t lk_room_update_data_track_subscription_options(
+    lk_room_t* room, const char* participant_identity, const char* track_sid,
+    const lk_data_track_subscription_options_t* options);
 LKC_API void lk_data_track_reader_destroy(lk_data_track_reader_t* reader);
 LKC_API void lk_data_track_reader_close(lk_data_track_reader_t* reader);
 LKC_API int lk_data_track_reader_is_closed(const lk_data_track_reader_t* reader);

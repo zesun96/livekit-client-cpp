@@ -235,6 +235,15 @@ TEST(ParticipantStateTest, PreservesDataTrackWhenSidIsReassigned) {
 	auto* original_track = participant->GetDataTrackBySid("DT_before_reconnect");
 	ASSERT_NE(original_track, nullptr);
 	EXPECT_TRUE(original_track->IsPublished());
+	auto owned_track = room.GetRemoteDataTrack("data-track-publisher", "DT_before_reconnect");
+	ASSERT_NE(owned_track, nullptr);
+	EXPECT_EQ(owned_track.get(), original_track);
+	auto snapshots = room.GetRemoteDataTrackSnapshots();
+	ASSERT_EQ(snapshots.size(), 1u);
+	EXPECT_EQ(snapshots.front().publisher_identity, "data-track-publisher");
+	EXPECT_EQ(snapshots.front().info.sid, "DT_before_reconnect");
+	EXPECT_EQ(snapshots.front().info.name, "telemetry");
+	EXPECT_TRUE(snapshots.front().published);
 	EXPECT_EQ(events.published_count, 1);
 	EXPECT_EQ(events.unpublished_count, 0);
 
@@ -250,6 +259,12 @@ TEST(ParticipantStateTest, PreservesDataTrackWhenSidIsReassigned) {
 	EXPECT_EQ(reassigned_track, original_track);
 	ASSERT_NE(reassigned_track, nullptr);
 	EXPECT_TRUE(reassigned_track->IsPublished());
+	EXPECT_EQ(room.GetRemoteDataTrack("data-track-publisher", "DT_after_reconnect").get(),
+	          original_track);
+	auto reconnected_snapshots = room.GetRemoteDataTrackSnapshots();
+	ASSERT_EQ(reconnected_snapshots.size(), 1u);
+	EXPECT_EQ(reconnected_snapshots.front().info.sid, "DT_after_reconnect");
+	EXPECT_EQ(snapshots.front().info.sid, "DT_before_reconnect");
 	EXPECT_EQ(events.published_count, 1);
 	EXPECT_EQ(events.unpublished_count, 0);
 	room.RemoveEventListener();

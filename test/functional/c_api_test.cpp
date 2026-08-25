@@ -1,4 +1,5 @@
 #include "livekit/capi/livekit.h"
+#include "livekit/core/livekit_client.h"
 
 #include <gtest/gtest.h>
 
@@ -75,11 +76,11 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	ASSERT_GT(required, 1u);
 	std::vector<char> version(required);
 	EXPECT_EQ(lk_version(version.data(), version.size()), required);
-	EXPECT_STREQ(version.data(), "0.0.1");
+	EXPECT_EQ(version.data(), livekit::core::Version());
 
 	std::array<char, 3> truncated{};
 	EXPECT_EQ(lk_version(truncated.data(), truncated.size()), required);
-	EXPECT_STREQ(truncated.data(), "0.");
+	EXPECT_EQ(std::string(truncated.data()), livekit::core::Version().substr(0, 2));
 
 	lk_audio_source_options_t audio;
 	lk_audio_source_options_init(&audio);
@@ -153,6 +154,7 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(data_track_info.struct_size, sizeof(data_track_info));
 	EXPECT_FALSE(data_track_info.has_frame_encoding);
 	EXPECT_FALSE(data_track_info.has_schema);
+	EXPECT_FALSE(data_track_info.is_published);
 
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
@@ -530,7 +532,13 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_data_track_unpublish(nullptr), LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_data_track_destroy(nullptr), LK_DATA_TRACK_ERROR_NONE);
+	EXPECT_EQ(lk_room_create_remote_data_track_snapshot(nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_data_track_list_at(nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_remote_data_track_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_subscribe_data_track(nullptr, nullptr, nullptr, nullptr, nullptr),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_update_data_track_subscription_options(nullptr, nullptr, nullptr, nullptr),
 	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_data_track_reader_try_read(nullptr, nullptr), LK_DATA_TRACK_READ_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_data_track_schema_name(nullptr, nullptr, 0), 0u);
@@ -598,6 +606,18 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(missing_participant, nullptr);
 	lk_remote_participant_list_destroy(participant_snapshot);
+	lk_remote_data_track_list_t* data_track_snapshot = nullptr;
+	ASSERT_EQ(lk_room_create_remote_data_track_snapshot(room, &data_track_snapshot), LK_STATUS_OK);
+	ASSERT_NE(data_track_snapshot, nullptr);
+	EXPECT_EQ(lk_remote_data_track_list_count(data_track_snapshot), 0u);
+	const lk_remote_data_track_snapshot_t* missing_data_track = nullptr;
+	EXPECT_EQ(lk_remote_data_track_list_at(data_track_snapshot, 0, &missing_data_track),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(missing_data_track, nullptr);
+	lk_remote_data_track_list_destroy(data_track_snapshot);
+	EXPECT_EQ(
+	    lk_room_update_data_track_subscription_options(room, "participant", "DT_missing", nullptr),
+	    LK_DATA_TRACK_ERROR_DISCONNECTED);
 
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);
