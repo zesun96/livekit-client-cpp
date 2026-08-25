@@ -2,12 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace {
@@ -18,6 +20,36 @@ lk_rpc_handler_result_t EchoRpc(void*, const lk_rpc_invocation_t* invocation) {
 
 void TextStream(void*, lk_room_t*, const lk_text_stream_event_t*) {}
 void ByteStream(void*, lk_room_t*, const lk_byte_stream_event_t*) {}
+
+struct CapturedLog {
+	size_t struct_size;
+	lk_log_level_t level;
+	lk_log_source_t source;
+	std::string message;
+	std::string file;
+	int32_t line;
+};
+
+struct LogCapture {
+	std::mutex mutex;
+	std::vector<CapturedLog> records;
+};
+
+void CaptureLog(void* user_data, const lk_log_record_t* record) {
+	auto* capture = static_cast<LogCapture*>(user_data);
+	if (capture == nullptr || record == nullptr) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(capture->mutex);
+	capture->records.push_back({record->struct_size, record->level, record->source,
+	                            record->message == nullptr ? "" : record->message,
+	                            record->file == nullptr ? "" : record->file, record->line});
+}
+
+class CLogCallbackGuard {
+public:
+	~CLogCallbackGuard() { lk_log_set_callback(nullptr, nullptr); }
+};
 
 struct AsyncRpcCompletion {
 	std::mutex mutex;
@@ -230,6 +262,73 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_remote_track_snapshot_info_t track_snapshot_info;
 	lk_remote_track_snapshot_info_init(&track_snapshot_info);
 	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
+}
+
+TEST(CApiTest, ConfiguresAndReceivesProcessWideLogs) {
+	lk_log_options_t defaults;
+	lk_log_options_init(&defaults);
+	EXPECT_EQ(defaults.struct_size, sizeof(defaults));
+	EXPECT_EQ(defaults.livekit_level, LK_LOG_LEVEL_INFO);
+	EXPECT_EQ(defaults.webrtc_level, LK_LOG_LEVEL_WARNING);
+	EXPECT_EQ(defaults.websocket_level, LK_LOG_LEVEL_WARNING);
+	EXPECT_EQ(lk_log_get_options(nullptr), LK_STATUS_INVALID_ARGUMENT);
+
+	lk_log_options_t invalid = defaults;
+	invalid.struct_size = 0;
+	EXPECT_EQ(lk_log_set_options(&invalid), LK_STATUS_INVALID_ARGUMENT);
+	invalid = defaults;
+	invalid.livekit_level = static_cast<lk_log_level_t>(100);
+	EXPECT_EQ(lk_log_set_options(&invalid), LK_STATUS_INVALID_ARGUMENT);
+
+	lk_log_options_t configured = defaults;
+	configured.livekit_level = LK_LOG_LEVEL_TRACE;
+	configured.webrtc_level = LK_LOG_LEVEL_ERROR;
+	configured.websocket_level = LK_LOG_LEVEL_OFF;
+	ASSERT_EQ(lk_log_set_options(&configured), LK_STATUS_OK) << lk_last_error();
+	lk_log_options_t result;
+	lk_log_options_init(&result);
+	ASSERT_EQ(lk_log_get_options(&result), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(result.livekit_level, configured.livekit_level);
+	EXPECT_EQ(result.webrtc_level, configured.webrtc_level);
+	EXPECT_EQ(result.websocket_level, configured.websocket_level);
+
+	LogCapture capture;
+	CLogCallbackGuard callback_guard;
+	ASSERT_EQ(lk_log_set_callback(CaptureLog, &capture), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK) << lk_last_error();
+
+	size_t record_count = 0;
+	{
+		std::lock_guard<std::mutex> guard(capture.mutex);
+		record_count = capture.records.size();
+		ASSERT_GE(record_count, 2u);
+		EXPECT_TRUE(
+		    std::all_of(capture.records.begin(), capture.records.end(), [](const auto& log) {
+			    return log.struct_size == sizeof(lk_log_record_t);
+		    }));
+		EXPECT_TRUE(
+		    std::any_of(capture.records.begin(), capture.records.end(), [](const auto& log) {
+			    return log.source == LK_LOG_SOURCE_LIVEKIT &&
+			           log.message.find("initialized") != std::string::npos;
+		    }));
+		EXPECT_TRUE(
+		    std::any_of(capture.records.begin(), capture.records.end(), [](const auto& log) {
+			    return log.source == LK_LOG_SOURCE_LIVEKIT &&
+			           log.message.find("shutdown complete") != std::string::npos;
+		    }));
+	}
+
+	ASSERT_EQ(lk_log_set_callback(nullptr, nullptr), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK) << lk_last_error();
+	{
+		std::lock_guard<std::mutex> guard(capture.mutex);
+		EXPECT_EQ(capture.records.size(), record_count);
+	}
+
+	lk_log_options_init(&defaults);
+	EXPECT_EQ(lk_log_set_options(&defaults), LK_STATUS_OK) << lk_last_error();
 }
 
 TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {

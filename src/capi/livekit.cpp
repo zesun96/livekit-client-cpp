@@ -3,6 +3,7 @@
 #include "livekit/core/data_track.h"
 #include "livekit/core/e2ee/e2ee_manager.h"
 #include "livekit/core/livekit_client.h"
+#include "livekit/core/logging.h"
 #include "livekit/core/rpc.h"
 #include "livekit/core/track/audio_source_interface.h"
 #include "livekit/core/track/local_track_interface.h"
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <map>
@@ -196,11 +198,120 @@ namespace {
 
 thread_local std::string last_error;
 
+lk_log_level_t FromCoreLogLevel(core::LogLevel level) {
+	switch (level) {
+	case core::LogLevel::Trace:
+		return LK_LOG_LEVEL_TRACE;
+	case core::LogLevel::Debug:
+		return LK_LOG_LEVEL_DEBUG;
+	case core::LogLevel::Info:
+		return LK_LOG_LEVEL_INFO;
+	case core::LogLevel::Warning:
+		return LK_LOG_LEVEL_WARNING;
+	case core::LogLevel::Error:
+		return LK_LOG_LEVEL_ERROR;
+	case core::LogLevel::Off:
+		return LK_LOG_LEVEL_OFF;
+	}
+	return LK_LOG_LEVEL_OFF;
+}
+
+lk_log_source_t FromCoreLogSource(core::LogSource source) {
+	switch (source) {
+	case core::LogSource::LiveKit:
+		return LK_LOG_SOURCE_LIVEKIT;
+	case core::LogSource::WebRTC:
+		return LK_LOG_SOURCE_WEBRTC;
+	case core::LogSource::WebSocket:
+		return LK_LOG_SOURCE_WEBSOCKET;
+	}
+	return LK_LOG_SOURCE_LIVEKIT;
+}
+
+class CLogSink final : public core::LogSinkInterface {
+public:
+	CLogSink(lk_log_callback callback, void* user_data)
+	    : callback_(callback), user_data_(user_data) {}
+
+	void OnLog(const core::LogRecord& record) override {
+		lk_log_callback callback = nullptr;
+		void* user_data = nullptr;
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			if (callback_ == nullptr) {
+				return;
+			}
+			++callbacks_in_progress_;
+			callback = callback_;
+			user_data = user_data_;
+		}
+
+		const lk_log_record_t c_record{sizeof(lk_log_record_t),
+		                               FromCoreLogLevel(record.level),
+		                               FromCoreLogSource(record.source),
+		                               record.message.c_str(),
+		                               record.file.c_str(),
+		                               record.line};
+		try {
+			callback(user_data, &c_record);
+		} catch (...) {
+			// Exceptions must never escape a C ABI callback boundary.
+		}
+
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			--callbacks_in_progress_;
+		}
+		callbacks_finished_.notify_all();
+	}
+
+	void Disable() {
+		std::unique_lock<std::mutex> lock(mutex_);
+		callback_ = nullptr;
+		user_data_ = nullptr;
+		callbacks_finished_.wait(lock, [this] { return callbacks_in_progress_ == 0; });
+	}
+
+private:
+	std::mutex mutex_;
+	std::condition_variable callbacks_finished_;
+	lk_log_callback callback_ = nullptr;
+	void* user_data_ = nullptr;
+	size_t callbacks_in_progress_ = 0;
+};
+
+std::mutex c_log_sink_mutex;
+std::shared_ptr<CLogSink> c_log_sink;
+
 void SetError(std::string error) { last_error = std::move(error); }
 
 lk_status_t Failure(lk_status_t status, const char* message) {
 	SetError(message);
 	return status;
+}
+
+bool ToCoreLogLevel(lk_log_level_t level, core::LogLevel& result) {
+	switch (level) {
+	case LK_LOG_LEVEL_TRACE:
+		result = core::LogLevel::Trace;
+		return true;
+	case LK_LOG_LEVEL_DEBUG:
+		result = core::LogLevel::Debug;
+		return true;
+	case LK_LOG_LEVEL_INFO:
+		result = core::LogLevel::Info;
+		return true;
+	case LK_LOG_LEVEL_WARNING:
+		result = core::LogLevel::Warning;
+		return true;
+	case LK_LOG_LEVEL_ERROR:
+		result = core::LogLevel::Error;
+		return true;
+	case LK_LOG_LEVEL_OFF:
+		result = core::LogLevel::Off;
+		return true;
+	}
+	return false;
 }
 
 template <typename Function> lk_status_t Guard(Function&& function) noexcept {
@@ -1906,6 +2017,68 @@ size_t lk_version(char* buffer, size_t buffer_size) {
 }
 
 const char* lk_last_error(void) { return last_error.c_str(); }
+
+void lk_log_options_init(lk_log_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->livekit_level = LK_LOG_LEVEL_INFO;
+		options->webrtc_level = LK_LOG_LEVEL_WARNING;
+		options->websocket_level = LK_LOG_LEVEL_WARNING;
+	}
+}
+
+lk_status_t lk_log_set_options(const lk_log_options_t* options) {
+	return Guard([&] {
+		if (options == nullptr || options->struct_size < sizeof(options->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "valid log options are required");
+		}
+		const auto current = core::GetLogOptions();
+		core::LogOptions converted = current;
+		if (LKC_HAS_FIELD(options, lk_log_options_t, livekit_level) &&
+		    !ToCoreLogLevel(options->livekit_level, converted.livekit_level)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid LiveKit log level");
+		}
+		if (LKC_HAS_FIELD(options, lk_log_options_t, webrtc_level) &&
+		    !ToCoreLogLevel(options->webrtc_level, converted.webrtc_level)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid WebRTC log level");
+		}
+		if (LKC_HAS_FIELD(options, lk_log_options_t, websocket_level) &&
+		    !ToCoreLogLevel(options->websocket_level, converted.websocket_level)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid WebSocket log level");
+		}
+		core::SetLogOptions(converted);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_log_get_options(lk_log_options_t* options) {
+	return Guard([&] {
+		const auto current = core::GetLogOptions();
+		const lk_log_options_t result{
+		    sizeof(lk_log_options_t), FromCoreLogLevel(current.livekit_level),
+		    FromCoreLogLevel(current.webrtc_level), FromCoreLogLevel(current.websocket_level)};
+		return CopyOutputStruct(result, options, "log options output is invalid");
+	});
+}
+
+lk_status_t lk_log_set_callback(lk_log_callback callback, void* user_data) {
+	return Guard([&] {
+		std::shared_ptr<CLogSink> replacement;
+		if (callback != nullptr) {
+			replacement = std::make_shared<CLogSink>(callback, user_data);
+		}
+
+		std::lock_guard<std::mutex> guard(c_log_sink_mutex);
+		auto previous = std::move(c_log_sink);
+		core::SetLogSink(replacement);
+		if (previous) {
+			previous->Disable();
+		}
+		c_log_sink = std::move(replacement);
+		return LK_STATUS_OK;
+	});
+}
 
 lk_status_t lk_media_device_list_create(lk_media_device_list_t** devices) {
 	return Guard([&] {

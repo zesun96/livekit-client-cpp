@@ -11,7 +11,9 @@
 #include <rtc_base/logging.h>
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
+#include <string_view>
 #include <utility>
 
 namespace livekit::core {
@@ -38,6 +40,76 @@ LogLevel ThresholdFor(const LogOptions& options, LogSource source) {
 		return options.websocket_level;
 	}
 	return LogLevel::Off;
+}
+
+std::string LowerAscii(std::string_view value) {
+	std::string result(value);
+	std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
+		return static_cast<char>(std::tolower(character));
+	});
+	return result;
+}
+
+void RedactLineFromMarker(std::string& message, std::string_view marker,
+                          std::string_view replacement) {
+	for (size_t search_from = 0;;) {
+		const auto lower = LowerAscii(message);
+		const auto marker_position = lower.find(marker, search_from);
+		if (marker_position == std::string::npos) {
+			return;
+		}
+		const auto line_end = message.find_first_of("\r\n", marker_position);
+		const auto replaced_size =
+		    (line_end == std::string::npos ? message.size() : line_end) - marker_position;
+		message.replace(marker_position, replaced_size, replacement);
+		search_from = marker_position + replacement.size();
+	}
+}
+
+void RedactJwtLikeValues(std::string& message) {
+	for (size_t search_from = 0;;) {
+		const auto start = message.find("eyJ", search_from);
+		if (start == std::string::npos) {
+			return;
+		}
+		auto end = start;
+		size_t dots = 0;
+		while (end < message.size()) {
+			const auto character = static_cast<unsigned char>(message[end]);
+			if (!(std::isalnum(character) != 0 || character == '_' || character == '-' ||
+			      character == '.')) {
+				break;
+			}
+			if (character == '.') {
+				++dots;
+			}
+			++end;
+		}
+		if (dots >= 2) {
+			constexpr std::string_view replacement = "[credential redacted]";
+			message.replace(start, end - start, replacement);
+			search_from = start + replacement.size();
+		} else {
+			search_from = end;
+		}
+	}
+}
+
+std::string SanitizeLogMessage(std::string message) {
+	const auto lower = LowerAscii(message);
+	if (lower.starts_with("v=0\r\n") || lower.starts_with("v=0\n") ||
+	    lower.find("\r\na=candidate:") != std::string::npos ||
+	    lower.find("\na=candidate:") != std::string::npos) {
+		return "[SDP redacted]";
+	}
+
+	RedactLineFromMarker(message, "access_token=", "[credential redacted]");
+	RedactLineFromMarker(message, "authorization:", "[credential redacted]");
+	RedactLineFromMarker(message, "candidate:", "[ICE details redacted]");
+	RedactLineFromMarker(message, "turn:", "[TURN URL redacted]");
+	RedactLineFromMarker(message, "turns:", "[TURN URL redacted]");
+	RedactJwtLikeValues(message);
+	return message;
 }
 
 } // namespace
@@ -236,7 +308,8 @@ void EmitLog(LogLevel level, LogSource source, std::string message, const char* 
 		if (!sink) {
 			return;
 		}
-		sink->OnLog({level, source, std::move(message), file == nullptr ? "" : file, line});
+		sink->OnLog({level, source, SanitizeLogMessage(std::move(message)),
+		             file == nullptr ? "" : file, line});
 	} catch (...) {
 		// Logging must never change SDK control flow.
 	}

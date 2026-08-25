@@ -45,6 +45,52 @@ private:
 	bool initialized_;
 };
 
+class CApiLogCapture {
+public:
+	void Add(const lk_log_record_t* record) {
+		if (record == nullptr || record->message == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(mutex_);
+		records_.emplace_back(record->source, record->message);
+	}
+
+	bool Contains(lk_log_source_t source, std::string_view text) const {
+		std::lock_guard<std::mutex> guard(mutex_);
+		return std::any_of(records_.begin(), records_.end(), [&](const auto& record) {
+			return record.first == source && record.second.find(text) != std::string::npos;
+		});
+	}
+
+	bool ContainsSource(lk_log_source_t source) const {
+		std::lock_guard<std::mutex> guard(mutex_);
+		return std::any_of(records_.begin(), records_.end(),
+		                   [&](const auto& record) { return record.first == source; });
+	}
+
+	bool ContainsValue(std::string_view value) const {
+		std::lock_guard<std::mutex> guard(mutex_);
+		return std::any_of(records_.begin(), records_.end(), [&](const auto& record) {
+			return !value.empty() && record.second.find(value) != std::string::npos;
+		});
+	}
+
+private:
+	mutable std::mutex mutex_;
+	std::vector<std::pair<lk_log_source_t, std::string>> records_;
+};
+
+void CaptureCApiLog(void* user_data, const lk_log_record_t* record) {
+	if (user_data != nullptr) {
+		static_cast<CApiLogCapture*>(user_data)->Add(record);
+	}
+}
+
+class CApiLogCallbackGuard {
+public:
+	~CApiLogCallbackGuard() { lk_log_set_callback(nullptr, nullptr); }
+};
+
 bool WaitUntil(const std::function<bool()>& predicate,
                std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -892,6 +938,16 @@ TEST(LiveKitServerTest, UsesRefreshedTokenForResumeAndFullReconnect) {
 		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 to run the token-refresh test";
 	}
 
+	CApiLogCapture logs;
+	CApiLogCallbackGuard log_callback_guard;
+	lk_log_options_t log_options;
+	lk_log_options_init(&log_options);
+	log_options.livekit_level = LK_LOG_LEVEL_TRACE;
+	log_options.webrtc_level = LK_LOG_LEVEL_INFO;
+	log_options.websocket_level = LK_LOG_LEVEL_INFO;
+	ASSERT_EQ(lk_log_set_options(&log_options), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_log_set_callback(CaptureCApiLog, &logs), LK_STATUS_OK) << lk_last_error();
+
 	ClientRuntime runtime;
 	ASSERT_TRUE(runtime.initialized());
 	auto reconnect_policy = std::make_shared<RecordingReconnectPolicy>();
@@ -931,6 +987,17 @@ TEST(LiveKitServerTest, UsesRefreshedTokenForResumeAndFullReconnect) {
 
 	room->RemoveEventListener();
 	EXPECT_TRUE(room->Disconnect());
+	EXPECT_TRUE(logs.Contains(LK_LOG_SOURCE_LIVEKIT, "WebSocket connection established"));
+	EXPECT_TRUE(logs.Contains(LK_LOG_SOURCE_LIVEKIT, "connection recovery started"));
+	EXPECT_TRUE(logs.Contains(LK_LOG_SOURCE_LIVEKIT, "connection recovery completed"));
+	EXPECT_TRUE(logs.ContainsSource(LK_LOG_SOURCE_WEBRTC));
+	EXPECT_TRUE(logs.ContainsSource(LK_LOG_SOURCE_WEBSOCKET));
+	EXPECT_FALSE(logs.ContainsValue(token));
+	EXPECT_FALSE(logs.ContainsValue(refreshed_token));
+	EXPECT_FALSE(logs.ContainsValue("access_token="));
+	EXPECT_FALSE(logs.ContainsValue("candidate:"));
+	EXPECT_FALSE(logs.ContainsValue("a=candidate"));
+	EXPECT_FALSE(logs.ContainsValue("v=0\r\n"));
 }
 
 TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {
