@@ -2093,6 +2093,43 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 
 	{
 		std::lock_guard<std::mutex> guard(participants_mutex_);
+		auto remove_participant = [&](auto participant) {
+			auto retained = participant->second;
+			for (const auto& [sid, track] : retained->DataTracksSnapshot()) {
+				if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
+					remote->MarkUnpublished();
+				}
+				if (emit_events) {
+					data_tracks_unpublished.push_back({track, retained});
+				}
+			}
+			for (const auto& [sid, publication] : retained->TrackPublicationsSnapshot()) {
+				auto track = remote_tracks_.find(sid);
+				if (track != remote_tracks_.end() && emit_events) {
+					UnsubscriptionEvent event{track->second, publication, retained};
+					if (auto* remote = dynamic_cast<RemoteTrackPublication*>(publication.get())) {
+						const auto previous = remote->SubscriptionStatus();
+						remote->SetTrackAttached(false);
+						event.status = remote->SubscriptionStatus();
+						event.status_changed = event.status != previous;
+					}
+					unsubscribed.push_back(std::move(event));
+				}
+				if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+					concrete->SetTrack(nullptr);
+				}
+				remote_tracks_.erase(sid);
+				pending_media_tracks_.erase(sid);
+				removed_cryptors.push_back(sid);
+				if (emit_events) {
+					unpublished.push_back({publication, retained});
+				}
+			}
+			remote_participants_.erase(participant);
+			if (emit_events) {
+				disconnected.push_back(std::move(retained));
+			}
+		};
 		for (const auto& info : updates) {
 			if (info.sid().empty()) {
 				continue;
@@ -2142,47 +2179,24 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 			auto participant = remote_participants_.find(info.sid());
 			if (info.state() == livekit::ParticipantInfo_State_DISCONNECTED) {
 				if (participant != remote_participants_.end()) {
-					auto retained = participant->second;
-					for (const auto& [sid, track] : retained->DataTracksSnapshot()) {
-						if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
-							remote->MarkUnpublished();
-						}
-						if (emit_events) {
-							data_tracks_unpublished.push_back({track, retained});
-						}
-					}
-					for (const auto& [sid, publication] : retained->TrackPublicationsSnapshot()) {
-						auto track = remote_tracks_.find(sid);
-						if (track != remote_tracks_.end() && emit_events) {
-							UnsubscriptionEvent event{track->second, publication, retained};
-							if (auto* remote =
-							        dynamic_cast<RemoteTrackPublication*>(publication.get())) {
-								const auto previous = remote->SubscriptionStatus();
-								remote->SetTrackAttached(false);
-								event.status = remote->SubscriptionStatus();
-								event.status_changed = event.status != previous;
-							}
-							unsubscribed.push_back(std::move(event));
-						}
-						if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
-							concrete->SetTrack(nullptr);
-						}
-						remote_tracks_.erase(sid);
-						pending_media_tracks_.erase(sid);
-						removed_cryptors.push_back(sid);
-						if (emit_events) {
-							unpublished.push_back({publication, retained});
-						}
-					}
-					remote_participants_.erase(participant);
-					if (emit_events) {
-						disconnected.push_back(std::move(retained));
-					}
+					remove_participant(participant);
 				}
 				continue;
 			}
 
 			if (participant == remote_participants_.end()) {
+				if (!info.identity().empty()) {
+					// A full reconnect assigns a new participant SID. The replacement may arrive
+					// before the server reports the previous participant as disconnected.
+					auto replaced =
+					    std::find_if(remote_participants_.begin(), remote_participants_.end(),
+					                 [&info](const auto& entry) {
+						                 return entry.second->Identity() == info.identity();
+					                 });
+					if (replaced != remote_participants_.end()) {
+						remove_participant(replaced);
+					}
+				}
 				auto added = std::make_shared<RemoteParticipant>(
 				    info, options_.auto_subscribe, CreateRemotePublicationHandlers(info.sid()),
 				    [this](const std::string& track_sid, bool subscribe,
@@ -2266,12 +2280,20 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				}
 			}
 			for (const auto& [sid, track] : new_data_tracks) {
-				if (!old_data_tracks.contains(sid)) {
+				// A stable publisher handle can retain the track object while its SID changes.
+				// Treat that as a rekey, not an unpublish followed by a new publication.
+				const auto retained_track =
+				    std::find_if(old_data_tracks.begin(), old_data_tracks.end(),
+				                 [&track](const auto& entry) { return entry.second == track; });
+				if (!old_data_tracks.contains(sid) && retained_track == old_data_tracks.end()) {
 					data_tracks_published.push_back({track, retained});
 				}
 			}
 			for (const auto& [sid, track] : old_data_tracks) {
-				if (!new_data_tracks.contains(sid)) {
+				const auto retained_track =
+				    std::find_if(new_data_tracks.begin(), new_data_tracks.end(),
+				                 [&track](const auto& entry) { return entry.second == track; });
+				if (!new_data_tracks.contains(sid) && retained_track == new_data_tracks.end()) {
 					if (auto* remote = dynamic_cast<RemoteDataTrack*>(track.get())) {
 						remote->MarkUnpublished();
 					}
