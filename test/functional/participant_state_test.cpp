@@ -122,6 +122,26 @@ TEST(ParticipantStateTest, FindsRemoteParticipantByIdentity) {
 	EXPECT_EQ(room.GetRemoteParticipantByIdentity("Remote User"), nullptr);
 }
 
+TEST(ParticipantStateTest, ReplacesReconnectedParticipantWithSameIdentity) {
+	Room room;
+	livekit::ParticipantInfo original;
+	original.set_sid("PA_before_reconnect");
+	original.set_identity("stable-identity");
+	original.set_version(3);
+	room.ParticipantUpdateEvent({original});
+
+	livekit::ParticipantInfo reconnected = original;
+	reconnected.set_sid("PA_after_reconnect");
+	reconnected.set_version(1);
+	room.ParticipantUpdateEvent({reconnected});
+
+	EXPECT_EQ(room.GetRemoteParticipantBySid("PA_before_reconnect"), nullptr);
+	auto* current = room.GetRemoteParticipantByIdentity("stable-identity");
+	ASSERT_NE(current, nullptr);
+	EXPECT_EQ(current->Sid(), "PA_after_reconnect");
+	ASSERT_EQ(room.GetRemoteParticipants().size(), 1u);
+}
+
 TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
 	Room room;
 	livekit::ParticipantInfo info;
@@ -179,6 +199,60 @@ TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
 	EXPECT_TRUE(room.GetRemoteParticipantSnapshots().empty());
 	EXPECT_EQ(snapshots.front().identity, "snapshot-identity");
 	EXPECT_EQ(snapshots.front().publications.front().sid, "TR_snapshot");
+}
+
+class DataTrackEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnDataTrackPublished(RemoteDataTrackInterface*, RemoteParticipantInterface*) override {
+		++published_count;
+	}
+	void OnDataTrackUnpublished(DataTrackInterface*, RemoteParticipantInterface*) override {
+		++unpublished_count;
+	}
+
+	int published_count = 0;
+	int unpublished_count = 0;
+};
+
+TEST(ParticipantStateTest, PreservesDataTrackWhenSidIsReassigned) {
+	Room room;
+	DataTrackEvents events;
+	room.AddEventListener(&events);
+
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_data_track");
+	info.set_identity("data-track-publisher");
+	info.set_version(1);
+	auto* data_track = info.add_data_tracks();
+	data_track->set_sid("DT_before_reconnect");
+	data_track->set_name("telemetry");
+	data_track->set_pub_handle(7);
+	room.ParticipantUpdateEvent({info});
+
+	auto* participant = room.GetRemoteParticipantByIdentity("data-track-publisher");
+	ASSERT_NE(participant, nullptr);
+	auto* original_track = participant->GetDataTrackBySid("DT_before_reconnect");
+	ASSERT_NE(original_track, nullptr);
+	EXPECT_TRUE(original_track->IsPublished());
+	EXPECT_EQ(events.published_count, 1);
+	EXPECT_EQ(events.unpublished_count, 0);
+
+	livekit::ParticipantInfo reconnected = info;
+	reconnected.set_version(2);
+	reconnected.mutable_data_tracks(0)->set_sid("DT_after_reconnect");
+	room.ParticipantUpdateEvent({reconnected});
+
+	participant = room.GetRemoteParticipantByIdentity("data-track-publisher");
+	ASSERT_NE(participant, nullptr);
+	EXPECT_EQ(participant->GetDataTrackBySid("DT_before_reconnect"), nullptr);
+	auto* reassigned_track = participant->GetDataTrackBySid("DT_after_reconnect");
+	EXPECT_EQ(reassigned_track, original_track);
+	ASSERT_NE(reassigned_track, nullptr);
+	EXPECT_TRUE(reassigned_track->IsPublished());
+	EXPECT_EQ(events.published_count, 1);
+	EXPECT_EQ(events.unpublished_count, 0);
+	room.RemoveEventListener();
 }
 
 class RoomStateEvents final : public RoomEventInterface {

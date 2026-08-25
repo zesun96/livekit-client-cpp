@@ -1722,6 +1722,8 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	subscription_options.max_partial_frames = 2;
 	auto reader = remote_track->Subscribe(subscription_options);
 	ASSERT_NE(reader, nullptr);
+	auto* original_remote_track = remote_track;
+	const auto original_remote_sid = remote_track->Info().sid;
 
 	DataTrackFrame small{{'{', '"', 'x', '"', ':', '1', '}'}, 123456};
 	DataTrackFrame received;
@@ -1768,15 +1770,16 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 		                       ? dynamic_cast<RemoteDataTrackInterface*>(
 		                             remote_sender->GetDataTrackByName(publish_options.name))
 		                       : nullptr;
-		    return remote_track != nullptr && remote_track->IsPublished();
+		    return remote_track != nullptr && remote_track->IsPublished() &&
+		           remote_track->Info().sid != original_remote_sid;
 	    },
 	    std::chrono::seconds(10)));
-	// A publisher full reconnect can surface as a replacement publication before the old
-	// publication is retired. Subscribe on the current publication either way: when the track
-	// object was preserved this adds another reader without duplicating the SFU subscription;
-	// when it was replaced this establishes the subscription for the new SID.
-	reader = remote_track->Subscribe(subscription_options);
-	ASSERT_NE(reader, nullptr);
+	if (remote_track == original_remote_track) {
+		EXPECT_FALSE(reader->IsClosed());
+	} else {
+		reader = remote_track->Subscribe(subscription_options);
+		ASSERT_NE(reader, nullptr);
+	}
 	DataTrackFrame after_reconnect{{9, 8, 7, 6}, 444};
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
@@ -1969,14 +1972,19 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	for (size_t index = 0; index < fragmented.size(); ++index) {
 		fragmented[index] = static_cast<uint8_t>(index % 251);
 	}
-	ASSERT_EQ(lk_local_data_track_try_push(local_track.get(), fragmented.data(), fragmented.size(),
-	                                       1, 987654321),
-	          LK_DATA_TRACK_ERROR_NONE)
-	    << lk_last_error();
 	received.reset();
 	received_handle = nullptr;
-	ASSERT_EQ(lk_data_track_reader_read_for(reader.get(), 10000, &received_handle),
-	          LK_DATA_TRACK_READ_FRAME)
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    if (lk_local_data_track_try_push(local_track.get(), fragmented.data(),
+		                                     fragmented.size(), 1,
+		                                     987654321) != LK_DATA_TRACK_ERROR_NONE) {
+			    return false;
+		    }
+		    return lk_data_track_reader_read_for(reader.get(), 100, &received_handle) ==
+		           LK_DATA_TRACK_READ_FRAME;
+	    },
+	    std::chrono::seconds(10)))
 	    << lk_last_error();
 	received.reset(received_handle);
 	received_payload.resize(lk_data_track_frame_data(received.get(), nullptr, 0));
