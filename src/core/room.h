@@ -67,6 +67,9 @@ public:
 	virtual LocalParticipantInterface* GetLocalParticipant() override;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() override;
 	std::vector<RemoteParticipantSnapshot> GetRemoteParticipantSnapshots() const;
+	std::vector<RemoteDataTrackSnapshot> GetRemoteDataTrackSnapshots() const;
+	std::shared_ptr<RemoteDataTrackInterface> GetRemoteDataTrack(std::string participant_identity,
+	                                                             std::string track_sid);
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
 	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) override;
 	virtual std::vector<ParticipantInterface*> Participants() override;

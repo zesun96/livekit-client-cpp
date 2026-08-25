@@ -1897,6 +1897,9 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	auto schema_deleter = [](lk_data_track_schema_t* schema) {
 		lk_data_track_schema_destroy(schema);
 	};
+	auto data_track_snapshot_deleter = [](lk_remote_data_track_list_t* snapshot) {
+		lk_remote_data_track_list_destroy(snapshot);
+	};
 
 	lk_room_t* receiver_handle = nullptr;
 	lk_room_t* sender_handle = nullptr;
@@ -1957,6 +1960,7 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	lk_data_track_snapshot_info_t local_info;
 	lk_data_track_snapshot_info_init(&local_info);
 	ASSERT_EQ(lk_local_data_track_info(local_track.get(), &local_info), LK_STATUS_OK);
+	EXPECT_TRUE(local_info.is_published);
 	EXPECT_TRUE(local_info.has_frame_encoding);
 	EXPECT_EQ(local_info.frame_encoding, LK_DATA_TRACK_FRAME_ENCODING_JSON);
 	EXPECT_TRUE(local_info.has_schema);
@@ -1972,10 +1976,46 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	std::string publisher_identity;
 	ASSERT_TRUE(WaitUntil([&] { return events.remote_published(remote_sid, publisher_identity); },
 	                      std::chrono::seconds(10)));
+	lk_remote_data_track_list_t* snapshot_handle = nullptr;
+	ASSERT_EQ(lk_room_create_remote_data_track_snapshot(receiver.get(), &snapshot_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_remote_data_track_list_t, decltype(data_track_snapshot_deleter)> snapshot(
+	    snapshot_handle, data_track_snapshot_deleter);
+	ASSERT_EQ(lk_remote_data_track_list_count(snapshot.get()), 1u);
+	const lk_remote_data_track_snapshot_t* remote_track_snapshot = nullptr;
+	ASSERT_EQ(lk_remote_data_track_list_at(snapshot.get(), 0, &remote_track_snapshot),
+	          LK_STATUS_OK);
+	ASSERT_NE(remote_track_snapshot, nullptr);
+	lk_data_track_snapshot_info_t remote_info;
+	lk_data_track_snapshot_info_init(&remote_info);
+	ASSERT_EQ(lk_remote_data_track_snapshot_info(remote_track_snapshot, &remote_info),
+	          LK_STATUS_OK);
+	EXPECT_TRUE(remote_info.is_published);
+	EXPECT_FALSE(remote_info.uses_e2ee);
+	EXPECT_EQ(remote_info.frame_encoding, LK_DATA_TRACK_FRAME_ENCODING_JSON);
+	EXPECT_EQ(remote_info.schema_encoding, LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA);
+	auto read_snapshot_string = [remote_track_snapshot](auto getter) {
+		std::vector<char> value(getter(remote_track_snapshot, nullptr, 0));
+		if (!value.empty()) {
+			getter(remote_track_snapshot, value.data(), value.size());
+		}
+		return value.empty() ? std::string{} : std::string(value.data());
+	};
+	EXPECT_EQ(read_snapshot_string(lk_remote_data_track_snapshot_publisher_identity),
+	          publisher_identity);
+	EXPECT_EQ(read_snapshot_string(lk_remote_data_track_snapshot_sid), remote_sid);
+	EXPECT_EQ(read_snapshot_string(lk_remote_data_track_snapshot_name), "c-api-telemetry");
+	EXPECT_EQ(read_snapshot_string(lk_remote_data_track_snapshot_schema_name), "c.telemetry.v1");
 	lk_data_track_subscription_options_t subscription_options;
 	lk_data_track_subscription_options_init(&subscription_options);
 	subscription_options.buffer_capacity = 4;
 	subscription_options.max_partial_frames = 2;
+	ASSERT_EQ(
+	    lk_room_update_data_track_subscription_options(receiver.get(), publisher_identity.c_str(),
+	                                                   remote_sid.c_str(), &subscription_options),
+	    LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
 	lk_data_track_reader_t* reader_handle = nullptr;
 	ASSERT_EQ(lk_room_subscribe_data_track(receiver.get(), publisher_identity.c_str(),
 	                                       remote_sid.c_str(), &subscription_options,
@@ -1984,6 +2024,14 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	    << lk_last_error();
 	std::unique_ptr<lk_data_track_reader_t, decltype(reader_deleter)> reader(reader_handle,
 	                                                                         reader_deleter);
+	subscription_options.has_target_fps = 1;
+	subscription_options.target_fps = 30;
+	subscription_options.max_partial_frames = 3;
+	ASSERT_EQ(
+	    lk_room_update_data_track_subscription_options(receiver.get(), publisher_identity.c_str(),
+	                                                   remote_sid.c_str(), &subscription_options),
+	    LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
 	lk_data_track_frame_t* empty_frame = nullptr;
 	EXPECT_EQ(lk_data_track_reader_try_read(reader.get(), &empty_frame), LK_DATA_TRACK_READ_EMPTY);
 	EXPECT_EQ(empty_frame, nullptr);
@@ -2066,6 +2114,13 @@ TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
 	ASSERT_TRUE(WaitUntil([&] { return events.unpublished(); }, std::chrono::seconds(10)));
 	EXPECT_TRUE(lk_data_track_reader_is_closed(reader.get()));
 	EXPECT_FALSE(lk_local_data_track_is_published(local_track.get()));
+	lk_data_track_snapshot_info_init(&local_info);
+	ASSERT_EQ(lk_local_data_track_info(local_track.get(), &local_info), LK_STATUS_OK);
+	EXPECT_FALSE(local_info.is_published);
+	lk_data_track_snapshot_info_init(&remote_info);
+	ASSERT_EQ(lk_remote_data_track_snapshot_info(remote_track_snapshot, &remote_info),
+	          LK_STATUS_OK);
+	EXPECT_TRUE(remote_info.is_published);
 	received.reset();
 	reader.reset();
 	EXPECT_EQ(lk_local_data_track_destroy(local_track.release()), LK_DATA_TRACK_ERROR_NONE);

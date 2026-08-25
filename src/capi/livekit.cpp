@@ -96,6 +96,14 @@ struct lk_local_data_track {
 	std::shared_ptr<RoomHandleState> room_state;
 };
 
+struct lk_remote_data_track_snapshot {
+	core::RemoteDataTrackSnapshot value;
+};
+
+struct lk_remote_data_track_list {
+	std::vector<lk_remote_data_track_snapshot_t> tracks;
+};
+
 struct lk_data_track_reader {
 	std::shared_ptr<core::DataTrackReader> reader;
 };
@@ -561,6 +569,20 @@ ToCDataTrackSchemaEncoding(core::DataTrackSchemaEncodingKind encoding) {
 	default:
 		return LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED;
 	}
+}
+
+lk_data_track_snapshot_info_t ToCDataTrackSnapshotInfo(const core::DataTrackInfo& source,
+                                                       bool published) {
+	return {sizeof(lk_data_track_snapshot_info_t),
+	        source.publisher_handle,
+	        source.uses_e2ee ? 1 : 0,
+	        source.frame_encoding.has_value() ? 1 : 0,
+	        source.frame_encoding ? ToCDataTrackFrameEncoding(source.frame_encoding->kind)
+	                              : LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED,
+	        source.schema.has_value() ? 1 : 0,
+	        source.schema ? ToCDataTrackSchemaEncoding(source.schema->encoding.kind)
+	                      : LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED,
+	        published ? 1 : 0};
 }
 
 lk_data_track_error_code_t ToCDataTrackError(core::DataTrackError error) {
@@ -4545,17 +4567,8 @@ lk_status_t lk_local_data_track_info(const lk_local_data_track_t* track,
 		if (track == nullptr || track->track == nullptr) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "local DataTrack is required");
 		}
-		const auto source = track->track->Info();
-		const lk_data_track_snapshot_info_t converted{
-		    sizeof(converted),
-		    source.publisher_handle,
-		    source.uses_e2ee ? 1 : 0,
-		    source.frame_encoding.has_value() ? 1 : 0,
-		    source.frame_encoding ? ToCDataTrackFrameEncoding(source.frame_encoding->kind)
-		                          : LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED,
-		    source.schema.has_value() ? 1 : 0,
-		    source.schema ? ToCDataTrackSchemaEncoding(source.schema->encoding.kind)
-		                  : LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED};
+		const auto converted =
+		    ToCDataTrackSnapshotInfo(track->track->Info(), track->track->IsPublished());
 		return CopyOutputStruct(converted, info, "initialized DataTrack info is required");
 	});
 }
@@ -4613,6 +4626,119 @@ size_t lk_local_data_track_custom_schema_encoding(const lk_local_data_track_t* t
 	});
 }
 
+lk_status_t lk_room_create_remote_data_track_snapshot(const lk_room_t* room,
+                                                      lk_remote_data_track_list_t** snapshot) {
+	return Guard([&] {
+		if (room == nullptr || room->room == nullptr || snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and remote DataTrack snapshot output are required");
+		}
+		*snapshot = nullptr;
+		auto result = std::make_unique<lk_remote_data_track_list_t>();
+		auto tracks = room->room->GetRemoteDataTrackSnapshots();
+		result->tracks.reserve(tracks.size());
+		for (auto& track : tracks) {
+			result->tracks.push_back({std::move(track)});
+		}
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_remote_data_track_list_destroy(lk_remote_data_track_list_t* snapshot) { delete snapshot; }
+
+size_t lk_remote_data_track_list_count(const lk_remote_data_track_list_t* snapshot) {
+	return snapshot != nullptr ? snapshot->tracks.size() : 0;
+}
+
+lk_status_t lk_remote_data_track_list_at(const lk_remote_data_track_list_t* snapshot, size_t index,
+                                         const lk_remote_data_track_snapshot_t** track) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "remote DataTrack snapshot output is required");
+		}
+		*track = nullptr;
+		if (snapshot == nullptr || index >= snapshot->tracks.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "remote DataTrack snapshot index is out of range");
+		}
+		*track = &snapshot->tracks[index];
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_remote_data_track_snapshot_info(const lk_remote_data_track_snapshot_t* track,
+                                               lk_data_track_snapshot_info_t* info) {
+	return Guard([&] {
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "remote DataTrack snapshot is required");
+		}
+		return CopyOutputStruct(ToCDataTrackSnapshotInfo(track->value.info, track->value.published),
+		                        info, "initialized remote DataTrack info is required");
+	});
+}
+
+size_t
+lk_remote_data_track_snapshot_publisher_identity(const lk_remote_data_track_snapshot_t* track,
+                                                 char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.publisher_identity, buffer, buffer_size)
+		                        : InvalidSizeResult("remote DataTrack snapshot is required");
+	});
+}
+
+size_t lk_remote_data_track_snapshot_sid(const lk_remote_data_track_snapshot_t* track, char* buffer,
+                                         size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.info.sid, buffer, buffer_size)
+		                        : InvalidSizeResult("remote DataTrack snapshot is required");
+	});
+}
+
+size_t lk_remote_data_track_snapshot_name(const lk_remote_data_track_snapshot_t* track,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr ? CopyString(track->value.info.name, buffer, buffer_size)
+		                        : InvalidSizeResult("remote DataTrack snapshot is required");
+	});
+}
+
+size_t
+lk_remote_data_track_snapshot_custom_frame_encoding(const lk_remote_data_track_snapshot_t* track,
+                                                    char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr) {
+			return InvalidSizeResult("remote DataTrack snapshot is required");
+		}
+		const auto& encoding = track->value.info.frame_encoding;
+		return CopyString(encoding ? encoding->custom : std::string{}, buffer, buffer_size);
+	});
+}
+
+size_t lk_remote_data_track_snapshot_schema_name(const lk_remote_data_track_snapshot_t* track,
+                                                 char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr) {
+			return InvalidSizeResult("remote DataTrack snapshot is required");
+		}
+		const auto& schema = track->value.info.schema;
+		return CopyString(schema ? schema->name : std::string{}, buffer, buffer_size);
+	});
+}
+
+size_t
+lk_remote_data_track_snapshot_custom_schema_encoding(const lk_remote_data_track_snapshot_t* track,
+                                                     char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr) {
+			return InvalidSizeResult("remote DataTrack snapshot is required");
+		}
+		const auto& schema = track->value.info.schema;
+		return CopyString(schema ? schema->encoding.custom : std::string{}, buffer, buffer_size);
+	});
+}
+
 lk_data_track_error_code_t lk_room_subscribe_data_track(
     lk_room_t* room, const char* participant_identity, const char* track_sid,
     const lk_data_track_subscription_options_t* options, lk_data_track_reader_t** reader) {
@@ -4636,10 +4762,7 @@ lk_data_track_error_code_t lk_room_subscribe_data_track(
 		if (options_error != LK_DATA_TRACK_ERROR_NONE) {
 			return options_error;
 		}
-		auto* participant = room->room->GetRemoteParticipantByIdentity(participant_identity);
-		auto* track = participant != nullptr ? dynamic_cast<core::RemoteDataTrackInterface*>(
-		                                           participant->GetDataTrackBySid(track_sid))
-		                                     : nullptr;
+		auto track = room->room->GetRemoteDataTrack(participant_identity, track_sid);
 		if (track == nullptr) {
 			return DataTrackFailure(LK_DATA_TRACK_ERROR_NOT_FOUND,
 			                        "remote participant or DataTrack was not found");
@@ -4653,6 +4776,38 @@ lk_data_track_error_code_t lk_room_subscribe_data_track(
 		auto output = std::make_unique<lk_data_track_reader_t>();
 		output->reader = std::move(subscribed);
 		*reader = output.release();
+		return LK_DATA_TRACK_ERROR_NONE;
+	});
+}
+
+lk_data_track_error_code_t lk_room_update_data_track_subscription_options(
+    lk_room_t* room, const char* participant_identity, const char* track_sid,
+    const lk_data_track_subscription_options_t* options) {
+	return DataTrackGuard([&] {
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0' || track_sid == nullptr || *track_sid == '\0') {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "room, participant identity, and DataTrack SID are required");
+		}
+		if (!room->room->IsConnected()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_DISCONNECTED, "room is disconnected");
+		}
+		core::DataTrackSubscriptionOptions subscription_options;
+		const auto options_error =
+		    ToCoreDataTrackSubscriptionOptions(options, subscription_options);
+		if (options_error != LK_DATA_TRACK_ERROR_NONE) {
+			return options_error;
+		}
+		auto track = room->room->GetRemoteDataTrack(participant_identity, track_sid);
+		if (track == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_NOT_FOUND,
+			                        "remote participant or DataTrack was not found");
+		}
+		if (!track->SetSubscriptionOptions(subscription_options)) {
+			return DataTrackFailure(track->IsPublished() ? LK_DATA_TRACK_ERROR_SEND_FAILED
+			                                             : LK_DATA_TRACK_ERROR_UNPUBLISHED,
+			                        "failed to update remote DataTrack subscription options");
+		}
 		return LK_DATA_TRACK_ERROR_NONE;
 	});
 }

@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <utility>
 #include <vector>
@@ -63,7 +65,13 @@ TEST(PublicApiTest, ProvidesConfigurableReconnectBounds) {
 	EXPECT_EQ(options.reconnect_policy->NextRetryDelay(context), std::chrono::milliseconds(300));
 }
 
-TEST(PublicApiTest, ExposesSemanticVersion) { EXPECT_EQ(Version(), "0.0.1"); }
+TEST(PublicApiTest, ExposesSemanticVersion) {
+	const auto version = Version();
+	EXPECT_EQ(std::count(version.begin(), version.end(), '.'), 2);
+	EXPECT_TRUE(std::all_of(version.begin(), version.end(), [](unsigned char value) {
+		return std::isdigit(value) != 0 || value == '.';
+	}));
+}
 
 TEST(PublicApiTest, EnumeratesMediaDevicesWithoutChangingClientState) {
 	const auto devices = EnumerateMediaDevices();

@@ -66,6 +66,11 @@ public:
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;
 	// Returns immutable values that remain valid independently of subsequent room updates.
 	std::vector<RemoteParticipantSnapshot> GetRemoteParticipantSnapshots() const;
+	std::vector<RemoteDataTrackSnapshot> GetRemoteDataTrackSnapshots() const;
+	// Returns shared ownership of a live remote DataTrack so callers can safely update its
+	// subscription while participant updates are processed concurrently.
+	std::shared_ptr<RemoteDataTrackInterface> GetRemoteDataTrack(std::string participant_identity,
+	                                                             std::string track_sid);
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
 	// LiveKit identity is stable for a participant session and should normally be preferred over
 	// the mutable display name.
