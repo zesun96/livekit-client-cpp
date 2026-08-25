@@ -1,5 +1,6 @@
 #include "livekit/capi/livekit.h"
 
+#include "livekit/core/e2ee/e2ee_manager.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/rpc.h"
 #include "livekit/core/track/audio_source_interface.h"
@@ -165,6 +166,10 @@ struct lk_screen_source_list {
 	std::vector<core::ScreenCaptureSourceInfo> sources;
 };
 
+struct lk_frame_cryptor_list {
+	std::vector<core::FrameCryptorInfo> cryptors;
+};
+
 namespace {
 
 thread_local std::string last_error;
@@ -210,6 +215,13 @@ size_t CopyString(const std::string& value, char* buffer, size_t buffer_size) no
 		buffer[count] = '\0';
 	}
 	return required;
+}
+
+size_t CopyBytes(const core::E2eeKey& value, uint8_t* buffer, size_t buffer_size) noexcept {
+	if (buffer != nullptr && buffer_size != 0 && !value.empty()) {
+		std::memcpy(buffer, value.data(), std::min(value.size(), buffer_size));
+	}
+	return value.size();
 }
 
 bool HasField(size_t struct_size, size_t offset, size_t field_size) {
@@ -345,6 +357,92 @@ lk_status_t ToCoreVideoEncoding(const lk_video_encoding_t* encoding, core::Video
 	return LK_STATUS_OK;
 }
 
+lk_status_t ToCoreE2eeOptions(const lk_e2ee_options_t* options, core::E2eeOptions& result) {
+	if (options == nullptr || options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid E2EE options struct size");
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, enabled)) {
+		result.enabled = options->enabled != 0;
+	}
+	auto copy_bytes = [&](const uint8_t* data, size_t size, core::E2eeKey& destination,
+	                      const char* description) -> lk_status_t {
+		if (size != 0 && data == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, description);
+		}
+		if (size != 0) {
+			destination.assign(data, data + size);
+		}
+		return LK_STATUS_OK;
+	};
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, shared_key_size)) {
+		if (options->shared_key != nullptr || options->shared_key_size != 0) {
+			core::E2eeKey key;
+			const auto status = copy_bytes(options->shared_key, options->shared_key_size, key,
+			                               "E2EE shared key data is invalid");
+			if (status != LK_STATUS_OK) {
+				return status;
+			}
+			if (key.empty()) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "E2EE shared key must not be empty");
+			}
+			result.shared_key = std::move(key);
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, ratchet_salt_size) &&
+	    (options->ratchet_salt != nullptr || options->ratchet_salt_size != 0)) {
+		result.key_provider.ratchet_salt.clear();
+		const auto status =
+		    copy_bytes(options->ratchet_salt, options->ratchet_salt_size,
+		               result.key_provider.ratchet_salt, "E2EE ratchet salt data is invalid");
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, unencrypted_magic_bytes_size) &&
+	    (options->unencrypted_magic_bytes != nullptr ||
+	     options->unencrypted_magic_bytes_size != 0)) {
+		result.key_provider.unencrypted_magic_bytes.clear();
+		const auto status =
+		    copy_bytes(options->unencrypted_magic_bytes, options->unencrypted_magic_bytes_size,
+		               result.key_provider.unencrypted_magic_bytes,
+		               "E2EE unencrypted magic bytes are invalid");
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, ratchet_window_size)) {
+		result.key_provider.ratchet_window_size = options->ratchet_window_size;
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, failure_tolerance)) {
+		result.key_provider.failure_tolerance = options->failure_tolerance;
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, key_ring_size)) {
+		result.key_provider.key_ring_size = options->key_ring_size;
+	}
+	if (LKC_HAS_FIELD(options, lk_e2ee_options_t, key_derivation)) {
+		switch (options->key_derivation) {
+		case LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256:
+			result.key_provider.key_derivation = core::KeyDerivationFunction::Pbkdf2Sha256;
+			break;
+		case LK_E2EE_KEY_DERIVATION_HKDF_SHA256:
+			result.key_provider.key_derivation = core::KeyDerivationFunction::HkdfSha256;
+			break;
+		default:
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid E2EE key derivation function");
+		}
+	}
+	if (result.key_provider.ratchet_window_size > 256) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "E2EE ratchet window size must not exceed 256");
+	}
+	if (result.key_provider.failure_tolerance < -1) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "E2EE failure tolerance must be -1 or greater");
+	}
+	if (result.key_provider.key_ring_size == 0 || result.key_provider.key_ring_size > 256) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "E2EE key ring size must be between 1 and 256");
+	}
+	return LK_STATUS_OK;
+}
+
 lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
                                       core::TrackPublishOptions& result) {
 	if (options == nullptr) {
@@ -413,6 +511,45 @@ lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 		return LK_TRACK_KIND_VIDEO;
 	default:
 		return LK_TRACK_KIND_UNKNOWN;
+	}
+}
+
+lk_frame_cryptor_direction_t ToCFrameCryptorDirection(core::FrameCryptorDirection direction) {
+	return direction == core::FrameCryptorDirection::Receiver ? LK_FRAME_CRYPTOR_DIRECTION_RECEIVER
+	                                                          : LK_FRAME_CRYPTOR_DIRECTION_SENDER;
+}
+
+bool ToCoreFrameCryptorDirection(lk_frame_cryptor_direction_t direction,
+                                 core::FrameCryptorDirection& result) {
+	switch (direction) {
+	case LK_FRAME_CRYPTOR_DIRECTION_SENDER:
+		result = core::FrameCryptorDirection::Sender;
+		return true;
+	case LK_FRAME_CRYPTOR_DIRECTION_RECEIVER:
+		result = core::FrameCryptorDirection::Receiver;
+		return true;
+	default:
+		return false;
+	}
+}
+
+lk_frame_cryptor_state_t ToCFrameCryptorState(core::FrameCryptorState state) {
+	switch (state) {
+	case core::FrameCryptorState::Ok:
+		return LK_FRAME_CRYPTOR_STATE_OK;
+	case core::FrameCryptorState::EncryptionFailed:
+		return LK_FRAME_CRYPTOR_STATE_ENCRYPTION_FAILED;
+	case core::FrameCryptorState::DecryptionFailed:
+		return LK_FRAME_CRYPTOR_STATE_DECRYPTION_FAILED;
+	case core::FrameCryptorState::MissingKey:
+		return LK_FRAME_CRYPTOR_STATE_MISSING_KEY;
+	case core::FrameCryptorState::KeyRatcheted:
+		return LK_FRAME_CRYPTOR_STATE_KEY_RATCHETED;
+	case core::FrameCryptorState::InternalError:
+		return LK_FRAME_CRYPTOR_STATE_INTERNAL_ERROR;
+	case core::FrameCryptorState::New:
+	default:
+		return LK_FRAME_CRYPTOR_STATE_NEW;
 	}
 }
 
@@ -653,6 +790,28 @@ core::LocalParticipantInterface* LocalParticipant(const lk_room_t* room) {
 	return room != nullptr && room->room != nullptr ? room->room->GetLocalParticipant() : nullptr;
 }
 
+core::E2EEManager* E2eeManager(const lk_room_t* room) {
+	return room != nullptr && room->room != nullptr ? room->room->GetE2EEManager() : nullptr;
+}
+
+lk_status_t KeyOperationStatus(const core::KeyOperationResult& result) {
+	if (result.Ok()) {
+		return LK_STATUS_OK;
+	}
+	const auto& error = *result.error;
+	switch (error.code) {
+	case core::KeyProviderErrorCode::InvalidKeyIndex:
+	case core::KeyProviderErrorCode::EmptyKey:
+	case core::KeyProviderErrorCode::EmptyParticipantIdentity:
+		return Failure(LK_STATUS_INVALID_ARGUMENT, error.message.c_str());
+	case core::KeyProviderErrorCode::KeyNotFound:
+		return Failure(LK_STATUS_INVALID_STATE, error.message.c_str());
+	case core::KeyProviderErrorCode::CryptoFailure:
+	default:
+		return Failure(LK_STATUS_OPERATION_FAILED, error.message.c_str());
+	}
+}
+
 template <typename Function> void InvokeRoomCallback(lk_room_t* owner, Function&& function) {
 	if (owner == nullptr) {
 		return;
@@ -834,6 +993,21 @@ public:
 				callbacks.on_subscribed_quality_update(callbacks.user_data, owner_,
 				                                       &owned_track.info, &owned_participant.info,
 				                                       &c_update);
+			}
+		});
+	}
+
+	void OnEncryptionStateChanged(const core::EncryptionStateEvent& event) override {
+		const lk_encryption_state_t state{event.cryptor.track_id.c_str(),
+		                                  event.cryptor.participant_identity.c_str(),
+		                                  ToCTrackKind(event.cryptor.kind),
+		                                  ToCFrameCryptorDirection(event.cryptor.direction),
+		                                  event.cryptor.enabled ? 1 : 0,
+		                                  event.cryptor.key_index,
+		                                  ToCFrameCryptorState(event.cryptor.state)};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_encryption_state_changed != nullptr) {
+				callbacks.on_encryption_state_changed(callbacks.user_data, owner_, &state);
 			}
 		});
 	}
@@ -1433,6 +1607,25 @@ void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
 	}
 }
 
+void lk_e2ee_options_init(lk_e2ee_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->enabled = 1;
+		options->ratchet_window_size = core::kDefaultE2eeRatchetWindowSize;
+		options->failure_tolerance = core::kDefaultE2eeFailureTolerance;
+		options->key_ring_size = core::kDefaultE2eeKeyRingSize;
+		options->key_derivation = LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256;
+	}
+}
+
+void lk_frame_cryptor_info_init(lk_frame_cryptor_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
 void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats) {
 	if (stats != nullptr) {
 		*stats = {};
@@ -1707,6 +1900,28 @@ lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token)
 	});
 }
 
+lk_status_t lk_room_connect_e2ee(lk_room_t* room, const char* url, const char* token,
+                                 const lk_e2ee_options_t* options) {
+	return Guard([&] {
+		if (room == nullptr || url == nullptr || token == nullptr || *url == '\0' ||
+		    *token == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, URL, and token are required");
+		}
+		core::E2eeOptions e2ee;
+		const auto status = ToCoreE2eeOptions(options, e2ee);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+		core::RoomConnectOptions connect_options;
+		connect_options.e2ee = std::move(e2ee);
+		if (!room->room->Connect(url, token, std::move(connect_options))) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect E2EE room");
+		}
+		room->state->connected.store(true);
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_room_disconnect(lk_room_t* room) {
 	return Guard([&] {
 		if (room == nullptr) {
@@ -1829,6 +2044,298 @@ lk_status_t lk_room_audio_playback_stats(const lk_room_t* room, lk_audio_playbac
 		copy.estimated_delay_ms = source.estimated_delay_ms;
 		std::memcpy(stats, &copy, std::min(stats->struct_size, sizeof(copy)));
 		return LK_STATUS_OK;
+	});
+}
+
+int lk_room_e2ee_is_configured(const lk_room_t* room) {
+	return E2eeManager(room) != nullptr ? 1 : 0;
+}
+
+int lk_room_e2ee_is_enabled(const lk_room_t* room) {
+	auto* manager = E2eeManager(room);
+	return manager != nullptr && manager->Enabled() ? 1 : 0;
+}
+
+lk_status_t lk_room_e2ee_set_enabled(lk_room_t* room, int enabled) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		return manager->SetEnabled(enabled != 0)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update E2EE state");
+	});
+}
+
+lk_status_t lk_room_e2ee_set_shared_key(lk_room_t* room, const uint8_t* key, size_t key_size,
+                                        size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (key == nullptr || key_size == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "E2EE shared key must not be empty");
+		}
+		return KeyOperationStatus(
+		    manager->Keys().SetSharedKey(core::E2eeKey(key, key + key_size), key_index));
+	});
+}
+
+size_t lk_room_e2ee_export_shared_key(const lk_room_t* room, size_t key_index, uint8_t* buffer,
+                                      size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return InvalidSizeResult("E2EE is not configured for this room");
+		}
+		const auto result = manager->Keys().ExportSharedKey(key_index);
+		if (!result.Ok()) {
+			KeyOperationStatus(result);
+			return size_t{0};
+		}
+		return CopyBytes(result.key, buffer, buffer_size);
+	});
+}
+
+lk_status_t lk_room_e2ee_ratchet_shared_key(lk_room_t* room, size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		return manager != nullptr
+		           ? KeyOperationStatus(manager->Keys().RatchetSharedKey(key_index))
+		           : Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+	});
+}
+
+lk_status_t lk_room_e2ee_remove_shared_key(lk_room_t* room, size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		return manager != nullptr
+		           ? KeyOperationStatus(manager->Keys().RemoveSharedKey(key_index))
+		           : Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+	});
+}
+
+lk_status_t lk_room_e2ee_set_participant_key(lk_room_t* room, const char* participant_identity,
+                                             const uint8_t* key, size_t key_size,
+                                             size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0' || key == nullptr ||
+		    key_size == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant identity and E2EE key are required");
+		}
+		return KeyOperationStatus(manager->Keys().SetKey(
+		    participant_identity, core::E2eeKey(key, key + key_size), key_index));
+	});
+}
+
+size_t lk_room_e2ee_export_participant_key(const lk_room_t* room, const char* participant_identity,
+                                           size_t key_index, uint8_t* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return InvalidSizeResult("E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0') {
+			return InvalidSizeResult("participant identity is required");
+		}
+		const auto result = manager->Keys().ExportKey(participant_identity, key_index);
+		if (!result.Ok()) {
+			KeyOperationStatus(result);
+			return size_t{0};
+		}
+		return CopyBytes(result.key, buffer, buffer_size);
+	});
+}
+
+lk_status_t lk_room_e2ee_ratchet_participant_key(lk_room_t* room, const char* participant_identity,
+                                                 size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant identity is required");
+		}
+		return KeyOperationStatus(manager->Keys().RatchetKey(participant_identity, key_index));
+	});
+}
+
+lk_status_t lk_room_e2ee_remove_participant_key(lk_room_t* room, const char* participant_identity,
+                                                size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant identity is required");
+		}
+		return KeyOperationStatus(manager->Keys().RemoveKey(participant_identity, key_index));
+	});
+}
+
+lk_status_t lk_room_e2ee_remove_participant_keys(lk_room_t* room,
+                                                 const char* participant_identity) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "participant identity is required");
+		}
+		return KeyOperationStatus(manager->Keys().RemoveParticipantKeys(participant_identity));
+	});
+}
+
+lk_status_t lk_room_e2ee_clear_keys(lk_room_t* room) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		manager->Keys().Clear();
+		return LK_STATUS_OK;
+	});
+}
+
+size_t lk_room_e2ee_data_key_index(const lk_room_t* room) {
+	auto* manager = E2eeManager(room);
+	return manager != nullptr ? manager->DataKeyIndex() : 0;
+}
+
+lk_status_t lk_room_e2ee_set_data_key_index(lk_room_t* room, size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		return manager->SetDataKeyIndex(key_index)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_INVALID_ARGUMENT, "invalid E2EE data key index");
+	});
+}
+
+lk_status_t lk_room_e2ee_set_frame_cryptor_enabled(lk_room_t* room, const char* track_id,
+                                                   lk_frame_cryptor_direction_t direction,
+                                                   int enabled) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		core::FrameCryptorDirection core_direction;
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (track_id == nullptr || *track_id == '\0' ||
+		    !ToCoreFrameCryptorDirection(direction, core_direction)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "track ID and direction are required");
+		}
+		return manager->SetFrameCryptorEnabled(track_id, core_direction, enabled != 0)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to update frame cryptor");
+	});
+}
+
+lk_status_t lk_room_e2ee_set_frame_cryptor_key_index(lk_room_t* room, const char* track_id,
+                                                     lk_frame_cryptor_direction_t direction,
+                                                     size_t key_index) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		core::FrameCryptorDirection core_direction;
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (track_id == nullptr || *track_id == '\0' ||
+		    !ToCoreFrameCryptorDirection(direction, core_direction)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "track ID and direction are required");
+		}
+		return manager->SetFrameCryptorKeyIndex(track_id, core_direction, key_index)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED,
+		                     "failed to update frame cryptor key index");
+	});
+}
+
+lk_status_t lk_room_e2ee_set_participant_enabled(lk_room_t* room, const char* participant_identity,
+                                                 int enabled, size_t* updated_count) {
+	return Guard([&] {
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		if (participant_identity == nullptr || *participant_identity == '\0' ||
+		    updated_count == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "participant identity and updated count are required");
+		}
+		*updated_count = manager->SetParticipantEnabled(participant_identity, enabled != 0);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_frame_cryptor_list_create(const lk_room_t* room,
+                                         lk_frame_cryptor_list_t** cryptors) {
+	return Guard([&] {
+		if (cryptors == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "frame cryptor output is required");
+		}
+		*cryptors = nullptr;
+		auto* manager = E2eeManager(room);
+		if (manager == nullptr) {
+			return Failure(LK_STATUS_INVALID_STATE, "E2EE is not configured for this room");
+		}
+		auto result = std::make_unique<lk_frame_cryptor_list_t>();
+		result->cryptors = manager->FrameCryptors();
+		*cryptors = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_frame_cryptor_list_destroy(lk_frame_cryptor_list_t* cryptors) { delete cryptors; }
+
+size_t lk_frame_cryptor_list_count(const lk_frame_cryptor_list_t* cryptors) {
+	return cryptors != nullptr ? cryptors->cryptors.size() : 0;
+}
+
+lk_status_t lk_frame_cryptor_list_info(const lk_frame_cryptor_list_t* cryptors, size_t index,
+                                       lk_frame_cryptor_info_t* info) {
+	return Guard([&] {
+		if (cryptors == nullptr || index >= cryptors->cryptors.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "frame cryptor index is out of range");
+		}
+		const auto& source = cryptors->cryptors[index];
+		const lk_frame_cryptor_info_t converted{sizeof(converted),
+		                                        ToCTrackKind(source.kind),
+		                                        ToCFrameCryptorDirection(source.direction),
+		                                        source.enabled ? 1 : 0,
+		                                        source.key_index,
+		                                        ToCFrameCryptorState(source.state)};
+		return CopyOutputStruct(converted, info, "initialized frame cryptor info is required");
+	});
+}
+
+size_t lk_frame_cryptor_list_track_id(const lk_frame_cryptor_list_t* cryptors, size_t index,
+                                      char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return cryptors != nullptr && index < cryptors->cryptors.size()
+		           ? CopyString(cryptors->cryptors[index].track_id, buffer, buffer_size)
+		           : InvalidSizeResult("frame cryptor index is out of range");
+	});
+}
+
+size_t lk_frame_cryptor_list_participant_identity(const lk_frame_cryptor_list_t* cryptors,
+                                                  size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return cryptors != nullptr && index < cryptors->cryptors.size()
+		           ? CopyString(cryptors->cryptors[index].participant_identity, buffer, buffer_size)
+		           : InvalidSizeResult("frame cryptor index is out of range");
 	});
 }
 

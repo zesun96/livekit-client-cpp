@@ -46,6 +46,7 @@ typedef struct lk_remote_track_publication_snapshot lk_remote_track_publication_
 typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
 typedef struct lk_media_device_list lk_media_device_list_t;
 typedef struct lk_screen_source_list lk_screen_source_list_t;
+typedef struct lk_frame_cryptor_list lk_frame_cryptor_list_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -140,6 +141,26 @@ typedef enum lk_backup_codec_policy {
 	LK_BACKUP_CODEC_POLICY_SIMULCAST = 1,
 	LK_BACKUP_CODEC_POLICY_REGRESSION = 2
 } lk_backup_codec_policy_t;
+
+typedef enum lk_e2ee_key_derivation {
+	LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256 = 0,
+	LK_E2EE_KEY_DERIVATION_HKDF_SHA256 = 1
+} lk_e2ee_key_derivation_t;
+
+typedef enum lk_frame_cryptor_direction {
+	LK_FRAME_CRYPTOR_DIRECTION_SENDER = 0,
+	LK_FRAME_CRYPTOR_DIRECTION_RECEIVER = 1
+} lk_frame_cryptor_direction_t;
+
+typedef enum lk_frame_cryptor_state {
+	LK_FRAME_CRYPTOR_STATE_NEW = 0,
+	LK_FRAME_CRYPTOR_STATE_OK = 1,
+	LK_FRAME_CRYPTOR_STATE_ENCRYPTION_FAILED = 2,
+	LK_FRAME_CRYPTOR_STATE_DECRYPTION_FAILED = 3,
+	LK_FRAME_CRYPTOR_STATE_MISSING_KEY = 4,
+	LK_FRAME_CRYPTOR_STATE_KEY_RATCHETED = 5,
+	LK_FRAME_CRYPTOR_STATE_INTERNAL_ERROR = 6
+} lk_frame_cryptor_state_t;
 
 typedef enum lk_connection_quality {
 	LK_CONNECTION_QUALITY_UNKNOWN = 0,
@@ -296,6 +317,25 @@ typedef struct lk_subscribed_quality_update {
 	const lk_subscribed_codec_t* codecs;
 	size_t codec_count;
 } lk_subscribed_quality_update_t;
+
+typedef struct lk_encryption_state {
+	const char* track_id;
+	const char* participant_identity;
+	lk_track_kind_t kind;
+	lk_frame_cryptor_direction_t direction;
+	int enabled;
+	size_t key_index;
+	lk_frame_cryptor_state_t state;
+} lk_encryption_state_t;
+
+typedef struct lk_frame_cryptor_info {
+	size_t struct_size;
+	lk_track_kind_t kind;
+	lk_frame_cryptor_direction_t direction;
+	int enabled;
+	size_t key_index;
+	lk_frame_cryptor_state_t state;
+} lk_frame_cryptor_info_t;
 
 typedef struct lk_audio_frame {
 	const int16_t* data;
@@ -570,6 +610,8 @@ typedef void (*lk_subscribed_quality_update_callback)(void* user_data, lk_room_t
                                                       const lk_track_publication_info_t* track,
                                                       const lk_participant_info_t* participant,
                                                       const lk_subscribed_quality_update_t* update);
+typedef void (*lk_encryption_state_callback)(void* user_data, lk_room_t* room,
+                                             const lk_encryption_state_t* state);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -612,7 +654,23 @@ typedef struct lk_room_callbacks {
 	lk_participant_permissions_callback on_participant_permissions_changed;
 	lk_track_event_callback on_local_track_subscribed;
 	lk_subscribed_quality_update_callback on_subscribed_quality_update;
+	lk_encryption_state_callback on_encryption_state_changed;
 } lk_room_callbacks_t;
+
+typedef struct lk_e2ee_options {
+	size_t struct_size;
+	int enabled;
+	const uint8_t* shared_key;
+	size_t shared_key_size;
+	const uint8_t* ratchet_salt;
+	size_t ratchet_salt_size;
+	const uint8_t* unencrypted_magic_bytes;
+	size_t unencrypted_magic_bytes_size;
+	size_t ratchet_window_size;
+	int failure_tolerance;
+	size_t key_ring_size;
+	lk_e2ee_key_derivation_t key_derivation;
+} lk_e2ee_options_t;
 
 typedef struct lk_audio_source_options {
 	size_t struct_size;
@@ -840,6 +898,8 @@ LKC_API size_t lk_screen_source_list_label(const lk_screen_source_list_t* source
                                            char* buffer, size_t buffer_size);
 
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
+LKC_API void lk_e2ee_options_init(lk_e2ee_options_t* options);
+LKC_API void lk_frame_cryptor_info_init(lk_frame_cryptor_info_t* info);
 LKC_API void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);
 LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t* options);
@@ -868,6 +928,8 @@ LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
 LKC_API lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbacks_t* callbacks);
 LKC_API lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token);
+LKC_API lk_status_t lk_room_connect_e2ee(lk_room_t* room, const char* url, const char* token,
+                                         const lk_e2ee_options_t* options);
 LKC_API lk_status_t lk_room_disconnect(lk_room_t* room);
 LKC_API lk_room_state_t lk_room_state(const lk_room_t* room);
 LKC_API lk_disconnect_reason_t lk_room_disconnect_reason(const lk_room_t* room);
@@ -884,6 +946,56 @@ LKC_API lk_status_t lk_room_set_speaker_muted(lk_room_t* room, int muted);
 LKC_API int lk_room_speaker_is_muted(const lk_room_t* room);
 LKC_API lk_status_t lk_room_audio_playback_stats(const lk_room_t* room,
                                                  lk_audio_playback_stats_t* stats);
+
+/* E2EE keys are copied during calls. Export functions return the required byte count. */
+LKC_API int lk_room_e2ee_is_configured(const lk_room_t* room);
+LKC_API int lk_room_e2ee_is_enabled(const lk_room_t* room);
+LKC_API lk_status_t lk_room_e2ee_set_enabled(lk_room_t* room, int enabled);
+LKC_API lk_status_t lk_room_e2ee_set_shared_key(lk_room_t* room, const uint8_t* key,
+                                                size_t key_size, size_t key_index);
+LKC_API size_t lk_room_e2ee_export_shared_key(const lk_room_t* room, size_t key_index,
+                                              uint8_t* buffer, size_t buffer_size);
+LKC_API lk_status_t lk_room_e2ee_ratchet_shared_key(lk_room_t* room, size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_remove_shared_key(lk_room_t* room, size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_set_participant_key(lk_room_t* room,
+                                                     const char* participant_identity,
+                                                     const uint8_t* key, size_t key_size,
+                                                     size_t key_index);
+LKC_API size_t lk_room_e2ee_export_participant_key(const lk_room_t* room,
+                                                   const char* participant_identity,
+                                                   size_t key_index, uint8_t* buffer,
+                                                   size_t buffer_size);
+LKC_API lk_status_t lk_room_e2ee_ratchet_participant_key(lk_room_t* room,
+                                                         const char* participant_identity,
+                                                         size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_remove_participant_key(lk_room_t* room,
+                                                        const char* participant_identity,
+                                                        size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_remove_participant_keys(lk_room_t* room,
+                                                         const char* participant_identity);
+LKC_API lk_status_t lk_room_e2ee_clear_keys(lk_room_t* room);
+LKC_API size_t lk_room_e2ee_data_key_index(const lk_room_t* room);
+LKC_API lk_status_t lk_room_e2ee_set_data_key_index(lk_room_t* room, size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_set_frame_cryptor_enabled(lk_room_t* room, const char* track_id,
+                                                           lk_frame_cryptor_direction_t direction,
+                                                           int enabled);
+LKC_API lk_status_t lk_room_e2ee_set_frame_cryptor_key_index(lk_room_t* room, const char* track_id,
+                                                             lk_frame_cryptor_direction_t direction,
+                                                             size_t key_index);
+LKC_API lk_status_t lk_room_e2ee_set_participant_enabled(lk_room_t* room,
+                                                         const char* participant_identity,
+                                                         int enabled, size_t* updated_count);
+LKC_API lk_status_t lk_frame_cryptor_list_create(const lk_room_t* room,
+                                                 lk_frame_cryptor_list_t** cryptors);
+LKC_API void lk_frame_cryptor_list_destroy(lk_frame_cryptor_list_t* cryptors);
+LKC_API size_t lk_frame_cryptor_list_count(const lk_frame_cryptor_list_t* cryptors);
+LKC_API lk_status_t lk_frame_cryptor_list_info(const lk_frame_cryptor_list_t* cryptors,
+                                               size_t index, lk_frame_cryptor_info_t* info);
+LKC_API size_t lk_frame_cryptor_list_track_id(const lk_frame_cryptor_list_t* cryptors, size_t index,
+                                              char* buffer, size_t buffer_size);
+LKC_API size_t lk_frame_cryptor_list_participant_identity(const lk_frame_cryptor_list_t* cryptors,
+                                                          size_t index, char* buffer,
+                                                          size_t buffer_size);
 
 /*
  * The list owns every participant, publication, and subscribed-track handle returned from it.

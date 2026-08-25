@@ -74,8 +74,12 @@ remote participants, their publications, and attached subscribed tracks. Snapsho
 are borrowed from the root list and all strings use caller-owned two-stage buffers. Incremental
 text streaming prints its structured completion status, stream ID, byte count, and failure reason.
 The C API also provides `lk_room_perform_rpc_async()` when blocking RPC results are unsuitable.
+Set `LIVEKIT_E2EE_KEY` before running the sample to connect with AES-GCM end-to-end encryption and
+print frame-encryption state changes. Every participant must obtain the same key material through
+an application-secured channel; do not hard-code production keys in the executable.
 
 ```powershell
+$env:LIVEKIT_E2EE_KEY = "development-only-shared-key"
 & "out/build/vs2022-x64-release/examples/c_sample/Release/c_sample.exe" $url $token
 ```
 

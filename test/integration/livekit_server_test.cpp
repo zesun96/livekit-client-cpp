@@ -2,6 +2,7 @@
 #include "../../src/core/room.h"
 #include "../../src/core/track/local_video_track.h"
 #include "../../src/core/track/track_publication.h"
+#include "livekit/capi/livekit.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/participant/local_participant_interface.h"
 #include "livekit/core/participant/remote_participant_interface.h"
@@ -12,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -53,6 +55,38 @@ bool WaitUntil(const std::function<bool()>& predicate,
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	} while (std::chrono::steady_clock::now() < deadline);
 	return predicate();
+}
+
+struct CApiE2eeEvents {
+	std::atomic_size_t audio_frames{0};
+	std::atomic_bool data_received{false};
+	std::atomic_bool sender_cryptor_ok{false};
+	std::atomic_bool receiver_cryptor_ok{false};
+};
+
+void OnCApiE2eeAudioFrame(void* user_data, lk_room_t*, const lk_track_publication_info_t*,
+                          const lk_participant_info_t*, const lk_audio_frame_t*) {
+	static_cast<CApiE2eeEvents*>(user_data)->audio_frames.fetch_add(1);
+}
+
+void OnCApiE2eeData(void* user_data, lk_room_t*, const lk_data_received_t* event) {
+	constexpr std::array<uint8_t, 10> expected{'c', '-', 'e', '2', 'e', 'e', '-', 'd', 'a', 't'};
+	if (event != nullptr && event->data_size == expected.size() &&
+	    std::equal(expected.begin(), expected.end(), event->data)) {
+		static_cast<CApiE2eeEvents*>(user_data)->data_received.store(true);
+	}
+}
+
+void OnCApiEncryptionState(void* user_data, lk_room_t*, const lk_encryption_state_t* state) {
+	if (state == nullptr || state->state != LK_FRAME_CRYPTOR_STATE_OK) {
+		return;
+	}
+	auto* events = static_cast<CApiE2eeEvents*>(user_data);
+	if (state->direction == LK_FRAME_CRYPTOR_DIRECTION_SENDER) {
+		events->sender_cryptor_ok.store(true);
+	} else {
+		events->receiver_cryptor_ok.store(true);
+	}
 }
 
 bool NotifyExternalHarness(const char* environment_name) {
@@ -1547,6 +1581,227 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, CApiEncryptsAudioAndDataAndControlsKeys) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the C API "
+		                "E2EE integration test";
+	}
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };
+	auto track_deleter = [](lk_local_track_t* track) { (void)lk_local_track_destroy(track); };
+	auto source_deleter = [](lk_audio_source_t* source) { (void)lk_audio_source_destroy(source); };
+	auto cryptor_deleter = [](lk_frame_cryptor_list_t* cryptors) {
+		lk_frame_cryptor_list_destroy(cryptors);
+	};
+
+	lk_room_t* receiver_handle = nullptr;
+	lk_room_t* sender_handle = nullptr;
+	ASSERT_EQ(lk_room_create(&receiver_handle), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_create(&sender_handle), LK_STATUS_OK) << lk_last_error();
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> receiver(receiver_handle, room_deleter);
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> sender(sender_handle, room_deleter);
+
+	CApiE2eeEvents events;
+	lk_room_callbacks_t receiver_callbacks;
+	lk_room_callbacks_init(&receiver_callbacks);
+	receiver_callbacks.user_data = &events;
+	receiver_callbacks.on_audio_frame = OnCApiE2eeAudioFrame;
+	receiver_callbacks.on_data_received = OnCApiE2eeData;
+	receiver_callbacks.on_encryption_state_changed = OnCApiEncryptionState;
+	ASSERT_EQ(lk_room_set_callbacks(receiver.get(), &receiver_callbacks), LK_STATUS_OK);
+	lk_room_callbacks_t sender_callbacks;
+	lk_room_callbacks_init(&sender_callbacks);
+	sender_callbacks.user_data = &events;
+	sender_callbacks.on_encryption_state_changed = OnCApiEncryptionState;
+	ASSERT_EQ(lk_room_set_callbacks(sender.get(), &sender_callbacks), LK_STATUS_OK);
+
+	const auto shared_key = IntegrationE2eeKey();
+	lk_e2ee_options_t e2ee;
+	lk_e2ee_options_init(&e2ee);
+	e2ee.shared_key = shared_key.data();
+	e2ee.shared_key_size = shared_key.size();
+	ASSERT_EQ(lk_room_connect_e2ee(receiver.get(), url, receiver_token, &e2ee), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect_e2ee(sender.get(), url, sender_token, &e2ee), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(lk_room_e2ee_is_configured(receiver.get()));
+	ASSERT_TRUE(lk_room_e2ee_is_enabled(receiver.get()));
+	ASSERT_EQ(lk_room_e2ee_set_enabled(sender.get(), 0), LK_STATUS_OK) << lk_last_error();
+	ASSERT_FALSE(lk_room_e2ee_is_enabled(sender.get()));
+	ASSERT_EQ(lk_room_e2ee_set_enabled(sender.get(), 1), LK_STATUS_OK) << lk_last_error();
+
+	std::vector<uint8_t> exported(lk_room_e2ee_export_shared_key(sender.get(), 0, nullptr, 0));
+	ASSERT_EQ(exported.size(), shared_key.size()) << lk_last_error();
+	EXPECT_EQ(lk_room_e2ee_export_shared_key(sender.get(), 0, exported.data(), exported.size()),
+	          exported.size());
+	EXPECT_EQ(exported, shared_key);
+
+	constexpr std::array<uint8_t, 10> data{'c', '-', 'e', '2', 'e', 'e', '-', 'd', 'a', 't'};
+	lk_data_publish_options_t data_options;
+	lk_data_publish_options_init(&data_options);
+	data_options.topic = "c-api-e2ee";
+	ASSERT_EQ(lk_room_publish_data(sender.get(), data.data(), data.size(), &data_options),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.data_received.load(); }, std::chrono::seconds(10)));
+	events.data_received.store(false);
+	ASSERT_EQ(lk_room_e2ee_ratchet_shared_key(sender.get(), 0), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_publish_data(sender.get(), data.data(), data.size(), &data_options),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.data_received.load(); }, std::chrono::seconds(10)));
+
+	const std::array<uint8_t, 32> alternate_key{
+	    0x8d, 0x41, 0x02, 0x77, 0xc5, 0x19, 0xee, 0x64, 0x37, 0xa8, 0xf2,
+	    0x90, 0x1c, 0xb3, 0x56, 0x4a, 0x71, 0x0f, 0xd8, 0x22, 0x9b, 0x6c,
+	    0x45, 0xe1, 0xaa, 0x38, 0x73, 0x0d, 0x5f, 0xc4, 0x16, 0x99,
+	};
+	for (auto* room : {sender.get(), receiver.get()}) {
+		ASSERT_EQ(lk_room_e2ee_set_shared_key(room, alternate_key.data(), alternate_key.size(), 1),
+		          LK_STATUS_OK)
+		    << lk_last_error();
+		ASSERT_EQ(lk_room_e2ee_set_data_key_index(room, 1), LK_STATUS_OK) << lk_last_error();
+		EXPECT_EQ(lk_room_e2ee_data_key_index(room), 1u);
+	}
+	events.data_received.store(false);
+	ASSERT_EQ(lk_room_publish_data(sender.get(), data.data(), data.size(), &data_options),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.data_received.load(); }, std::chrono::seconds(10)));
+	for (auto* room : {sender.get(), receiver.get()}) {
+		ASSERT_EQ(lk_room_e2ee_set_data_key_index(room, 0), LK_STATUS_OK) << lk_last_error();
+	}
+
+	ASSERT_EQ(lk_room_e2ee_set_participant_key(sender.get(), "test-participant",
+	                                           alternate_key.data(), alternate_key.size(), 2),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::vector<uint8_t> participant_key(
+	    lk_room_e2ee_export_participant_key(sender.get(), "test-participant", 2, nullptr, 0));
+	ASSERT_EQ(participant_key.size(), alternate_key.size());
+	EXPECT_EQ(lk_room_e2ee_export_participant_key(sender.get(), "test-participant", 2,
+	                                              participant_key.data(), participant_key.size()),
+	          participant_key.size());
+	EXPECT_TRUE(std::equal(participant_key.begin(), participant_key.end(), alternate_key.begin()));
+	ASSERT_EQ(lk_room_e2ee_ratchet_participant_key(sender.get(), "test-participant", 2),
+	          LK_STATUS_OK);
+	ASSERT_EQ(lk_room_e2ee_remove_participant_key(sender.get(), "test-participant", 2),
+	          LK_STATUS_OK);
+
+	lk_audio_source_options_t source_options;
+	lk_audio_source_options_init(&source_options);
+	lk_audio_source_t* source_handle = nullptr;
+	ASSERT_EQ(lk_audio_source_create(&source_options, &source_handle), LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_audio_source_t, decltype(source_deleter)> source(source_handle,
+	                                                                    source_deleter);
+	lk_local_track_t* track_handle = nullptr;
+	ASSERT_EQ(
+	    lk_room_create_audio_track(sender.get(), "c-api-e2ee-audio", source.get(), &track_handle),
+	    LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_local_track_t, decltype(track_deleter)> track(track_handle, track_deleter);
+	lk_track_publish_options_t publish_options;
+	lk_track_publish_options_init(&publish_options);
+	publish_options.source = LK_TRACK_SOURCE_MICROPHONE;
+	ASSERT_EQ(lk_local_track_publish(sender.get(), track.get(), &publish_options), LK_STATUS_OK)
+	    << lk_last_error();
+
+	std::vector<int16_t> samples(480, 1700);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return lk_audio_source_capture_frame(source.get(), samples.data(), 480) ==
+		               LK_STATUS_OK &&
+		           events.audio_frames.load() >= 3 && events.sender_cryptor_ok.load() &&
+		           events.receiver_cryptor_ok.load();
+	    },
+	    std::chrono::seconds(10)));
+
+	lk_frame_cryptor_list_t* sender_cryptors_handle = nullptr;
+	lk_frame_cryptor_list_t* receiver_cryptors_handle = nullptr;
+	ASSERT_EQ(lk_frame_cryptor_list_create(sender.get(), &sender_cryptors_handle), LK_STATUS_OK);
+	ASSERT_EQ(lk_frame_cryptor_list_create(receiver.get(), &receiver_cryptors_handle),
+	          LK_STATUS_OK);
+	std::unique_ptr<lk_frame_cryptor_list_t, decltype(cryptor_deleter)> sender_cryptors(
+	    sender_cryptors_handle, cryptor_deleter);
+	std::unique_ptr<lk_frame_cryptor_list_t, decltype(cryptor_deleter)> receiver_cryptors(
+	    receiver_cryptors_handle, cryptor_deleter);
+	ASSERT_EQ(lk_frame_cryptor_list_count(sender_cryptors.get()), 1u);
+	ASSERT_EQ(lk_frame_cryptor_list_count(receiver_cryptors.get()), 1u);
+	lk_frame_cryptor_info_t sender_cryptor_info;
+	lk_frame_cryptor_info_init(&sender_cryptor_info);
+	ASSERT_EQ(lk_frame_cryptor_list_info(sender_cryptors.get(), 0, &sender_cryptor_info),
+	          LK_STATUS_OK);
+	EXPECT_EQ(sender_cryptor_info.direction, LK_FRAME_CRYPTOR_DIRECTION_SENDER);
+	EXPECT_EQ(sender_cryptor_info.state, LK_FRAME_CRYPTOR_STATE_OK);
+	const auto track_id_size = lk_frame_cryptor_list_track_id(sender_cryptors.get(), 0, nullptr, 0);
+	ASSERT_GT(track_id_size, 1u);
+	std::vector<char> track_id(track_id_size);
+	EXPECT_EQ(
+	    lk_frame_cryptor_list_track_id(sender_cryptors.get(), 0, track_id.data(), track_id.size()),
+	    track_id.size());
+	lk_frame_cryptor_info_t receiver_cryptor_info;
+	lk_frame_cryptor_info_init(&receiver_cryptor_info);
+	ASSERT_EQ(lk_frame_cryptor_list_info(receiver_cryptors.get(), 0, &receiver_cryptor_info),
+	          LK_STATUS_OK);
+	EXPECT_EQ(receiver_cryptor_info.direction, LK_FRAME_CRYPTOR_DIRECTION_RECEIVER);
+	EXPECT_EQ(receiver_cryptor_info.state, LK_FRAME_CRYPTOR_STATE_OK);
+
+	ASSERT_EQ(lk_room_e2ee_set_frame_cryptor_enabled(sender.get(), track_id.data(),
+	                                                 LK_FRAME_CRYPTOR_DIRECTION_SENDER, 0),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_e2ee_set_frame_cryptor_enabled(sender.get(), track_id.data(),
+	                                                 LK_FRAME_CRYPTOR_DIRECTION_SENDER, 1),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_e2ee_set_frame_cryptor_key_index(sender.get(), track_id.data(),
+	                                                   LK_FRAME_CRYPTOR_DIRECTION_SENDER, 1),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_e2ee_set_frame_cryptor_key_index(receiver.get(), track_id.data(),
+	                                                   LK_FRAME_CRYPTOR_DIRECTION_RECEIVER, 1),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	const auto frames_before_slot_change = events.audio_frames.load();
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return lk_audio_source_capture_frame(source.get(), samples.data(), 480) ==
+		               LK_STATUS_OK &&
+		           events.audio_frames.load() >= frames_before_slot_change + 3;
+	    },
+	    std::chrono::seconds(10)));
+
+	size_t updated_cryptors = 0;
+	const auto sender_identity_size = lk_local_participant_identity(sender.get(), nullptr, 0);
+	ASSERT_GT(sender_identity_size, 1u);
+	std::vector<char> sender_identity(sender_identity_size);
+	ASSERT_EQ(
+	    lk_local_participant_identity(sender.get(), sender_identity.data(), sender_identity.size()),
+	    sender_identity.size());
+	ASSERT_EQ(lk_room_e2ee_set_participant_enabled(receiver.get(), sender_identity.data(), 0,
+	                                               &updated_cryptors),
+	          LK_STATUS_OK);
+	EXPECT_EQ(updated_cryptors, 1u);
+	ASSERT_EQ(lk_room_e2ee_set_participant_enabled(receiver.get(), sender_identity.data(), 1,
+	                                               &updated_cryptors),
+	          LK_STATUS_OK);
+
+	ASSERT_EQ(lk_local_track_unpublish(track.get(), 0), LK_STATUS_OK);
+	track.reset();
+	source.reset();
+	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
+	sender.reset();
+	receiver.reset();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK);
 }
 
 TEST(LiveKitServerTest, EncryptsAudioVideoAndDataEndToEnd) {

@@ -24,6 +24,18 @@ auto room = livekit::core::CreateRoomUnique();
 room->Connect(url, token, options);
 ```
 
+The stable C ABI configures the same AES-GCM implementation at connect time. All byte buffers are
+copied by the SDK during the call.
+
+```c
+lk_e2ee_options_t e2ee;
+lk_e2ee_options_init(&e2ee);
+e2ee.shared_key = key_bytes;
+e2ee.shared_key_size = key_size;
+
+lk_room_connect_e2ee(room, url, token, &e2ee);
+```
+
 E2EE is disabled when `RoomOptions::e2ee` is absent or its encryption type is
 `EncryptionType::None`. `EncryptionType::Custom` is rejected explicitly instead of silently
 downgrading the room to plaintext.
@@ -57,12 +69,23 @@ not expose internal WebRTC objects.
 Disabling E2EE at runtime republishes existing local tracks so signaling and media encryption stay
 consistent. Treat this as a visible room transition, not as a per-packet toggle.
 
+The C API provides matching room-owned operations through the `lk_room_e2ee_*` functions. They
+support shared and participant keys, export and ratchet operations, media/data key-slot selection,
+per-cryptor and per-participant enablement, and global enablement. Use
+`lk_frame_cryptor_list_create()` for an owned value snapshot; destroy it with
+`lk_frame_cryptor_list_destroy()`. Key export functions return the required byte count and follow
+the same two-stage buffer convention as string getters.
+
 ## State events
 
 Implement `RoomEventInterface::OnEncryptionStateChanged`, or install a callback directly with
 `E2EEManager::SetStateCallback`. States cover success, missing keys, encryption/decryption failure,
 successful automatic ratcheting, and internal errors. Callbacks may arrive on an E2EE worker thread;
 they must not perform long blocking operations.
+
+C applications receive the same borrowed event through
+`lk_room_callbacks_t::on_encryption_state_changed`. The event and its strings remain valid only for
+the callback duration.
 
 ## Coverage
 
@@ -88,6 +111,10 @@ to 1 and back, and a live shared-key ratchet between two C++ clients. The compan
 key-error tests verify E2EE after publisher full/media reconnect, subscriber signal resume, missing
 keys, incorrect keys, and recovery after the correct key is installed. All three codecs have been
 verified against LiveKit Server 1.13.5 on Windows x64.
+
+`LiveKitServerTest.CApiEncryptsAudioAndDataAndControlsKeys` exercises the C ABI against a real room,
+including encrypted audio/data, shared and participant keys, key slots, callbacks, and cryptor
+snapshots.
 
 `LiveKitServerTest.InteroperatesWithOfficialJsE2EEPeer` and
 `test/integration/run_js_e2ee_interop.mjs` additionally verify that the official JS SDK 2.21.0 can
