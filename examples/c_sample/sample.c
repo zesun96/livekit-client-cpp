@@ -239,6 +239,32 @@ static void on_participant_attributes_changed(void* user_data, lk_room_t* room,
 	}
 }
 
+static void on_data_track_published(void* user_data, lk_room_t* room,
+                                    const lk_data_track_info_t* track,
+                                    const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("DataTrack %s published by %s: %s (schema=%s)\n", track->sid, participant->identity,
+	       track->name, track->has_schema ? track->schema_name : "none");
+}
+
+static void on_data_track_unpublished(void* user_data, lk_room_t* room,
+                                      const lk_data_track_info_t* track,
+                                      const lk_participant_info_t* participant) {
+	(void)user_data;
+	(void)room;
+	printf("DataTrack %s unpublished by %s\n", track->sid, participant->identity);
+}
+
+static void on_data_track_frame(void* user_data, lk_room_t* room, const lk_data_track_info_t* track,
+                                const lk_participant_info_t* participant,
+                                const lk_data_track_frame_view_t* frame) {
+	(void)user_data;
+	(void)room;
+	printf("DataTrack frame from %s/%s: %zu bytes%s\n", participant->identity, track->name,
+	       frame->data_size, frame->has_user_timestamp ? " with user timestamp" : "");
+}
+
 static void on_stream_complete(void* user_data, const lk_data_stream_completion_t* completion) {
 	(void)user_data;
 	printf("Data stream completed: id=%s, status=%d, bytes=%llu, reason=%s\n",
@@ -348,6 +374,11 @@ int main(int argc, char** argv) {
 	callbacks.on_participant_metadata_changed = on_participant_metadata_changed;
 	callbacks.on_participant_name_changed = on_participant_name_changed;
 	callbacks.on_participant_attributes_changed = on_participant_attributes_changed;
+	callbacks.on_data_track_published = on_data_track_published;
+	callbacks.on_data_track_unpublished = on_data_track_unpublished;
+	callbacks.on_local_data_track_published = on_data_track_published;
+	callbacks.on_local_data_track_unpublished = on_data_track_unpublished;
+	callbacks.on_data_track_frame = on_data_track_frame;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");

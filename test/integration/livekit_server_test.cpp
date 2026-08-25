@@ -64,6 +64,120 @@ struct CApiE2eeEvents {
 	std::atomic_bool receiver_cryptor_ok{false};
 };
 
+class CApiDataTrackEvents {
+public:
+	void Published(const lk_data_track_info_t* track, const lk_participant_info_t* participant,
+	               bool local) {
+		if (track == nullptr || participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		if (local) {
+			local_published_ = true;
+		} else {
+			remote_published_ = true;
+			remote_sid_ = track->sid;
+			publisher_identity_ = participant->identity;
+			remote_name_ = track->name;
+			remote_has_json_ = track->has_frame_encoding &&
+			                   track->frame_encoding == LK_DATA_TRACK_FRAME_ENCODING_JSON;
+			remote_has_schema_ =
+			    track->has_schema && std::string(track->schema_name) == "c.telemetry.v1" &&
+			    track->schema_encoding == LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA;
+		}
+	}
+
+	void Unpublished(bool local) {
+		std::lock_guard<std::mutex> guard(lock_);
+		if (local) {
+			local_unpublished_ = true;
+		} else {
+			remote_unpublished_ = true;
+		}
+	}
+
+	void Frame(const lk_data_track_frame_view_t* frame) {
+		if (frame == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		++frame_count_;
+		last_frame_.clear();
+		if (frame->data != nullptr && frame->data_size != 0) {
+			last_frame_.assign(frame->data, frame->data + frame->data_size);
+		}
+		last_timestamp_ = frame->has_user_timestamp ? frame->user_timestamp : 0;
+	}
+
+	bool remote_published(std::string& sid, std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		if (!remote_published_ || remote_name_ != "c-api-telemetry" || !remote_has_json_ ||
+		    !remote_has_schema_) {
+			return false;
+		}
+		sid = remote_sid_;
+		identity = publisher_identity_;
+		return true;
+	}
+
+	bool local_published() {
+		std::lock_guard<std::mutex> guard(lock_);
+		return local_published_;
+	}
+
+	bool frame_received(const std::vector<uint8_t>& payload, uint64_t timestamp,
+	                    size_t minimum_count) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return frame_count_ >= minimum_count && last_frame_ == payload &&
+		       last_timestamp_ == timestamp;
+	}
+
+	bool unpublished() {
+		std::lock_guard<std::mutex> guard(lock_);
+		return local_unpublished_ && remote_unpublished_;
+	}
+
+private:
+	std::mutex lock_;
+	bool local_published_ = false;
+	bool remote_published_ = false;
+	bool local_unpublished_ = false;
+	bool remote_unpublished_ = false;
+	bool remote_has_json_ = false;
+	bool remote_has_schema_ = false;
+	std::string remote_sid_;
+	std::string remote_name_;
+	std::string publisher_identity_;
+	std::vector<uint8_t> last_frame_;
+	uint64_t last_timestamp_ = 0;
+	size_t frame_count_ = 0;
+};
+
+void OnCApiRemoteDataTrackPublished(void* user_data, lk_room_t*, const lk_data_track_info_t* track,
+                                    const lk_participant_info_t* participant) {
+	static_cast<CApiDataTrackEvents*>(user_data)->Published(track, participant, false);
+}
+
+void OnCApiRemoteDataTrackUnpublished(void* user_data, lk_room_t*, const lk_data_track_info_t*,
+                                      const lk_participant_info_t*) {
+	static_cast<CApiDataTrackEvents*>(user_data)->Unpublished(false);
+}
+
+void OnCApiLocalDataTrackPublished(void* user_data, lk_room_t*, const lk_data_track_info_t* track,
+                                   const lk_participant_info_t* participant) {
+	static_cast<CApiDataTrackEvents*>(user_data)->Published(track, participant, true);
+}
+
+void OnCApiLocalDataTrackUnpublished(void* user_data, lk_room_t*, const lk_data_track_info_t*,
+                                     const lk_participant_info_t*) {
+	static_cast<CApiDataTrackEvents*>(user_data)->Unpublished(true);
+}
+
+void OnCApiDataTrackFrame(void* user_data, lk_room_t*, const lk_data_track_info_t*,
+                          const lk_participant_info_t*, const lk_data_track_frame_view_t* frame) {
+	static_cast<CApiDataTrackEvents*>(user_data)->Frame(frame);
+}
+
 class CApiParticipantEvents {
 public:
 	void Connected(const lk_participant_info_t* participant) {
@@ -1686,6 +1800,206 @@ TEST(LiveKitServerTest, PublishesReadsAndUnpublishesEncryptedDataTrack) {
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, CApiPublishesReadsAndUnpublishesDataTrack) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the C API "
+		                "DataTrack integration test";
+	}
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };
+	auto local_track_deleter = [](lk_local_data_track_t* track) {
+		if (track != nullptr && lk_local_data_track_is_published(track)) {
+			(void)lk_local_data_track_unpublish(track);
+		}
+		(void)lk_local_data_track_destroy(track);
+	};
+	auto reader_deleter = [](lk_data_track_reader_t* reader) {
+		lk_data_track_reader_destroy(reader);
+	};
+	auto frame_deleter = [](lk_data_track_frame_t* frame) { lk_data_track_frame_destroy(frame); };
+	auto schema_deleter = [](lk_data_track_schema_t* schema) {
+		lk_data_track_schema_destroy(schema);
+	};
+
+	lk_room_t* receiver_handle = nullptr;
+	lk_room_t* sender_handle = nullptr;
+	ASSERT_EQ(lk_room_create(&receiver_handle), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_create(&sender_handle), LK_STATUS_OK) << lk_last_error();
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> receiver(receiver_handle, room_deleter);
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> sender(sender_handle, room_deleter);
+
+	CApiDataTrackEvents events;
+	lk_room_callbacks_t receiver_callbacks;
+	lk_room_callbacks_init(&receiver_callbacks);
+	receiver_callbacks.user_data = &events;
+	receiver_callbacks.on_data_track_published = OnCApiRemoteDataTrackPublished;
+	receiver_callbacks.on_data_track_unpublished = OnCApiRemoteDataTrackUnpublished;
+	receiver_callbacks.on_data_track_frame = OnCApiDataTrackFrame;
+	ASSERT_EQ(lk_room_set_callbacks(receiver.get(), &receiver_callbacks), LK_STATUS_OK);
+	lk_room_callbacks_t sender_callbacks;
+	lk_room_callbacks_init(&sender_callbacks);
+	sender_callbacks.user_data = &events;
+	sender_callbacks.on_local_data_track_published = OnCApiLocalDataTrackPublished;
+	sender_callbacks.on_local_data_track_unpublished = OnCApiLocalDataTrackUnpublished;
+	ASSERT_EQ(lk_room_set_callbacks(sender.get(), &sender_callbacks), LK_STATUS_OK);
+
+	ASSERT_EQ(lk_room_connect(receiver.get(), url, receiver_token), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect(sender.get(), url, sender_token), LK_STATUS_OK) << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return lk_room_is_connected(receiver.get()) && lk_room_is_connected(sender.get()); },
+	    std::chrono::seconds(10)));
+
+	lk_data_track_schema_id_t schema_id;
+	lk_data_track_schema_id_init(&schema_id);
+	schema_id.name = "c.telemetry.v1";
+	schema_id.encoding = LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA;
+	const std::string schema_json =
+	    R"({"type":"object","properties":{"x":{"type":"number"}},"required":["x"]})";
+	ASSERT_EQ(lk_room_store_data_track_schema(sender.get(), &schema_id,
+	                                          reinterpret_cast<const uint8_t*>(schema_json.data()),
+	                                          schema_json.size()),
+	          LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+
+	lk_data_track_publish_options_t publish_options;
+	lk_data_track_publish_options_init(&publish_options);
+	publish_options.name = "c-api-telemetry";
+	publish_options.has_frame_encoding = 1;
+	publish_options.frame_encoding = LK_DATA_TRACK_FRAME_ENCODING_JSON;
+	publish_options.has_schema = 1;
+	publish_options.schema = schema_id;
+	lk_local_data_track_t* local_track_handle = nullptr;
+	ASSERT_EQ(lk_room_publish_data_track(sender.get(), &publish_options, &local_track_handle),
+	          LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+	std::unique_ptr<lk_local_data_track_t, decltype(local_track_deleter)> local_track(
+	    local_track_handle, local_track_deleter);
+	ASSERT_TRUE(events.local_published());
+	ASSERT_TRUE(lk_local_data_track_is_published(local_track.get()));
+	lk_data_track_snapshot_info_t local_info;
+	lk_data_track_snapshot_info_init(&local_info);
+	ASSERT_EQ(lk_local_data_track_info(local_track.get(), &local_info), LK_STATUS_OK);
+	EXPECT_TRUE(local_info.has_frame_encoding);
+	EXPECT_EQ(local_info.frame_encoding, LK_DATA_TRACK_FRAME_ENCODING_JSON);
+	EXPECT_TRUE(local_info.has_schema);
+	EXPECT_EQ(local_info.schema_encoding, LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA);
+	EXPECT_EQ(lk_local_data_track_destroy(local_track.get()), LK_DATA_TRACK_ERROR_NOT_ALLOWED);
+	const auto local_name_size = lk_local_data_track_name(local_track.get(), nullptr, 0);
+	std::vector<char> local_name(local_name_size);
+	ASSERT_EQ(lk_local_data_track_name(local_track.get(), local_name.data(), local_name.size()),
+	          local_name.size());
+	EXPECT_STREQ(local_name.data(), "c-api-telemetry");
+
+	std::string remote_sid;
+	std::string publisher_identity;
+	ASSERT_TRUE(WaitUntil([&] { return events.remote_published(remote_sid, publisher_identity); },
+	                      std::chrono::seconds(10)));
+	lk_data_track_subscription_options_t subscription_options;
+	lk_data_track_subscription_options_init(&subscription_options);
+	subscription_options.buffer_capacity = 4;
+	subscription_options.max_partial_frames = 2;
+	lk_data_track_reader_t* reader_handle = nullptr;
+	ASSERT_EQ(lk_room_subscribe_data_track(receiver.get(), publisher_identity.c_str(),
+	                                       remote_sid.c_str(), &subscription_options,
+	                                       &reader_handle),
+	          LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+	std::unique_ptr<lk_data_track_reader_t, decltype(reader_deleter)> reader(reader_handle,
+	                                                                         reader_deleter);
+	lk_data_track_frame_t* empty_frame = nullptr;
+	EXPECT_EQ(lk_data_track_reader_try_read(reader.get(), &empty_frame), LK_DATA_TRACK_READ_EMPTY);
+	EXPECT_EQ(empty_frame, nullptr);
+
+	lk_data_track_schema_t* remote_schema_handle = nullptr;
+	ASSERT_EQ(lk_room_get_data_track_schema(receiver.get(), publisher_identity.c_str(), &schema_id,
+	                                        &remote_schema_handle),
+	          LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+	std::unique_ptr<lk_data_track_schema_t, decltype(schema_deleter)> remote_schema(
+	    remote_schema_handle, schema_deleter);
+	EXPECT_EQ(lk_data_track_schema_encoding(remote_schema.get()),
+	          LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA);
+	const auto remote_schema_name_size = lk_data_track_schema_name(remote_schema.get(), nullptr, 0);
+	std::vector<char> remote_schema_name(remote_schema_name_size);
+	ASSERT_EQ(lk_data_track_schema_name(remote_schema.get(), remote_schema_name.data(),
+	                                    remote_schema_name.size()),
+	          remote_schema_name.size());
+	EXPECT_STREQ(remote_schema_name.data(), "c.telemetry.v1");
+	std::vector<uint8_t> schema_definition(
+	    lk_data_track_schema_definition(remote_schema.get(), nullptr, 0));
+	ASSERT_EQ(lk_data_track_schema_definition(remote_schema.get(), schema_definition.data(),
+	                                          schema_definition.size()),
+	          schema_definition.size());
+	EXPECT_EQ(std::string(schema_definition.begin(), schema_definition.end()), schema_json);
+
+	const std::vector<uint8_t> first_payload{'{', '"', 'x', '"', ':', '1', '}'};
+	lk_data_track_frame_t* received_handle = nullptr;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    if (lk_local_data_track_try_push(local_track.get(), first_payload.data(),
+		                                     first_payload.size(), 1,
+		                                     123456) != LK_DATA_TRACK_ERROR_NONE) {
+			    return false;
+		    }
+		    return lk_data_track_reader_read_for(reader.get(), 100, &received_handle) ==
+		           LK_DATA_TRACK_READ_FRAME;
+	    },
+	    std::chrono::seconds(10)));
+	std::unique_ptr<lk_data_track_frame_t, decltype(frame_deleter)> received(received_handle,
+	                                                                         frame_deleter);
+	std::vector<uint8_t> received_payload(lk_data_track_frame_data(received.get(), nullptr, 0));
+	ASSERT_EQ(
+	    lk_data_track_frame_data(received.get(), received_payload.data(), received_payload.size()),
+	    received_payload.size());
+	EXPECT_EQ(received_payload, first_payload);
+	EXPECT_TRUE(lk_data_track_frame_has_user_timestamp(received.get()));
+	EXPECT_EQ(lk_data_track_frame_user_timestamp(received.get()), 123456u);
+	ASSERT_TRUE(WaitUntil([&] { return events.frame_received(first_payload, 123456, 1); },
+	                      std::chrono::seconds(10)));
+
+	std::vector<uint8_t> fragmented(40'000);
+	for (size_t index = 0; index < fragmented.size(); ++index) {
+		fragmented[index] = static_cast<uint8_t>(index % 251);
+	}
+	ASSERT_EQ(lk_local_data_track_try_push(local_track.get(), fragmented.data(), fragmented.size(),
+	                                       1, 987654321),
+	          LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+	received.reset();
+	received_handle = nullptr;
+	ASSERT_EQ(lk_data_track_reader_read_for(reader.get(), 10000, &received_handle),
+	          LK_DATA_TRACK_READ_FRAME)
+	    << lk_last_error();
+	received.reset(received_handle);
+	received_payload.resize(lk_data_track_frame_data(received.get(), nullptr, 0));
+	ASSERT_EQ(
+	    lk_data_track_frame_data(received.get(), received_payload.data(), received_payload.size()),
+	    received_payload.size());
+	EXPECT_EQ(received_payload, fragmented);
+	EXPECT_EQ(lk_data_track_frame_user_timestamp(received.get()), 987654321u);
+
+	ASSERT_EQ(lk_local_data_track_unpublish(local_track.get()), LK_DATA_TRACK_ERROR_NONE)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.unpublished(); }, std::chrono::seconds(10)));
+	EXPECT_TRUE(lk_data_track_reader_is_closed(reader.get()));
+	EXPECT_FALSE(lk_local_data_track_is_published(local_track.get()));
+	received.reset();
+	reader.reset();
+	EXPECT_EQ(lk_local_data_track_destroy(local_track.release()), LK_DATA_TRACK_ERROR_NONE);
+
+	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
+	sender.reset();
+	receiver.reset();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK);
 }
 
 TEST(LiveKitServerTest, CApiReportsParticipantProfileChanges) {

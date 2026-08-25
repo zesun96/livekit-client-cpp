@@ -98,6 +98,30 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(cryptor.direction, LK_FRAME_CRYPTOR_DIRECTION_SENDER);
 	EXPECT_EQ(cryptor.state, LK_FRAME_CRYPTOR_STATE_NEW);
 
+	lk_data_track_schema_id_t schema_id;
+	lk_data_track_schema_id_init(&schema_id);
+	EXPECT_EQ(schema_id.struct_size, sizeof(schema_id));
+	EXPECT_EQ(schema_id.encoding, LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED);
+
+	lk_data_track_publish_options_t data_track;
+	lk_data_track_publish_options_init(&data_track);
+	EXPECT_EQ(data_track.struct_size, sizeof(data_track));
+	EXPECT_FALSE(data_track.has_frame_encoding);
+	EXPECT_FALSE(data_track.has_schema);
+	EXPECT_EQ(data_track.schema.struct_size, sizeof(data_track.schema));
+
+	lk_data_track_subscription_options_t data_subscription;
+	lk_data_track_subscription_options_init(&data_subscription);
+	EXPECT_EQ(data_subscription.struct_size, sizeof(data_subscription));
+	EXPECT_EQ(data_subscription.buffer_capacity, 16u);
+	EXPECT_EQ(data_subscription.max_partial_frames, 1u);
+
+	lk_data_track_snapshot_info_t data_track_info;
+	lk_data_track_snapshot_info_init(&data_track_info);
+	EXPECT_EQ(data_track_info.struct_size, sizeof(data_track_info));
+	EXPECT_FALSE(data_track_info.has_frame_encoding);
+	EXPECT_FALSE(data_track_info.has_schema);
+
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
 	EXPECT_EQ(file.struct_size, sizeof(file));
@@ -397,6 +421,21 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	                                                 LK_FRAME_CRYPTOR_DIRECTION_SENDER, 1),
 	          LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(lk_frame_cryptor_list_create(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_store_data_track_schema(nullptr, nullptr, nullptr, 0),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_get_data_track_schema(nullptr, nullptr, nullptr, nullptr),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_publish_data_track(nullptr, nullptr, nullptr),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_data_track_try_push(nullptr, nullptr, 0, 0, 0),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_data_track_unpublish(nullptr), LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_data_track_destroy(nullptr), LK_DATA_TRACK_ERROR_NONE);
+	EXPECT_EQ(lk_room_subscribe_data_track(nullptr, nullptr, nullptr, nullptr, nullptr),
+	          LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_data_track_reader_try_read(nullptr, nullptr), LK_DATA_TRACK_READ_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_data_track_schema_name(nullptr, nullptr, 0), 0u);
+	EXPECT_EQ(lk_data_track_frame_data(nullptr, nullptr, 0), 0u);
 	lk_audio_playback_stats_t playback_stats;
 	lk_audio_playback_stats_init(&playback_stats);
 	EXPECT_EQ(lk_room_audio_playback_stats(nullptr, &playback_stats), LK_STATUS_INVALID_ARGUMENT);
@@ -426,6 +465,24 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	lk_frame_cryptor_list_t* unconfigured_cryptors = nullptr;
 	EXPECT_EQ(lk_frame_cryptor_list_create(room, &unconfigured_cryptors), LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(unconfigured_cryptors, nullptr);
+	lk_data_track_schema_id_t data_schema_id;
+	lk_data_track_schema_id_init(&data_schema_id);
+	data_schema_id.name = "test.schema";
+	data_schema_id.encoding = LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA;
+	EXPECT_EQ(lk_room_store_data_track_schema(room, &data_schema_id, nullptr, 0),
+	          LK_DATA_TRACK_ERROR_DISCONNECTED);
+	lk_data_track_publish_options_t data_track_options;
+	lk_data_track_publish_options_init(&data_track_options);
+	data_track_options.name = "test-track";
+	lk_local_data_track_t* data_track = nullptr;
+	EXPECT_EQ(lk_room_publish_data_track(room, &data_track_options, &data_track),
+	          LK_DATA_TRACK_ERROR_DISCONNECTED);
+	EXPECT_EQ(data_track, nullptr);
+	lk_data_track_reader_t* data_reader = nullptr;
+	EXPECT_EQ(
+	    lk_room_subscribe_data_track(room, "participant", "DT_missing", nullptr, &data_reader),
+	    LK_DATA_TRACK_ERROR_DISCONNECTED);
+	EXPECT_EQ(data_reader, nullptr);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, -0.1F), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, 1.1F), LK_STATUS_INVALID_ARGUMENT);
 	lk_audio_playback_stats_t playback_stats;
@@ -468,6 +525,11 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_participant_metadata_changed, nullptr);
 	EXPECT_EQ(callbacks.on_participant_name_changed, nullptr);
 	EXPECT_EQ(callbacks.on_participant_attributes_changed, nullptr);
+	EXPECT_EQ(callbacks.on_data_track_published, nullptr);
+	EXPECT_EQ(callbacks.on_data_track_unpublished, nullptr);
+	EXPECT_EQ(callbacks.on_local_data_track_published, nullptr);
+	EXPECT_EQ(callbacks.on_local_data_track_unpublished, nullptr);
+	EXPECT_EQ(callbacks.on_data_track_frame, nullptr);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);

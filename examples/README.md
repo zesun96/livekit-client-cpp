@@ -76,6 +76,9 @@ text streaming prints its structured completion status, stream ID, byte count, a
 The C API also provides `lk_room_perform_rpc_async()` when blocking RPC results are unsuitable.
 Participant metadata, display-name, and attribute changes are reported through borrowed,
 room-scoped callbacks; the sample prints each update and its participant identity.
+Typed DataTrack publication, removal, and frame events are also printed. Applications can publish
+through `lk_room_publish_data_track()`, subscribe with `lk_room_subscribe_data_track()`, and consume
+owned frames from the bounded pull reader.
 Set `LIVEKIT_E2EE_KEY` before running the sample to connect with AES-GCM end-to-end encryption and
 print frame-encryption state changes. Every participant must obtain the same key material through
 an application-secured channel; do not hard-code production keys in the executable.

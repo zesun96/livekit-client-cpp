@@ -396,6 +396,10 @@ try {
     Invoke-SimpleTest "PublishesReadsAndUnpublishesEncryptedDataTrack"
   }
 
+  if ($Scenario -in @("All", "DataTrack", "CAPI")) {
+    Invoke-SimpleTest "CApiPublishesReadsAndUnpublishesDataTrack"
+  }
+
   if ($Scenario -in @("All", "CAPI")) {
     Invoke-SimpleTest "CApiReportsParticipantProfileChanges"
   }

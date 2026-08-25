@@ -160,6 +160,11 @@ successful lookups are cached across connection recovery. LiveKit Server must en
 [`data_track_schema`](examples/data_track_schema/data_track_schema.cpp) example for the complete
 store, publish, and frame-send flow.
 
+The stable C ABI exposes the same schema store/query, typed publication, fragmentation, bounded
+pull-reader, and room-event flow through the `lk_*_data_track_*` APIs. Local track, reader, pulled
+frame, and queried schema handles are caller-owned. DataTrack operations return
+`lk_data_track_error_code_t`; `lk_last_error()` supplies the accompanying diagnostic text.
+
 ## Tests
 
 Tests use GoogleTest 1.15.2 from a small, checksum-verified source archive.

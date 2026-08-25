@@ -47,6 +47,10 @@ typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
 typedef struct lk_media_device_list lk_media_device_list_t;
 typedef struct lk_screen_source_list lk_screen_source_list_t;
 typedef struct lk_frame_cryptor_list lk_frame_cryptor_list_t;
+typedef struct lk_local_data_track lk_local_data_track_t;
+typedef struct lk_data_track_reader lk_data_track_reader_t;
+typedef struct lk_data_track_frame lk_data_track_frame_t;
+typedef struct lk_data_track_schema lk_data_track_schema_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -202,6 +206,55 @@ typedef enum lk_data_stream_completion_status {
 	LK_DATA_STREAM_COMPLETION_CANCELLED = 1,
 	LK_DATA_STREAM_COMPLETION_FAILED = 2
 } lk_data_stream_completion_status_t;
+
+typedef enum lk_data_track_frame_encoding {
+	LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED = 0,
+	LK_DATA_TRACK_FRAME_ENCODING_ROS1 = 1,
+	LK_DATA_TRACK_FRAME_ENCODING_CDR = 2,
+	LK_DATA_TRACK_FRAME_ENCODING_PROTOBUF = 3,
+	LK_DATA_TRACK_FRAME_ENCODING_FLATBUFFER = 4,
+	LK_DATA_TRACK_FRAME_ENCODING_CBOR = 5,
+	LK_DATA_TRACK_FRAME_ENCODING_MSGPACK = 6,
+	LK_DATA_TRACK_FRAME_ENCODING_JSON = 7,
+	LK_DATA_TRACK_FRAME_ENCODING_CUSTOM = 8
+} lk_data_track_frame_encoding_t;
+
+typedef enum lk_data_track_schema_encoding {
+	LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED = 0,
+	LK_DATA_TRACK_SCHEMA_ENCODING_PROTOBUF = 1,
+	LK_DATA_TRACK_SCHEMA_ENCODING_FLATBUFFER = 2,
+	LK_DATA_TRACK_SCHEMA_ENCODING_ROS1_MESSAGE = 3,
+	LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_MESSAGE = 4,
+	LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_IDL = 5,
+	LK_DATA_TRACK_SCHEMA_ENCODING_OMG_IDL = 6,
+	LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA = 7,
+	LK_DATA_TRACK_SCHEMA_ENCODING_CUSTOM = 8
+} lk_data_track_schema_encoding_t;
+
+typedef enum lk_data_track_error_code {
+	LK_DATA_TRACK_ERROR_NONE = 0,
+	LK_DATA_TRACK_ERROR_INVALID_NAME = 1,
+	LK_DATA_TRACK_ERROR_INVALID_SCHEMA = 2,
+	LK_DATA_TRACK_ERROR_DUPLICATE_NAME = 3,
+	LK_DATA_TRACK_ERROR_HANDLE_LIMIT_REACHED = 4,
+	LK_DATA_TRACK_ERROR_NOT_ALLOWED = 5,
+	LK_DATA_TRACK_ERROR_DISCONNECTED = 6,
+	LK_DATA_TRACK_ERROR_TIMEOUT = 7,
+	LK_DATA_TRACK_ERROR_UNPUBLISHED = 8,
+	LK_DATA_TRACK_ERROR_QUEUE_FULL = 9,
+	LK_DATA_TRACK_ERROR_INVALID_FRAME = 10,
+	LK_DATA_TRACK_ERROR_PROTOCOL = 11,
+	LK_DATA_TRACK_ERROR_SEND_FAILED = 12,
+	LK_DATA_TRACK_ERROR_NOT_FOUND = 13,
+	LK_DATA_TRACK_ERROR_INVALID_ARGUMENT = 14
+} lk_data_track_error_code_t;
+
+typedef enum lk_data_track_read_status {
+	LK_DATA_TRACK_READ_FRAME = 0,
+	LK_DATA_TRACK_READ_EMPTY = 1,
+	LK_DATA_TRACK_READ_CLOSED = 2,
+	LK_DATA_TRACK_READ_INVALID_ARGUMENT = 3
+} lk_data_track_read_status_t;
 
 typedef struct lk_participant_info {
 	const char* sid;
@@ -360,6 +413,38 @@ typedef struct lk_data_received {
 	const char* participant_identity;
 	int reliable;
 } lk_data_received_t;
+
+/* All pointers are borrowed for the callback duration. */
+typedef struct lk_data_track_info {
+	uint16_t publisher_handle;
+	const char* sid;
+	const char* name;
+	int uses_e2ee;
+	int has_frame_encoding;
+	lk_data_track_frame_encoding_t frame_encoding;
+	const char* custom_frame_encoding;
+	int has_schema;
+	const char* schema_name;
+	lk_data_track_schema_encoding_t schema_encoding;
+	const char* custom_schema_encoding;
+} lk_data_track_info_t;
+
+typedef struct lk_data_track_frame_view {
+	const uint8_t* data;
+	size_t data_size;
+	int has_user_timestamp;
+	uint64_t user_timestamp;
+} lk_data_track_frame_view_t;
+
+typedef struct lk_data_track_snapshot_info {
+	size_t struct_size;
+	uint16_t publisher_handle;
+	int uses_e2ee;
+	int has_frame_encoding;
+	lk_data_track_frame_encoding_t frame_encoding;
+	int has_schema;
+	lk_data_track_schema_encoding_t schema_encoding;
+} lk_data_track_snapshot_info_t;
 
 typedef struct lk_sip_dtmf {
 	uint32_t code;
@@ -626,6 +711,13 @@ typedef void (*lk_subscribed_quality_update_callback)(void* user_data, lk_room_t
                                                       const lk_subscribed_quality_update_t* update);
 typedef void (*lk_encryption_state_callback)(void* user_data, lk_room_t* room,
                                              const lk_encryption_state_t* state);
+typedef void (*lk_data_track_event_callback)(void* user_data, lk_room_t* room,
+                                             const lk_data_track_info_t* track,
+                                             const lk_participant_info_t* participant);
+typedef void (*lk_data_track_frame_callback)(void* user_data, lk_room_t* room,
+                                             const lk_data_track_info_t* track,
+                                             const lk_participant_info_t* participant,
+                                             const lk_data_track_frame_view_t* frame);
 
 typedef struct lk_room_callbacks {
 	size_t struct_size;
@@ -672,6 +764,11 @@ typedef struct lk_room_callbacks {
 	lk_participant_metadata_changed_callback on_participant_metadata_changed;
 	lk_participant_name_changed_callback on_participant_name_changed;
 	lk_participant_attributes_changed_callback on_participant_attributes_changed;
+	lk_data_track_event_callback on_data_track_published;
+	lk_data_track_event_callback on_data_track_unpublished;
+	lk_data_track_event_callback on_local_data_track_published;
+	lk_data_track_event_callback on_local_data_track_unpublished;
+	lk_data_track_frame_callback on_data_track_frame;
 } lk_room_callbacks_t;
 
 typedef struct lk_e2ee_options {
@@ -773,6 +870,31 @@ typedef struct lk_data_publish_options {
 	const char* const* destination_identities;
 	size_t destination_identity_count;
 } lk_data_publish_options_t;
+
+typedef struct lk_data_track_schema_id {
+	size_t struct_size;
+	const char* name;
+	lk_data_track_schema_encoding_t encoding;
+	const char* custom_encoding;
+} lk_data_track_schema_id_t;
+
+typedef struct lk_data_track_publish_options {
+	size_t struct_size;
+	const char* name;
+	int has_frame_encoding;
+	lk_data_track_frame_encoding_t frame_encoding;
+	const char* custom_frame_encoding;
+	int has_schema;
+	lk_data_track_schema_id_t schema;
+} lk_data_track_publish_options_t;
+
+typedef struct lk_data_track_subscription_options {
+	size_t struct_size;
+	int has_target_fps;
+	uint32_t target_fps;
+	size_t buffer_capacity;
+	size_t max_partial_frames;
+} lk_data_track_subscription_options_t;
 
 typedef struct lk_file_send_options {
 	size_t struct_size;
@@ -928,6 +1050,10 @@ LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options
 LKC_API void lk_video_encoding_init(lk_video_encoding_t* encoding);
 LKC_API void lk_track_publish_options_init(lk_track_publish_options_t* options);
 LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
+LKC_API void lk_data_track_schema_id_init(lk_data_track_schema_id_t* schema_id);
+LKC_API void lk_data_track_publish_options_init(lk_data_track_publish_options_t* options);
+LKC_API void lk_data_track_subscription_options_init(lk_data_track_subscription_options_t* options);
+LKC_API void lk_data_track_snapshot_info_init(lk_data_track_snapshot_info_t* info);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
 LKC_API void lk_byte_send_options_init(lk_byte_send_options_t* options);
@@ -1174,6 +1300,61 @@ LKC_API lk_status_t lk_room_set_track_subscription_permissions(
 
 LKC_API lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t data_size,
                                          const lk_data_publish_options_t* options);
+/* DataTrack failures return a stable domain code and also update lk_last_error(). */
+LKC_API lk_data_track_error_code_t
+lk_room_store_data_track_schema(lk_room_t* room, const lk_data_track_schema_id_t* schema_id,
+                                const uint8_t* definition, size_t definition_size);
+LKC_API lk_data_track_error_code_t lk_room_get_data_track_schema(
+    lk_room_t* room, const char* participant_identity, const lk_data_track_schema_id_t* schema_id,
+    lk_data_track_schema_t** schema);
+LKC_API void lk_data_track_schema_destroy(lk_data_track_schema_t* schema);
+LKC_API size_t lk_data_track_schema_name(const lk_data_track_schema_t* schema, char* buffer,
+                                         size_t buffer_size);
+LKC_API lk_data_track_schema_encoding_t
+lk_data_track_schema_encoding(const lk_data_track_schema_t* schema);
+LKC_API size_t lk_data_track_schema_custom_encoding(const lk_data_track_schema_t* schema,
+                                                    char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_track_schema_definition(const lk_data_track_schema_t* schema,
+                                               uint8_t* buffer, size_t buffer_size);
+LKC_API lk_data_track_error_code_t lk_room_publish_data_track(
+    lk_room_t* room, const lk_data_track_publish_options_t* options, lk_local_data_track_t** track);
+LKC_API lk_data_track_error_code_t lk_local_data_track_try_push(lk_local_data_track_t* track,
+                                                                const uint8_t* data,
+                                                                size_t data_size,
+                                                                int has_user_timestamp,
+                                                                uint64_t user_timestamp);
+LKC_API lk_data_track_error_code_t lk_local_data_track_unpublish(lk_local_data_track_t* track);
+LKC_API lk_data_track_error_code_t lk_local_data_track_destroy(lk_local_data_track_t* track);
+LKC_API int lk_local_data_track_is_published(const lk_local_data_track_t* track);
+LKC_API lk_status_t lk_local_data_track_info(const lk_local_data_track_t* track,
+                                             lk_data_track_snapshot_info_t* info);
+LKC_API size_t lk_local_data_track_sid(const lk_local_data_track_t* track, char* buffer,
+                                       size_t buffer_size);
+LKC_API size_t lk_local_data_track_name(const lk_local_data_track_t* track, char* buffer,
+                                        size_t buffer_size);
+LKC_API size_t lk_local_data_track_custom_frame_encoding(const lk_local_data_track_t* track,
+                                                         char* buffer, size_t buffer_size);
+LKC_API size_t lk_local_data_track_schema_name(const lk_local_data_track_t* track, char* buffer,
+                                               size_t buffer_size);
+LKC_API size_t lk_local_data_track_custom_schema_encoding(const lk_local_data_track_t* track,
+                                                          char* buffer, size_t buffer_size);
+LKC_API lk_data_track_error_code_t lk_room_subscribe_data_track(
+    lk_room_t* room, const char* participant_identity, const char* track_sid,
+    const lk_data_track_subscription_options_t* options, lk_data_track_reader_t** reader);
+LKC_API void lk_data_track_reader_destroy(lk_data_track_reader_t* reader);
+LKC_API void lk_data_track_reader_close(lk_data_track_reader_t* reader);
+LKC_API int lk_data_track_reader_is_closed(const lk_data_track_reader_t* reader);
+LKC_API size_t lk_data_track_reader_dropped_frames(const lk_data_track_reader_t* reader);
+LKC_API lk_data_track_read_status_t lk_data_track_reader_try_read(lk_data_track_reader_t* reader,
+                                                                  lk_data_track_frame_t** frame);
+LKC_API lk_data_track_read_status_t lk_data_track_reader_read_for(lk_data_track_reader_t* reader,
+                                                                  uint32_t timeout_ms,
+                                                                  lk_data_track_frame_t** frame);
+LKC_API void lk_data_track_frame_destroy(lk_data_track_frame_t* frame);
+LKC_API size_t lk_data_track_frame_data(const lk_data_track_frame_t* frame, uint8_t* buffer,
+                                        size_t buffer_size);
+LKC_API int lk_data_track_frame_has_user_timestamp(const lk_data_track_frame_t* frame);
+LKC_API uint64_t lk_data_track_frame_user_timestamp(const lk_data_track_frame_t* frame);
 LKC_API lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit);
 LKC_API lk_status_t lk_room_send_chat_message(lk_room_t* room, const char* message,
                                               char* message_id, size_t message_id_size,
