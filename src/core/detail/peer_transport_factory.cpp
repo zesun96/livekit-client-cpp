@@ -16,6 +16,7 @@
  */
 
 #include "peer_transport_factory.h"
+#include "logging.h"
 
 #include "api/audio/builtin_audio_processing_builder.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
@@ -35,8 +36,6 @@
 #include "api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h"
 #include "api/video_codecs/video_encoder_factory_template_open_h264_adapter.h"
 #include "rtc_base/thread.h"
-
-#include <iostream>
 
 namespace livekit {
 namespace core {
@@ -73,7 +72,7 @@ PeerTransportFactory::PeerTransportFactory() {
 }
 
 PeerTransportFactory::~PeerTransportFactory() {
-	std::cout << "PeerTransportFactory::~PeerTransportFactory()" << std::endl;
+	LKC_LOG_DEBUG << "peer transport factory shutdown";
 	peer_factory_ = nullptr;
 	audio_device_ = nullptr;
 	worker_thread_->Stop();

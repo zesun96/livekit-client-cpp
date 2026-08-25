@@ -21,6 +21,7 @@
 #include "../detail/converted_proto.h"
 #include "../detail/data_stream_compression.h"
 #include "../detail/data_track_proto.h"
+#include "../detail/logging.h"
 #include "../detail/video_encoding.h"
 #include "../e2ee/e2ee_manager_internal.h"
 #include "../track/audio_source.h"
@@ -611,7 +612,7 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	}
 
 	try {
-		std::cout << "PublishTrack,name" << req.name() << ",kind" << req.type() << std::endl;
+		LKC_LOG_INFO << "publishing track: name=" << req.name() << ", kind=" << req.type();
 		auto option_ti = engine_->AddTrack(req);
 		if (!option_ti.has_value()) {
 			return false;
@@ -664,7 +665,7 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		}
 
 	} catch (const std::exception& e) {
-		std::cout << "publish track error:" << e.what() << std::endl;
+		LKC_LOG_ERROR << "failed to publish track: " << e.what();
 		return false;
 	}
 	return true;
@@ -843,9 +844,9 @@ void LocalParticipant::RunBackupCodecWorker() {
 		try {
 			PublishAdditionalCodec(request.track_sid, request.codec);
 		} catch (const std::exception& error) {
-			std::cout << "publish backup codec error:" << error.what() << std::endl;
+			LKC_LOG_ERROR << "failed to publish backup codec: " << error.what();
 		} catch (...) {
-			std::cout << "publish backup codec error:unknown error" << std::endl;
+			LKC_LOG_ERROR << "failed to publish backup codec: unknown error";
 		}
 		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
 		pending_backup_codecs_.erase(std::make_pair(request.track_sid, request.codec));

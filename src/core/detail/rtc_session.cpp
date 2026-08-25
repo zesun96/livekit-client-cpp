@@ -17,6 +17,7 @@
 
 #include "rtc_session.h"
 
+#include "logging.h"
 #include "video_encoding.h"
 
 #include "api/peer_connection_interface.h"
@@ -120,7 +121,7 @@ RtcSession::RtcSession(livekit::JoinResponse join_response, EngineOptions option
 }
 
 RtcSession::~RtcSession() {
-	std::cout << "RtcSession::~RtcSession()" << std::endl;
+	LKC_LOG_DEBUG << "RTC session shutdown";
 	RemoveObserver();
 	if (publisher_pc_) {
 		publisher_pc_->RemovePeerTransportListener();
@@ -252,7 +253,7 @@ std::unique_ptr<webrtc::SessionDescriptionInterface> RtcSession::CreateSubscribe
 
 	std::string str_desc;
 	offer->ToString(&str_desc);
-	std::cout << "recived offer: " << str_desc << std::endl;
+	LKC_LOG_DEBUG << "received subscriber offer, sdp_bytes=" << str_desc.size();
 
 	if (!subscriber_pc_->SetRemoteDescription(std::move(offer))) {
 		return nullptr;

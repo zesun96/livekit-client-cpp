@@ -20,7 +20,7 @@
 #ifndef _LKC_CORE_DETAIL_INTERNALS_H_
 #define _LKC_CORE_DETAIL_INTERNALS_H_
 
-#include "plog/Log.h"
+#include "logging.h"
 
 namespace livekit {
 namespace core {

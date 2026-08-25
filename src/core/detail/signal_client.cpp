@@ -18,13 +18,13 @@
 #include "signal_client.h"
 #include "livekit_models.pb.h"
 #include "livekit_rtc.pb.h"
+#include "logging.h"
 #include "signal_url.h"
 #include "utils.h"
 #include "websocket_uri.h"
 
 #include <chrono>
 #include <functional>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -97,7 +97,7 @@ SignalClient::SignalClient(std::string url, std::string token, SignalOptions opt
 }
 
 SignalClient::~SignalClient() {
-	std::cout << "SignalClient::~SignalClient()" << std::endl;
+	LKC_LOG_DEBUG << "signal client shutdown";
 	Close(false);
 }
 
@@ -137,7 +137,7 @@ livekit::JoinResponse SignalClient::Connect() {
 		livekit::JoinResponse response = future.get();
 		return response;
 	} catch (const std::exception& e) {
-		std::cerr << "Error: " << e.what() << std::endl;
+		LKC_LOG_ERROR << "signal connection failed: " << e.what();
 	}
 	return livekit::JoinResponse();
 }
@@ -158,7 +158,7 @@ bool SignalClient::Resume() {
 	try {
 		return future.get();
 	} catch (const std::exception& e) {
-		std::cerr << "Signal resume error: " << e.what() << std::endl;
+		LKC_LOG_ERROR << "signal resume failed: " << e.what();
 	}
 	return false;
 }
@@ -234,9 +234,8 @@ void SignalClient::SendAddTrack(const livekit::AddTrackRequest& request) {
 	livekit::SignalRequest req;
 	auto* add_track_msg = req.mutable_add_track();
 	add_track_msg->CopyFrom(request);
-	std::cout << "SendAddTrack:"
-	          << "source=" << add_track_msg->source() << ",kind=" << add_track_msg->type()
-	          << ",cid=" << add_track_msg->cid() << std::endl;
+	LKC_LOG_DEBUG << "sending add-track request: source=" << add_track_msg->source()
+	              << ", kind=" << add_track_msg->type() << ", cid=" << add_track_msg->cid();
 	sendRequest(req);
 	return;
 }
@@ -387,21 +386,21 @@ void SignalClient::SendGetDataBlob(const livekit::GetDataBlobRequest& request) {
 
 void SignalClient::onWsMessage(const WebsocketData& data) {
 	if (data.type() == WebsocketDataType::Binary) {
-		std::cout << "WebSocket binary message, len:" << data.size() << std::endl;
+		LKC_LOG_TRACE << "received WebSocket binary message, bytes=" << data.size();
 		handleWsBinaryMessage(data);
 	} else {
 		const auto text =
 		    data.empty()
 		        ? std::string_view{}
 		        : std::string_view(reinterpret_cast<const char*>(data.data()), data.size());
-		std::cout << "WebSocket message, len:" << data.size() << ", data:" << text << std::endl;
+		LKC_LOG_DEBUG << "received unexpected WebSocket text message, bytes=" << text.size();
 	}
 
 	return;
 }
 
 void SignalClient::onWsEvent(enum EventCode code, EventReason reason) {
-	std::cout << "WebSocket event:" << int(code) << ", reason" << reason << std::endl;
+	LKC_LOG_DEBUG << "WebSocket event: code=" << int(code) << ", reason=" << reason;
 	if (code == EventCode::Connected) {
 
 	} else if (code == EventCode::Disconnected) {
@@ -413,13 +412,13 @@ void SignalClient::onWsEvent(enum EventCode code, EventReason reason) {
 void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 	std::lock_guard<std::mutex> guard(lock_);
 	if (data.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
-		std::cerr << "WebSocket signal message is too large" << std::endl;
+		LKC_LOG_ERROR << "WebSocket signal message is too large";
 		return;
 	}
 	livekit::SignalResponse resp{};
 	bool ret = resp.ParseFromArray(data.data(), static_cast<int>(data.size()));
 	if (ret) {
-		std::cout << "SignalResponsecase(: " << resp.message_case() << std::endl;
+		LKC_LOG_TRACE << "received signal response, case=" << resp.message_case();
 		if (state_ != SignalConnectionState::CONNECTED) {
 			bool should_process_message = false;
 			switch (resp.message_case()) {
@@ -430,8 +429,9 @@ void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 				ping_interval_duration_ = resp.join().ping_interval();
 
 				if (ping_timeout_duration_ > 0) {
-					std::cout << "ping config" << ping_timeout_duration_ << ", "
-					          << ping_interval_duration_ << std::endl;
+					LKC_LOG_DEBUG << "received ping configuration: timeout="
+					              << ping_timeout_duration_
+					              << ", interval=" << ping_interval_duration_;
 					this->startPingInterval();
 				}
 
@@ -487,10 +487,10 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		try {
 			sd = fromProtoSessionDescription(resp.answer());
 		} catch (const std::exception& e) {
-			std::cerr << e.what() << '\n';
+			LKC_LOG_ERROR << "failed to parse signal answer: " << e.what();
 		}
 		if (sd == nullptr) {
-			std::cout << "failed to parse answer" << std::endl;
+			LKC_LOG_ERROR << "failed to parse signal answer";
 			return;
 		}
 		if (observer_) {
@@ -503,10 +503,10 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		try {
 			sd = fromProtoSessionDescription(resp.offer());
 		} catch (const std::exception& e) {
-			std::cerr << e.what() << '\n';
+			LKC_LOG_ERROR << "failed to parse signal offer: " << e.what();
 		}
 		if (sd == nullptr) {
-			std::cout << "failed to parse offer" << std::endl;
+			LKC_LOG_ERROR << "failed to parse signal offer";
 			return;
 		}
 		if (observer_) {
@@ -690,7 +690,7 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		break;
 	}
 	default: {
-		std::cout << "unsupported message(: " << resp.message_case() << std::endl;
+		LKC_LOG_WARNING << "unsupported signal response, case=" << resp.message_case();
 	}
 	}
 
@@ -700,7 +700,7 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 }
 
 void SignalClient::handleOnClose(std::string reason) {
-	std::cout << "WebSocket closed, reason:" << reason << std::endl;
+	LKC_LOG_WARNING << "WebSocket closed, reason=" << reason;
 	SignalClientObserver* observer = nullptr;
 	bool notify_observer = false;
 	{
@@ -743,17 +743,16 @@ void SignalClient::resolveResume(bool connected) {
 void SignalClient::resetPingTimeout() {
 	this->clearPingTimeout();
 	if (!this->ping_timeout_duration_) {
-		std::cout << "ping timeout duration is 0, skip reset ping timeout" << std::endl;
+		LKC_LOG_TRACE << "ping timeout disabled";
 		return;
 	}
 
 	std::lock_guard<std::mutex> guard(ping_timeout_timer_lock_);
-	// std::cout << "reset ping timeout, count:" << ping_timeout_timer_count_.load() << std::endl;
 	ping_timeout_timer_count_.fetch_add(1);
 	ping_timeout_timer_ = std::make_shared<Timer>();
 	ping_timeout_timer_->SetTimeout(
 	    [this]() {
-		    std::cout << "handle ping timeout" << std::endl;
+		    LKC_LOG_WARNING << "signal ping timed out";
 		    this->handleOnClose("ping timeout");
 	    },
 	    this->ping_timeout_duration_ * 1000);
@@ -764,7 +763,7 @@ void SignalClient::resetPingTimeout() {
 void SignalClient::clearPingTimeout() {
 	std::lock_guard<std::mutex> guard(ping_timeout_timer_lock_);
 	if (ping_timeout_timer_) {
-		std::cout << "clear ping timeout" << std::endl;
+		LKC_LOG_TRACE << "clearing ping timeout";
 		ping_timeout_timer_count_.fetch_sub(1);
 		ping_timeout_timer_->Stop();
 		ping_timeout_timer_ = nullptr;
@@ -776,7 +775,7 @@ void SignalClient::startPingInterval() {
 	this->clearPingInterval();
 	this->resetPingTimeout();
 	if (!this->ping_interval_duration_) {
-		std::cout << "ping interval duration is 0, skip start ping interval" << std::endl;
+		LKC_LOG_TRACE << "ping interval disabled";
 		return;
 	}
 
@@ -784,7 +783,7 @@ void SignalClient::startPingInterval() {
 	ping_interval_timer_ = std::make_shared<Timer>();
 	ping_interval_timer_->SetInterval(
 	    [this]() {
-		    std::cout << "ping interval" << std::endl;
+		    LKC_LOG_TRACE << "sending signal ping";
 		    this->SendPing();
 	    },
 	    this->ping_interval_duration_ * 1000);
@@ -796,7 +795,7 @@ void SignalClient::clearPingInterval() {
 	clearPingTimeout();
 	std::lock_guard<std::mutex> guard(ping_interval_timer_lock_);
 	if (ping_interval_timer_) {
-		std::cout << "clear ping interval" << std::endl;
+		LKC_LOG_TRACE << "clearing ping interval";
 		ping_interval_timer_->Stop();
 		ping_interval_timer_ = nullptr;
 	}
@@ -807,7 +806,8 @@ void SignalClient::sendRequest(livekit::SignalRequest& request, bool from_queue)
 	std::string serialized_request;
 	request.SerializeToString(&serialized_request);
 
-	std::cout << "sendRequest:" << request.DebugString() << std::endl;
+	LKC_LOG_TRACE << "sending signal request, case=" << request.message_case()
+	              << ", bytes=" << serialized_request.size();
 	wsc_->send(WebsocketData(serialized_request.data(), serialized_request.size(),
 	                         WebsocketDataType::Binary));
 	return;

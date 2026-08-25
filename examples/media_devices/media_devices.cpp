@@ -1,4 +1,4 @@
-#include "livekit/core/livekit_client.h"
+#include "example_utils.h"
 
 #include <iostream>
 
@@ -19,6 +19,11 @@ const char* KindName(livekit::core::MediaDeviceKind kind) {
 } // namespace
 
 int main() {
+	livekit::examples::ClientRuntime runtime;
+	if (!runtime.initialized()) {
+		std::cerr << "Failed to initialize LiveKit" << std::endl;
+		return 1;
+	}
 	const auto devices = livekit::core::EnumerateMediaDevices();
 	std::cout << "Found " << devices.size() << " media device(s)" << std::endl;
 	for (const auto& device : devices) {

@@ -16,6 +16,7 @@
  */
 
 #include "websocket_client.h"
+#include "logging.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -29,7 +30,6 @@ WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_op
     : connection_options_(connection_options), uri_(std::move(uri)),
       ws_uri_(WebsocketUri::parse_and_validate(uri_)) {
 
-	// lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
 	struct lws_context_creation_info info;
 	memset(&info, 0, sizeof(info));
 
@@ -53,10 +53,12 @@ WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_op
 	 */
 	info.fd_limit_per_thread = 1 + 1 + 1;
 
-	lwsl_user("LWS client\n");
 	context_ = lws_create_context(&info);
-	if (context_ == NULL)
+	if (context_ == NULL) {
+		LKC_LOG_ERROR << "failed to create WebSocket context";
 		throw std::runtime_error("lws context creation failed");
+	}
+	LKC_LOG_DEBUG << "WebSocket context created";
 }
 
 WebsocketClient::~WebsocketClient() {
@@ -70,6 +72,7 @@ WebsocketClient::~WebsocketClient() {
 }
 
 void WebsocketClient::connect() {
+	LKC_LOG_DEBUG << "starting WebSocket connection";
 	static const uint32_t backoff_ms[] = {1000, 2000, 3000, 4000, 5000};
 	static const lws_retry_bo_t retry = {
 	    .retry_ms_table = backoff_ms, // i dont use this, i think its just for sul w event loops?
@@ -98,8 +101,10 @@ void WebsocketClient::connect() {
 	};
 
 	wsi_ = lws_client_connect_via_info(&connect_info);
-	if (wsi_ == NULL)
+	if (wsi_ == NULL) {
+		LKC_LOG_ERROR << "failed to start WebSocket connection";
 		throw std::runtime_error("lws connection failed");
+	}
 }
 
 void WebsocketClient::service() {
@@ -122,7 +127,7 @@ void WebsocketClient::disconnect() {
 
 void WebsocketClient::send(WebsocketData message) {
 	if (!conn_established_ || wsi_ == nullptr) {
-		lwsl_user("Websocket is not connected");
+		LKC_LOG_WARNING << "cannot send because WebSocket is not connected";
 		return;
 	}
 	{
@@ -132,8 +137,7 @@ void WebsocketClient::send(WebsocketData message) {
 
 	auto res = lws_callback_on_writable(wsi_);
 	if (res != 0) {
-		lwsl_user("lws_callback_on_writable failed: %d", res);
-		// log::error("Failed lws_callback_on_writable: {}", res); // idc
+		LKC_LOG_ERROR << "failed to schedule WebSocket write: code=" << res;
 	}
 	lws_cancel_service(context_);
 	return;
@@ -164,6 +168,7 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
                                      size_t len) {
 	switch (reason) {
 	case LWS_CALLBACK_CLIENT_ESTABLISHED: {
+		LKC_LOG_INFO << "WebSocket connection established";
 		this->conn_established_ = true;
 		this->reconnect_attempts_ = 0;
 		if (this->func_event_cb_)
@@ -182,11 +187,13 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 		break;
 	}
 	case LWS_CALLBACK_WSI_DESTROY: {
+		LKC_LOG_DEBUG << "WebSocket instance destroyed";
 		if (this->func_event_cb_)
 			this->func_event_cb_(EventCode::Disconnected, std::string());
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
+		LKC_LOG_WARNING << "WebSocket connection error";
 		if (this->conn_established_) {
 			break;
 		}
@@ -194,7 +201,7 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 	}
 	case LWS_CALLBACK_CLIENT_CLOSED: {
 		// try to reconnect
-		lwsl_user("LWS_CALLBACK_CLIENT_CLOSED");
+		LKC_LOG_WARNING << "WebSocket connection closed";
 		this->conn_established_ = false;
 		this->wsi_ = nullptr;
 		this->restart_after_ =
@@ -223,7 +230,8 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 			    message->type() == WebsocketDataType::Binary ? LWS_WRITE_BINARY : LWS_WRITE_TEXT;
 			const int written = lws_write(wsi, payload.data() + LWS_PRE, message->size(), mode);
 			if (written < 0 || static_cast<std::size_t>(written) != message->size()) {
-				lwsl_err("WebSocket write failed: %d of %zu bytes\n", written, message->size());
+				LKC_LOG_ERROR << "WebSocket write failed: wrote=" << written
+				              << ", expected=" << message->size();
 				write_result = -1;
 			}
 		}
@@ -249,9 +257,11 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 }
 
 void WebsocketClient::run_service_loop() {
+	LKC_LOG_DEBUG << "WebSocket service loop started";
 	while (!stop_) {
 		lws_service(context_, 10);
 	}
+	LKC_LOG_DEBUG << "WebSocket service loop stopped";
 }
 
 } // namespace core

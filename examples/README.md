@@ -42,6 +42,11 @@ $env:LIVEKIT_URL = "http://<livekit-host>:7880/rtc"
 $env:LIVEKIT_TOKEN = "<short-lived-participant-token>"
 ```
 
+The C++ examples adapt the SDK logging interface to plog. Normal runs show LiveKit and WebSocket
+operational logs while keeping WebRTC at warning level. Set `LIVEKIT_LOG_LEVEL` to `trace`,
+`debug`, `info`, `warning`, `error`, or `off` before starting an example. Debug mode enables
+WebRTC informational diagnostics; trace mode also enables its verbose diagnostics.
+
 Generate tokens with different participant identities but the same room name when running a
 publisher and receiver together. Never put API secrets or generated tokens in source files or
 repository configuration.

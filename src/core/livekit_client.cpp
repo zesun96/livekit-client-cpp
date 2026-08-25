@@ -16,14 +16,12 @@
  */
 
 #include "livekit/core/livekit_client.h"
+#include "detail/logging.h"
 #include "version/version.h"
 
 #include <rtc_base/crypto_random.h>
-#include <rtc_base/logging.h>
 #include <rtc_base/ssl_adapter.h>
-#include <rtc_base/time_utils.h>
 
-#include <iostream>
 #include <mutex>
 
 namespace {
@@ -38,31 +36,29 @@ bool Init() {
 	std::lock_guard<std::mutex> guard(initialization_mutex);
 	if (initialization_count != 0) {
 		++initialization_count;
+		LKC_LOG_DEBUG << "runtime reference acquired, count=" << initialization_count;
 		return true;
 	}
 
-	std::cout << "livekit_client version: " << Version() << std::endl;
-
 	if (!webrtc::InitializeSSL()) {
+		LKC_LOG_ERROR << "failed to initialize WebRTC SSL";
 		return false;
 	}
 	webrtc::SetDefaultRandomGenerator();
-#if _DEBUG
-	webrtc::LogMessage::LogToDebug(webrtc::LS_INFO);
-	webrtc::LogMessage::LogTimestamps(true);
-#else
-	webrtc::LogMessage::LogToDebug(webrtc::LS_ERROR);
-#endif
+	detail::StartBackendLogging();
 
 #ifdef WEBRTC_WIN
 	WSADATA data;
 	if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+		LKC_LOG_ERROR << "failed to initialize Winsock";
+		detail::StopBackendLogging();
 		webrtc::CleanupSSL();
 		return false;
 	}
 #endif
 
 	initialization_count = 1;
+	LKC_LOG_INFO << "LiveKit client " << Version() << " initialized";
 	return true;
 }
 
@@ -72,12 +68,20 @@ bool Destroy() {
 		return true;
 	}
 	if (--initialization_count != 0) {
+		LKC_LOG_DEBUG << "runtime reference released, count=" << initialization_count;
 		return true;
 	}
 #ifdef WEBRTC_WIN
 	WSACleanup();
 #endif
-	return webrtc::CleanupSSL();
+	const bool cleaned = webrtc::CleanupSSL();
+	if (cleaned) {
+		LKC_LOG_INFO << "LiveKit client shutdown complete";
+	} else {
+		LKC_LOG_ERROR << "failed to clean up WebRTC SSL";
+	}
+	detail::StopBackendLogging();
+	return cleaned;
 }
 
 std::string Version() {

@@ -5,6 +5,7 @@ add_executable(
   data_track_schema_test.cpp
   e2ee_manager_test.cpp
   key_provider_test.cpp
+  logging_test.cpp
   microphone_source_test.cpp
   participant_state_test.cpp
   public_api_test.cpp
