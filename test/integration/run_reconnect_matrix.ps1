@@ -19,7 +19,9 @@ param(
   [string]$ConfigPath = "",
   [string]$ExistingServerExecutable = "",
   [switch]$ReplaceExistingServer,
-  [ValidateSet("All", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "OfficialCpp")]
+  [ValidateSet(
+    "All", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI", "OfficialCpp"
+  )]
   [string]$Scenario = "All",
   [ValidateSet("vp8", "h264", "vp9", "av1")]
   [string]$VideoCodec = "vp8",
@@ -90,11 +92,21 @@ function Stop-OwnedProcess([Diagnostics.Process]$Process) {
   }
 }
 
-function New-ParticipantToken([string]$Room, [string]$Identity) {
+function New-ParticipantToken(
+  [string]$Room,
+  [string]$Identity,
+  [switch]$AllowUpdateMetadata
+) {
   $previousErrorAction = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    $raw = & $lkPath token create --join --room $Room --identity $Identity --valid-for 15m 2>&1
+    $tokenArguments = @(
+      "token", "create", "--join", "--room", $Room, "--identity", $Identity, "--valid-for", "15m"
+    )
+    if ($AllowUpdateMetadata) {
+      $tokenArguments += "--allow-update-metadata"
+    }
+    $raw = & $lkPath @tokenArguments 2>&1
     $tokenExitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorAction
@@ -342,7 +354,7 @@ try {
   $env:LIVEKIT_TOKEN_RESTART = New-ParticipantToken $room $restartIdentity
   $env:LIVEKIT_TOKEN_REFRESH = New-ParticipantToken $room $refreshIdentity
   $e2eeRoom = "cpp-e2ee-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
-  $env:LIVEKIT_TOKEN = New-ParticipantToken $e2eeRoom "e2ee-sender"
+  $env:LIVEKIT_TOKEN = New-ParticipantToken $e2eeRoom "e2ee-sender" -AllowUpdateMetadata
   $env:LIVEKIT_TOKEN_2 = New-ParticipantToken $e2eeRoom "e2ee-receiver"
   $env:LIVEKIT_VIDEO_CODEC = $VideoCodec
   $env:LIVEKIT_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "restart.ready"
@@ -382,6 +394,14 @@ try {
 
   if ($Scenario -in @("All", "DataTrack")) {
     Invoke-SimpleTest "PublishesReadsAndUnpublishesEncryptedDataTrack"
+  }
+
+  if ($Scenario -in @("All", "DataTrack", "CAPI")) {
+    Invoke-SimpleTest "CApiPublishesReadsAndUnpublishesDataTrack"
+  }
+
+  if ($Scenario -in @("All", "CAPI")) {
+    Invoke-SimpleTest "CApiReportsParticipantProfileChanges"
   }
 
   if ($Scenario -eq "OfficialCpp" -or

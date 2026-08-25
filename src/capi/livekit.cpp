@@ -1,5 +1,6 @@
 #include "livekit/capi/livekit.h"
 
+#include "livekit/core/data_track.h"
 #include "livekit/core/e2ee/e2ee_manager.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/rpc.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -56,8 +58,10 @@ struct lk_room {
 	std::mutex callbacks_mutex;
 	std::mutex callback_lifetime_mutex;
 	std::mutex local_tracks_mutex;
+	std::mutex local_data_tracks_mutex;
 	std::mutex async_tasks_mutex;
 	std::vector<lk_local_track_t*> local_tracks;
+	std::vector<lk_local_data_track_t*> local_data_tracks;
 	std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
 	lk_room_callbacks_t callbacks{};
 	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
@@ -82,6 +86,24 @@ struct lk_local_track {
 	lk_video_source_t* video_source = nullptr;
 	std::shared_ptr<RoomHandleState> room_state;
 	std::atomic_bool published{false};
+};
+
+struct lk_local_data_track {
+	std::shared_ptr<core::LocalDataTrackInterface> track;
+	lk_room_t* owner = nullptr;
+	std::shared_ptr<RoomHandleState> room_state;
+};
+
+struct lk_data_track_reader {
+	std::shared_ptr<core::DataTrackReader> reader;
+};
+
+struct lk_data_track_frame {
+	core::DataTrackFrame frame;
+};
+
+struct lk_data_track_schema {
+	core::DataTrackSchema schema;
 };
 
 struct lk_rpc_result {
@@ -207,6 +229,25 @@ template <typename Function> size_t SizeGuard(Function&& function) noexcept {
 	}
 }
 
+lk_data_track_error_code_t DataTrackFailure(lk_data_track_error_code_t code, const char* message) {
+	SetError(message);
+	return code;
+}
+
+template <typename Function>
+lk_data_track_error_code_t DataTrackGuard(Function&& function) noexcept {
+	try {
+		last_error.clear();
+		return function();
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+	}
+}
+
 size_t CopyString(const std::string& value, char* buffer, size_t buffer_size) noexcept {
 	const size_t required = value.size() + 1;
 	if (buffer != nullptr && buffer_size != 0) {
@@ -290,6 +331,266 @@ void NotifyDataStreamCompletion(const std::shared_ptr<CDataStreamCompletionState
 
 #define LKC_HAS_FIELD(value, type, field)                                                          \
 	HasField((value)->struct_size, offsetof(type, field), sizeof((value)->field))
+
+bool ToCoreDataTrackFrameEncoding(lk_data_track_frame_encoding_t encoding,
+                                  core::DataTrackFrameEncodingKind& result) {
+	switch (encoding) {
+	case LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED:
+		result = core::DataTrackFrameEncodingKind::Unspecified;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_ROS1:
+		result = core::DataTrackFrameEncodingKind::Ros1;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_CDR:
+		result = core::DataTrackFrameEncodingKind::Cdr;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_PROTOBUF:
+		result = core::DataTrackFrameEncodingKind::Protobuf;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_FLATBUFFER:
+		result = core::DataTrackFrameEncodingKind::Flatbuffer;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_CBOR:
+		result = core::DataTrackFrameEncodingKind::Cbor;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_MSGPACK:
+		result = core::DataTrackFrameEncodingKind::Msgpack;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_JSON:
+		result = core::DataTrackFrameEncodingKind::Json;
+		return true;
+	case LK_DATA_TRACK_FRAME_ENCODING_CUSTOM:
+		result = core::DataTrackFrameEncodingKind::Custom;
+		return true;
+	default:
+		return false;
+	}
+}
+
+lk_data_track_frame_encoding_t
+ToCDataTrackFrameEncoding(core::DataTrackFrameEncodingKind encoding) {
+	switch (encoding) {
+	case core::DataTrackFrameEncodingKind::Ros1:
+		return LK_DATA_TRACK_FRAME_ENCODING_ROS1;
+	case core::DataTrackFrameEncodingKind::Cdr:
+		return LK_DATA_TRACK_FRAME_ENCODING_CDR;
+	case core::DataTrackFrameEncodingKind::Protobuf:
+		return LK_DATA_TRACK_FRAME_ENCODING_PROTOBUF;
+	case core::DataTrackFrameEncodingKind::Flatbuffer:
+		return LK_DATA_TRACK_FRAME_ENCODING_FLATBUFFER;
+	case core::DataTrackFrameEncodingKind::Cbor:
+		return LK_DATA_TRACK_FRAME_ENCODING_CBOR;
+	case core::DataTrackFrameEncodingKind::Msgpack:
+		return LK_DATA_TRACK_FRAME_ENCODING_MSGPACK;
+	case core::DataTrackFrameEncodingKind::Json:
+		return LK_DATA_TRACK_FRAME_ENCODING_JSON;
+	case core::DataTrackFrameEncodingKind::Custom:
+		return LK_DATA_TRACK_FRAME_ENCODING_CUSTOM;
+	case core::DataTrackFrameEncodingKind::Unspecified:
+	default:
+		return LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED;
+	}
+}
+
+bool ToCoreDataTrackSchemaEncoding(lk_data_track_schema_encoding_t encoding,
+                                   core::DataTrackSchemaEncodingKind& result) {
+	switch (encoding) {
+	case LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED:
+		result = core::DataTrackSchemaEncodingKind::Unspecified;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_PROTOBUF:
+		result = core::DataTrackSchemaEncodingKind::Protobuf;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_FLATBUFFER:
+		result = core::DataTrackSchemaEncodingKind::Flatbuffer;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_ROS1_MESSAGE:
+		result = core::DataTrackSchemaEncodingKind::Ros1Message;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_MESSAGE:
+		result = core::DataTrackSchemaEncodingKind::Ros2Message;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_IDL:
+		result = core::DataTrackSchemaEncodingKind::Ros2Idl;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_OMG_IDL:
+		result = core::DataTrackSchemaEncodingKind::OmgIdl;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA:
+		result = core::DataTrackSchemaEncodingKind::JsonSchema;
+		return true;
+	case LK_DATA_TRACK_SCHEMA_ENCODING_CUSTOM:
+		result = core::DataTrackSchemaEncodingKind::Custom;
+		return true;
+	default:
+		return false;
+	}
+}
+
+lk_data_track_schema_encoding_t
+ToCDataTrackSchemaEncoding(core::DataTrackSchemaEncodingKind encoding) {
+	switch (encoding) {
+	case core::DataTrackSchemaEncodingKind::Protobuf:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_PROTOBUF;
+	case core::DataTrackSchemaEncodingKind::Flatbuffer:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_FLATBUFFER;
+	case core::DataTrackSchemaEncodingKind::Ros1Message:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_ROS1_MESSAGE;
+	case core::DataTrackSchemaEncodingKind::Ros2Message:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_MESSAGE;
+	case core::DataTrackSchemaEncodingKind::Ros2Idl:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_IDL;
+	case core::DataTrackSchemaEncodingKind::OmgIdl:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_OMG_IDL;
+	case core::DataTrackSchemaEncodingKind::JsonSchema:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA;
+	case core::DataTrackSchemaEncodingKind::Custom:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_CUSTOM;
+	case core::DataTrackSchemaEncodingKind::Unspecified:
+	default:
+		return LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED;
+	}
+}
+
+lk_data_track_error_code_t ToCDataTrackError(core::DataTrackError error) {
+	if (!error) {
+		return LK_DATA_TRACK_ERROR_NONE;
+	}
+	SetError(std::move(error.message));
+	switch (error.code) {
+	case core::DataTrackErrorCode::InvalidName:
+		return LK_DATA_TRACK_ERROR_INVALID_NAME;
+	case core::DataTrackErrorCode::InvalidSchema:
+		return LK_DATA_TRACK_ERROR_INVALID_SCHEMA;
+	case core::DataTrackErrorCode::DuplicateName:
+		return LK_DATA_TRACK_ERROR_DUPLICATE_NAME;
+	case core::DataTrackErrorCode::HandleLimitReached:
+		return LK_DATA_TRACK_ERROR_HANDLE_LIMIT_REACHED;
+	case core::DataTrackErrorCode::NotAllowed:
+		return LK_DATA_TRACK_ERROR_NOT_ALLOWED;
+	case core::DataTrackErrorCode::Disconnected:
+		return LK_DATA_TRACK_ERROR_DISCONNECTED;
+	case core::DataTrackErrorCode::Timeout:
+		return LK_DATA_TRACK_ERROR_TIMEOUT;
+	case core::DataTrackErrorCode::Unpublished:
+		return LK_DATA_TRACK_ERROR_UNPUBLISHED;
+	case core::DataTrackErrorCode::QueueFull:
+		return LK_DATA_TRACK_ERROR_QUEUE_FULL;
+	case core::DataTrackErrorCode::InvalidFrame:
+		return LK_DATA_TRACK_ERROR_INVALID_FRAME;
+	case core::DataTrackErrorCode::ProtocolError:
+		return LK_DATA_TRACK_ERROR_PROTOCOL;
+	case core::DataTrackErrorCode::SendFailed:
+		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+	case core::DataTrackErrorCode::NotFound:
+		return LK_DATA_TRACK_ERROR_NOT_FOUND;
+	case core::DataTrackErrorCode::None:
+		return LK_DATA_TRACK_ERROR_NONE;
+	default:
+		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+	}
+}
+
+lk_data_track_error_code_t ToCoreDataTrackSchemaId(const lk_data_track_schema_id_t* source,
+                                                   core::DataTrackSchemaId& result) {
+	if (source == nullptr || source->struct_size < sizeof(source->struct_size) ||
+	    !LKC_HAS_FIELD(source, lk_data_track_schema_id_t, name) || source->name == nullptr ||
+	    *source->name == '\0') {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+		                        "initialized DataTrack schema ID and name are required");
+	}
+	result.name = source->name;
+	if (LKC_HAS_FIELD(source, lk_data_track_schema_id_t, encoding) &&
+	    !ToCoreDataTrackSchemaEncoding(source->encoding, result.encoding.kind)) {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+		                        "invalid DataTrack schema encoding");
+	}
+	if (LKC_HAS_FIELD(source, lk_data_track_schema_id_t, custom_encoding) &&
+	    source->custom_encoding != nullptr) {
+		result.encoding.custom = source->custom_encoding;
+	}
+	if (result.encoding.kind == core::DataTrackSchemaEncodingKind::Custom &&
+	    result.encoding.custom.empty()) {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_SCHEMA,
+		                        "custom DataTrack schema encoding is required");
+	}
+	return LK_DATA_TRACK_ERROR_NONE;
+}
+
+lk_data_track_error_code_t
+ToCoreDataTrackPublishOptions(const lk_data_track_publish_options_t* source,
+                              core::DataTrackPublishOptions& result) {
+	if (source == nullptr || source->struct_size < sizeof(source->struct_size) ||
+	    !LKC_HAS_FIELD(source, lk_data_track_publish_options_t, name) || source->name == nullptr ||
+	    *source->name == '\0') {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+		                        "initialized DataTrack publish options and name are required");
+	}
+	result.name = source->name;
+	if (LKC_HAS_FIELD(source, lk_data_track_publish_options_t, has_frame_encoding) &&
+	    source->has_frame_encoding) {
+		core::DataTrackFrameEncoding encoding;
+		if (!LKC_HAS_FIELD(source, lk_data_track_publish_options_t, frame_encoding) ||
+		    !ToCoreDataTrackFrameEncoding(source->frame_encoding, encoding.kind)) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "invalid DataTrack frame encoding");
+		}
+		if (LKC_HAS_FIELD(source, lk_data_track_publish_options_t, custom_frame_encoding) &&
+		    source->custom_frame_encoding != nullptr) {
+			encoding.custom = source->custom_frame_encoding;
+		}
+		if (encoding.kind == core::DataTrackFrameEncodingKind::Custom && encoding.custom.empty()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "custom DataTrack frame encoding is required");
+		}
+		result.frame_encoding = std::move(encoding);
+	}
+	if (LKC_HAS_FIELD(source, lk_data_track_publish_options_t, has_schema) && source->has_schema) {
+		if (!LKC_HAS_FIELD(source, lk_data_track_publish_options_t, schema)) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "DataTrack schema is missing from publish options");
+		}
+		core::DataTrackSchemaId schema;
+		const auto error = ToCoreDataTrackSchemaId(&source->schema, schema);
+		if (error != LK_DATA_TRACK_ERROR_NONE) {
+			return error;
+		}
+		result.schema = std::move(schema);
+	}
+	return LK_DATA_TRACK_ERROR_NONE;
+}
+
+lk_data_track_error_code_t
+ToCoreDataTrackSubscriptionOptions(const lk_data_track_subscription_options_t* source,
+                                   core::DataTrackSubscriptionOptions& result) {
+	if (source == nullptr) {
+		return LK_DATA_TRACK_ERROR_NONE;
+	}
+	if (source->struct_size < sizeof(source->struct_size)) {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+		                        "invalid DataTrack subscription options struct size");
+	}
+	if (LKC_HAS_FIELD(source, lk_data_track_subscription_options_t, has_target_fps) &&
+	    source->has_target_fps) {
+		if (!LKC_HAS_FIELD(source, lk_data_track_subscription_options_t, target_fps) ||
+		    source->target_fps == 0) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "DataTrack target FPS must be greater than zero");
+		}
+		result.target_fps = source->target_fps;
+	}
+	if (LKC_HAS_FIELD(source, lk_data_track_subscription_options_t, buffer_capacity)) {
+		result.buffer_capacity = source->buffer_capacity;
+	}
+	if (LKC_HAS_FIELD(source, lk_data_track_subscription_options_t, max_partial_frames)) {
+		result.max_partial_frames = source->max_partial_frames;
+	}
+	if (result.buffer_capacity == 0 || result.max_partial_frames == 0) {
+		return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+		                        "DataTrack reader capacities must be greater than zero");
+	}
+	return LK_DATA_TRACK_ERROR_NONE;
+}
 
 core::TrackSource ToCoreTrackSource(lk_track_source_t source) {
 	switch (source) {
@@ -686,6 +987,33 @@ struct OwnedParticipantInfo {
 	lk_participant_info_t info{};
 };
 
+struct OwnedDataTrackInfo {
+	explicit OwnedDataTrackInfo(core::DataTrackInterface* track) {
+		if (track == nullptr) {
+			return;
+		}
+		value = track->Info();
+		const auto* frame_encoding = value.frame_encoding ? &*value.frame_encoding : nullptr;
+		const auto* schema = value.schema ? &*value.schema : nullptr;
+		info = {value.publisher_handle,
+		        value.sid.c_str(),
+		        value.name.c_str(),
+		        value.uses_e2ee ? 1 : 0,
+		        frame_encoding != nullptr ? 1 : 0,
+		        frame_encoding != nullptr ? ToCDataTrackFrameEncoding(frame_encoding->kind)
+		                                  : LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED,
+		        frame_encoding != nullptr ? frame_encoding->custom.c_str() : "",
+		        schema != nullptr ? 1 : 0,
+		        schema != nullptr ? schema->name.c_str() : "",
+		        schema != nullptr ? ToCDataTrackSchemaEncoding(schema->encoding.kind)
+		                          : LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED,
+		        schema != nullptr ? schema->encoding.custom.c_str() : ""};
+	}
+
+	core::DataTrackInfo value;
+	lk_data_track_info_t info{};
+};
+
 struct OwnedParticipantPermissions {
 	explicit OwnedParticipantPermissions(const core::ParticipantPermissions& source) {
 		publish_sources.reserve(source.can_publish_sources.size());
@@ -915,6 +1243,46 @@ public:
 		            participant);
 	}
 
+	void OnParticipantMetadataChanged(const std::string& previous_metadata,
+	                                  core::ParticipantInterface* participant) override {
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_metadata_changed != nullptr) {
+				callbacks.on_participant_metadata_changed(callbacks.user_data, owner_,
+				                                          previous_metadata.c_str(),
+				                                          &owned_participant.info);
+			}
+		});
+	}
+
+	void OnParticipantNameChanged(const std::string& name,
+	                              core::ParticipantInterface* participant) override {
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_name_changed != nullptr) {
+				callbacks.on_participant_name_changed(callbacks.user_data, owner_, name.c_str(),
+				                                      &owned_participant.info);
+			}
+		});
+	}
+
+	void OnParticipantAttributesChanged(const std::map<std::string, std::string>& changes,
+	                                    core::ParticipantInterface* participant) override {
+		std::vector<lk_attribute_t> converted;
+		converted.reserve(changes.size());
+		for (const auto& [key, value] : changes) {
+			converted.push_back({key.c_str(), value.c_str()});
+		}
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participant_attributes_changed != nullptr) {
+				callbacks.on_participant_attributes_changed(callbacks.user_data, owner_,
+				                                            converted.data(), converted.size(),
+				                                            &owned_participant.info);
+			}
+		});
+	}
+
 	void OnParticipantPermissionsChanged(const core::ParticipantPermissions& previous_permissions,
 	                                     core::ParticipantInterface* participant) override {
 		OwnedParticipantPermissions previous(previous_permissions);
@@ -1008,6 +1376,46 @@ public:
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_encryption_state_changed != nullptr) {
 				callbacks.on_encryption_state_changed(callbacks.user_data, owner_, &state);
+			}
+		});
+	}
+
+	void OnDataTrackPublished(core::RemoteDataTrackInterface* track,
+	                          core::RemoteParticipantInterface* participant) override {
+		DataTrack(callbacks_member(&lk_room_callbacks_t::on_data_track_published), track,
+		          participant);
+	}
+
+	void OnDataTrackUnpublished(core::DataTrackInterface* track,
+	                            core::RemoteParticipantInterface* participant) override {
+		DataTrack(callbacks_member(&lk_room_callbacks_t::on_data_track_unpublished), track,
+		          participant);
+	}
+
+	void OnLocalDataTrackPublished(core::LocalDataTrackInterface* track,
+	                               core::ParticipantInterface* participant) override {
+		DataTrack(callbacks_member(&lk_room_callbacks_t::on_local_data_track_published), track,
+		          participant);
+	}
+
+	void OnLocalDataTrackUnpublished(core::LocalDataTrackInterface* track,
+	                                 core::ParticipantInterface* participant) override {
+		DataTrack(callbacks_member(&lk_room_callbacks_t::on_local_data_track_unpublished), track,
+		          participant);
+	}
+
+	void OnDataTrackFrame(core::RemoteDataTrackInterface* track,
+	                      core::RemoteParticipantInterface* participant,
+	                      const core::DataTrackFrame& frame) override {
+		OwnedDataTrackInfo owned_track(track);
+		OwnedParticipantInfo owned_participant(participant);
+		const lk_data_track_frame_view_t view{frame.payload.data(), frame.payload.size(),
+		                                      frame.user_timestamp.has_value() ? 1 : 0,
+		                                      frame.user_timestamp.value_or(0)};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_data_track_frame != nullptr) {
+				callbacks.on_data_track_frame(callbacks.user_data, owner_, &owned_track.info,
+				                              &owned_participant.info, &view);
 			}
 		});
 	}
@@ -1393,6 +1801,18 @@ private:
 		});
 	}
 
+	void DataTrack(lk_data_track_event_callback lk_room_callbacks_t::*callback,
+	               core::DataTrackInterface* track, core::ParticipantInterface* participant) {
+		OwnedDataTrackInfo owned_track(track);
+		OwnedParticipantInfo owned_participant(participant);
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.*callback != nullptr) {
+				(callbacks.*callback)(callbacks.user_data, owner_, &owned_track.info,
+				                      &owned_participant.info);
+			}
+		});
+	}
+
 	lk_room_t* owner_;
 };
 
@@ -1726,6 +2146,37 @@ void lk_data_publish_options_init(lk_data_publish_options_t* options) {
 	}
 }
 
+void lk_data_track_schema_id_init(lk_data_track_schema_id_t* schema_id) {
+	if (schema_id != nullptr) {
+		*schema_id = {};
+		schema_id->struct_size = sizeof(*schema_id);
+	}
+}
+
+void lk_data_track_publish_options_init(lk_data_track_publish_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		lk_data_track_schema_id_init(&options->schema);
+	}
+}
+
+void lk_data_track_subscription_options_init(lk_data_track_subscription_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->buffer_capacity = 16;
+		options->max_partial_frames = 1;
+	}
+}
+
+void lk_data_track_snapshot_info_init(lk_data_track_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
 void lk_file_send_options_init(lk_file_send_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -1859,6 +2310,15 @@ void lk_room_destroy(lk_room_t* room) {
 				}
 			}
 			room->local_tracks.clear();
+		}
+		{
+			std::lock_guard<std::mutex> guard(room->local_data_tracks_mutex);
+			for (auto* track : room->local_data_tracks) {
+				if (track != nullptr) {
+					track->owner = nullptr;
+				}
+			}
+			room->local_data_tracks.clear();
 		}
 		{ std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex); }
 		delete room;
@@ -3719,6 +4179,385 @@ lk_status_t lk_room_publish_data(lk_room_t* room, const uint8_t* data, size_t da
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to publish data");
 	});
+}
+
+lk_data_track_error_code_t
+lk_room_store_data_track_schema(lk_room_t* room, const lk_data_track_schema_id_t* schema_id,
+                                const uint8_t* definition, size_t definition_size) {
+	return DataTrackGuard([&] {
+		if (room == nullptr || room->room == nullptr ||
+		    (definition == nullptr && definition_size != 0)) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "room and valid schema definition are required");
+		}
+		core::DataTrackSchema schema;
+		const auto id_error = ToCoreDataTrackSchemaId(schema_id, schema.id);
+		if (id_error != LK_DATA_TRACK_ERROR_NONE) {
+			return id_error;
+		}
+		if (definition_size != 0) {
+			schema.definition.assign(definition, definition + definition_size);
+		}
+		return ToCDataTrackError(room->room->StoreDataTrackSchema(std::move(schema)));
+	});
+}
+
+lk_data_track_error_code_t lk_room_get_data_track_schema(lk_room_t* room,
+                                                         const char* participant_identity,
+                                                         const lk_data_track_schema_id_t* schema_id,
+                                                         lk_data_track_schema_t** schema) {
+	return DataTrackGuard([&] {
+		if (schema == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "DataTrack schema output is required");
+		}
+		*schema = nullptr;
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0') {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "room and participant identity are required");
+		}
+		core::DataTrackSchemaId core_id;
+		const auto id_error = ToCoreDataTrackSchemaId(schema_id, core_id);
+		if (id_error != LK_DATA_TRACK_ERROR_NONE) {
+			return id_error;
+		}
+		auto result = room->room->GetDataTrackSchema(participant_identity, std::move(core_id));
+		if (!result) {
+			return ToCDataTrackError(std::move(result.error));
+		}
+		auto output = std::make_unique<lk_data_track_schema_t>();
+		output->schema = std::move(*result.schema);
+		*schema = output.release();
+		return LK_DATA_TRACK_ERROR_NONE;
+	});
+}
+
+void lk_data_track_schema_destroy(lk_data_track_schema_t* schema) { delete schema; }
+
+size_t lk_data_track_schema_name(const lk_data_track_schema_t* schema, char* buffer,
+                                 size_t buffer_size) {
+	return SizeGuard([&] {
+		return schema != nullptr ? CopyString(schema->schema.id.name, buffer, buffer_size)
+		                         : InvalidSizeResult("DataTrack schema is required");
+	});
+}
+
+lk_data_track_schema_encoding_t
+lk_data_track_schema_encoding(const lk_data_track_schema_t* schema) {
+	return schema != nullptr ? ToCDataTrackSchemaEncoding(schema->schema.id.encoding.kind)
+	                         : LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED;
+}
+
+size_t lk_data_track_schema_custom_encoding(const lk_data_track_schema_t* schema, char* buffer,
+                                            size_t buffer_size) {
+	return SizeGuard([&] {
+		return schema != nullptr
+		           ? CopyString(schema->schema.id.encoding.custom, buffer, buffer_size)
+		           : InvalidSizeResult("DataTrack schema is required");
+	});
+}
+
+size_t lk_data_track_schema_definition(const lk_data_track_schema_t* schema, uint8_t* buffer,
+                                       size_t buffer_size) {
+	return SizeGuard([&] {
+		return schema != nullptr ? CopyBytes(schema->schema.definition, buffer, buffer_size)
+		                         : InvalidSizeResult("DataTrack schema is required");
+	});
+}
+
+lk_data_track_error_code_t
+lk_room_publish_data_track(lk_room_t* room, const lk_data_track_publish_options_t* options,
+                           lk_local_data_track_t** track) {
+	return DataTrackGuard([&] {
+		if (track == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "local DataTrack output is required");
+		}
+		*track = nullptr;
+		auto* participant = LocalParticipant(room);
+		if (participant == nullptr || room == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_DISCONNECTED,
+			                        "room is unavailable or disconnected");
+		}
+		core::DataTrackPublishOptions publish_options;
+		const auto options_error = ToCoreDataTrackPublishOptions(options, publish_options);
+		if (options_error != LK_DATA_TRACK_ERROR_NONE) {
+			return options_error;
+		}
+		auto published = participant->PublishDataTrack(std::move(publish_options));
+		if (!published) {
+			return ToCDataTrackError(std::move(published.error));
+		}
+		auto output = std::make_unique<lk_local_data_track_t>();
+		output->track = std::move(published.track);
+		output->owner = room;
+		output->room_state = room->state;
+		{
+			std::lock_guard<std::mutex> guard(room->local_data_tracks_mutex);
+			room->local_data_tracks.push_back(output.get());
+		}
+		*track = output.release();
+		return LK_DATA_TRACK_ERROR_NONE;
+	});
+}
+
+lk_data_track_error_code_t lk_local_data_track_try_push(lk_local_data_track_t* track,
+                                                        const uint8_t* data, size_t data_size,
+                                                        int has_user_timestamp,
+                                                        uint64_t user_timestamp) {
+	return DataTrackGuard([&] {
+		if (track == nullptr || track->track == nullptr || (data == nullptr && data_size != 0)) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "local DataTrack and valid frame data are required");
+		}
+		if (track->room_state == nullptr || !track->room_state->alive.load()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_DISCONNECTED,
+			                        "DataTrack room has been destroyed");
+		}
+		core::DataTrackFrame frame;
+		if (data_size != 0) {
+			frame.payload.assign(data, data + data_size);
+		}
+		if (has_user_timestamp) {
+			frame.user_timestamp = user_timestamp;
+		}
+		return ToCDataTrackError(track->track->TryPush(frame));
+	});
+}
+
+lk_data_track_error_code_t lk_local_data_track_unpublish(lk_local_data_track_t* track) {
+	return DataTrackGuard([&] {
+		if (track == nullptr || track->track == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "local DataTrack is required");
+		}
+		if (track->room_state == nullptr || !track->room_state->alive.load()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_DISCONNECTED,
+			                        "DataTrack room has been destroyed");
+		}
+		return ToCDataTrackError(track->track->Unpublish());
+	});
+}
+
+lk_data_track_error_code_t lk_local_data_track_destroy(lk_local_data_track_t* track) {
+	return DataTrackGuard([&] {
+		if (track == nullptr) {
+			return LK_DATA_TRACK_ERROR_NONE;
+		}
+		if (track->track != nullptr && track->track->IsPublished() &&
+		    track->room_state != nullptr && track->room_state->alive.load() &&
+		    track->room_state->connected.load()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_NOT_ALLOWED,
+			                        "unpublish the DataTrack before destroying its handle");
+		}
+		if (track->owner != nullptr && track->room_state != nullptr &&
+		    track->room_state->alive.load()) {
+			std::lock_guard<std::mutex> guard(track->owner->local_data_tracks_mutex);
+			auto& tracks = track->owner->local_data_tracks;
+			tracks.erase(std::remove(tracks.begin(), tracks.end(), track), tracks.end());
+		}
+		delete track;
+		return LK_DATA_TRACK_ERROR_NONE;
+	});
+}
+
+int lk_local_data_track_is_published(const lk_local_data_track_t* track) {
+	return track != nullptr && track->track != nullptr && track->track->IsPublished();
+}
+
+lk_status_t lk_local_data_track_info(const lk_local_data_track_t* track,
+                                     lk_data_track_snapshot_info_t* info) {
+	return Guard([&] {
+		if (track == nullptr || track->track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "local DataTrack is required");
+		}
+		const auto source = track->track->Info();
+		const lk_data_track_snapshot_info_t converted{
+		    sizeof(converted),
+		    source.publisher_handle,
+		    source.uses_e2ee ? 1 : 0,
+		    source.frame_encoding.has_value() ? 1 : 0,
+		    source.frame_encoding ? ToCDataTrackFrameEncoding(source.frame_encoding->kind)
+		                          : LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED,
+		    source.schema.has_value() ? 1 : 0,
+		    source.schema ? ToCDataTrackSchemaEncoding(source.schema->encoding.kind)
+		                  : LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED};
+		return CopyOutputStruct(converted, info, "initialized DataTrack info is required");
+	});
+}
+
+size_t lk_local_data_track_sid(const lk_local_data_track_t* track, char* buffer,
+                               size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr && track->track != nullptr
+		           ? CopyString(track->track->Info().sid, buffer, buffer_size)
+		           : InvalidSizeResult("local DataTrack is required");
+	});
+}
+
+size_t lk_local_data_track_name(const lk_local_data_track_t* track, char* buffer,
+                                size_t buffer_size) {
+	return SizeGuard([&] {
+		return track != nullptr && track->track != nullptr
+		           ? CopyString(track->track->Info().name, buffer, buffer_size)
+		           : InvalidSizeResult("local DataTrack is required");
+	});
+}
+
+size_t lk_local_data_track_custom_frame_encoding(const lk_local_data_track_t* track, char* buffer,
+                                                 size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr || track->track == nullptr) {
+			return InvalidSizeResult("local DataTrack is required");
+		}
+		const auto info = track->track->Info();
+		return CopyString(info.frame_encoding ? info.frame_encoding->custom : std::string{}, buffer,
+		                  buffer_size);
+	});
+}
+
+size_t lk_local_data_track_schema_name(const lk_local_data_track_t* track, char* buffer,
+                                       size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr || track->track == nullptr) {
+			return InvalidSizeResult("local DataTrack is required");
+		}
+		const auto info = track->track->Info();
+		return CopyString(info.schema ? info.schema->name : std::string{}, buffer, buffer_size);
+	});
+}
+
+size_t lk_local_data_track_custom_schema_encoding(const lk_local_data_track_t* track, char* buffer,
+                                                  size_t buffer_size) {
+	return SizeGuard([&] {
+		if (track == nullptr || track->track == nullptr) {
+			return InvalidSizeResult("local DataTrack is required");
+		}
+		const auto info = track->track->Info();
+		return CopyString(info.schema ? info.schema->encoding.custom : std::string{}, buffer,
+		                  buffer_size);
+	});
+}
+
+lk_data_track_error_code_t lk_room_subscribe_data_track(
+    lk_room_t* room, const char* participant_identity, const char* track_sid,
+    const lk_data_track_subscription_options_t* options, lk_data_track_reader_t** reader) {
+	return DataTrackGuard([&] {
+		if (reader == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "DataTrack reader output is required");
+		}
+		*reader = nullptr;
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0' || track_sid == nullptr || *track_sid == '\0') {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                        "room, participant identity, and DataTrack SID are required");
+		}
+		if (!room->room->IsConnected()) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_DISCONNECTED, "room is disconnected");
+		}
+		core::DataTrackSubscriptionOptions subscription_options;
+		const auto options_error =
+		    ToCoreDataTrackSubscriptionOptions(options, subscription_options);
+		if (options_error != LK_DATA_TRACK_ERROR_NONE) {
+			return options_error;
+		}
+		auto* participant = room->room->GetRemoteParticipantByIdentity(participant_identity);
+		auto* track = participant != nullptr ? dynamic_cast<core::RemoteDataTrackInterface*>(
+		                                           participant->GetDataTrackBySid(track_sid))
+		                                     : nullptr;
+		if (track == nullptr) {
+			return DataTrackFailure(LK_DATA_TRACK_ERROR_NOT_FOUND,
+			                        "remote participant or DataTrack was not found");
+		}
+		auto subscribed = track->Subscribe(subscription_options);
+		if (!subscribed) {
+			return DataTrackFailure(track->IsPublished() ? LK_DATA_TRACK_ERROR_SEND_FAILED
+			                                             : LK_DATA_TRACK_ERROR_UNPUBLISHED,
+			                        "failed to subscribe to remote DataTrack");
+		}
+		auto output = std::make_unique<lk_data_track_reader_t>();
+		output->reader = std::move(subscribed);
+		*reader = output.release();
+		return LK_DATA_TRACK_ERROR_NONE;
+	});
+}
+
+void lk_data_track_reader_destroy(lk_data_track_reader_t* reader) { delete reader; }
+
+void lk_data_track_reader_close(lk_data_track_reader_t* reader) {
+	if (reader != nullptr && reader->reader != nullptr) {
+		reader->reader->Close();
+	}
+}
+
+int lk_data_track_reader_is_closed(const lk_data_track_reader_t* reader) {
+	return reader == nullptr || reader->reader == nullptr || reader->reader->IsClosed();
+}
+
+size_t lk_data_track_reader_dropped_frames(const lk_data_track_reader_t* reader) {
+	return reader != nullptr && reader->reader != nullptr ? reader->reader->DroppedFrames() : 0;
+}
+
+static lk_data_track_read_status_t ReadDataTrackFrame(lk_data_track_reader_t* reader,
+                                                      lk_data_track_frame_t** frame, bool wait,
+                                                      uint32_t timeout_ms) {
+	try {
+		last_error.clear();
+		if (frame == nullptr || reader == nullptr || reader->reader == nullptr) {
+			SetError("DataTrack reader and frame output are required");
+			return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
+		}
+		*frame = nullptr;
+		core::DataTrackFrame value;
+		const bool received =
+		    wait ? reader->reader->ReadFor(value, std::chrono::milliseconds(timeout_ms))
+		         : reader->reader->TryRead(value);
+		if (!received) {
+			return reader->reader->IsClosed() ? LK_DATA_TRACK_READ_CLOSED
+			                                  : LK_DATA_TRACK_READ_EMPTY;
+		}
+		auto output = std::make_unique<lk_data_track_frame_t>();
+		output->frame = std::move(value);
+		*frame = output.release();
+		return LK_DATA_TRACK_READ_FRAME;
+	} catch (const std::exception& exception) {
+		SetError(exception.what());
+		return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
+	} catch (...) {
+		SetError("unknown C++ exception");
+		return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
+	}
+}
+
+lk_data_track_read_status_t lk_data_track_reader_try_read(lk_data_track_reader_t* reader,
+                                                          lk_data_track_frame_t** frame) {
+	return ReadDataTrackFrame(reader, frame, false, 0);
+}
+
+lk_data_track_read_status_t lk_data_track_reader_read_for(lk_data_track_reader_t* reader,
+                                                          uint32_t timeout_ms,
+                                                          lk_data_track_frame_t** frame) {
+	return ReadDataTrackFrame(reader, frame, true, timeout_ms);
+}
+
+void lk_data_track_frame_destroy(lk_data_track_frame_t* frame) { delete frame; }
+
+size_t lk_data_track_frame_data(const lk_data_track_frame_t* frame, uint8_t* buffer,
+                                size_t buffer_size) {
+	return SizeGuard([&] {
+		return frame != nullptr ? CopyBytes(frame->frame.payload, buffer, buffer_size)
+		                        : InvalidSizeResult("DataTrack frame is required");
+	});
+}
+
+int lk_data_track_frame_has_user_timestamp(const lk_data_track_frame_t* frame) {
+	return frame != nullptr && frame->frame.user_timestamp.has_value();
+}
+
+uint64_t lk_data_track_frame_user_timestamp(const lk_data_track_frame_t* frame) {
+	return frame != nullptr ? frame->frame.user_timestamp.value_or(0) : 0;
 }
 
 lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit) {
