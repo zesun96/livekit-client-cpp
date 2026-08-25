@@ -79,6 +79,25 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(encoding.max_bitrate, 0u);
 	EXPECT_FLOAT_EQ(encoding.max_framerate, 0.0F);
 
+	lk_e2ee_options_t e2ee;
+	lk_e2ee_options_init(&e2ee);
+	EXPECT_EQ(e2ee.struct_size, sizeof(e2ee));
+	EXPECT_EQ(e2ee.enabled, 1);
+	EXPECT_EQ(e2ee.shared_key, nullptr);
+	EXPECT_EQ(e2ee.shared_key_size, 0u);
+	EXPECT_EQ(e2ee.ratchet_salt, nullptr);
+	EXPECT_EQ(e2ee.ratchet_window_size, 16u);
+	EXPECT_EQ(e2ee.failure_tolerance, -1);
+	EXPECT_EQ(e2ee.key_ring_size, 16u);
+	EXPECT_EQ(e2ee.key_derivation, LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256);
+
+	lk_frame_cryptor_info_t cryptor;
+	lk_frame_cryptor_info_init(&cryptor);
+	EXPECT_EQ(cryptor.struct_size, sizeof(cryptor));
+	EXPECT_EQ(cryptor.kind, LK_TRACK_KIND_UNKNOWN);
+	EXPECT_EQ(cryptor.direction, LK_FRAME_CRYPTOR_DIRECTION_SENDER);
+	EXPECT_EQ(cryptor.state, LK_FRAME_CRYPTOR_STATE_NEW);
+
 	lk_file_send_options_t file;
 	lk_file_send_options_init(&file);
 	EXPECT_EQ(file.struct_size, sizeof(file));
@@ -330,6 +349,7 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_NE(std::strlen(lk_last_error()), 0u);
 	EXPECT_EQ(lk_room_connect(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_connect_e2ee(nullptr, nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_capture_frame(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_capture_i420(nullptr, nullptr, 0, 0, 0, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
@@ -367,6 +387,16 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_FLOAT_EQ(lk_room_speaker_volume(nullptr), 0.0F);
 	EXPECT_EQ(lk_room_set_speaker_muted(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_FALSE(lk_room_speaker_is_muted(nullptr));
+	EXPECT_FALSE(lk_room_e2ee_is_configured(nullptr));
+	EXPECT_FALSE(lk_room_e2ee_is_enabled(nullptr));
+	EXPECT_EQ(lk_room_e2ee_set_enabled(nullptr, 1), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_e2ee_set_shared_key(nullptr, nullptr, 0, 0), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_e2ee_export_shared_key(nullptr, 0, nullptr, 0), 0u);
+	EXPECT_EQ(lk_room_e2ee_set_data_key_index(nullptr, 0), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_room_e2ee_set_frame_cryptor_enabled(nullptr, nullptr,
+	                                                 LK_FRAME_CRYPTOR_DIRECTION_SENDER, 1),
+	          LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(lk_frame_cryptor_list_create(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	lk_audio_playback_stats_t playback_stats;
 	lk_audio_playback_stats_init(&playback_stats);
 	EXPECT_EQ(lk_room_audio_playback_stats(nullptr, &playback_stats), LK_STATUS_INVALID_ARGUMENT);
@@ -388,6 +418,14 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
 	EXPECT_EQ(lk_room_set_audio_output_device(room, "missing"), LK_STATUS_OPERATION_FAILED);
+	lk_e2ee_options_t invalid_e2ee;
+	lk_e2ee_options_init(&invalid_e2ee);
+	invalid_e2ee.key_ring_size = 0;
+	EXPECT_EQ(lk_room_connect_e2ee(room, "http://127.0.0.1/rtc", "token", &invalid_e2ee),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_frame_cryptor_list_t* unconfigured_cryptors = nullptr;
+	EXPECT_EQ(lk_frame_cryptor_list_create(room, &unconfigured_cryptors), LK_STATUS_INVALID_STATE);
+	EXPECT_EQ(unconfigured_cryptors, nullptr);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, -0.1F), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, 1.1F), LK_STATUS_INVALID_ARGUMENT);
 	lk_audio_playback_stats_t playback_stats;
@@ -426,6 +464,7 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_participant_permissions_changed, nullptr);
 	EXPECT_EQ(callbacks.on_local_track_subscribed, nullptr);
 	EXPECT_EQ(callbacks.on_subscribed_quality_update, nullptr);
+	EXPECT_EQ(callbacks.on_encryption_state_changed, nullptr);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);

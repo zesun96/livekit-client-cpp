@@ -41,7 +41,7 @@ Because webrtc requires C++20.
 - [x] Incremental text/byte stream writers and topic-scoped chunk handlers
 - [x] Bounded DataChannel backpressure with high/low-water events
 - [x] Participant RPC with ACK/response timeouts, standard errors, and C API support
-- [x] Pure C++ E2EE for media and data, with key rotation and reconnect recovery
+- [x] Pure C++ E2EE for media and data, with C++/C APIs, key rotation, and reconnect recovery
 
 ## Dependencies
 

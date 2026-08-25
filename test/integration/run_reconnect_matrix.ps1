@@ -374,6 +374,7 @@ try {
   }
 
   if ($Scenario -in @("All", "E2EE")) {
+    Invoke-SimpleTest "CApiEncryptsAudioAndDataAndControlsKeys"
     Invoke-SimpleTest "EncryptsAudioVideoAndDataEndToEnd"
     Invoke-SimpleTest "PreservesE2EEAfterPublisherAndSubscriberReconnect"
     Invoke-SimpleTest "ReportsAndRecoversFromE2EEKeyErrors"

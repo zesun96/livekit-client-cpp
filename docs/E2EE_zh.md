@@ -22,6 +22,17 @@ auto room = livekit::core::CreateRoomUnique();
 room->Connect(url, token, options);
 ```
 
+稳定 C ABI 在连接时配置同一套 AES-GCM 实现；SDK 会在调用期间复制所有字节缓冲区。
+
+```c
+lk_e2ee_options_t e2ee;
+lk_e2ee_options_init(&e2ee);
+e2ee.shared_key = key_bytes;
+e2ee.shared_key_size = key_size;
+
+lk_room_connect_e2ee(room, url, token, &e2ee);
+```
+
 `RoomOptions::e2ee` 未设置或加密类型为 `EncryptionType::None` 时不启用 E2EE。
 `EncryptionType::Custom` 当前会被明确拒绝，不会静默降级为明文。
 
@@ -53,11 +64,20 @@ ratchet window 内尝试前向派生。`FrameCryptors()` 返回独立值快照�
 运行时关闭或重新启用 E2EE 会重新发布已有本地轨道，以保证信令声明与媒体加密状态一致。应把
 它视为可见的房间状态切换，而不是逐包开关。
 
+C API 通过 `lk_room_e2ee_*` 函数提供对应的 Room 所有操作，包括共享密钥和参与者密钥、导出与
+ratchet、媒体和数据密钥槽位、按 cryptor/参与者启停及全局启停。调用
+`lk_frame_cryptor_list_create()` 可获得独立值快照，使用完毕后必须调用
+`lk_frame_cryptor_list_destroy()`。密钥导出函数返回所需字节数，使用与字符串 getter 相同的
+两阶段缓冲区约定。
+
 ## 状态事件
 
 应用可实现 `RoomEventInterface::OnEncryptionStateChanged`，或直接设置
 `E2EEManager::SetStateCallback`。状态包括成功、缺少密钥、加密失败、解密失败、自动 ratchet
 成功和内部错误。回调可能来自 E2EE 工作线程，不应在回调中执行长时间阻塞操作。
+
+C 应用通过 `lk_room_callbacks_t::on_encryption_state_changed` 接收同样的借用事件；事件及其中的
+字符串只在回调期间有效。
 
 ## 覆盖范围
 
@@ -79,6 +99,9 @@ VP8、H264 或 AV1 视频、数据、信令加密元数据、状态事件、媒�
 再切回，以及在线共享密钥轮换。配套测试还会验证 publisher 的 full/media reconnect、
 subscriber 的 signal resume、缺失密钥、错误密钥以及设置正确密钥后的恢复。三个 codec 均已在
 Windows x64 的 LiveKit Server 1.13.5 上通过验证。
+
+`LiveKitServerTest.CApiEncryptsAudioAndDataAndControlsKeys` 使用真实房间验证 C ABI 的加密音频、
+数据、共享/参与者密钥、密钥槽位、状态回调和 cryptor 快照。
 
 `LiveKitServerTest.InteroperatesWithOfficialJsE2EEPeer` 和
 `test/integration/run_js_e2ee_interop.mjs` 还会验证：官方 JS SDK 2.21.0 可以解密本 SDK 的

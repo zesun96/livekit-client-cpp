@@ -203,6 +203,15 @@ static void on_metrics(void* user_data, lk_room_t* room, const lk_metrics_receiv
 	       event->event_count, event->participant_identity);
 }
 
+static void on_encryption_state(void* user_data, lk_room_t* room,
+                                const lk_encryption_state_t* state) {
+	(void)user_data;
+	(void)room;
+	printf("E2EE state: track=%s, participant=%s, direction=%d, key=%zu, state=%d\n",
+	       state->track_id, state->participant_identity, (int)state->direction, state->key_index,
+	       (int)state->state);
+}
+
 static void on_stream_complete(void* user_data, const lk_data_stream_completion_t* completion) {
 	(void)user_data;
 	printf("Data stream completed: id=%s, status=%d, bytes=%llu, reason=%s\n",
@@ -308,6 +317,7 @@ int main(int argc, char** argv) {
 	callbacks.on_transcription_received = on_transcription;
 	callbacks.on_recording_status_changed = on_recording_status;
 	callbacks.on_metrics_received = on_metrics;
+	callbacks.on_encryption_state_changed = on_encryption_state;
 	lk_room_set_callbacks(room, &callbacks);
 	{
 		const char* allowed_subscriber = getenv("LIVEKIT_ALLOWED_SUBSCRIBER");
@@ -330,7 +340,18 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "Text stream registration failed: %s\n", lk_last_error());
 	}
 
-	if (lk_room_connect(room, url, token) != LK_STATUS_OK) {
+	const char* e2ee_key = getenv("LIVEKIT_E2EE_KEY");
+	lk_status_t connect_status;
+	if (e2ee_key != NULL && e2ee_key[0] != '\0') {
+		lk_e2ee_options_t e2ee;
+		lk_e2ee_options_init(&e2ee);
+		e2ee.shared_key = (const uint8_t*)e2ee_key;
+		e2ee.shared_key_size = strlen(e2ee_key);
+		connect_status = lk_room_connect_e2ee(room, url, token, &e2ee);
+	} else {
+		connect_status = lk_room_connect(room, url, token);
+	}
+	if (connect_status != LK_STATUS_OK) {
 		fprintf(stderr, "Connection failed: %s\n", lk_last_error());
 		lk_room_destroy(room);
 		lk_shutdown();
