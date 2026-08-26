@@ -1297,6 +1297,24 @@ std::vector<std::string> DestinationIdentities(const char* const* identities, si
 	return result;
 }
 
+std::vector<const char*> StringViews(const std::vector<std::string>& values) {
+	std::vector<const char*> result;
+	result.reserve(values.size());
+	for (const auto& value : values) {
+		result.push_back(value.c_str());
+	}
+	return result;
+}
+
+std::vector<lk_attribute_t> AttributeViews(const std::map<std::string, std::string>& attributes) {
+	std::vector<lk_attribute_t> result;
+	result.reserve(attributes.size());
+	for (const auto& [key, value] : attributes) {
+		result.push_back({key.c_str(), value.c_str()});
+	}
+	return result;
+}
+
 bool CopyAttributes(const lk_attribute_t* attributes, size_t count,
                     std::map<std::string, std::string>& result) {
 	if (count != 0 && attributes == nullptr) {
@@ -1401,11 +1419,7 @@ public:
 
 	void OnParticipantAttributesChanged(const std::map<std::string, std::string>& changes,
 	                                    core::ParticipantInterface* participant) override {
-		std::vector<lk_attribute_t> converted;
-		converted.reserve(changes.size());
-		for (const auto& [key, value] : changes) {
-			converted.push_back({key.c_str(), value.c_str()});
-		}
+		auto converted = AttributeViews(changes);
 		OwnedParticipantInfo owned_participant(participant);
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_participant_attributes_changed != nullptr) {
@@ -1807,12 +1821,18 @@ public:
 	}
 
 	void OnTextReceived(const core::TextReceivedEvent& event) override {
+		const auto attached_stream_ids = StringViews(event.attached_stream_ids);
+		const auto attributes = AttributeViews(event.attributes);
 		const lk_text_received_t c_event{event.stream_id.c_str(),
 		                                 event.text.c_str(),
 		                                 event.topic.c_str(),
 		                                 event.participant_identity.c_str(),
 		                                 event.reply_to_stream_id.c_str(),
-		                                 event.timestamp};
+		                                 event.timestamp,
+		                                 attached_stream_ids.data(),
+		                                 attached_stream_ids.size(),
+		                                 attributes.data(),
+		                                 attributes.size()};
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_text_received != nullptr) {
 				callbacks.on_text_received(callbacks.user_data, owner_, &c_event);
@@ -1831,13 +1851,17 @@ public:
 private:
 	void File(lk_file_received_callback lk_room_callbacks_t::*callback,
 	          const core::FileReceivedEvent& event) {
+		const auto attributes = AttributeViews(event.attributes);
 		const lk_file_received_t c_event{event.data.data(),
 		                                 event.data.size(),
 		                                 event.stream_id.c_str(),
 		                                 event.name.c_str(),
 		                                 event.mime_type.c_str(),
 		                                 event.topic.c_str(),
-		                                 event.participant_identity.c_str()};
+		                                 event.participant_identity.c_str(),
+		                                 attributes.data(),
+		                                 attributes.size(),
+		                                 event.timestamp};
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.*callback != nullptr) {
 				(callbacks.*callback)(callbacks.user_data, owner_, &c_event);
@@ -5476,6 +5500,8 @@ lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* to
 		const bool registered = room->room->RegisterTextStreamHandler(
 		    topic, [room, handler, user_data](const core::TextStreamEvent& event) {
 			    std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex);
+			    const auto attributes = AttributeViews(event.info.attributes);
+			    const auto attached_stream_ids = StringViews(event.info.attached_stream_ids);
 			    const lk_text_stream_event_t converted{ToCDataStreamEventType(event.type),
 			                                           event.info.stream_id.c_str(),
 			                                           event.info.mime_type.c_str(),
@@ -5486,7 +5512,13 @@ lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* to
 			                                           event.chunk_index,
 			                                           event.info.total_size.has_value(),
 			                                           event.info.total_size.value_or(0),
-			                                           event.reason.c_str()};
+			                                           event.reason.c_str(),
+			                                           attributes.data(),
+			                                           attributes.size(),
+			                                           event.info.timestamp,
+			                                           event.info.reply_to_stream_id.c_str(),
+			                                           attached_stream_ids.data(),
+			                                           attached_stream_ids.size()};
 			    handler(user_data, room, &converted);
 		    });
 		return registered
@@ -5515,6 +5547,7 @@ lk_status_t lk_room_register_byte_stream_handler(lk_room_t* room, const char* to
 		const bool registered = room->room->RegisterByteStreamHandler(
 		    topic, [room, handler, user_data](const core::ByteStreamEvent& event) {
 			    std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex);
+			    const auto attributes = AttributeViews(event.info.attributes);
 			    const lk_byte_stream_event_t converted{ToCDataStreamEventType(event.type),
 			                                           event.info.stream_id.c_str(),
 			                                           event.info.name.c_str(),
@@ -5526,7 +5559,10 @@ lk_status_t lk_room_register_byte_stream_handler(lk_room_t* room, const char* to
 			                                           event.chunk_index,
 			                                           event.info.total_size.has_value(),
 			                                           event.info.total_size.value_or(0),
-			                                           event.reason.c_str()};
+			                                           event.reason.c_str(),
+			                                           attributes.data(),
+			                                           attributes.size(),
+			                                           event.info.timestamp};
 			    handler(user_data, room, &converted);
 		    });
 		return registered

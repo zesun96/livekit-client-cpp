@@ -402,6 +402,7 @@ try {
 
   if ($Scenario -in @("All", "CAPI")) {
     Invoke-SimpleTest "CApiReportsParticipantProfileChanges"
+    Invoke-SimpleTest "CApiPreservesDataStreamMetadata"
   }
 
   if ($Scenario -eq "OfficialCpp" -or
