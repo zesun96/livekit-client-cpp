@@ -17,6 +17,22 @@ static void sleep_ms(unsigned milliseconds) {
 }
 #endif
 
+static void print_last_error(const char* context) {
+	lk_error_info_t info;
+	lk_error_info_init(&info);
+	if (lk_last_error_info(&info) != LK_STATUS_OK) {
+		fprintf(stderr, "%s: %s\n", context, lk_last_error());
+		return;
+	}
+	char* message = info.message_size != 0 ? (char*)malloc(info.message_size) : NULL;
+	if (message != NULL) {
+		lk_last_error_message(message, info.message_size);
+	}
+	fprintf(stderr, "%s: domain=%d, code=%d, message=%s\n", context, (int)info.domain,
+	        (int)info.code, message != NULL ? message : lk_last_error());
+	free(message);
+}
+
 static const char* log_level_name(lk_log_level_t level) {
 	switch (level) {
 	case LK_LOG_LEVEL_TRACE:
@@ -458,7 +474,7 @@ int main(int argc, char** argv) {
 
 	lk_room_t* room = NULL;
 	if (lk_room_create(&room) != LK_STATUS_OK) {
-		fprintf(stderr, "Room creation failed: %s\n", lk_last_error());
+		print_last_error("Room creation failed");
 		shutdown_livekit();
 		return 1;
 	}
@@ -528,7 +544,7 @@ int main(int argc, char** argv) {
 		connect_status = lk_room_connect(room, url, token);
 	}
 	if (connect_status != LK_STATUS_OK) {
-		fprintf(stderr, "Connection failed: %s\n", lk_last_error());
+		print_last_error("Connection failed");
 		lk_room_destroy(room);
 		shutdown_livekit();
 		return 1;
