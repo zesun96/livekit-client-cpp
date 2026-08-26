@@ -12,8 +12,11 @@
  * must not be destroyed from one of its own callbacks.
  *
  * String getters return the required size including the trailing NUL. Pass NULL and zero to query
- * the size. All functions catch C++ exceptions; details for a failure on the current thread are
- * available through lk_last_error().
+ * the size; a short non-NULL buffer receives a NUL-terminated truncated value. Unless explicitly
+ * documented otherwise, destroy functions accept NULL and owned handles must be destroyed exactly
+ * once. All functions catch C++ exceptions. Failure details belong to the calling thread and
+ * remain valid until a later C API call updates that thread's error state. They are available
+ * through lk_last_error() or the structured lk_last_error_info()/lk_last_error_message() pair.
  */
 
 #include <stddef.h>
@@ -61,6 +64,20 @@ typedef enum lk_status {
 	LK_STATUS_OPERATION_FAILED = 3,
 	LK_STATUS_EXCEPTION = 4
 } lk_status_t;
+
+typedef enum lk_error_domain {
+	LK_ERROR_DOMAIN_NONE = 0,
+	LK_ERROR_DOMAIN_STATUS = 1,
+	LK_ERROR_DOMAIN_DATA_TRACK = 2
+} lk_error_domain_t;
+
+/* A value snapshot. Read its message with lk_last_error_message(). */
+typedef struct lk_error_info {
+	size_t struct_size;
+	lk_error_domain_t domain;
+	int32_t code;
+	size_t message_size;
+} lk_error_info_t;
 
 typedef enum lk_log_level {
 	LK_LOG_LEVEL_TRACE = 0,
@@ -659,6 +676,8 @@ typedef struct lk_data_stream_completion {
 	int has_total_size;
 	uint64_t total_size;
 	const char* reason;
+	lk_error_domain_t error_domain;
+	int32_t error_code;
 } lk_data_stream_completion_t;
 
 typedef struct lk_rpc_invocation {
@@ -677,12 +696,20 @@ typedef struct lk_rpc_handler_result {
 
 typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
                                                   const lk_rpc_invocation_t* invocation);
-/* The result is borrowed for the callback duration. Do not destroy the room from this callback. */
+/*
+ * Called at most once after successful scheduling. It is suppressed when the room is destroyed.
+ * The result is borrowed for the callback duration; use lk_rpc_result_clone() to retain it. Do not
+ * destroy the room from this callback.
+ */
 typedef void (*lk_rpc_completion_callback)(void* user_data, lk_room_t* room,
                                            const lk_rpc_result_t* result);
 typedef void (*lk_data_stream_progress_callback)(void* user_data, uint64_t bytes_sent,
                                                  int has_total_size, uint64_t total_size);
-/* Completion data is borrowed; destroy the writer only after this callback returns. */
+/*
+ * Called at most once for close, cancel, write failure, or destruction of an open writer.
+ * Completion data is borrowed; copy strings needed after return. Destroy the writer only after
+ * this callback returns.
+ */
 typedef void (*lk_data_stream_completion_callback)(void* user_data,
                                                    const lk_data_stream_completion_t* completion);
 typedef void (*lk_text_stream_handler)(void* user_data, lk_room_t* room,
@@ -1068,7 +1095,12 @@ typedef struct lk_remote_track_settings {
 LKC_API lk_status_t lk_init(void);
 LKC_API lk_status_t lk_shutdown(void);
 LKC_API size_t lk_version(char* buffer, size_t buffer_size);
+LKC_API void lk_error_info_init(lk_error_info_t* info);
+/* Compatibility view; the pointer is thread-local and invalidated when the error state changes. */
 LKC_API const char* lk_last_error(void);
+/* These accessors inspect the current thread's error without clearing it. */
+LKC_API lk_status_t lk_last_error_info(lk_error_info_t* info);
+LKC_API size_t lk_last_error_message(char* buffer, size_t buffer_size);
 
 LKC_API void lk_log_options_init(lk_log_options_t* options);
 LKC_API lk_status_t lk_log_set_options(const lk_log_options_t* options);
@@ -1502,6 +1534,8 @@ LKC_API lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_op
 LKC_API lk_status_t lk_room_perform_rpc_async(lk_room_t* room,
                                               const lk_rpc_perform_options_t* options,
                                               lk_rpc_completion_callback callback, void* user_data);
+LKC_API lk_status_t lk_rpc_result_clone(const lk_rpc_result_t* result,
+                                        lk_rpc_result_t** cloned_result);
 LKC_API void lk_rpc_result_destroy(lk_rpc_result_t* result);
 LKC_API int lk_rpc_result_ok(const lk_rpc_result_t* result);
 LKC_API size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer,

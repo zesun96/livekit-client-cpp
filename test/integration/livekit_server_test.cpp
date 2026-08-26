@@ -400,6 +400,22 @@ public:
 		}
 	}
 
+	void Completion(const lk_data_stream_completion_t* completion) {
+		if (completion == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		if (std::string_view(completion->stream_id) == "ST_c_api_text_completion") {
+			text_completion_status_ = completion->status;
+			text_completion_domain_ = completion->error_domain;
+			text_completion_code_ = completion->error_code;
+		} else if (std::string_view(completion->stream_id) == "ST_c_api_byte_completion") {
+			byte_completion_status_ = completion->status;
+			byte_completion_domain_ = completion->error_domain;
+			byte_completion_code_ = completion->error_code;
+		}
+	}
+
 	bool LegacyTextMatches(const std::string& identity) {
 		std::lock_guard<std::mutex> guard(lock_);
 		return text_ == "C API metadata" && text_topic_ == "c-api-text-metadata" &&
@@ -437,6 +453,14 @@ public:
 		       stream_byte_topic_ == "c-api-stream-bytes" && stream_byte_identity_ == identity &&
 		       stream_byte_timestamp_ > 0 &&
 		       stream_byte_attributes_ == std::map<std::string, std::string>{{"purpose", "stream"}};
+	}
+
+	bool CompletionsMatch() {
+		std::lock_guard<std::mutex> guard(lock_);
+		return text_completion_status_ == LK_DATA_STREAM_COMPLETION_COMPLETED &&
+		       text_completion_domain_ == LK_ERROR_DOMAIN_NONE && text_completion_code_ == 0 &&
+		       byte_completion_status_ == LK_DATA_STREAM_COMPLETION_COMPLETED &&
+		       byte_completion_domain_ == LK_ERROR_DOMAIN_NONE && byte_completion_code_ == 0;
 	}
 
 private:
@@ -495,6 +519,12 @@ private:
 	std::string stream_byte_identity_;
 	int64_t stream_byte_timestamp_ = 0;
 	std::map<std::string, std::string> stream_byte_attributes_;
+	lk_data_stream_completion_status_t text_completion_status_ = LK_DATA_STREAM_COMPLETION_FAILED;
+	lk_error_domain_t text_completion_domain_ = LK_ERROR_DOMAIN_STATUS;
+	int32_t text_completion_code_ = LK_STATUS_OPERATION_FAILED;
+	lk_data_stream_completion_status_t byte_completion_status_ = LK_DATA_STREAM_COMPLETION_FAILED;
+	lk_error_domain_t byte_completion_domain_ = LK_ERROR_DOMAIN_STATUS;
+	int32_t byte_completion_code_ = LK_STATUS_OPERATION_FAILED;
 };
 
 void OnCApiTextReceived(void* user_data, lk_room_t*, const lk_text_received_t* event) {
@@ -511,6 +541,10 @@ void OnCApiTextStream(void* user_data, lk_room_t*, const lk_text_stream_event_t*
 
 void OnCApiByteStream(void* user_data, lk_room_t*, const lk_byte_stream_event_t* event) {
 	static_cast<CApiDataStreamEvents*>(user_data)->ByteStream(event);
+}
+
+void OnCApiDataStreamCompletion(void* user_data, const lk_data_stream_completion_t* completion) {
+	static_cast<CApiDataStreamEvents*>(user_data)->Completion(completion);
 }
 
 void OnCApiE2eeAudioFrame(void* user_data, lk_room_t*, const lk_track_publication_info_t*,
@@ -2503,6 +2537,9 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	stream_text_options.reply_to_stream_id = "ST_stream_reply";
 	stream_text_options.attached_stream_ids = stream_attachments;
 	stream_text_options.attached_stream_id_count = std::size(stream_attachments);
+	stream_text_options.stream_id = "ST_c_api_text_completion";
+	stream_text_options.on_complete = OnCApiDataStreamCompletion;
+	stream_text_options.completion_user_data = &events;
 	lk_text_stream_writer_t* text_writer_handle = nullptr;
 	ASSERT_EQ(lk_room_stream_text(sender.get(), &stream_text_options, &text_writer_handle),
 	          LK_STATUS_OK)
@@ -2525,6 +2562,9 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	stream_byte_options.destination_identity_count = std::size(destinations);
 	stream_byte_options.attributes = &stream_byte_attribute;
 	stream_byte_options.attribute_count = 1;
+	stream_byte_options.stream_id = "ST_c_api_byte_completion";
+	stream_byte_options.on_complete = OnCApiDataStreamCompletion;
+	stream_byte_options.completion_user_data = &events;
 	lk_byte_stream_writer_t* byte_writer_handle = nullptr;
 	ASSERT_EQ(lk_room_stream_bytes(sender.get(), &stream_byte_options, &byte_writer_handle),
 	          LK_STATUS_OK)
@@ -2539,6 +2579,7 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	ASSERT_EQ(lk_byte_stream_writer_close(byte_writer.get()), LK_STATUS_OK) << lk_last_error();
 	ASSERT_TRUE(WaitUntil([&] { return events.ByteStreamMatches(sender_identity); },
 	                      std::chrono::seconds(10)));
+	EXPECT_TRUE(events.CompletionsMatch());
 
 	EXPECT_EQ(lk_room_unregister_text_stream_handler(receiver.get(), "c-api-stream-text"),
 	          LK_STATUS_OK);

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -58,6 +59,8 @@ struct AsyncRpcCompletion {
 	bool called = false;
 	int ok = 0;
 	uint32_t error_code = 0;
+	lk_status_t clone_status = LK_STATUS_OPERATION_FAILED;
+	lk_rpc_result_t* cloned_result = nullptr;
 };
 
 void RpcCompleted(void* user_data, lk_room_t*, const lk_rpc_result_t* result) {
@@ -67,11 +70,19 @@ void RpcCompleted(void* user_data, lk_room_t*, const lk_rpc_result_t* result) {
 		completion->called = true;
 		completion->ok = lk_rpc_result_ok(result);
 		completion->error_code = lk_rpc_result_error_code(result);
+		completion->clone_status = lk_rpc_result_clone(result, &completion->cloned_result);
 	}
 	completion->condition.notify_one();
 }
 
 TEST(CApiTest, ExposesVersionAndOptionDefaults) {
+	lk_error_info_t error_info;
+	lk_error_info_init(&error_info);
+	EXPECT_EQ(error_info.struct_size, sizeof(error_info));
+	EXPECT_EQ(error_info.domain, LK_ERROR_DOMAIN_NONE);
+	EXPECT_EQ(error_info.code, 0);
+	EXPECT_EQ(error_info.message_size, 0u);
+
 	const auto required = lk_version(nullptr, 0);
 	ASSERT_GT(required, 1u);
 	std::vector<char> version(required);
@@ -264,6 +275,59 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_remote_track_snapshot_info_t track_snapshot_info;
 	lk_remote_track_snapshot_info_init(&track_snapshot_info);
 	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
+}
+
+TEST(CApiTest, ReportsStructuredThreadLocalErrors) {
+	EXPECT_EQ(lk_room_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
+	lk_error_info_t info;
+	lk_error_info_init(&info);
+	ASSERT_EQ(lk_last_error_info(&info), LK_STATUS_OK);
+	EXPECT_EQ(info.domain, LK_ERROR_DOMAIN_STATUS);
+	EXPECT_EQ(info.code, LK_STATUS_INVALID_ARGUMENT);
+	ASSERT_GT(info.message_size, 1u);
+	std::vector<char> message(info.message_size);
+	EXPECT_EQ(lk_last_error_message(message.data(), message.size()), info.message_size);
+	EXPECT_STREQ(message.data(), "room output is null");
+	EXPECT_STREQ(lk_last_error(), message.data());
+	std::array<char, 5> truncated{};
+	EXPECT_EQ(lk_last_error_message(truncated.data(), truncated.size()), info.message_size);
+	EXPECT_STREQ(truncated.data(), "room");
+
+	lk_error_info_t worker_info;
+	lk_error_info_init(&worker_info);
+	std::string worker_message;
+	lk_data_track_error_code_t worker_call_status = LK_DATA_TRACK_ERROR_NONE;
+	lk_status_t worker_info_status = LK_STATUS_OPERATION_FAILED;
+	std::thread worker([&] {
+		worker_call_status =
+		    lk_room_update_data_track_subscription_options(nullptr, nullptr, nullptr, nullptr);
+		worker_info_status = lk_last_error_info(&worker_info);
+		std::vector<char> value(worker_info.message_size);
+		if (!value.empty()) {
+			lk_last_error_message(value.data(), value.size());
+			worker_message = value.data();
+		}
+	});
+	worker.join();
+	EXPECT_EQ(worker_call_status, LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_EQ(worker_info_status, LK_STATUS_OK);
+	EXPECT_EQ(worker_info.domain, LK_ERROR_DOMAIN_DATA_TRACK);
+	EXPECT_EQ(worker_info.code, LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
+	EXPECT_FALSE(worker_message.empty());
+
+	lk_error_info_init(&info);
+	ASSERT_EQ(lk_last_error_info(&info), LK_STATUS_OK);
+	EXPECT_EQ(info.domain, LK_ERROR_DOMAIN_STATUS);
+	EXPECT_EQ(info.code, LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_STREQ(lk_last_error(), "room output is null");
+
+	EXPECT_GT(lk_version(nullptr, 0), 1u);
+	lk_error_info_init(&info);
+	ASSERT_EQ(lk_last_error_info(&info), LK_STATUS_OK);
+	EXPECT_EQ(info.domain, LK_ERROR_DOMAIN_NONE);
+	EXPECT_EQ(info.code, 0);
+	EXPECT_EQ(info.message_size, 1u);
+	EXPECT_STREQ(lk_last_error(), "");
 }
 
 TEST(CApiTest, ConfiguresAndReceivesProcessWideLogs) {
@@ -480,6 +544,11 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_unpublish(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_rtc_stats(nullptr, nullptr, 0), 0u);
+	lk_error_info_t size_error;
+	lk_error_info_init(&size_error);
+	ASSERT_EQ(lk_last_error_info(&size_error), LK_STATUS_OK);
+	EXPECT_EQ(size_error.domain, LK_ERROR_DOMAIN_STATUS);
+	EXPECT_EQ(size_error.code, LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_publish_screen_share_video(nullptr, nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_publish_screen_share_audio(nullptr, nullptr, nullptr),
@@ -502,6 +571,9 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_perform_rpc(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_perform_rpc_async(nullptr, nullptr, nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
+	lk_rpc_result_t* cloned_result = reinterpret_cast<lk_rpc_result_t*>(1);
+	EXPECT_EQ(lk_rpc_result_clone(nullptr, &cloned_result), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(cloned_result, nullptr);
 	EXPECT_EQ(lk_room_set_track_subscription_permissions(nullptr, 1, nullptr, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_create_remote_participant_snapshot(nullptr, nullptr),
@@ -693,6 +765,12 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_FALSE(async_rpc_completion.ok);
 	EXPECT_EQ(async_rpc_completion.error_code,
 	          static_cast<uint32_t>(LK_RPC_ERROR_RECIPIENT_NOT_FOUND));
+	ASSERT_EQ(async_rpc_completion.clone_status, LK_STATUS_OK);
+	ASSERT_NE(async_rpc_completion.cloned_result, nullptr);
+	EXPECT_FALSE(lk_rpc_result_ok(async_rpc_completion.cloned_result));
+	EXPECT_EQ(lk_rpc_result_error_code(async_rpc_completion.cloned_result),
+	          static_cast<uint32_t>(LK_RPC_ERROR_RECIPIENT_NOT_FOUND));
+	lk_rpc_result_destroy(async_rpc_completion.cloned_result);
 	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),
 	          LK_STATUS_OK);
 	EXPECT_EQ(lk_room_register_text_stream_handler(room, "stream-text", TextStream, nullptr),

@@ -204,7 +204,13 @@ struct lk_frame_cryptor_list {
 
 namespace {
 
-thread_local std::string last_error;
+struct CErrorState {
+	lk_error_domain_t domain = LK_ERROR_DOMAIN_NONE;
+	int32_t code = 0;
+	std::string message;
+};
+
+thread_local CErrorState last_error;
 
 lk_log_level_t FromCoreLogLevel(core::LogLevel level) {
 	switch (level) {
@@ -291,10 +297,22 @@ private:
 std::mutex c_log_sink_mutex;
 std::shared_ptr<CLogSink> c_log_sink;
 
-void SetError(std::string error) { last_error = std::move(error); }
+void ClearError() { last_error = {}; }
+
+void SetError(lk_error_domain_t domain, int32_t code, std::string message) {
+	last_error = {domain, code, std::move(message)};
+}
+
+void SetStatusError(lk_status_t status, std::string message) {
+	SetError(LK_ERROR_DOMAIN_STATUS, static_cast<int32_t>(status), std::move(message));
+}
+
+void SetDataTrackError(lk_data_track_error_code_t code, std::string message) {
+	SetError(LK_ERROR_DOMAIN_DATA_TRACK, static_cast<int32_t>(code), std::move(message));
+}
 
 lk_status_t Failure(lk_status_t status, const char* message) {
-	SetError(message);
+	SetStatusError(status, message);
 	return status;
 }
 
@@ -324,45 +342,45 @@ bool ToCoreLogLevel(lk_log_level_t level, core::LogLevel& result) {
 
 template <typename Function> lk_status_t Guard(Function&& function) noexcept {
 	try {
-		last_error.clear();
+		ClearError();
 		return function();
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
 		return LK_STATUS_EXCEPTION;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
 		return LK_STATUS_EXCEPTION;
 	}
 }
 
 template <typename Function> size_t SizeGuard(Function&& function) noexcept {
 	try {
-		last_error.clear();
+		ClearError();
 		return function();
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
 		return 0;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
 		return 0;
 	}
 }
 
 lk_data_track_error_code_t DataTrackFailure(lk_data_track_error_code_t code, const char* message) {
-	SetError(message);
+	SetDataTrackError(code, message);
 	return code;
 }
 
 template <typename Function>
 lk_data_track_error_code_t DataTrackGuard(Function&& function) noexcept {
 	try {
-		last_error.clear();
+		ClearError();
 		return function();
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetDataTrackError(LK_DATA_TRACK_ERROR_SEND_FAILED, exception.what());
 		return LK_DATA_TRACK_ERROR_SEND_FAILED;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetDataTrackError(LK_DATA_TRACK_ERROR_SEND_FAILED, "unknown C++ exception");
 		return LK_DATA_TRACK_ERROR_SEND_FAILED;
 	}
 }
@@ -399,7 +417,7 @@ lk_status_t CopyOutputStruct(const Value& value, Value* output, const char* desc
 }
 
 size_t InvalidSizeResult(const char* message) {
-	SetError(message);
+	SetStatusError(LK_STATUS_INVALID_ARGUMENT, message);
 	return 0;
 }
 
@@ -414,7 +432,8 @@ void UpdateDataStreamProgress(const std::shared_ptr<CDataStreamCompletionState>&
 }
 
 void NotifyDataStreamCompletion(const std::shared_ptr<CDataStreamCompletionState>& state,
-                                lk_data_stream_completion_status_t status, std::string reason) {
+                                lk_data_stream_completion_status_t status, std::string reason,
+                                lk_status_t error_code = LK_STATUS_OPERATION_FAILED) {
 	if (!state || state->callback == nullptr) {
 		return;
 	}
@@ -435,12 +454,15 @@ void NotifyDataStreamCompletion(const std::shared_ptr<CDataStreamCompletionState
 		bytes_sent = state->bytes_sent;
 		total_size = state->total_size;
 	}
-	const lk_data_stream_completion_t completion{status,
-	                                             stream_id.c_str(),
-	                                             bytes_sent,
-	                                             total_size.has_value() ? 1 : 0,
-	                                             total_size.value_or(0),
-	                                             reason.c_str()};
+	const lk_data_stream_completion_t completion{
+	    status,
+	    stream_id.c_str(),
+	    bytes_sent,
+	    total_size.has_value() ? 1 : 0,
+	    total_size.value_or(0),
+	    reason.c_str(),
+	    status == LK_DATA_STREAM_COMPLETION_FAILED ? LK_ERROR_DOMAIN_STATUS : LK_ERROR_DOMAIN_NONE,
+	    status == LK_DATA_STREAM_COMPLETION_FAILED ? error_code : 0};
 	try {
 		callback(user_data, &completion);
 	} catch (...) {
@@ -589,39 +611,55 @@ lk_data_track_error_code_t ToCDataTrackError(core::DataTrackError error) {
 	if (!error) {
 		return LK_DATA_TRACK_ERROR_NONE;
 	}
-	SetError(std::move(error.message));
+	lk_data_track_error_code_t converted = LK_DATA_TRACK_ERROR_SEND_FAILED;
 	switch (error.code) {
 	case core::DataTrackErrorCode::InvalidName:
-		return LK_DATA_TRACK_ERROR_INVALID_NAME;
+		converted = LK_DATA_TRACK_ERROR_INVALID_NAME;
+		break;
 	case core::DataTrackErrorCode::InvalidSchema:
-		return LK_DATA_TRACK_ERROR_INVALID_SCHEMA;
+		converted = LK_DATA_TRACK_ERROR_INVALID_SCHEMA;
+		break;
 	case core::DataTrackErrorCode::DuplicateName:
-		return LK_DATA_TRACK_ERROR_DUPLICATE_NAME;
+		converted = LK_DATA_TRACK_ERROR_DUPLICATE_NAME;
+		break;
 	case core::DataTrackErrorCode::HandleLimitReached:
-		return LK_DATA_TRACK_ERROR_HANDLE_LIMIT_REACHED;
+		converted = LK_DATA_TRACK_ERROR_HANDLE_LIMIT_REACHED;
+		break;
 	case core::DataTrackErrorCode::NotAllowed:
-		return LK_DATA_TRACK_ERROR_NOT_ALLOWED;
+		converted = LK_DATA_TRACK_ERROR_NOT_ALLOWED;
+		break;
 	case core::DataTrackErrorCode::Disconnected:
-		return LK_DATA_TRACK_ERROR_DISCONNECTED;
+		converted = LK_DATA_TRACK_ERROR_DISCONNECTED;
+		break;
 	case core::DataTrackErrorCode::Timeout:
-		return LK_DATA_TRACK_ERROR_TIMEOUT;
+		converted = LK_DATA_TRACK_ERROR_TIMEOUT;
+		break;
 	case core::DataTrackErrorCode::Unpublished:
-		return LK_DATA_TRACK_ERROR_UNPUBLISHED;
+		converted = LK_DATA_TRACK_ERROR_UNPUBLISHED;
+		break;
 	case core::DataTrackErrorCode::QueueFull:
-		return LK_DATA_TRACK_ERROR_QUEUE_FULL;
+		converted = LK_DATA_TRACK_ERROR_QUEUE_FULL;
+		break;
 	case core::DataTrackErrorCode::InvalidFrame:
-		return LK_DATA_TRACK_ERROR_INVALID_FRAME;
+		converted = LK_DATA_TRACK_ERROR_INVALID_FRAME;
+		break;
 	case core::DataTrackErrorCode::ProtocolError:
-		return LK_DATA_TRACK_ERROR_PROTOCOL;
+		converted = LK_DATA_TRACK_ERROR_PROTOCOL;
+		break;
 	case core::DataTrackErrorCode::SendFailed:
-		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+		converted = LK_DATA_TRACK_ERROR_SEND_FAILED;
+		break;
 	case core::DataTrackErrorCode::NotFound:
-		return LK_DATA_TRACK_ERROR_NOT_FOUND;
+		converted = LK_DATA_TRACK_ERROR_NOT_FOUND;
+		break;
 	case core::DataTrackErrorCode::None:
-		return LK_DATA_TRACK_ERROR_NONE;
+		converted = LK_DATA_TRACK_ERROR_NONE;
+		break;
 	default:
-		return LK_DATA_TRACK_ERROR_SEND_FAILED;
+		break;
 	}
+	SetDataTrackError(converted, std::move(error.message));
+	return converted;
 }
 
 lk_data_track_error_code_t ToCoreDataTrackSchemaId(const lk_data_track_schema_id_t* source,
@@ -2042,27 +2080,63 @@ lk_status_t ToCorePerformRpcParams(const lk_rpc_perform_options_t* options,
 extern "C" {
 
 lk_status_t lk_init(void) {
-	return Guard([] { return core::Init() ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED; });
+	return Guard([] {
+		return core::Init() ? LK_STATUS_OK
+		                    : Failure(LK_STATUS_OPERATION_FAILED, "failed to initialize LiveKit");
+	});
 }
 
 lk_status_t lk_shutdown(void) {
-	return Guard([] { return core::Destroy() ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED; });
+	return Guard([] {
+		return core::Destroy() ? LK_STATUS_OK
+		                       : Failure(LK_STATUS_OPERATION_FAILED, "failed to shut down LiveKit");
+	});
 }
 
 size_t lk_version(char* buffer, size_t buffer_size) {
 	try {
-		last_error.clear();
+		ClearError();
 		return CopyString(core::Version(), buffer, buffer_size);
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
 		return 0;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
 		return 0;
 	}
 }
 
-const char* lk_last_error(void) { return last_error.c_str(); }
+void lk_error_info_init(lk_error_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+const char* lk_last_error(void) { return last_error.message.c_str(); }
+
+lk_status_t lk_last_error_info(lk_error_info_t* info) {
+	try {
+		if (info == nullptr || info->struct_size < sizeof(info->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "initialized error info is required");
+		}
+		const lk_error_info_t value{sizeof(value), last_error.domain, last_error.code,
+		                            last_error.message.size() + 1};
+		const auto output_size = info->struct_size;
+		std::memcpy(info, &value, std::min(output_size, sizeof(value)));
+		return LK_STATUS_OK;
+	} catch (const std::exception& exception) {
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
+		return LK_STATUS_EXCEPTION;
+	} catch (...) {
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
+		return LK_STATUS_EXCEPTION;
+	}
+}
+
+size_t lk_last_error_message(char* buffer, size_t buffer_size) {
+	return CopyString(last_error.message, buffer, buffer_size);
+}
 
 void lk_log_options_init(lk_log_options_t* options) {
 	if (options != nullptr) {
@@ -2542,7 +2616,7 @@ void lk_room_destroy(lk_room_t* room) {
 		{ std::lock_guard<std::mutex> guard(room->callback_lifetime_mutex); }
 		delete room;
 	} catch (...) {
-		SetError("exception while destroying room");
+		SetStatusError(LK_STATUS_EXCEPTION, "exception while destroying room");
 	}
 }
 
@@ -2633,18 +2707,26 @@ int lk_room_is_connected(const lk_room_t* room) {
 }
 
 size_t lk_room_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
-	return SizeGuard(
-	    [&] { return room != nullptr ? CopyString(room->room->Sid(), buffer, buffer_size) : 0; });
+	return SizeGuard([&] {
+		return room != nullptr && room->room != nullptr
+		           ? CopyString(room->room->Sid(), buffer, buffer_size)
+		           : InvalidSizeResult("room is required");
+	});
 }
 
 size_t lk_room_name(const lk_room_t* room, char* buffer, size_t buffer_size) {
-	return SizeGuard(
-	    [&] { return room != nullptr ? CopyString(room->room->Name(), buffer, buffer_size) : 0; });
+	return SizeGuard([&] {
+		return room != nullptr && room->room != nullptr
+		           ? CopyString(room->room->Name(), buffer, buffer_size)
+		           : InvalidSizeResult("room is required");
+	});
 }
 
 size_t lk_room_metadata(const lk_room_t* room, char* buffer, size_t buffer_size) {
 	return SizeGuard([&] {
-		return room != nullptr ? CopyString(room->room->Metadata(), buffer, buffer_size) : 0;
+		return room != nullptr && room->room != nullptr
+		           ? CopyString(room->room->Metadata(), buffer, buffer_size)
+		           : InvalidSizeResult("room is required");
 	});
 }
 
@@ -2669,7 +2751,7 @@ size_t lk_room_audio_output_device(const lk_room_t* room, char* buffer, size_t b
 	return SizeGuard([&] {
 		return room != nullptr && room->room != nullptr
 		           ? CopyString(room->room->AudioOutputDevice(), buffer, buffer_size)
-		           : 0;
+		           : InvalidSizeResult("room is required");
 	});
 }
 
@@ -3288,7 +3370,8 @@ size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, ch
 size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
 	return SizeGuard([&] {
 		auto* participant = LocalParticipant(room);
-		return participant != nullptr ? CopyString(participant->Sid(), buffer, buffer_size) : 0;
+		return participant != nullptr ? CopyString(participant->Sid(), buffer, buffer_size)
+		                              : InvalidSizeResult("connected room is required");
 	});
 }
 
@@ -3296,14 +3379,15 @@ size_t lk_local_participant_identity(const lk_room_t* room, char* buffer, size_t
 	return SizeGuard([&] {
 		auto* participant = LocalParticipant(room);
 		return participant != nullptr ? CopyString(participant->Identity(), buffer, buffer_size)
-		                              : 0;
+		                              : InvalidSizeResult("connected room is required");
 	});
 }
 
 size_t lk_local_participant_name(const lk_room_t* room, char* buffer, size_t buffer_size) {
 	return SizeGuard([&] {
 		auto* participant = LocalParticipant(room);
-		return participant != nullptr ? CopyString(participant->Name(), buffer, buffer_size) : 0;
+		return participant != nullptr ? CopyString(participant->Name(), buffer, buffer_size)
+		                              : InvalidSizeResult("connected room is required");
 	});
 }
 
@@ -3311,7 +3395,7 @@ size_t lk_local_participant_metadata(const lk_room_t* room, char* buffer, size_t
 	return SizeGuard([&] {
 		auto* participant = LocalParticipant(room);
 		return participant != nullptr ? CopyString(participant->Metadata(), buffer, buffer_size)
-		                              : 0;
+		                              : InvalidSizeResult("connected room is required");
 	});
 }
 
@@ -3543,14 +3627,18 @@ lk_status_t lk_audio_source_microphone_stop(lk_audio_source_t* source) {
 
 int lk_audio_source_microphone_is_capturing(const lk_audio_source_t* source) {
 	try {
-		last_error.clear();
+		ClearError();
 		const auto* microphone =
 		    source != nullptr
 		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
 		        : nullptr;
+		if (microphone == nullptr) {
+			SetStatusError(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+			return 0;
+		}
 		return microphone != nullptr && microphone->IsCapturing() ? 1 : 0;
 	} catch (...) {
-		SetError("failed to query microphone capture state");
+		SetStatusError(LK_STATUS_EXCEPTION, "failed to query microphone capture state");
 		return 0;
 	}
 }
@@ -3601,14 +3689,18 @@ lk_status_t lk_audio_source_microphone_set_muted(lk_audio_source_t* source, int 
 
 int lk_audio_source_microphone_is_muted(const lk_audio_source_t* source) {
 	try {
-		last_error.clear();
+		ClearError();
 		const auto* microphone =
 		    source != nullptr
 		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
 		        : nullptr;
+		if (microphone == nullptr) {
+			SetStatusError(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
+			return 0;
+		}
 		return microphone != nullptr && microphone->IsMuted() ? 1 : 0;
 	} catch (...) {
-		SetError("failed to query microphone mute state");
+		SetStatusError(LK_STATUS_EXCEPTION, "failed to query microphone mute state");
 		return 0;
 	}
 }
@@ -3630,18 +3722,18 @@ lk_status_t lk_audio_source_microphone_set_volume(lk_audio_source_t* source, flo
 
 float lk_audio_source_microphone_volume(const lk_audio_source_t* source) {
 	try {
-		last_error.clear();
+		ClearError();
 		const auto* microphone =
 		    source != nullptr
 		        ? dynamic_cast<const core::MicrophoneAudioSourceInterface*>(source->source.get())
 		        : nullptr;
 		if (microphone == nullptr) {
-			SetError("audio source is not a microphone source");
+			SetStatusError(LK_STATUS_INVALID_ARGUMENT, "audio source is not a microphone source");
 			return 0.0F;
 		}
 		return microphone->Volume();
 	} catch (...) {
-		SetError("failed to query microphone volume");
+		SetStatusError(LK_STATUS_EXCEPTION, "failed to query microphone volume");
 		return 0.0F;
 	}
 }
@@ -3769,8 +3861,9 @@ size_t lk_audio_source_system_audio_device_id(const lk_audio_source_t* source, c
 		    source != nullptr
 		        ? dynamic_cast<const core::SystemAudioSourceInterface*>(source->source.get())
 		        : nullptr;
-		return system_audio != nullptr ? CopyString(system_audio->DeviceId(), buffer, buffer_size)
-		                               : 0;
+		return system_audio != nullptr
+		           ? CopyString(system_audio->DeviceId(), buffer, buffer_size)
+		           : InvalidSizeResult("audio source is not a system audio source");
 	});
 }
 
@@ -3943,17 +4036,21 @@ lk_status_t lk_video_source_camera_stop(lk_video_source_t* source) {
 
 int lk_video_source_camera_is_capturing(const lk_video_source_t* source) {
 	try {
-		last_error.clear();
+		ClearError();
 		const auto* camera =
 		    source != nullptr
 		        ? dynamic_cast<const core::CameraVideoSourceInterface*>(source->source.get())
 		        : nullptr;
+		if (camera == nullptr) {
+			SetStatusError(LK_STATUS_INVALID_ARGUMENT, "video source is not a camera source");
+			return 0;
+		}
 		return camera != nullptr && camera->IsCapturing() ? 1 : 0;
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
 		return 0;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
 		return 0;
 	}
 }
@@ -4015,17 +4112,21 @@ lk_status_t lk_video_source_screen_stop(lk_video_source_t* source) {
 
 int lk_video_source_screen_is_capturing(const lk_video_source_t* source) {
 	try {
-		last_error.clear();
+		ClearError();
 		const auto* screen =
 		    source != nullptr
 		        ? dynamic_cast<const core::ScreenVideoSourceInterface*>(source->source.get())
 		        : nullptr;
+		if (screen == nullptr) {
+			SetStatusError(LK_STATUS_INVALID_ARGUMENT, "video source is not a screen source");
+			return 0;
+		}
 		return screen != nullptr && screen->IsCapturing() ? 1 : 0;
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetStatusError(LK_STATUS_EXCEPTION, exception.what());
 		return 0;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetStatusError(LK_STATUS_EXCEPTION, "unknown C++ exception");
 		return 0;
 	}
 }
@@ -4209,7 +4310,7 @@ size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer, siz
 	return SizeGuard([&] {
 		return track != nullptr && track->track != nullptr
 		           ? CopyString(track->track->GetRTCStats(), buffer, buffer_size)
-		           : 0;
+		           : InvalidSizeResult("local track is required");
 	});
 }
 
@@ -4856,9 +4957,10 @@ static lk_data_track_read_status_t ReadDataTrackFrame(lk_data_track_reader_t* re
                                                       lk_data_track_frame_t** frame, bool wait,
                                                       uint32_t timeout_ms) {
 	try {
-		last_error.clear();
+		ClearError();
 		if (frame == nullptr || reader == nullptr || reader->reader == nullptr) {
-			SetError("DataTrack reader and frame output are required");
+			SetDataTrackError(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT,
+			                  "DataTrack reader and frame output are required");
 			return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
 		}
 		*frame = nullptr;
@@ -4875,10 +4977,10 @@ static lk_data_track_read_status_t ReadDataTrackFrame(lk_data_track_reader_t* re
 		*frame = output.release();
 		return LK_DATA_TRACK_READ_FRAME;
 	} catch (const std::exception& exception) {
-		SetError(exception.what());
+		SetDataTrackError(LK_DATA_TRACK_ERROR_SEND_FAILED, exception.what());
 		return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
 	} catch (...) {
-		SetError("unknown C++ exception");
+		SetDataTrackError(LK_DATA_TRACK_ERROR_SEND_FAILED, "unknown C++ exception");
 		return LK_DATA_TRACK_READ_INVALID_ARGUMENT;
 	}
 }
@@ -5252,7 +5354,8 @@ lk_status_t lk_text_stream_writer_close(lk_text_stream_writer_t* writer) {
 		}
 		if (writer != nullptr) {
 			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
-			                           "text stream is already closed or incomplete");
+			                           "text stream is already closed or incomplete",
+			                           LK_STATUS_INVALID_STATE);
 		}
 		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed or incomplete");
 	});
@@ -5269,10 +5372,8 @@ lk_status_t lk_text_stream_writer_cancel(lk_text_stream_writer_t* writer, const 
 			                           cancellation_reason);
 			return LK_STATUS_OK;
 		}
-		if (writer->writer->IsClosed()) {
-			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
-			                           "failed to cancel text stream");
-		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to cancel text stream", LK_STATUS_INVALID_STATE);
 		return Failure(LK_STATUS_INVALID_STATE, "text stream is already closed");
 	});
 }
@@ -5282,7 +5383,7 @@ size_t lk_text_stream_writer_id(const lk_text_stream_writer_t* writer, char* buf
 	return SizeGuard([&] {
 		return writer && writer->writer
 		           ? CopyString(writer->writer->Info().stream_id, buffer, buffer_size)
-		           : 0;
+		           : InvalidSizeResult("text stream writer is required");
 	});
 }
 
@@ -5297,14 +5398,14 @@ void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer) {
 			if (writer->writer->Cancel(reason)) {
 				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
 				                           reason);
-			} else if (writer->writer->IsClosed()) {
+			} else {
 				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
 				                           "failed to cancel text stream");
 			}
 		}
 		delete writer;
 	} catch (...) {
-		SetError("exception while destroying text stream writer");
+		SetStatusError(LK_STATUS_EXCEPTION, "exception while destroying text stream writer");
 	}
 }
 
@@ -5435,7 +5536,8 @@ lk_status_t lk_byte_stream_writer_close(lk_byte_stream_writer_t* writer) {
 		}
 		if (writer != nullptr) {
 			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
-			                           "byte stream is already closed or incomplete");
+			                           "byte stream is already closed or incomplete",
+			                           LK_STATUS_INVALID_STATE);
 		}
 		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed or incomplete");
 	});
@@ -5452,10 +5554,8 @@ lk_status_t lk_byte_stream_writer_cancel(lk_byte_stream_writer_t* writer, const 
 			                           cancellation_reason);
 			return LK_STATUS_OK;
 		}
-		if (writer->writer->IsClosed()) {
-			NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
-			                           "failed to cancel byte stream");
-		}
+		NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
+		                           "failed to cancel byte stream", LK_STATUS_INVALID_STATE);
 		return Failure(LK_STATUS_INVALID_STATE, "byte stream is already closed");
 	});
 }
@@ -5465,7 +5565,7 @@ size_t lk_byte_stream_writer_id(const lk_byte_stream_writer_t* writer, char* buf
 	return SizeGuard([&] {
 		return writer && writer->writer
 		           ? CopyString(writer->writer->Info().stream_id, buffer, buffer_size)
-		           : 0;
+		           : InvalidSizeResult("byte stream writer is required");
 	});
 }
 
@@ -5480,14 +5580,14 @@ void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer) {
 			if (writer->writer->Cancel(reason)) {
 				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_CANCELLED,
 				                           reason);
-			} else if (writer->writer->IsClosed()) {
+			} else {
 				NotifyDataStreamCompletion(writer->completion, LK_DATA_STREAM_COMPLETION_FAILED,
 				                           "failed to cancel byte stream");
 			}
 		}
 		delete writer;
 	} catch (...) {
-		SetError("exception while destroying byte stream writer");
+		SetStatusError(LK_STATUS_EXCEPTION, "exception while destroying byte stream writer");
 	}
 }
 
@@ -5696,6 +5796,22 @@ lk_status_t lk_room_perform_rpc_async(lk_room_t* room, const lk_rpc_perform_opti
 	});
 }
 
+lk_status_t lk_rpc_result_clone(const lk_rpc_result_t* result, lk_rpc_result_t** cloned_result) {
+	return Guard([&] {
+		if (cloned_result != nullptr) {
+			*cloned_result = nullptr;
+		}
+		if (result == nullptr || cloned_result == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "RPC result and cloned result output are required");
+		}
+		auto clone = std::make_unique<lk_rpc_result_t>();
+		clone->result = result->result;
+		*cloned_result = clone.release();
+		return LK_STATUS_OK;
+	});
+}
+
 void lk_rpc_result_destroy(lk_rpc_result_t* result) { delete result; }
 
 int lk_rpc_result_ok(const lk_rpc_result_t* result) {
@@ -5704,7 +5820,8 @@ int lk_rpc_result_ok(const lk_rpc_result_t* result) {
 
 size_t lk_rpc_result_payload(const lk_rpc_result_t* result, char* buffer, size_t buffer_size) {
 	return SizeGuard([&] {
-		return result != nullptr ? CopyString(result->result.payload, buffer, buffer_size) : 0;
+		return result != nullptr ? CopyString(result->result.payload, buffer, buffer_size)
+		                         : InvalidSizeResult("RPC result is required");
 	});
 }
 
@@ -5717,17 +5834,21 @@ uint32_t lk_rpc_result_error_code(const lk_rpc_result_t* result) {
 size_t lk_rpc_result_error_message(const lk_rpc_result_t* result, char* buffer,
                                    size_t buffer_size) {
 	return SizeGuard([&] {
-		return result != nullptr && result->result.error
-		           ? CopyString(result->result.error->message, buffer, buffer_size)
-		           : 0;
+		if (result == nullptr) {
+			return InvalidSizeResult("RPC result is required");
+		}
+		return CopyString(result->result.error ? result->result.error->message : std::string{},
+		                  buffer, buffer_size);
 	});
 }
 
 size_t lk_rpc_result_error_data(const lk_rpc_result_t* result, char* buffer, size_t buffer_size) {
 	return SizeGuard([&] {
-		return result != nullptr && result->result.error
-		           ? CopyString(result->result.error->data, buffer, buffer_size)
-		           : 0;
+		if (result == nullptr) {
+			return InvalidSizeResult("RPC result is required");
+		}
+		return CopyString(result->result.error ? result->result.error->data : std::string{}, buffer,
+		                  buffer_size);
 	});
 }
 
