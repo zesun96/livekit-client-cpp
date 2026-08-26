@@ -316,12 +316,15 @@ $originalEnvironment = @{
   LIVEKIT_API_KEY = $env:LIVEKIT_API_KEY
   LIVEKIT_API_SECRET = $env:LIVEKIT_API_SECRET
   LIVEKIT_TOKEN_RESTART = $env:LIVEKIT_TOKEN_RESTART
+  LIVEKIT_TOKEN_CAPI_RESTART = $env:LIVEKIT_TOKEN_CAPI_RESTART
+  LIVEKIT_TOKEN_CAPI_RESTART_2 = $env:LIVEKIT_TOKEN_CAPI_RESTART_2
   LIVEKIT_TOKEN_REFRESH = $env:LIVEKIT_TOKEN_REFRESH
   LIVEKIT_TOKEN = $env:LIVEKIT_TOKEN
   LIVEKIT_TOKEN_2 = $env:LIVEKIT_TOKEN_2
   LIVEKIT_VIDEO_CODEC = $env:LIVEKIT_VIDEO_CODEC
   LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY = $env:LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY
   LIVEKIT_SERVER_RESTART_READY_FILE = $env:LIVEKIT_SERVER_RESTART_READY_FILE
+  LIVEKIT_CAPI_SERVER_RESTART_READY_FILE = $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE
   LIVEKIT_TOKEN_REFRESH_READY_FILE = $env:LIVEKIT_TOKEN_REFRESH_READY_FILE
 }
 
@@ -353,17 +356,30 @@ try {
   $refreshIdentity = "refresh-client"
   $env:LIVEKIT_TOKEN_RESTART = New-ParticipantToken $room $restartIdentity
   $env:LIVEKIT_TOKEN_REFRESH = New-ParticipantToken $room $refreshIdentity
+  $capiReconnectRoom = "cpp-capi-reconnect-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  $env:LIVEKIT_TOKEN_CAPI_RESTART = New-ParticipantToken $capiReconnectRoom "capi-sender"
+  $env:LIVEKIT_TOKEN_CAPI_RESTART_2 = New-ParticipantToken $capiReconnectRoom "capi-receiver"
   $e2eeRoom = "cpp-e2ee-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
   $env:LIVEKIT_TOKEN = New-ParticipantToken $e2eeRoom "e2ee-sender" -AllowUpdateMetadata
   $env:LIVEKIT_TOKEN_2 = New-ParticipantToken $e2eeRoom "e2ee-receiver"
   $env:LIVEKIT_VIDEO_CODEC = $VideoCodec
   $env:LIVEKIT_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "restart.ready"
+  $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "capi-restart.ready"
   $env:LIVEKIT_TOKEN_REFRESH_READY_FILE = Join-Path $tempRoot "refresh.ready"
 
   $server = Start-TestServer
   if ($Scenario -in @("All", "Restart")) {
     Invoke-CoordinatedTest "RecoversAfterExplicitServerRestart" `
       $env:LIVEKIT_SERVER_RESTART_READY_FILE {
+        Stop-OwnedProcess $server
+        Start-Sleep -Seconds 2
+        $script:server = Start-TestServer
+      }
+  }
+
+  if ($Scenario -in @("All", "Restart", "CAPI")) {
+    Invoke-CoordinatedTest "CApiRecoversAfterExplicitServerRestart" `
+      $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE {
         Stop-OwnedProcess $server
         Start-Sleep -Seconds 2
         $script:server = Start-TestServer

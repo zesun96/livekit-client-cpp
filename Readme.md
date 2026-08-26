@@ -96,8 +96,9 @@ isolated from the BoringSSL symbols embedded in `webrtc.lib`. CMake copies
 `websockets.dll` next to SDK executables automatically; applications consuming
 the static library must deploy that DLL with their executable. Consumers must also use the static
 MSVC runtime (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) to match the
-packaged libwebrtc library. `test/consumer` is a standalone `add_subdirectory` smoke project that
-checks these downstream configure, link, and runtime requirements.
+packaged libwebrtc library. `test/consumer` is a standalone `add_subdirectory` smoke project with
+both C++ and pure C executables that checks these downstream configure, link, and runtime
+requirements.
 
 Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected
 `TrackPublishOptions::video_codec` (or `lk_track_publish_options_t::video_codec` in C) is applied as
@@ -234,7 +235,9 @@ Run this command from an elevated PowerShell when the existing server is elevate
 Firewall requires a rule for a newly downloaded server executable. To test a different server
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
 RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart`,
-`-Scenario TokenRefresh`, `-Scenario Media`, or `-Scenario E2EE` to run one part of the matrix.
+`-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, or `-Scenario CAPI` to run one part
+of the matrix. The C API scenario restarts the server with two C ABI rooms, verifies reconnect
+callbacks and identities, then transfers reliable data after recovery.
 `-VideoCodec vp8` is the default; VP8, H264, and AV1 are supported by the media and E2EE scenarios.
 The E2EE scenario creates two short-lived identities and verifies encrypted audio, the selected
 video codec, data, state events, key-slot switching, automatic key ratcheting, reconnect recovery,
@@ -292,14 +295,17 @@ and end-to-end audio, video, data-message, and file-transfer verification.
 
 Pure C applications include `livekit/capi/livekit.h` and link the same `livekitclient` library.
 The API uses opaque handles, caller-owned output buffers, and C function-pointer callbacks; no C++
-type or exception crosses the ABI boundary. Remote participant snapshots provide immutable,
-owned enumeration of publications and attached subscribed tracks; their child handles remain valid
-until the root snapshot is destroyed. Incremental DataStream writers report one structured
+type or exception crosses the ABI boundary. Synchronous failures expose a thread-local error
+domain, code, and two-phase message reader. Remote participant snapshots provide immutable, owned
+enumeration of publications and attached subscribed tracks; their child handles remain valid until
+the root snapshot is destroyed. Incremental DataStream writers report one structured
 completed/cancelled/failed callback, and `lk_room_perform_rpc_async()` delivers a borrowed
-structured RPC result from a room-managed worker thread. See the
+structured RPC result that can be cloned when it must outlive the callback. See the
 [`c_sample`](examples/c_sample/sample.c) example for room creation, callback registration,
 connection, snapshot enumeration, stream completion, subscribed codec/quality feedback, string
-retrieval, and deterministic cleanup.
+retrieval, and deterministic cleanup. The standalone
+[`main.c`](test/consumer/main.c) consumer continuously verifies pure C compilation, C++ linkage,
+runtime initialization, two-phase strings, structured errors, and cleanup.
 
 ## Thanks
 
