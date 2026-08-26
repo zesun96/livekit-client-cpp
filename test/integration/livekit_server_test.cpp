@@ -224,6 +224,56 @@ void OnCApiDataTrackFrame(void* user_data, lk_room_t*, const lk_data_track_info_
 	static_cast<CApiDataTrackEvents*>(user_data)->Frame(frame);
 }
 
+class CApiReconnectEvents {
+public:
+	void Connected() { connected_.fetch_add(1); }
+	void Reconnecting() { reconnecting_.fetch_add(1); }
+	void Reconnected() { reconnected_.fetch_add(1); }
+	void Disconnected() { disconnected_.store(true); }
+
+	void Data(const lk_data_received_t* event) {
+		constexpr std::array<uint8_t, 7> expected{'c', '-', 'r', 'e', 'c', 'o', 'n'};
+		if (event != nullptr && event->data != nullptr && event->data_size == expected.size() &&
+		    event->topic != nullptr && std::string_view(event->topic) == "c-api-reconnect" &&
+		    event->reliable && std::equal(expected.begin(), expected.end(), event->data)) {
+			data_received_.store(true);
+		}
+	}
+
+	uint32_t connected() const { return connected_.load(); }
+	uint32_t reconnecting() const { return reconnecting_.load(); }
+	uint32_t reconnected() const { return reconnected_.load(); }
+	bool disconnected() const { return disconnected_.load(); }
+	bool data_received() const { return data_received_.load(); }
+
+private:
+	std::atomic<uint32_t> connected_{0};
+	std::atomic<uint32_t> reconnecting_{0};
+	std::atomic<uint32_t> reconnected_{0};
+	std::atomic<bool> disconnected_{false};
+	std::atomic<bool> data_received_{false};
+};
+
+void OnCApiConnected(void* user_data, lk_room_t*) {
+	static_cast<CApiReconnectEvents*>(user_data)->Connected();
+}
+
+void OnCApiReconnecting(void* user_data, lk_room_t*) {
+	static_cast<CApiReconnectEvents*>(user_data)->Reconnecting();
+}
+
+void OnCApiReconnected(void* user_data, lk_room_t*) {
+	static_cast<CApiReconnectEvents*>(user_data)->Reconnected();
+}
+
+void OnCApiDisconnected(void* user_data, lk_room_t*) {
+	static_cast<CApiReconnectEvents*>(user_data)->Disconnected();
+}
+
+void OnCApiReconnectData(void* user_data, lk_room_t*, const lk_data_received_t* event) {
+	static_cast<CApiReconnectEvents*>(user_data)->Data(event);
+}
+
 class CApiParticipantEvents {
 public:
 	void Connected(const lk_participant_info_t* participant) {
@@ -1146,6 +1196,97 @@ TEST(LiveKitServerTest, RecoversAfterExplicitServerRestart) {
 
 	room->RemoveEventListener();
 	EXPECT_TRUE(room->Disconnect());
+}
+
+TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN_CAPI_RESTART");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_CAPI_RESTART_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0' ||
+	    std::getenv("LIVEKIT_CAPI_SERVER_RESTART_READY_FILE") == nullptr) {
+		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 to run the C API server-restart test";
+	}
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };
+	lk_room_t* sender_handle = nullptr;
+	lk_room_t* receiver_handle = nullptr;
+	ASSERT_EQ(lk_room_create(&sender_handle), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_create(&receiver_handle), LK_STATUS_OK) << lk_last_error();
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> sender(sender_handle, room_deleter);
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> receiver(receiver_handle, room_deleter);
+
+	CApiReconnectEvents sender_events;
+	CApiReconnectEvents receiver_events;
+	auto configure_callbacks = [](lk_room_t* room, CApiReconnectEvents* events, bool receive_data) {
+		lk_room_callbacks_t callbacks;
+		lk_room_callbacks_init(&callbacks);
+		callbacks.user_data = events;
+		callbacks.on_connected = OnCApiConnected;
+		callbacks.on_reconnecting = OnCApiReconnecting;
+		callbacks.on_reconnected = OnCApiReconnected;
+		callbacks.on_disconnected = OnCApiDisconnected;
+		callbacks.on_data_received = receive_data ? OnCApiReconnectData : nullptr;
+		return lk_room_set_callbacks(room, &callbacks);
+	};
+	ASSERT_EQ(configure_callbacks(sender.get(), &sender_events, false), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(configure_callbacks(receiver.get(), &receiver_events, true), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect(receiver.get(), url, receiver_token), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect(sender.get(), url, sender_token), LK_STATUS_OK) << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return sender_events.connected() == 1 && receiver_events.connected() == 1 &&
+		           lk_room_is_connected(sender.get()) && lk_room_is_connected(receiver.get());
+	    },
+	    std::chrono::seconds(10)));
+
+	auto read_identity = [](lk_room_t* room) {
+		const auto required = lk_local_participant_identity(room, nullptr, 0);
+		std::vector<char> value(required);
+		if (required > 1) {
+			lk_local_participant_identity(room, value.data(), value.size());
+		}
+		return required > 1 ? std::string(value.data()) : std::string{};
+	};
+	const auto sender_identity = read_identity(sender.get());
+	const auto receiver_identity = read_identity(receiver.get());
+	ASSERT_FALSE(sender_identity.empty());
+	ASSERT_FALSE(receiver_identity.empty());
+	ASSERT_TRUE(NotifyExternalHarness("LIVEKIT_CAPI_SERVER_RESTART_READY_FILE"));
+
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return sender_events.reconnecting() >= 1 && receiver_events.reconnecting() >= 1; },
+	    std::chrono::seconds(20)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return sender_events.reconnected() >= 1 && receiver_events.reconnected() >= 1 &&
+		           lk_room_is_connected(sender.get()) && lk_room_is_connected(receiver.get());
+	    },
+	    std::chrono::seconds(60)));
+	EXPECT_FALSE(sender_events.disconnected());
+	EXPECT_FALSE(receiver_events.disconnected());
+	EXPECT_EQ(read_identity(sender.get()), sender_identity);
+	EXPECT_EQ(read_identity(receiver.get()), receiver_identity);
+
+	constexpr std::array<uint8_t, 7> data{'c', '-', 'r', 'e', 'c', 'o', 'n'};
+	lk_data_publish_options_t options;
+	lk_data_publish_options_init(&options);
+	options.reliable = 1;
+	options.topic = "c-api-reconnect";
+	ASSERT_EQ(lk_room_publish_data(sender.get(), data.data(), data.size(), &options), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(
+	    WaitUntil([&] { return receiver_events.data_received(); }, std::chrono::seconds(10)));
+
+	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK) << lk_last_error();
+	sender.reset();
+	receiver.reset();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK) << lk_last_error();
 }
 
 TEST(LiveKitServerTest, UsesRefreshedTokenForResumeAndFullReconnect) {

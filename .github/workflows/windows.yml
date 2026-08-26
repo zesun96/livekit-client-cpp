@@ -81,5 +81,6 @@ jobs:
         shell: pwsh
         run: |
           cmake --build "$env:BUILD_ROOT-consumer" --config Release `
-            --target livekit_consumer_smoke --parallel
+            --target livekit_consumer_smoke livekit_c_consumer_smoke --parallel
           & "$env:BUILD_ROOT-consumer\Release\livekit_consumer_smoke.exe"
+          & "$env:BUILD_ROOT-consumer\Release\livekit_c_consumer_smoke.exe"

@@ -10,7 +10,7 @@ if(MSVC OR CMAKE_GENERATOR MATCHES "Visual Studio")
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-project(livekit-consumer-smoke LANGUAGES CXX)
+project(livekit-consumer-smoke LANGUAGES C CXX)
 
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TEST OFF CACHE BOOL "" FORCE)
@@ -21,3 +21,8 @@ add_subdirectory("${LIVEKIT_CLIENT_CPP_SOURCE_DIR}" livekit-client-cpp EXCLUDE_F
 add_executable(livekit_consumer_smoke main.cpp)
 target_compile_features(livekit_consumer_smoke PRIVATE cxx_std_20)
 target_link_libraries(livekit_consumer_smoke PRIVATE livekitclient)
+
+add_executable(livekit_c_consumer_smoke main.c)
+set_target_properties(livekit_c_consumer_smoke PROPERTIES LINKER_LANGUAGE CXX)
+target_compile_features(livekit_c_consumer_smoke PRIVATE c_std_11)
+target_link_libraries(livekit_c_consumer_smoke PRIVATE livekitclient)

@@ -153,6 +153,9 @@ jobs:
           }
           & .\test\integration\run_reconnect_matrix.ps1 @common `
             -Scenario DataTrack -VideoCodec vp8 -Port $port
+          $port += 10
+          & .\test\integration\run_reconnect_matrix.ps1 @common `
+            -Scenario CAPI -VideoCodec vp8 -Port $port
 
       - name: Official C++ interoperability
         if: ${{ vars.OFFICIAL_LIVEKIT_CPP_WINDOWS_URL != '' }}
