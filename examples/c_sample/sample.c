@@ -197,9 +197,14 @@ static lk_rpc_handler_result_t on_echo_rpc(void* user_data, const lk_rpc_invocat
 static void on_text_stream(void* user_data, lk_room_t* room, const lk_text_stream_event_t* event) {
 	(void)user_data;
 	(void)room;
-	printf("Text stream %s: state=%d, chunk=%llu, bytes=%zu, reason=%s\n", event->stream_id,
-	       (int)event->type, (unsigned long long)event->chunk_index, event->content_size,
-	       event->reason);
+	printf("Text stream %s: state=%d, chunk=%llu, bytes=%zu, timestamp=%lld, attributes=%zu, "
+	       "attachments=%zu, reply-to=%s, reason=%s\n",
+	       event->stream_id, (int)event->type, (unsigned long long)event->chunk_index,
+	       event->content_size, (long long)event->timestamp, event->attribute_count,
+	       event->attached_stream_id_count, event->reply_to_stream_id, event->reason);
+	for (size_t index = 0; index < event->attribute_count; ++index) {
+		printf("  %s=%s\n", event->attributes[index].key, event->attributes[index].value);
+	}
 }
 
 static void on_data_channel_buffer_status(void* user_data, lk_room_t* room,

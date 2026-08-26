@@ -329,6 +329,190 @@ void OnCApiParticipantAttributesChanged(void* user_data, lk_room_t*, const lk_at
 	                                                                  participant);
 }
 
+class CApiDataStreamEvents {
+public:
+	void Text(const lk_text_received_t* event) {
+		if (event == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		text_ = event->text;
+		text_topic_ = event->topic;
+		text_identity_ = event->participant_identity;
+		text_reply_to_ = event->reply_to_stream_id;
+		text_timestamp_ = event->timestamp;
+		text_attached_stream_ids_ =
+		    Strings(event->attached_stream_ids, event->attached_stream_id_count);
+		text_attributes_ = Attributes(event->attributes, event->attribute_count);
+	}
+
+	void Bytes(const lk_file_received_t* event) {
+		if (event == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		bytes_.assign(event->data, event->data + event->data_size);
+		byte_name_ = event->name;
+		byte_mime_type_ = event->mime_type;
+		byte_topic_ = event->topic;
+		byte_identity_ = event->participant_identity;
+		byte_timestamp_ = event->timestamp;
+		byte_attributes_ = Attributes(event->attributes, event->attribute_count);
+	}
+
+	void TextStream(const lk_text_stream_event_t* event) {
+		if (event == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		if (event->type == LK_DATA_STREAM_EVENT_OPEN) {
+			stream_text_topic_ = event->topic;
+			stream_text_identity_ = event->participant_identity;
+			stream_text_reply_to_ = event->reply_to_stream_id;
+			stream_text_timestamp_ = event->timestamp;
+			stream_text_attached_stream_ids_ =
+			    Strings(event->attached_stream_ids, event->attached_stream_id_count);
+			stream_text_attributes_ = Attributes(event->attributes, event->attribute_count);
+		} else if (event->type == LK_DATA_STREAM_EVENT_CHUNK) {
+			stream_text_.append(event->content, event->content_size);
+		} else if (event->type == LK_DATA_STREAM_EVENT_CLOSED) {
+			stream_text_closed_ = true;
+		}
+	}
+
+	void ByteStream(const lk_byte_stream_event_t* event) {
+		if (event == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		if (event->type == LK_DATA_STREAM_EVENT_OPEN) {
+			stream_byte_name_ = event->name;
+			stream_byte_mime_type_ = event->mime_type;
+			stream_byte_topic_ = event->topic;
+			stream_byte_identity_ = event->participant_identity;
+			stream_byte_timestamp_ = event->timestamp;
+			stream_byte_attributes_ = Attributes(event->attributes, event->attribute_count);
+		} else if (event->type == LK_DATA_STREAM_EVENT_CHUNK) {
+			stream_bytes_.insert(stream_bytes_.end(), event->content,
+			                     event->content + event->content_size);
+		} else if (event->type == LK_DATA_STREAM_EVENT_CLOSED) {
+			stream_bytes_closed_ = true;
+		}
+	}
+
+	bool LegacyTextMatches(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return text_ == "C API metadata" && text_topic_ == "c-api-text-metadata" &&
+		       text_identity_ == identity && text_reply_to_ == "ST_reply" && text_timestamp_ > 0 &&
+		       text_attached_stream_ids_ == std::vector<std::string>{"ST_attachment"} &&
+		       text_attributes_ ==
+		           std::map<std::string, std::string>{{"language", "zh-CN"}, {"purpose", "parity"}};
+	}
+
+	bool LegacyBytesMatch(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return bytes_ == std::vector<uint8_t>({4, 3, 2, 1}) && byte_name_ == "metadata.bin" &&
+		       byte_mime_type_ == "application/x-livekit-metadata" &&
+		       byte_topic_ == "c-api-byte-metadata" && byte_identity_ == identity &&
+		       byte_timestamp_ > 0 &&
+		       byte_attributes_ == std::map<std::string, std::string>{{"purpose", "parity"}};
+	}
+
+	bool TextStreamMatches(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return stream_text_closed_ && stream_text_ == "stream metadata" &&
+		       stream_text_topic_ == "c-api-stream-text" && stream_text_identity_ == identity &&
+		       stream_text_reply_to_ == "ST_stream_reply" && stream_text_timestamp_ > 0 &&
+		       stream_text_attached_stream_ids_ ==
+		           std::vector<std::string>{"ST_stream_attachment"} &&
+		       stream_text_attributes_ ==
+		           std::map<std::string, std::string>{{"language", "zh-CN"}, {"purpose", "stream"}};
+	}
+
+	bool ByteStreamMatches(const std::string& identity) {
+		std::lock_guard<std::mutex> guard(lock_);
+		return stream_bytes_closed_ && stream_bytes_ == std::vector<uint8_t>({1, 3, 5, 7}) &&
+		       stream_byte_name_ == "stream.bin" &&
+		       stream_byte_mime_type_ == "application/x-livekit-stream" &&
+		       stream_byte_topic_ == "c-api-stream-bytes" && stream_byte_identity_ == identity &&
+		       stream_byte_timestamp_ > 0 &&
+		       stream_byte_attributes_ == std::map<std::string, std::string>{{"purpose", "stream"}};
+	}
+
+private:
+	static std::vector<std::string> Strings(const char* const* values, size_t count) {
+		std::vector<std::string> result;
+		if (values == nullptr) {
+			return result;
+		}
+		result.reserve(count);
+		for (size_t index = 0; index < count; ++index) {
+			result.emplace_back(values[index] != nullptr ? values[index] : "");
+		}
+		return result;
+	}
+
+	static std::map<std::string, std::string> Attributes(const lk_attribute_t* values,
+	                                                     size_t count) {
+		std::map<std::string, std::string> result;
+		if (values == nullptr) {
+			return result;
+		}
+		for (size_t index = 0; index < count; ++index) {
+			result[values[index].key] = values[index].value;
+		}
+		return result;
+	}
+
+	std::mutex lock_;
+	std::string text_;
+	std::string text_topic_;
+	std::string text_identity_;
+	std::string text_reply_to_;
+	int64_t text_timestamp_ = 0;
+	std::vector<std::string> text_attached_stream_ids_;
+	std::map<std::string, std::string> text_attributes_;
+	std::vector<uint8_t> bytes_;
+	std::string byte_name_;
+	std::string byte_mime_type_;
+	std::string byte_topic_;
+	std::string byte_identity_;
+	int64_t byte_timestamp_ = 0;
+	std::map<std::string, std::string> byte_attributes_;
+	bool stream_text_closed_ = false;
+	std::string stream_text_;
+	std::string stream_text_topic_;
+	std::string stream_text_identity_;
+	std::string stream_text_reply_to_;
+	int64_t stream_text_timestamp_ = 0;
+	std::vector<std::string> stream_text_attached_stream_ids_;
+	std::map<std::string, std::string> stream_text_attributes_;
+	bool stream_bytes_closed_ = false;
+	std::vector<uint8_t> stream_bytes_;
+	std::string stream_byte_name_;
+	std::string stream_byte_mime_type_;
+	std::string stream_byte_topic_;
+	std::string stream_byte_identity_;
+	int64_t stream_byte_timestamp_ = 0;
+	std::map<std::string, std::string> stream_byte_attributes_;
+};
+
+void OnCApiTextReceived(void* user_data, lk_room_t*, const lk_text_received_t* event) {
+	static_cast<CApiDataStreamEvents*>(user_data)->Text(event);
+}
+
+void OnCApiBytesReceived(void* user_data, lk_room_t*, const lk_file_received_t* event) {
+	static_cast<CApiDataStreamEvents*>(user_data)->Bytes(event);
+}
+
+void OnCApiTextStream(void* user_data, lk_room_t*, const lk_text_stream_event_t* event) {
+	static_cast<CApiDataStreamEvents*>(user_data)->TextStream(event);
+}
+
+void OnCApiByteStream(void* user_data, lk_room_t*, const lk_byte_stream_event_t* event) {
+	static_cast<CApiDataStreamEvents*>(user_data)->ByteStream(event);
+}
+
 void OnCApiE2eeAudioFrame(void* user_data, lk_room_t*, const lk_track_publication_info_t*,
                           const lk_participant_info_t*, const lk_audio_frame_t*) {
 	static_cast<CApiE2eeEvents*>(user_data)->audio_frames.fetch_add(1);
@@ -2204,6 +2388,164 @@ TEST(LiveKitServerTest, CApiReportsParticipantProfileChanges) {
 	    [&] { return events.attributes_changed(sender_identity.data(), {{"role", ""}}, 2); },
 	    std::chrono::seconds(10)));
 
+	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
+	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
+	sender.reset();
+	receiver.reset();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK);
+}
+
+TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the C API "
+		                "DataStream metadata integration test";
+	}
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };
+	auto text_writer_deleter = [](lk_text_stream_writer_t* writer) {
+		lk_text_stream_writer_destroy(writer);
+	};
+	auto byte_writer_deleter = [](lk_byte_stream_writer_t* writer) {
+		lk_byte_stream_writer_destroy(writer);
+	};
+	lk_room_t* receiver_handle = nullptr;
+	lk_room_t* sender_handle = nullptr;
+	ASSERT_EQ(lk_room_create(&receiver_handle), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_create(&sender_handle), LK_STATUS_OK) << lk_last_error();
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> receiver(receiver_handle, room_deleter);
+	std::unique_ptr<lk_room_t, decltype(room_deleter)> sender(sender_handle, room_deleter);
+
+	CApiDataStreamEvents events;
+	lk_room_callbacks_t callbacks;
+	lk_room_callbacks_init(&callbacks);
+	callbacks.user_data = &events;
+	callbacks.on_text_received = OnCApiTextReceived;
+	callbacks.on_byte_received = OnCApiBytesReceived;
+	ASSERT_EQ(lk_room_set_callbacks(receiver.get(), &callbacks), LK_STATUS_OK) << lk_last_error();
+	ASSERT_EQ(lk_room_register_text_stream_handler(receiver.get(), "c-api-stream-text",
+	                                               OnCApiTextStream, &events),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_register_byte_stream_handler(receiver.get(), "c-api-stream-bytes",
+	                                               OnCApiByteStream, &events),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+
+	ASSERT_EQ(lk_room_connect(receiver.get(), url, receiver_token), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_room_connect(sender.get(), url, sender_token), LK_STATUS_OK) << lk_last_error();
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return lk_room_is_connected(receiver.get()) && lk_room_is_connected(sender.get()); },
+	    std::chrono::seconds(10)));
+	auto read_identity = [](lk_room_t* room) {
+		std::vector<char> value(lk_local_participant_identity(room, nullptr, 0));
+		if (!value.empty()) {
+			lk_local_participant_identity(room, value.data(), value.size());
+		}
+		return value.empty() ? std::string{} : std::string(value.data());
+	};
+	const auto receiver_identity = read_identity(receiver.get());
+	const auto sender_identity = read_identity(sender.get());
+	ASSERT_FALSE(receiver_identity.empty());
+	ASSERT_FALSE(sender_identity.empty());
+	const char* destinations[] = {receiver_identity.c_str()};
+
+	const std::array<lk_attribute_t, 2> text_attributes{
+	    {{"language", "zh-CN"}, {"purpose", "parity"}}};
+	const char* attached_stream_ids[] = {"ST_attachment"};
+	lk_text_send_options_t text_options;
+	lk_text_send_options_init(&text_options);
+	text_options.topic = "c-api-text-metadata";
+	text_options.destination_identities = destinations;
+	text_options.destination_identity_count = std::size(destinations);
+	text_options.attributes = text_attributes.data();
+	text_options.attribute_count = text_attributes.size();
+	text_options.reply_to_stream_id = "ST_reply";
+	text_options.attached_stream_ids = attached_stream_ids;
+	text_options.attached_stream_id_count = std::size(attached_stream_ids);
+	ASSERT_EQ(lk_room_send_text(sender.get(), "C API metadata", &text_options), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.LegacyTextMatches(sender_identity); },
+	                      std::chrono::seconds(10)));
+
+	const lk_attribute_t byte_attribute{"purpose", "parity"};
+	const std::array<uint8_t, 4> bytes{4, 3, 2, 1};
+	lk_byte_send_options_t byte_options;
+	lk_byte_send_options_init(&byte_options);
+	byte_options.topic = "c-api-byte-metadata";
+	byte_options.mime_type = "application/x-livekit-metadata";
+	byte_options.name = "metadata.bin";
+	byte_options.destination_identities = destinations;
+	byte_options.destination_identity_count = std::size(destinations);
+	byte_options.attributes = &byte_attribute;
+	byte_options.attribute_count = 1;
+	ASSERT_EQ(lk_room_send_bytes(sender.get(), bytes.data(), bytes.size(), &byte_options),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.LegacyBytesMatch(sender_identity); },
+	                      std::chrono::seconds(10)));
+
+	const std::array<lk_attribute_t, 2> stream_text_attributes{
+	    {{"language", "zh-CN"}, {"purpose", "stream"}}};
+	const char* stream_attachments[] = {"ST_stream_attachment"};
+	lk_stream_text_options_t stream_text_options;
+	lk_stream_text_options_init(&stream_text_options);
+	stream_text_options.topic = "c-api-stream-text";
+	stream_text_options.destination_identities = destinations;
+	stream_text_options.destination_identity_count = std::size(destinations);
+	stream_text_options.attributes = stream_text_attributes.data();
+	stream_text_options.attribute_count = stream_text_attributes.size();
+	stream_text_options.reply_to_stream_id = "ST_stream_reply";
+	stream_text_options.attached_stream_ids = stream_attachments;
+	stream_text_options.attached_stream_id_count = std::size(stream_attachments);
+	lk_text_stream_writer_t* text_writer_handle = nullptr;
+	ASSERT_EQ(lk_room_stream_text(sender.get(), &stream_text_options, &text_writer_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_text_stream_writer_t, decltype(text_writer_deleter)> text_writer(
+	    text_writer_handle, text_writer_deleter);
+	ASSERT_EQ(lk_text_stream_writer_write(text_writer.get(), "stream metadata", 15), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_text_stream_writer_close(text_writer.get()), LK_STATUS_OK) << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.TextStreamMatches(sender_identity); },
+	                      std::chrono::seconds(10)));
+
+	const lk_attribute_t stream_byte_attribute{"purpose", "stream"};
+	lk_stream_bytes_options_t stream_byte_options;
+	lk_stream_bytes_options_init(&stream_byte_options);
+	stream_byte_options.topic = "c-api-stream-bytes";
+	stream_byte_options.mime_type = "application/x-livekit-stream";
+	stream_byte_options.name = "stream.bin";
+	stream_byte_options.destination_identities = destinations;
+	stream_byte_options.destination_identity_count = std::size(destinations);
+	stream_byte_options.attributes = &stream_byte_attribute;
+	stream_byte_options.attribute_count = 1;
+	lk_byte_stream_writer_t* byte_writer_handle = nullptr;
+	ASSERT_EQ(lk_room_stream_bytes(sender.get(), &stream_byte_options, &byte_writer_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_byte_stream_writer_t, decltype(byte_writer_deleter)> byte_writer(
+	    byte_writer_handle, byte_writer_deleter);
+	const std::array<uint8_t, 4> stream_bytes{1, 3, 5, 7};
+	ASSERT_EQ(
+	    lk_byte_stream_writer_write(byte_writer.get(), stream_bytes.data(), stream_bytes.size()),
+	    LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_EQ(lk_byte_stream_writer_close(byte_writer.get()), LK_STATUS_OK) << lk_last_error();
+	ASSERT_TRUE(WaitUntil([&] { return events.ByteStreamMatches(sender_identity); },
+	                      std::chrono::seconds(10)));
+
+	EXPECT_EQ(lk_room_unregister_text_stream_handler(receiver.get(), "c-api-stream-text"),
+	          LK_STATUS_OK);
+	EXPECT_EQ(lk_room_unregister_byte_stream_handler(receiver.get(), "c-api-stream-bytes"),
+	          LK_STATUS_OK);
+	text_writer.reset();
+	byte_writer.reset();
 	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
 	sender.reset();

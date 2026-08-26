@@ -574,6 +574,12 @@ typedef struct lk_metrics_received {
 	const char* participant_identity;
 } lk_metrics_received_t;
 
+typedef struct lk_attribute {
+	const char* key;
+	const char* value;
+} lk_attribute_t;
+
+/* All pointer fields in received and stream events are borrowed for the callback duration. */
 typedef struct lk_file_received {
 	const uint8_t* data;
 	size_t data_size;
@@ -582,6 +588,9 @@ typedef struct lk_file_received {
 	const char* mime_type;
 	const char* topic;
 	const char* participant_identity;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	int64_t timestamp;
 } lk_file_received_t;
 
 typedef struct lk_text_received {
@@ -591,6 +600,10 @@ typedef struct lk_text_received {
 	const char* participant_identity;
 	const char* reply_to_stream_id;
 	int64_t timestamp;
+	const char* const* attached_stream_ids;
+	size_t attached_stream_id_count;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
 } lk_text_received_t;
 
 typedef struct lk_text_stream_event {
@@ -605,6 +618,12 @@ typedef struct lk_text_stream_event {
 	int has_total_size;
 	uint64_t total_size;
 	const char* reason;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	int64_t timestamp;
+	const char* reply_to_stream_id;
+	const char* const* attached_stream_ids;
+	size_t attached_stream_id_count;
 } lk_text_stream_event_t;
 
 typedef struct lk_byte_stream_event {
@@ -620,6 +639,9 @@ typedef struct lk_byte_stream_event {
 	int has_total_size;
 	uint64_t total_size;
 	const char* reason;
+	const lk_attribute_t* attributes;
+	size_t attribute_count;
+	int64_t timestamp;
 } lk_byte_stream_event_t;
 
 typedef struct lk_data_channel_buffer_status {
@@ -638,11 +660,6 @@ typedef struct lk_data_stream_completion {
 	uint64_t total_size;
 	const char* reason;
 } lk_data_stream_completion_t;
-
-typedef struct lk_attribute {
-	const char* key;
-	const char* value;
-} lk_attribute_t;
 
 typedef struct lk_rpc_invocation {
 	const char* request_id;
