@@ -89,23 +89,23 @@ cmake --build out/build/vs2022-x64-release --config Release --parallel
 ctest --test-dir out/build/vs2022-x64-release -C Release --output-on-failure
 ```
 
-The default artifact is the static library
-`out/build/vs2022-x64-release/Release/livekitclient.lib`. Configure with
-`-DBUILD_SHARED_LIBS=ON` to build `livekitclient.dll`; its imported CMake target automatically
-defines `LKC_SHARED` for consumers. The DLL's explicitly exported C API is the stable ABI. Exported
-C++ symbols are supported for same-toolset consumers but are not a cross-compiler or cross-release
-ABI promise.
+Windows builds a DLL by default. The distributable SDK ZIP contains both
+`livekitclient.dll` (Release) and `livekitclientd.dll` plus its PDB (Debug), with matching import
+libraries and runtime dependencies in per-configuration directories. Its imported CMake target
+automatically defines `LKC_SHARED` and selects the correct binary for the consumer configuration.
+The DLL's explicitly exported C API is the stable ABI. Exported C++ symbols are supported for
+same-toolset consumers but are not a cross-compiler or cross-release ABI promise.
 
-Both variants provide `install()` rules, the `LiveKitClient::livekitclient` imported target, and a
-versioned CPack ZIP. `test/consumer` can either use the source tree or an installed package and
-builds both C++ and pure C smoke executables. See
-[Windows SDK packaging and deployment](docs/WINDOWS_SDK_PACKAGING.md) for static/DLL build,
-installation, consumption, and runtime layout commands.
+Static builds remain available from source with `-DBUILD_SHARED_LIBS=OFF`, but are not part of the
+prebuilt Windows SDK distribution. `test/consumer` can either use the source tree or an installed
+package and builds both C++ and pure C smoke executables. See
+[Windows SDK packaging and deployment](docs/WINDOWS_SDK_PACKAGING.md) for Release/Debug WebRTC,
+DLL packaging, static source builds, consumption, and runtime layout commands.
 
 On Windows, libwebsockets is intentionally kept in a DLL so its mbedTLS symbols remain isolated
-from the BoringSSL symbols embedded in `webrtc.lib`. Deploy `websockets.dll` next to the application
-for both SDK variants, plus `livekitclient.dll` for the shared variant. Static SDK consumers must
-also use the static MSVC runtime
+from the BoringSSL symbols embedded in `webrtc.lib`. Deploy the configuration-matching
+`websockets.dll` and `livekitclient[d].dll` next to a DLL consumer. Static consumers must also use
+the static MSVC runtime
 (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) to match packaged libwebrtc.
 
 Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected

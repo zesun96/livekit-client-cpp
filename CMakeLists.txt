@@ -35,7 +35,12 @@ option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
 option(BUILD_INTEGRATION_TESTS "Build tests that connect to a LiveKit server" OFF)
 option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
 option(LIBWEBRTC_USE_H264 "Enable H264 adapters from an H264-enabled libwebrtc package" ON)
-option(BUILD_SHARED_LIBS "Build livekitclient as a shared library" OFF)
+if(WIN32)
+  set(LKC_BUILD_SHARED_DEFAULT ON)
+else()
+  set(LKC_BUILD_SHARED_DEFAULT OFF)
+endif()
+option(BUILD_SHARED_LIBS "Build livekitclient as a shared library" ${LKC_BUILD_SHARED_DEFAULT})
 set(OFFICIAL_LIVEKIT_CPP_ROOT "" CACHE PATH
     "Optional extracted official LiveKit C++ SDK root for interoperability tests")
 
@@ -263,6 +268,7 @@ if(BUILD_SHARED_LIBS)
   target_compile_definitions(livekitclient PUBLIC LKC_SHARED)
   target_compile_definitions(livekitclient PRIVATE LKC_BUILDING_LIBRARY)
   set_target_properties(livekitclient PROPERTIES
+    DEBUG_POSTFIX d
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
     WINDOWS_EXPORT_ALL_SYMBOLS ON
@@ -305,13 +311,26 @@ endif()
 
 include(CMakePackageConfigHelpers)
 
+if(WIN32)
+  set(LKC_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}/$<CONFIG>")
+  set(LKC_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}/$<CONFIG>")
+else()
+  set(LKC_INSTALL_BINDIR "${CMAKE_INSTALL_BINDIR}")
+  set(LKC_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+endif()
+
 install(TARGETS livekitclient
   EXPORT LiveKitClientTargets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  ARCHIVE DESTINATION "${LKC_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${LKC_INSTALL_LIBDIR}"
+  RUNTIME DESTINATION "${LKC_INSTALL_BINDIR}"
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+if(MSVC AND BUILD_SHARED_LIBS)
+  install(FILES "$<TARGET_PDB_FILE:livekitclient>"
+    DESTINATION "${LKC_INSTALL_BINDIR}"
+    OPTIONAL)
+endif()
 install(DIRECTORY include/livekit DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE Readme.md docs/WINDOWS_SDK_PACKAGING.md
   DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp)
@@ -328,11 +347,11 @@ endif()
 
 if(WIN32 AND NOT BUILD_SHARED_LIBS)
   install(FILES "${libwebrtc_SOURCE_DIR}/lib/webrtc.lib"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    DESTINATION "${LKC_INSTALL_LIBDIR}")
 endif()
 if(WIN32 AND TARGET websockets_shared)
   install(FILES "$<TARGET_FILE:websockets_shared>"
-    DESTINATION ${CMAKE_INSTALL_BINDIR})
+    DESTINATION "${LKC_INSTALL_BINDIR}")
 endif()
 
 install(EXPORT LiveKitClientTargets
