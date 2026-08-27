@@ -1,6 +1,6 @@
 {
     "name": "livekit-client-cpp-sdk",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "homepage": "https://github.com/zesun96/livekit-client-cpp",
     "license": "Apache-2.0",
     "dependencies": [

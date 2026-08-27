@@ -1,0 +1,16 @@
+{
+  "name": "livekit-client-consumer-smoke",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "libwebsockets",
+    "protobuf",
+    "zlib"
+  ],
+  "overrides": [
+    {
+      "name": "protobuf",
+      "version": "3.21.12",
+      "port-version": 4
+    }
+  ]
+}
