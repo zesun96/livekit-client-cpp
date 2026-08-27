@@ -89,16 +89,24 @@ cmake --build out/build/vs2022-x64-release --config Release --parallel
 ctest --test-dir out/build/vs2022-x64-release -C Release --output-on-failure
 ```
 
-The resulting static library is
-`out/build/vs2022-x64-release/Release/livekitclient.lib`. On Windows,
-libwebsockets is intentionally kept in a DLL so its mbedTLS symbols remain
-isolated from the BoringSSL symbols embedded in `webrtc.lib`. CMake copies
-`websockets.dll` next to SDK executables automatically; applications consuming
-the static library must deploy that DLL with their executable. Consumers must also use the static
-MSVC runtime (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) to match the
-packaged libwebrtc library. `test/consumer` is a standalone `add_subdirectory` smoke project with
-both C++ and pure C executables that checks these downstream configure, link, and runtime
-requirements.
+The default artifact is the static library
+`out/build/vs2022-x64-release/Release/livekitclient.lib`. Configure with
+`-DBUILD_SHARED_LIBS=ON` to build `livekitclient.dll`; its imported CMake target automatically
+defines `LKC_SHARED` for consumers. The DLL's explicitly exported C API is the stable ABI. Exported
+C++ symbols are supported for same-toolset consumers but are not a cross-compiler or cross-release
+ABI promise.
+
+Both variants provide `install()` rules, the `LiveKitClient::livekitclient` imported target, and a
+versioned CPack ZIP. `test/consumer` can either use the source tree or an installed package and
+builds both C++ and pure C smoke executables. See
+[Windows SDK packaging and deployment](docs/WINDOWS_SDK_PACKAGING.md) for static/DLL build,
+installation, consumption, and runtime layout commands.
+
+On Windows, libwebsockets is intentionally kept in a DLL so its mbedTLS symbols remain isolated
+from the BoringSSL symbols embedded in `webrtc.lib`. Deploy `websockets.dll` next to the application
+for both SDK variants, plus `livekitclient.dll` for the shared variant. Static SDK consumers must
+also use the static MSVC runtime
+(`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) to match packaged libwebrtc.
 
 Video registers libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d codec adapters. The selected
 `TrackPublishOptions::video_codec` (or `lk_track_publish_options_t::video_codec` in C) is applied as

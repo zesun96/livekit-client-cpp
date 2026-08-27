@@ -17,7 +17,7 @@
 
 #include "livekit/core/livekit_client.h"
 #include "detail/logging.h"
-#include "version/version.h"
+#include "livekit/core/version.h"
 
 #include <rtc_base/crypto_random.h>
 #include <rtc_base/ssl_adapter.h>

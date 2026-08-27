@@ -1,0 +1,11 @@
+// Copyright 2026 LiveKit Client C++ contributors
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef LKC_CORE_VERSION_H_
+#define LKC_CORE_VERSION_H_
+
+#define LKC_CORE_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define LKC_CORE_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define LKC_CORE_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+#endif // LKC_CORE_VERSION_H_

@@ -4,7 +4,8 @@
 # ----------------------------------------------------------------------------
 cmake_minimum_required (VERSION 3.15)
 
-project ("livekit-client-cpp-sdk")
+set(LKC_VERSION 0.1.0)
+project ("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES C CXX)
 
 set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
 
@@ -34,6 +35,7 @@ option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
 option(BUILD_INTEGRATION_TESTS "Build tests that connect to a LiveKit server" OFF)
 option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
 option(LIBWEBRTC_USE_H264 "Enable H264 adapters from an H264-enabled libwebrtc package" ON)
+option(BUILD_SHARED_LIBS "Build livekitclient as a shared library" OFF)
 set(OFFICIAL_LIVEKIT_CPP_ROOT "" CACHE PATH
     "Optional extracted official LiveKit C++ SDK root for interoperability tests")
 
@@ -49,7 +51,7 @@ elseif(EXISTS "${MEDIA_CAPTURE_ROOT}/CMakeLists.txt")
   set(MEDIA_CAPTURE_BUILD_CAMERA ON CACHE BOOL "" FORCE)
   set(MEDIA_CAPTURE_BUILD_SCREEN ON CACHE BOOL "" FORCE)
   add_subdirectory("${MEDIA_CAPTURE_ROOT}"
-    "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build" EXCLUDE_FROM_ALL)
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/media-capture-build")
 else()
   message(FATAL_ERROR
     "media-capture was not found. Set MEDIA_CAPTURE_ROOT or USE_SYSTEM_MEDIA_CAPTURE=ON.")
@@ -115,9 +117,15 @@ set(LK_PROTO_FILES
 )
 set(PROTO_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${PROTO_BINARY_DIR})
+configure_file(
+  cmake/version.h.in
+  "${PROTO_BINARY_DIR}/livekit/core/version.h"
+  @ONLY
+)
 
 # livekit-proto
 add_library(livekit_proto OBJECT ${LK_PROTO_FILES})
+set_target_properties(livekit_proto PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(livekit_proto PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 target_include_directories(livekit_proto PUBLIC ${Protobuf_INCLUDE_DIRS})
 target_link_libraries(livekit_proto PUBLIC protobuf::libprotobuf)
@@ -198,12 +206,16 @@ set(
 
 )
 
-add_library (livekitclient STATIC
+add_library (livekitclient
 
   ${LKC_CORE_SOURCE_FILES}
 
   ${LK_PROTO_FILES}
+
+  $<TARGET_OBJECTS:livekit_proto>
 )
+add_library(LiveKitClient::livekitclient ALIAS livekitclient)
+target_compile_features(livekitclient PUBLIC cxx_std_20)
 
 protobuf_generate(
     TARGET livekit_proto
@@ -213,32 +225,52 @@ protobuf_generate(
     PROTOC_OUT_DIR ${PROTO_BINARY_DIR}
 )
 
-target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include)
 target_include_directories(
   livekitclient
-  PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${libwebrtc_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp>
+    $<BUILD_INTERFACE:${PROTO_BINARY_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_include_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/include/third_party/abseil-cpp)
 target_include_directories(livekitclient PRIVATE
   ${libwebrtc_SOURCE_DIR}/include/third_party/boringssl/src/include
   ${libwebrtc_SOURCE_DIR}/include/third_party/libyuv/include
 )
 target_include_directories(livekitclient PRIVATE ${PROTOBUF_INCLUDE_DIRS})
-target_include_directories(livekitclient PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
-target_link_directories(livekitclient PUBLIC ${libwebrtc_SOURCE_DIR}/lib)
-target_link_libraries(livekitclient PUBLIC webrtc)
+target_link_directories(livekitclient PRIVATE ${libwebrtc_SOURCE_DIR}/lib)
+target_link_libraries(livekitclient PRIVATE webrtc)
 target_link_libraries(livekitclient PRIVATE protobuf::libprotobuf)
-target_link_libraries(livekitclient PUBLIC livekit_proto)
-target_link_libraries(livekitclient PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(livekitclient PRIVATE $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>)
 target_link_libraries(livekitclient PRIVATE ZLIB::ZLIB)
 target_link_libraries(livekitclient PRIVATE
-  media_capture::audio media_capture::camera media_capture::screen)
+  $<BUILD_INTERFACE:media_capture::audio>
+  $<BUILD_INTERFACE:media_capture::camera>
+  $<BUILD_INTERFACE:media_capture::screen>
+  $<INSTALL_INTERFACE:media_capture::audio>
+  $<INSTALL_INTERFACE:media_capture::camera>
+  $<INSTALL_INTERFACE:media_capture::screen>)
 #target_link_libraries(livekitclient PRIVATE absl::strings absl::string_view)
 target_link_libraries(livekitclient PRIVATE ${LKC_LIBWEBSOCKETS_TARGET} libuv::uv_a)
 
 if(LIBWEBRTC_USE_H264)
   target_compile_definitions(livekitclient PUBLIC WEBRTC_USE_H264)
+endif()
+
+if(BUILD_SHARED_LIBS)
+  target_compile_definitions(livekitclient PUBLIC LKC_SHARED)
+  target_compile_definitions(livekitclient PRIVATE LKC_BUILDING_LIBRARY)
+  set_target_properties(livekitclient PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+  )
+else()
+  target_link_directories(livekitclient INTERFACE
+    $<BUILD_INTERFACE:${libwebrtc_SOURCE_DIR}/lib>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}>)
 endif()
 
 if (WIN32)
@@ -270,3 +302,71 @@ if(BUILD_TEST)
   enable_testing()
   add_subdirectory(test)
 endif()
+
+include(CMakePackageConfigHelpers)
+
+install(TARGETS livekitclient
+  EXPORT LiveKitClientTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY include/livekit DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES LICENSE Readme.md docs/WINDOWS_SDK_PACKAGING.md
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp)
+if(EXISTS "${libwebrtc_SOURCE_DIR}/NOTICE")
+  install(FILES "${libwebrtc_SOURCE_DIR}/NOTICE"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp
+    RENAME WEBRTC_NOTICE)
+endif()
+if(EXISTS "${libwebrtc_SOURCE_DIR}/VERSIONS")
+  install(FILES "${libwebrtc_SOURCE_DIR}/VERSIONS"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp
+    RENAME WEBRTC_VERSIONS)
+endif()
+
+if(WIN32 AND NOT BUILD_SHARED_LIBS)
+  install(FILES "${libwebrtc_SOURCE_DIR}/lib/webrtc.lib"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+if(WIN32 AND TARGET websockets_shared)
+  install(FILES "$<TARGET_FILE:websockets_shared>"
+    DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+install(EXPORT LiveKitClientTargets
+  FILE LiveKitClientTargets.cmake
+  NAMESPACE LiveKitClient::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LiveKitClient
+)
+configure_package_config_file(
+  cmake/LiveKitClientConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/LiveKitClientConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LiveKitClient
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/LiveKitClientConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/LiveKitClientConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/LiveKitClientConfigVersion.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LiveKitClient
+)
+
+set(CPACK_PACKAGE_NAME "livekit-client-cpp")
+set(CPACK_PACKAGE_VENDOR "LiveKit Client C++ contributors")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+if(BUILD_SHARED_LIBS)
+  set(LKC_PACKAGE_VARIANT shared)
+else()
+  set(LKC_PACKAGE_VARIANT static)
+endif()
+set(CPACK_PACKAGE_FILE_NAME
+  "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-${LKC_PACKAGE_VARIANT}")
+if(WIN32)
+  set(CPACK_GENERATOR ZIP)
+endif()
+include(CPack)
