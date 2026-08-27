@@ -48,7 +48,7 @@ Because webrtc requires C++20.
 - [livekit-protocol](https://github.com/livekit/protocol) (pinned source archive via CMake FetchContent)
 - [plog](https://github.com/SergiusTheBest/plog) (release archive via CMake FetchContent)
 - [libwebsockets](https://github.com/warmcat/libwebsockets)
-- [libwebrtc](https://github.com/livekit/rust-sdks/releases) (cmake FetchContent by default)
+- [libwebrtc](https://github.com/zesun96/webrtc-build) (cmake FetchContent by default)
 - [media-capture](https://github.com/zesun96/media-capture) (audio, camera, and screen capture
   abstraction; sibling source tree by default)
 - [protobuf](https://github.com/protocolbuffers/protobuf) (cmake find_package by default)
