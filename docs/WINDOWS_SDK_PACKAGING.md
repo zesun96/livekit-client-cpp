@@ -1,91 +1,117 @@
 # Windows SDK packaging and deployment
 
-LiveKit Client C++ 0.1.0 can be installed as either a static SDK or a DLL SDK. Both variants expose
-the same CMake package and target:
+The prebuilt Windows LiveKit Client C++ SDK is a DLL distribution containing matching Release and
+Debug binaries. Applications choose the configuration through the imported CMake target:
 
 ```cmake
 find_package(LiveKitClient CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE LiveKitClient::livekitclient)
 ```
 
-The DLL's C ABI in `livekit/capi/livekit.h` is the stable binary boundary. The Windows build also
-exports C++ symbols so a consumer built with the same MSVC toolset and runtime can use the C++ API,
-but C++ ABI compatibility across compilers, toolset versions, build modes, or SDK releases is not
-promised. Prefer the C ABI when the DLL and application have independent release lifecycles.
+Release uses `livekitclient.dll`; Debug uses `livekitclientd.dll` and includes its PDB. The DLL's C
+ABI in `livekit/capi/livekit.h` is the stable binary boundary. Exported C++ symbols require the same
+MSVC toolset and compatible build settings and are not a cross-compiler or cross-release ABI
+promise.
 
-## Build and install
+## Build the WebRTC prerequisites
 
-Use the same x64 libwebrtc package, media-capture checkout, and vcpkg static triplet described in
-the main README. `BUILD_SHARED_LIBS` selects the artifact type; it defaults to `OFF`.
-
-```powershell
-# Static SDK
-cmake -S . -B out/build/sdk-static <common dependency options> `
-  -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TEST=OFF
-cmake --build out/build/sdk-static --config Release --parallel
-cmake --install out/build/sdk-static --config Release `
-  --prefix out/install/livekit-client-cpp-static
-
-# DLL SDK
-cmake -S . -B out/build/sdk-shared <common dependency options> `
-  -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DBUILD_TEST=OFF
-cmake --build out/build/sdk-shared --config Release --parallel
-cmake --install out/build/sdk-shared --config Release `
-  --prefix out/install/livekit-client-cpp-shared
-```
-
-The shared build adds `LKC_SHARED` to the imported target automatically. Applications must not set
-`LKC_BUILDING_LIBRARY`; that definition is private to the DLL build.
-
-Generate versioned ZIP archives with CPack:
+A true MSVC Debug DLL cannot link the Release `webrtc.lib`: Release uses `/MT` and
+`_ITERATOR_DEBUG_LEVEL=0`, while Debug uses `/MTd` and level 2. Build both H264-enabled packages
+from the local `webrtc-build` checkout:
 
 ```powershell
-cmake --build out/build/sdk-static --config Release --target package
-cmake --build out/build/sdk-shared --config Release --target package
+Push-Location ..\webrtc-build\build
+.\build_windows.cmd release x64 h264
+.\build_windows.cmd debug x64 h264
+Pop-Location
 ```
 
-The archive names include the SDK version, platform, processor, and `static` or `shared` variant.
+The expected roots are:
+
+```text
+../webrtc-build/build/_package/windows_x86_64/release/webrtc
+../webrtc-build/build/_package/windows_x86_64/debug/webrtc
+```
+
+## Build and package the DLL SDK
+
+Use separate CMake build trees because each configuration links a different WebRTC package. Both
+trees use the same Visual Studio toolset, media-capture checkout, and `x64-windows-static` vcpkg
+dependencies.
+
+```powershell
+$common = @(
+  '-G', 'Visual Studio 17 2022', '-A', 'x64',
+  '-DBUILD_SHARED_LIBS=ON',
+  '-DBUILD_EXAMPLES=OFF', '-DBUILD_TEST=OFF',
+  '-DLIBWEBRTC_USE_H264=ON',
+  '-DMEDIA_CAPTURE_ROOT=E:/path/to/media-capture',
+  '-DCMAKE_TOOLCHAIN_FILE=E:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake',
+  '-DVCPKG_TARGET_TRIPLET=x64-windows-static'
+)
+
+cmake -S . -B out/build/sdk-dll-release @common `
+  -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release/webrtc
+cmake -S . -B out/build/sdk-dll-debug @common `
+  -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/debug/webrtc
+
+.\cmake\package-windows-dll.ps1 `
+  -ReleaseBuildDirectory out/build/sdk-dll-release `
+  -DebugBuildDirectory out/build/sdk-dll-debug `
+  -OutputDirectory out/package
+```
+
+The packaging script builds, installs, validates, and combines both configurations into
+`livekit-client-cpp-<version>-Windows-x64-dll.zip`, then prints its SHA256 digest.
 
 ## Installed layout
 
 ```text
 include/livekit/                         public C and C++ headers
-lib/livekitclient.lib                   static library or DLL import library
-lib/webrtc.lib                          static SDK's pinned WebRTC library
+lib/Release/livekitclient.lib           Release DLL import library
+lib/Debug/livekitclientd.lib            Debug DLL import library
 lib/cmake/LiveKitClient/                CMake package config and imported target
-lib/cmake/media-capture/                bundled media-capture package metadata
-bin/livekitclient.dll                   shared SDK only
-bin/websockets.dll                      libwebsockets runtime
-share/livekit-client-cpp/               licenses, dependency versions, and deployment docs
+bin/Release/livekitclient.dll           Release SDK runtime
+bin/Release/websockets.dll              Release WebSocket runtime
+bin/Debug/livekitclientd.dll             Debug SDK runtime
+bin/Debug/livekitclientd.pdb             Debug symbols
+bin/Debug/websockets.dll                 Debug WebSocket runtime
+share/livekit-client-cpp/               licenses, versions, and deployment docs
 ```
 
-The static package keeps WebRTC and media-capture in the SDK prefix. Its remaining link-time
-dependencies (`protobuf`, `libwebsockets`, `libuv`, and `zlib`) are resolved with
-`find_dependency`; configure consumers with the same `x64-windows-static` vcpkg triplet and `/MT`
-runtime. The DLL package hides those link-time dependencies from consumers.
+Copy the two DLLs from the selected configuration's `bin` directory next to the application, or
+add that directory to the process DLL search path. Do not mix Release and Debug directories.
 
-## Runtime deployment
-
-For the DLL SDK, copy `bin/livekitclient.dll` and `bin/websockets.dll` next to the application
-executable, or add the SDK `bin` directory to the process DLL search path. A static SDK application
-still needs `websockets.dll`, because libwebsockets is intentionally isolated from WebRTC's
-BoringSSL symbols.
-
-The selected libwebrtc package determines codec support. This repository enables H264 by default,
-so release packages must use an H264-enabled libwebrtc build unless configured with
-`-DLIBWEBRTC_USE_H264=OFF`.
+The selected WebRTC package determines codec support. H264 is enabled by default, so both packages
+must be built with H264 unless the SDK is explicitly configured with `-DLIBWEBRTC_USE_H264=OFF`.
 
 ## Installed-package smoke test
 
-`test/consumer` uses the installed package whenever `LIVEKIT_CLIENT_CPP_SOURCE_DIR` is omitted:
+Extract the ZIP, point `CMAKE_PREFIX_PATH` at its top-level directory, then build either
+configuration. The same consumer build tree can select the matching imported SDK binary:
 
 ```powershell
 cmake -S test/consumer -B out/build/package-consumer `
   -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_PREFIX_PATH=E:/path/to/livekit-client-cpp-install
+  -DCMAKE_PREFIX_PATH=E:/path/to/extracted/livekit-client-cpp-sdk
 cmake --build out/build/package-consumer --config Release
+cmake --build out/build/package-consumer --config Debug
 ```
 
-It builds a C++ program and a source file compiled as C. For the shared build, run
-`test/consumer/check-c-exports.ps1` to verify that every `LKC_API` declaration is present in the DLL
-export table.
+`test/consumer` builds both a C++ executable and a source file compiled as C. Run
+`test/consumer/check-c-exports.ps1` against both DLLs to verify every `LKC_API` declaration.
+
+## Static source build
+
+Static consumers build the SDK from source and provide the configuration-matching WebRTC package:
+
+```powershell
+cmake -S . -B out/build/sdk-static <common dependency options> `
+  -DBUILD_SHARED_LIBS=OFF `
+  -DLIBWEBRTC_ROOT=E:/path/to/configuration-matching/webrtc
+cmake --build out/build/sdk-static --config Release --parallel
+```
+
+Static consumers must use the same static MSVC runtime and dependency configuration as WebRTC. A
+static application still deploys `websockets.dll`, which isolates libwebsockets' mbedTLS symbols
+from WebRTC's BoringSSL symbols.

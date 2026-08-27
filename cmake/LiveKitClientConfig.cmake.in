@@ -15,4 +15,11 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/LiveKitClientTargets.cmake")
 
+if(TARGET LiveKitClient::livekitclient)
+  set_property(TARGET LiveKitClient::livekitclient PROPERTY
+    MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
+  set_property(TARGET LiveKitClient::livekitclient PROPERTY
+    MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+endif()
+
 check_required_components(LiveKitClient)

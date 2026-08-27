@@ -32,14 +32,15 @@ $declarations = [regex]::Matches(
   'LKC_API\s+[\s\S]*?\b(lk_[a-zA-Z0-9_]+)\s*\('
 ) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
 $exports = & $link /dump /exports $dllPath |
-  Select-String '\slk_[a-zA-Z0-9_]+$' |
-  ForEach-Object { $_.Matches.Value.Trim() } |
+  Select-String '\b(lk_[a-zA-Z0-9_]+)(?:\s|$)' |
+  ForEach-Object { $_.Matches[0].Groups[1].Value } |
   Sort-Object -Unique
 
-$missing = Compare-Object $declarations $exports |
+$differences = @(Compare-Object $declarations $exports)
+$missing = $differences |
   Where-Object SideIndicator -eq '<=' |
   Select-Object -ExpandProperty InputObject
-$unexpected = Compare-Object $declarations $exports |
+$unexpected = $differences |
   Where-Object SideIndicator -eq '=>' |
   Select-Object -ExpandProperty InputObject
 if ($missing -or $unexpected) {
