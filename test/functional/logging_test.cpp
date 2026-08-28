@@ -111,12 +111,22 @@ TEST(LoggingTest, RedactsCredentialsAndConnectionDescriptions) {
 	detail::EmitLog(LogLevel::Info, LogSource::LiveKit, "Authorization: Bearer secret");
 	detail::EmitLog(LogLevel::Info, LogSource::WebRTC,
 	                "candidate:1 1 UDP 1 192.0.2.1 5000 typ host");
+	detail::EmitLog(LogLevel::Warning, LogSource::WebRTC,
+	                "Candidate has an unknown component: "
+	                "Cand[:123:1:udp:192.0.2.2:5001:host:secret-ufrag:secret-password]");
+	detail::EmitLog(LogLevel::Warning, LogSource::WebRTC,
+	                "Conn[id:host:udp:192.0.2.3:5002->secret-connection]");
+	detail::EmitLog(LogLevel::Error, LogSource::WebRTC,
+	                "Port[id:host:udp:192.0.2.4:5003]");
 	detail::EmitLog(LogLevel::Info, LogSource::WebRTC,
 	                "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:secret\r\n");
 	detail::EmitLog(LogLevel::Info, LogSource::WebSocket, "token eyJabc.def.ghi");
 
 	EXPECT_FALSE(sink->Contains(LogSource::LiveKit, LogLevel::Info, "secret"));
 	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "192.0.2.1"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Warning, "secret-ufrag"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Warning, "secret-connection"));
+	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Error, "192.0.2.4"));
 	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "m=audio"));
 	EXPECT_FALSE(sink->Contains(LogSource::WebSocket, LogLevel::Info, "eyJabc.def.ghi"));
 	EXPECT_TRUE(sink->Contains(LogSource::WebRTC, LogLevel::Info, "ICE details redacted"));

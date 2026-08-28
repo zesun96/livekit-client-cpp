@@ -1,6 +1,10 @@
-add_executable(livekit_server_integration_tests livekit_server_test.cpp)
+add_executable(
+  livekit_server_integration_tests
+  integration_main.cpp
+  livekit_server_test.cpp
+)
 target_compile_features(livekit_server_integration_tests PRIVATE cxx_std_20)
-target_link_libraries(livekit_server_integration_tests PRIVATE livekitclient GTest::gtest_main)
+target_link_libraries(livekit_server_integration_tests PRIVATE livekitclient GTest::gtest)
 
 if(OFFICIAL_LIVEKIT_CPP_ROOT)
   find_package(

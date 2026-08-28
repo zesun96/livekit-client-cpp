@@ -106,6 +106,9 @@ std::string SanitizeLogMessage(std::string message) {
 	RedactLineFromMarker(message, "access_token=", "[credential redacted]");
 	RedactLineFromMarker(message, "authorization:", "[credential redacted]");
 	RedactLineFromMarker(message, "candidate:", "[ICE details redacted]");
+	RedactLineFromMarker(message, "cand[", "[ICE details redacted]");
+	RedactLineFromMarker(message, "conn[", "[ICE details redacted]");
+	RedactLineFromMarker(message, "port[", "[ICE details redacted]");
 	RedactLineFromMarker(message, "turn:", "[TURN URL redacted]");
 	RedactLineFromMarker(message, "turns:", "[TURN URL redacted]");
 	RedactJwtLikeValues(message);
