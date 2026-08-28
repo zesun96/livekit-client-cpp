@@ -242,10 +242,14 @@ $apiSecret = Read-Host "LiveKit API secret"
 Run this command from an elevated PowerShell when the existing server is elevated or Windows
 Firewall requires a rule for a newly downloaded server executable. To test a different server
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
-RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Restart`,
+RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Participants`, `-Scenario Restart`,
 `-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, or `-Scenario CAPI` to run one part
-of the matrix. The C API scenario restarts the server with two C ABI rooms, verifies reconnect
-callbacks and identities, then transfers reliable data after recovery.
+of the matrix. The participant scenario concurrently joins and leaves four clients, verifies
+duplicate-identity replacement and same-identity rejoin, and accepts `-Iterations N` for repeated
+runs. The C API scenario restarts the server with two C ABI rooms, verifies reconnect callbacks and
+identities, then transfers reliable data after recovery. See
+[Reliability and weak-network testing](docs/RELIABILITY_TESTING.md) for the staged matrix and
+acceptance rules.
 `-VideoCodec vp8` is the default; VP8, H264, and AV1 are supported by the media and E2EE scenarios.
 The E2EE scenario creates two short-lived identities and verifies encrypted audio, the selected
 video codec, data, state events, key-slot switching, automatic key ratcheting, reconnect recovery,

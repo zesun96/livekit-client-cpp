@@ -20,9 +20,12 @@ param(
   [string]$ExistingServerExecutable = "",
   [switch]$ReplaceExistingServer,
   [ValidateSet(
-    "All", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI", "OfficialCpp"
+    "All", "Participants", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI",
+    "OfficialCpp"
   )]
   [string]$Scenario = "All",
+  [ValidateRange(1, 100)]
+  [int]$Iterations = 1,
   [ValidateSet("vp8", "h264", "vp9", "av1")]
   [string]$VideoCodec = "vp8",
   [string]$OfficialCppPeerExecutable = ""
@@ -267,17 +270,30 @@ if (-not [string]::IsNullOrEmpty($OfficialCppPeerExecutable)) {
   throw "-OfficialCppPeerExecutable is required for -Scenario OfficialCpp"
 }
 if ([string]::IsNullOrEmpty($NodeIp)) {
-  $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" |
-    Sort-Object RouteMetric, InterfaceMetric |
-    Select-Object -First 1
-  if ($null -eq $defaultRoute) {
-    throw "Unable to determine the local IPv4 address; pass -NodeIp explicitly"
+  try {
+    $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" `
+      -ErrorAction Stop |
+      Sort-Object RouteMetric, InterfaceMetric |
+      Select-Object -First 1
+  } catch {
+    $defaultRoute = $null
   }
-  $NodeIp = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $defaultRoute.InterfaceIndex |
-    Where-Object { $_.IPAddress -notlike "169.254.*" } |
-    Select-Object -ExpandProperty IPAddress -First 1
-  if ([string]::IsNullOrEmpty($NodeIp)) {
-    throw "Unable to determine the local IPv4 address; pass -NodeIp explicitly"
+  if ($null -eq $defaultRoute) {
+    $NodeIp = "127.0.0.1"
+    Write-Warning "Unable to inspect the default route; using loopback for the local matrix"
+  } else {
+    try {
+      $NodeIp = Get-NetIPAddress -AddressFamily IPv4 `
+        -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction Stop |
+        Where-Object { $_.IPAddress -notlike "169.254.*" } |
+        Select-Object -ExpandProperty IPAddress -First 1
+    } catch {
+      $NodeIp = ""
+    }
+    if ([string]::IsNullOrEmpty($NodeIp)) {
+      $NodeIp = "127.0.0.1"
+      Write-Warning "Unable to resolve the default-route address; using loopback for the local matrix"
+    }
   }
 }
 if ([string]::IsNullOrEmpty($ExistingServerNodeIp)) {
@@ -319,6 +335,14 @@ $originalEnvironment = @{
   LIVEKIT_TOKEN_CAPI_RESTART = $env:LIVEKIT_TOKEN_CAPI_RESTART
   LIVEKIT_TOKEN_CAPI_RESTART_2 = $env:LIVEKIT_TOKEN_CAPI_RESTART_2
   LIVEKIT_TOKEN_REFRESH = $env:LIVEKIT_TOKEN_REFRESH
+  LIVEKIT_TOKEN_PARTICIPANT_OBSERVER = $env:LIVEKIT_TOKEN_PARTICIPANT_OBSERVER
+  LIVEKIT_TOKEN_PARTICIPANT_1 = $env:LIVEKIT_TOKEN_PARTICIPANT_1
+  LIVEKIT_TOKEN_PARTICIPANT_2 = $env:LIVEKIT_TOKEN_PARTICIPANT_2
+  LIVEKIT_TOKEN_PARTICIPANT_3 = $env:LIVEKIT_TOKEN_PARTICIPANT_3
+  LIVEKIT_TOKEN_PARTICIPANT_4 = $env:LIVEKIT_TOKEN_PARTICIPANT_4
+  LIVEKIT_TOKEN_DUPLICATE_OBSERVER = $env:LIVEKIT_TOKEN_DUPLICATE_OBSERVER
+  LIVEKIT_TOKEN_DUPLICATE_1 = $env:LIVEKIT_TOKEN_DUPLICATE_1
+  LIVEKIT_TOKEN_DUPLICATE_2 = $env:LIVEKIT_TOKEN_DUPLICATE_2
   LIVEKIT_TOKEN = $env:LIVEKIT_TOKEN
   LIVEKIT_TOKEN_2 = $env:LIVEKIT_TOKEN_2
   LIVEKIT_VIDEO_CODEC = $env:LIVEKIT_VIDEO_CODEC
@@ -356,6 +380,18 @@ try {
   $refreshIdentity = "refresh-client"
   $env:LIVEKIT_TOKEN_RESTART = New-ParticipantToken $room $restartIdentity
   $env:LIVEKIT_TOKEN_REFRESH = New-ParticipantToken $room $refreshIdentity
+  $participantRoom = "cpp-participant-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  $env:LIVEKIT_TOKEN_PARTICIPANT_OBSERVER =
+    New-ParticipantToken $participantRoom "participant-observer"
+  $env:LIVEKIT_TOKEN_PARTICIPANT_1 = New-ParticipantToken $participantRoom "participant-1"
+  $env:LIVEKIT_TOKEN_PARTICIPANT_2 = New-ParticipantToken $participantRoom "participant-2"
+  $env:LIVEKIT_TOKEN_PARTICIPANT_3 = New-ParticipantToken $participantRoom "participant-3"
+  $env:LIVEKIT_TOKEN_PARTICIPANT_4 = New-ParticipantToken $participantRoom "participant-4"
+  $duplicateRoom = "cpp-duplicate-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  $env:LIVEKIT_TOKEN_DUPLICATE_OBSERVER =
+    New-ParticipantToken $duplicateRoom "duplicate-observer"
+  $env:LIVEKIT_TOKEN_DUPLICATE_1 = New-ParticipantToken $duplicateRoom "duplicate-client"
+  $env:LIVEKIT_TOKEN_DUPLICATE_2 = New-ParticipantToken $duplicateRoom "duplicate-client"
   $capiReconnectRoom = "cpp-capi-reconnect-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
   $env:LIVEKIT_TOKEN_CAPI_RESTART = New-ParticipantToken $capiReconnectRoom "capi-sender"
   $env:LIVEKIT_TOKEN_CAPI_RESTART_2 = New-ParticipantToken $capiReconnectRoom "capi-receiver"
@@ -368,6 +404,14 @@ try {
   $env:LIVEKIT_TOKEN_REFRESH_READY_FILE = Join-Path $tempRoot "refresh.ready"
 
   $server = Start-TestServer
+  if ($Scenario -in @("All", "Participants")) {
+    for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
+      Write-Host "Participant matrix iteration $iteration/$Iterations"
+      Invoke-SimpleTest "HandlesConcurrentParticipantJoinAndLeave"
+      Invoke-SimpleTest "ReplacesDuplicateIdentityAndAllowsRejoin"
+    }
+  }
+
   if ($Scenario -in @("All", "Restart")) {
     Invoke-CoordinatedTest "RecoversAfterExplicitServerRestart" `
       $env:LIVEKIT_SERVER_RESTART_READY_FILE {

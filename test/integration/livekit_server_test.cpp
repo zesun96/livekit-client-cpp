@@ -1005,6 +1005,55 @@ private:
 	std::string attributes_identity_;
 };
 
+class ParticipantLifecycleEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnParticipantConnected(RemoteParticipantInterface* participant) override {
+		if (participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		++connected_[participant->Identity()];
+	}
+	void OnParticipantDisconnected(RemoteParticipantInterface* participant) override {
+		if (participant == nullptr) {
+			return;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		++disconnected_[participant->Identity()];
+	}
+
+	bool connected(const std::string& identity) const {
+		std::lock_guard<std::mutex> guard(lock_);
+		return connected_.contains(identity);
+	}
+	bool disconnected(const std::string& identity) const {
+		std::lock_guard<std::mutex> guard(lock_);
+		return disconnected_.contains(identity);
+	}
+
+private:
+	mutable std::mutex lock_;
+	std::unordered_map<std::string, uint32_t> connected_;
+	std::unordered_map<std::string, uint32_t> disconnected_;
+};
+
+class DisconnectReasonEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnDisconnected(DisconnectReason reason) override {
+		reason_.store(reason);
+		disconnected_.store(true);
+	}
+
+	bool disconnected() const { return disconnected_.load(); }
+	DisconnectReason reason() const { return reason_.load(); }
+
+private:
+	std::atomic_bool disconnected_{false};
+	std::atomic<DisconnectReason> reason_{DisconnectReason::Unknown};
+};
+
 class DataTrackEvents final : public RoomEventInterface {
 public:
 	void OnConnected() override {}
@@ -1581,6 +1630,176 @@ TEST(LiveKitServerTest, SynchronizesParticipantJoinAndLeave) {
 	EXPECT_TRUE(WaitUntil([&] { return events.disconnected(second_local->Identity()); }));
 	first_room->RemoveEventListener();
 	EXPECT_TRUE(first_room->Disconnect());
+}
+
+TEST(LiveKitServerTest, HandlesConcurrentParticipantJoinAndLeave) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* observer_token = std::getenv("LIVEKIT_TOKEN_PARTICIPANT_OBSERVER");
+	const std::array<const char*, 4> token_names{
+	    "LIVEKIT_TOKEN_PARTICIPANT_1",
+	    "LIVEKIT_TOKEN_PARTICIPANT_2",
+	    "LIVEKIT_TOKEN_PARTICIPANT_3",
+	    "LIVEKIT_TOKEN_PARTICIPANT_4",
+	};
+	std::array<const char*, token_names.size()> peer_tokens{};
+	for (size_t index = 0; index < token_names.size(); ++index) {
+		peer_tokens[index] = std::getenv(token_names[index]);
+	}
+	if (url == nullptr || observer_token == nullptr || *url == '\0' || *observer_token == '\0' ||
+	    std::any_of(peer_tokens.begin(), peer_tokens.end(),
+	                [](const char* token) { return token == nullptr || *token == '\0'; })) {
+		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 -Scenario Participants to run the "
+		                "concurrent participant test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	auto observer = CreateRoomUnique();
+	ParticipantLifecycleEvents events;
+	observer->AddEventListener(&events);
+	ASSERT_TRUE(observer->Connect(url, observer_token));
+	ASSERT_TRUE(WaitUntil([&] { return observer->IsConnected(); }, std::chrono::seconds(10)));
+
+	std::vector<std::unique_ptr<RoomInterface>> peers;
+	peers.reserve(peer_tokens.size());
+	for (size_t index = 0; index < peer_tokens.size(); ++index) {
+		peers.push_back(CreateRoomUnique());
+	}
+	std::array<std::atomic_bool, token_names.size()> connect_results{};
+	std::vector<std::thread> workers;
+	workers.reserve(peers.size());
+	for (size_t index = 0; index < peers.size(); ++index) {
+		workers.emplace_back([&, index] {
+			connect_results[index].store(peers[index]->Connect(url, peer_tokens[index]));
+		});
+	}
+	for (auto& worker : workers) {
+		worker.join();
+	}
+
+	std::vector<std::string> identities;
+	identities.reserve(peers.size());
+	for (size_t index = 0; index < peers.size(); ++index) {
+		ASSERT_TRUE(connect_results[index].load()) << "participant " << index << " failed to join";
+		auto* participant = peers[index]->GetLocalParticipant();
+		ASSERT_NE(participant, nullptr);
+		ASSERT_FALSE(participant->Identity().empty());
+		identities.push_back(participant->Identity());
+	}
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto snapshots = observer->GetRemoteParticipantSnapshots();
+		    return snapshots.size() == peers.size() &&
+		           std::all_of(identities.begin(), identities.end(), [&](const auto& identity) {
+			           return std::any_of(
+			               snapshots.begin(), snapshots.end(),
+			               [&](const auto& snapshot) { return snapshot.identity == identity; });
+		           });
+	    },
+	    std::chrono::seconds(20)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return std::all_of(identities.begin(), identities.end(),
+		                       [&](const auto& identity) { return events.connected(identity); });
+	    },
+	    std::chrono::seconds(10)));
+
+	workers.clear();
+	std::array<std::atomic_bool, token_names.size()> disconnect_results{};
+	for (size_t index = 0; index < peers.size(); ++index) {
+		workers.emplace_back(
+		    [&, index] { disconnect_results[index].store(peers[index]->Disconnect()); });
+	}
+	for (auto& worker : workers) {
+		worker.join();
+	}
+	for (size_t index = 0; index < peers.size(); ++index) {
+		EXPECT_TRUE(disconnect_results[index].load())
+		    << "participant " << index << " failed to leave";
+	}
+	ASSERT_TRUE(WaitUntil([&] { return observer->GetRemoteParticipantSnapshots().empty(); },
+	                      std::chrono::seconds(20)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    return std::all_of(identities.begin(), identities.end(),
+		                       [&](const auto& identity) { return events.disconnected(identity); });
+	    },
+	    std::chrono::seconds(10)));
+
+	observer->RemoveEventListener();
+	EXPECT_TRUE(observer->Disconnect());
+}
+
+TEST(LiveKitServerTest, ReplacesDuplicateIdentityAndAllowsRejoin) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* observer_token = std::getenv("LIVEKIT_TOKEN_DUPLICATE_OBSERVER");
+	const char* first_token = std::getenv("LIVEKIT_TOKEN_DUPLICATE_1");
+	const char* second_token = std::getenv("LIVEKIT_TOKEN_DUPLICATE_2");
+	if (url == nullptr || observer_token == nullptr || first_token == nullptr ||
+	    second_token == nullptr || *url == '\0' || *observer_token == '\0' ||
+	    *first_token == '\0' || *second_token == '\0') {
+		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 -Scenario Participants to run the "
+		                "duplicate identity test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	auto observer = CreateRoomUnique();
+	auto first = CreateRoomUnique();
+	auto replacement = CreateRoomUnique();
+	DisconnectReasonEvents first_events;
+	first->AddEventListener(&first_events);
+	ASSERT_TRUE(observer->Connect(url, observer_token));
+	ASSERT_TRUE(first->Connect(url, first_token));
+	ASSERT_TRUE(WaitUntil([&] { return observer->GetRemoteParticipantSnapshots().size() == 1; },
+	                      std::chrono::seconds(10)));
+	auto* first_local = first->GetLocalParticipant();
+	ASSERT_NE(first_local, nullptr);
+	const auto identity = first_local->Identity();
+	const auto first_sid = first_local->Sid();
+	ASSERT_FALSE(identity.empty());
+	ASSERT_FALSE(first_sid.empty());
+
+	ASSERT_TRUE(replacement->Connect(url, second_token));
+	auto* replacement_local = replacement->GetLocalParticipant();
+	ASSERT_NE(replacement_local, nullptr);
+	ASSERT_EQ(replacement_local->Identity(), identity);
+	ASSERT_NE(replacement_local->Sid(), first_sid);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    auto* participant = observer->GetRemoteParticipantByIdentity(identity);
+		    return participant != nullptr && participant->Sid() == replacement_local->Sid() &&
+		           observer->GetRemoteParticipantBySid(first_sid) == nullptr;
+	    },
+	    std::chrono::seconds(15)));
+	ASSERT_TRUE(WaitUntil([&] { return first_events.disconnected(); }, std::chrono::seconds(15)));
+	EXPECT_EQ(first_events.reason(), DisconnectReason::DuplicateIdentity);
+	EXPECT_EQ(first->LastDisconnectReason(), DisconnectReason::DuplicateIdentity);
+	EXPECT_FALSE(first->IsConnected());
+
+	const auto replacement_sid = replacement_local->Sid();
+	ASSERT_TRUE(replacement->Disconnect());
+	ASSERT_TRUE(
+	    WaitUntil([&] { return observer->GetRemoteParticipantByIdentity(identity) == nullptr; },
+	              std::chrono::seconds(10)));
+
+	auto rejoined = CreateRoomUnique();
+	ASSERT_TRUE(rejoined->Connect(url, first_token));
+	auto* rejoined_local = rejoined->GetLocalParticipant();
+	ASSERT_NE(rejoined_local, nullptr);
+	EXPECT_EQ(rejoined_local->Identity(), identity);
+	EXPECT_NE(rejoined_local->Sid(), first_sid);
+	EXPECT_NE(rejoined_local->Sid(), replacement_sid);
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    auto* participant = observer->GetRemoteParticipantByIdentity(identity);
+		    return participant != nullptr && participant->Sid() == rejoined_local->Sid();
+	    },
+	    std::chrono::seconds(10)));
+
+	first->RemoveEventListener();
+	EXPECT_TRUE(rejoined->Disconnect());
+	EXPECT_TRUE(observer->Disconnect());
 }
 
 TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
