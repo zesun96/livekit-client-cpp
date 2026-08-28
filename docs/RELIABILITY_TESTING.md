@@ -62,16 +62,114 @@ For example:
 Every iteration starts from newly created SDK room objects. Server-restart iterations reuse only
 their short-lived room grant and restart the harness-owned server process between recovery checks.
 
+The `DataRecovery` scenario verifies an incremental text stream and an RPC call before recovery,
+after sender full reconnect, and after receiver full reconnect. It also proves that the receiver's
+registered stream handler and RPC method remain installed across recovery:
+
+```powershell
+.\test\integration\run_reconnect_matrix.ps1 <common arguments> `
+  -Scenario DataRecovery
+```
+
+## Sustained codec matrix
+
+The `CodecMatrix` scenario publishes and subscribes VP8, VP9, H264, and AV1 sequentially. The
+default duration is 30 seconds per codec. It requires a new received frame at every two-second
+checkpoint, at least five received frames per second overall, and connected sender/receiver rooms
+at the end of each run:
+
+```powershell
+.\test\integration\run_reconnect_matrix.ps1 <common arguments> `
+  -Scenario CodecMatrix -CodecSoakSeconds 30
+```
+
+`-CodecSoakSeconds` accepts 5 through 7200 seconds. Use the dedicated resource soak described
+below for long runs that also sample process resource growth.
+
+## Resource soak
+
+The `Soak` scenario samples the integration process once per second after the selected codec is
+already publishing and receiving. It records baseline/final/peak handle, thread, and Private Bytes
+values while retaining the codec frame-progress checks.
+
+Run the 30-minute gate first, then the 2-hour gate:
+
+```powershell
+.\test\integration\run_reconnect_matrix.ps1 <common arguments> `
+  -Scenario Soak -VideoCodec h264 -SoakSeconds 1800 `
+  -ResultLogPath "C:\path\to\resource-soak-30m.log"
+
+.\test\integration\run_reconnect_matrix.ps1 <common arguments> `
+  -Scenario Soak -VideoCodec h264 -SoakSeconds 7200 `
+  -ResultLogPath "C:\path\to\resource-soak-2h.log"
+```
+
+The defaults allow peak growth of 64 handles, 16 threads, and 256 MB of Private Bytes from the
+post-startup baseline. Override them with `-MaxHandleGrowth`, `-MaxThreadGrowth`, and
+`-MaxPrivateMemoryGrowthMb` only when the acceptance environment has documented reasons. A result
+log contains no generated token or API secret.
+
+The Windows Release H264 acceptance gates completed successfully. The 30-minute run recorded
+baseline/final/peak values of 404/408/412 handles, 33/31/33 threads, and
+32391168/38150144/38240256 Private Bytes; peak growth was 8 handles, 0 threads, and 5.6 MB. The
+subsequent 2-hour run recorded 404/410/413 handles, 33/31/33 threads, and
+33226752/40411136/40411136 Private Bytes; peak growth was 9 handles, 0 threads, and 6.9 MB. Both
+credential-free result logs passed the sensitive-data scan.
+
+## Failure diagnostics and credential audit
+
+The integration executable installs a bounded asynchronous SDK logging sink before running a test.
+It records LiveKit at debug level, WebRTC at warning level, and WebSocket at info level. Callbacks
+only enqueue records; a worker batches them into the child process's stderr so diagnostic I/O does
+not block WebRTC threads. On failure, the harness appends bounded, labelled gtest, SDK/transport,
+and server log tails to `ResultLogPath` before removing its temporary directory.
+
+Every harness exit scans temporary `*.log` files and the retained result log for the API key,
+API secret, JWTs, authorization/access-token fields, raw SDP, ICE candidates, and credentialed TURN
+URLs. A match fails the run without printing the matched value. Runs that started an SDK integration
+process must also contain at least one `[livekit-sdk]` record; successful audits report the captured
+source names. The Windows Release H264 media-recovery acceptance run captured
+`livekit,webrtc,websocket` and passed the sensitive-data audit in three consecutive media-matrix
+iterations (12 real-server subtests). An intentionally failing 30-second resource gate also
+retained structured diagnostics and passed the audit and cleanup checks. SDK sanitization and the
+harness audit additionally cover WebRTC's `Cand[]`, `Conn[]`, and `Port[]` ICE-detail formats.
+
+## Weak-network matrix
+
+Run the weak-network scenario from an Administrator PowerShell because clumsy opens the WinDivert
+driver. The harness limits interception to loopback TCP ports `Port`/`Port + 1` and UDP port
+`Port + 2`; it never applies a host-wide filter.
+
+```powershell
+$apiSecret = Read-Host "LiveKit API secret"
+.\test\integration\run_reconnect_matrix.ps1 `
+  -ServerExecutable "C:\path\to\livekit-server.exe" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ClumsyExecutable "C:\path\to\clumsy.exe" `
+  -ApiKey "devkey" -ApiSecret $apiSecret `
+  -BuildDirectory "out\build\vs2022-x64-release" `
+  -Configuration Release -Scenario WeakNetwork -WeakNetworkProfile All
+```
+
+The profiles are 15% packet loss for 8 seconds, 250 ms latency for 8 seconds, a 50-to-300 ms delay
+change during an 8-second window to create jitter, and a 10-second 100% packet-loss outage. Every
+profile proves that audio and reliable data work before the fault and resume after it. Use
+`-WeakNetworkProfile Loss`, `Latency`, `Jitter`, or `Outage` to run one profile.
+
+Each clumsy process has its own timeout and is also stopped by the harness `finally` block. The
+harness then signals the integration test to verify recovery and removes all marker files, server
+configuration, and isolated logs.
+
 ## Remaining matrix
 
 | Area | Status | Next acceptance work |
 | --- | --- | --- |
 | concurrent participant lifecycle and duplicate identity | complete | increase participant count during soak runs |
 | repeated resume, ICE restart, full reconnect, server restart | complete | raise iteration count during soak runs |
-| packet loss, delay, jitter, and temporary outage | pending | add an explicitly enabled network-fault adapter |
-| DataTrack, DataStream, RPC, E2EE, and media across recovery | partial | combine capabilities into repeated recovery rounds |
-| VP8, VP9, H264, and AV1 sustained publish/subscribe | partial | add duration and per-codec frame thresholds |
-| 30-minute and 2-hour soak with resource growth checks | pending | record handles, threads, private bytes, and pass thresholds |
+| packet loss, delay, jitter, and temporary outage | complete | repeat profiles during soak runs |
+| DataTrack, DataStream, RPC, E2EE, and media across recovery | complete | repeat capability recovery during soak runs |
+| VP8, VP9, H264, and AV1 sustained publish/subscribe | complete | repeat the matrix during soak runs |
+| 30-minute and 2-hour soak with resource growth checks | complete | rerun both gates for release candidates |
 
 Network mutation and long-running tests remain opt-in because they alter host networking or occupy
 hardware and server resources. Ordinary unit and functional test runs never start or stop a server.

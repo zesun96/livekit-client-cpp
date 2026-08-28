@@ -632,6 +632,20 @@ bool NotifyExternalHarness(const char* environment_name) {
 	return marker.good();
 }
 
+bool WaitForExternalHarness(const char* environment_name,
+                            std::chrono::milliseconds timeout) {
+	const char* path = std::getenv(environment_name);
+	if (path == nullptr || *path == '\0') {
+		return false;
+	}
+	return WaitUntil(
+	    [path] {
+		    std::error_code error;
+		    return std::filesystem::exists(path, error) && !error;
+	    },
+	    timeout);
+}
+
 VideoCodec VideoCodecFromEnvironment(std::string& mime_type) {
 	const char* value = std::getenv("LIVEKIT_VIDEO_CODEC");
 	std::string codec = value != nullptr ? value : "vp8";
@@ -1245,6 +1259,212 @@ TEST(LiveKitServerTest, RecoversAfterExplicitServerRestart) {
 
 	room->RemoveEventListener();
 	EXPECT_TRUE(room->Disconnect());
+}
+
+TEST(LiveKitServerTest, RecoversMediaAndDataAfterExternalNetworkFault) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	const char* profile = std::getenv("LIVEKIT_NETWORK_FAULT_PROFILE");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0' || profile == nullptr ||
+	    *profile == '\0' || std::getenv("LIVEKIT_NETWORK_FAULT_READY_FILE") == nullptr ||
+	    std::getenv("LIVEKIT_NETWORK_FAULT_DONE_FILE") == nullptr) {
+		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 -Scenario WeakNetwork to run the "
+		                "external network-fault test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	RoomOptions room_options;
+	room_options.reconnect_timeout = std::chrono::seconds(45);
+	auto receiver = CreateRoomUnique(room_options);
+	auto sender = CreateRoomUnique(room_options);
+	receiver->AddEventListener(&events);
+	sender->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token, room_options));
+	ASSERT_TRUE(sender->Connect(url, sender_token, room_options));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(15)));
+
+	auto audio_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	auto audio_track = sender->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    "weak-network-audio", audio_source.get());
+	ASSERT_NE(audio_track, nullptr);
+	TrackPublishOptions publish_options;
+	publish_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), publish_options));
+	std::vector<int16_t> samples(480, 1800);
+	const auto initial_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (events.audio_frame_count() < 5 && std::chrono::steady_clock::now() < initial_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_GE(events.audio_frame_count(), 5u);
+
+	DataPublishOptions data_options;
+	data_options.reliable = true;
+	data_options.destination_identities = {receiver->GetLocalParticipant()->Identity()};
+	data_options.topic = std::string("weak-network-before-") + profile;
+	const std::vector<uint8_t> before_payload{'b', 'e', 'f', 'o', 'r', 'e'};
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(before_payload, data_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_data(data_options.topic, before_payload, true); },
+	    std::chrono::seconds(10)));
+
+	ASSERT_TRUE(NotifyExternalHarness("LIVEKIT_NETWORK_FAULT_READY_FILE"));
+	const char* done_path = std::getenv("LIVEKIT_NETWORK_FAULT_DONE_FILE");
+	const auto fault_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (std::chrono::steady_clock::now() < fault_deadline) {
+		std::error_code error;
+		if (std::filesystem::exists(done_path, error) && !error) {
+			break;
+		}
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_TRUE(WaitForExternalHarness("LIVEKIT_NETWORK_FAULT_DONE_FILE",
+	                                  std::chrono::seconds(1)));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(45)));
+
+	const auto frames_after_fault = events.audio_frame_count();
+	const auto media_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	while (events.audio_frame_count() < frames_after_fault + 5 &&
+	       std::chrono::steady_clock::now() < media_deadline) {
+		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_GE(events.audio_frame_count(), frames_after_fault + 5)
+	    << "media did not recover after network fault profile " << profile;
+
+	data_options.topic = std::string("weak-network-after-") + profile;
+	const std::vector<uint8_t> after_payload{'a', 'f', 't', 'e', 'r'};
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(after_payload, data_options));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return events.received_data(data_options.topic, after_payload, true); },
+	    std::chrono::seconds(20)))
+	    << "reliable data did not recover after network fault profile " << profile;
+
+	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
+	audio_track.reset();
+	audio_source.reset();
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, PreservesDataStreamsAndRpcAcrossFullReconnect) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the data "
+		                "recovery integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	ReconnectEvents receiver_events;
+	ReconnectEvents sender_events;
+	receiver->AddEventListener(&receiver_events);
+	sender->AddEventListener(&sender_events);
+
+	std::mutex stream_mutex;
+	std::vector<TextStreamEvent> stream_events;
+	ASSERT_TRUE(receiver->RegisterTextStreamHandler(
+	    "reconnect-stream", [&](const TextStreamEvent& event) {
+		    std::lock_guard<std::mutex> guard(stream_mutex);
+		    stream_events.push_back(event);
+	    }));
+	ASSERT_TRUE(receiver->RegisterRpcMethod(
+	    "reconnect.echo", [](const RpcInvocationData& invocation) {
+		    return RpcResult::Success("echo:" + invocation.payload);
+	    }));
+
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+	const auto receiver_identity = receiver->GetLocalParticipant()->Identity();
+	ASSERT_FALSE(receiver_identity.empty());
+
+	auto verify_data_paths = [&](const std::string& suffix) {
+		const std::string text = "stream-after-" + suffix;
+		{
+			std::lock_guard<std::mutex> guard(stream_mutex);
+			stream_events.clear();
+		}
+		StreamTextOptions options;
+		options.topic = "reconnect-stream";
+		options.total_size = text.size();
+		options.destination_identities = {receiver_identity};
+		auto writer = sender->GetLocalParticipant()->StreamText(options);
+		if (writer == nullptr || !writer->Write(text) || !writer->Close()) {
+			return false;
+		}
+		if (!WaitUntil(
+		        [&] {
+			        std::lock_guard<std::mutex> guard(stream_mutex);
+			        return !stream_events.empty() &&
+			               stream_events.back().type == DataStreamEventType::Closed;
+		        },
+		        std::chrono::seconds(10))) {
+			return false;
+		}
+		std::string received_text;
+		{
+			std::lock_guard<std::mutex> guard(stream_mutex);
+			for (const auto& event : stream_events) {
+				if (event.type == DataStreamEventType::Chunk) {
+					received_text += event.content;
+				}
+			}
+		}
+		if (received_text != text) {
+			return false;
+		}
+
+		PerformRpcParams rpc;
+		rpc.destination_identity = receiver_identity;
+		rpc.method = "reconnect.echo";
+		rpc.payload = suffix;
+		rpc.response_timeout = std::chrono::seconds(10);
+		const auto result = sender->GetLocalParticipant()->PerformRpc(rpc);
+		return result.Ok() && result.payload == "echo:" + suffix;
+	};
+
+	ASSERT_TRUE(verify_data_paths("initial"));
+	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
+	ASSERT_NE(concrete_sender, nullptr);
+	ASSERT_TRUE(concrete_sender->SimulateMediaFailureForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnecting(); },
+	                      std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	ASSERT_TRUE(verify_data_paths("sender-full-reconnect"));
+
+	auto* concrete_receiver = dynamic_cast<Room*>(receiver.get());
+	ASSERT_NE(concrete_receiver, nullptr);
+	ASSERT_TRUE(concrete_receiver->SimulateMediaFailureForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return receiver_events.reconnecting(); },
+	                      std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return receiver_events.reconnected() && receiver->IsConnected(); },
+	    std::chrono::seconds(30)));
+	ASSERT_TRUE(verify_data_paths("receiver-full-reconnect"));
+
+	EXPECT_TRUE(receiver->UnregisterRpcMethod("reconnect.echo"));
+	EXPECT_TRUE(receiver->UnregisterTextStreamHandler("reconnect-stream"));
+	receiver->RemoveEventListener();
+	sender->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
 }
 
 TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
@@ -1896,6 +2116,39 @@ TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
 	                              video_options.video_codec == VideoCodec::H264;
 	EXPECT_EQ(video_publication->IsSimulcasted(), expect_simulcast);
 
+	const char* soak_seconds_value = std::getenv("LIVEKIT_CODEC_SOAK_SECONDS");
+	const long soak_seconds =
+	    soak_seconds_value != nullptr ? std::strtol(soak_seconds_value, nullptr, 10) : 0;
+	if (soak_seconds > 0) {
+		if (std::getenv("LIVEKIT_CODEC_SOAK_READY_FILE") != nullptr) {
+			ASSERT_TRUE(NotifyExternalHarness("LIVEKIT_CODEC_SOAK_READY_FILE"));
+		}
+		const auto frames_before_soak = events.video_frame_count();
+		auto frames_at_checkpoint = frames_before_soak;
+		const auto soak_deadline =
+		    std::chrono::steady_clock::now() + std::chrono::seconds(soak_seconds);
+		auto checkpoint = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (std::chrono::steady_clock::now() < soak_deadline) {
+			video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+			                               std::chrono::steady_clock::now().time_since_epoch())
+			                               .count();
+			ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+			std::this_thread::sleep_for(std::chrono::milliseconds(33));
+			if (std::chrono::steady_clock::now() >= checkpoint) {
+				const auto current_frames = events.video_frame_count();
+				EXPECT_GT(current_frames, frames_at_checkpoint)
+				    << expected_video_mime_type << " stopped receiving during codec soak";
+				frames_at_checkpoint = current_frames;
+				checkpoint += std::chrono::seconds(2);
+			}
+		}
+		EXPECT_TRUE(sender->IsConnected());
+		EXPECT_TRUE(receiver->IsConnected());
+		EXPECT_GE(events.video_frame_count() - frames_before_soak,
+		          static_cast<uint64_t>(soak_seconds * 5))
+		    << expected_video_mime_type << " received too few frames during codec soak";
+	}
+
 	receiver->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
@@ -2204,6 +2457,37 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	screen_video_options.simulcast = false;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishScreenShareVideoTrack(
 	    screen_video_track.get(), screen_video_options));
+	TrackPublicationInterface* screen_video_publication = nullptr;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                                   std::chrono::steady_clock::now().time_since_epoch())
+		                                   .count();
+		    if (!screen_video_source->CaptureFrame(video_frame)) {
+			    return false;
+		    }
+		    screen_video_publication =
+		        sender_participant->GetTrackPublication(TrackSource::ScreenShare);
+		    return screen_video_publication != nullptr;
+	    },
+	    std::chrono::seconds(10)))
+	    << PublicationSummary(sender_participant);
+	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
+	                                               screen_video_publication->Sid(), true));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		                                   std::chrono::steady_clock::now().time_since_epoch())
+		                                   .count();
+		    if (!screen_video_source->CaptureFrame(video_frame)) {
+			    return false;
+		    }
+		    return screen_video_publication->SubscriptionStatus() ==
+		               TrackSubscriptionStatus::Subscribed &&
+		           screen_video_publication->Track() != nullptr;
+	    },
+	    std::chrono::seconds(15)))
+	    << PublicationSummary(sender_participant);
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
 		    video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2212,9 +2496,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 		    return screen_video_source->CaptureFrame(video_frame) &&
 		           events.media_frames("integration-screen-video") >= 3;
 	    },
-	    std::chrono::seconds(10)));
-	auto* screen_video_publication =
-	    sender_participant->GetTrackPublication(TrackSource::ScreenShare);
+	    std::chrono::seconds(15)))
+	    << "screen frames=" << events.media_frames("integration-screen-video");
 	ASSERT_NE(screen_video_publication, nullptr);
 	EXPECT_EQ(screen_video_publication->Name(), "integration-screen-video");
 	EXPECT_EQ(screen_video_publication->Kind(), TrackKind::Video);

@@ -243,7 +243,9 @@ Run this command from an elevated PowerShell when the existing server is elevate
 Firewall requires a rule for a newly downloaded server executable. To test a different server
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
 RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Participants`, `-Scenario Restart`,
-`-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, or `-Scenario CAPI` to run one part
+`-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, `-Scenario CAPI`,
+`-Scenario DataRecovery`, `-Scenario CodecMatrix`, `-Scenario Soak`, or `-Scenario WeakNetwork` to
+run one part
 of the matrix. The participant scenario concurrently joins and leaves four clients and verifies
 duplicate-identity replacement and same-identity rejoin. `-Iterations N` repeats the participant,
 restart, token-refresh, and media-recovery scenario blocks; the latter covers signal resume, ICE
@@ -252,6 +254,18 @@ with two C ABI rooms, verifies reconnect callbacks and identities, then transfer
 after recovery. See
 [Reliability and weak-network testing](docs/RELIABILITY_TESTING.md) for the staged matrix and
 acceptance rules.
+The data-recovery scenario verifies DataStream and RPC before and after sender and receiver full
+reconnects, including retention of registered handlers and methods.
+The codec matrix sustains VP8, VP9, H264, and AV1 publish/subscribe with periodic frame-progress
+checks; configure its per-codec duration with `-CodecSoakSeconds`.
+The resource soak additionally samples handle, thread, and Private Bytes growth; configure its
+duration with `-SoakSeconds` and retain a credential-free summary with `-ResultLogPath`.
+Integration failures append bounded gtest, unified SDK/transport, and server diagnostics to that
+result log. Before cleanup, the harness rejects raw credentials, tokens, SDP, ICE candidates, or
+credentialed TURN URLs and reports which SDK log sources were captured.
+The weak-network scenario additionally requires `-ClumsyExecutable <path>` and an Administrator
+PowerShell. It restricts clumsy to the harness-owned LiveKit loopback ports and verifies media and
+reliable-data recovery after loss, latency, jitter, and a temporary outage.
 `-VideoCodec vp8` is the default; VP8, H264, and AV1 are supported by the media and E2EE scenarios.
 The E2EE scenario creates two short-lived identities and verifies encrypted audio, the selected
 video codec, data, state events, key-slot switching, automatic key ratcheting, reconnect recovery,
