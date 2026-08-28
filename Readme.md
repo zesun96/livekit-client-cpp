@@ -244,10 +244,12 @@ Firewall requires a rule for a newly downloaded server executable. To test a dif
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
 RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Participants`, `-Scenario Restart`,
 `-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, or `-Scenario CAPI` to run one part
-of the matrix. The participant scenario concurrently joins and leaves four clients, verifies
-duplicate-identity replacement and same-identity rejoin, and accepts `-Iterations N` for repeated
-runs. The C API scenario restarts the server with two C ABI rooms, verifies reconnect callbacks and
-identities, then transfers reliable data after recovery. See
+of the matrix. The participant scenario concurrently joins and leaves four clients and verifies
+duplicate-identity replacement and same-identity rejoin. `-Iterations N` repeats the participant,
+restart, token-refresh, and media-recovery scenario blocks; the latter covers signal resume, ICE
+restart, forced full reconnect, and track/data recovery. The C API scenario restarts the server
+with two C ABI rooms, verifies reconnect callbacks and identities, then transfers reliable data
+after recovery. See
 [Reliability and weak-network testing](docs/RELIABILITY_TESTING.md) for the staged matrix and
 acceptance rules.
 `-VideoCodec vp8` is the default; VP8, H264, and AV1 are supported by the media and E2EE scenarios.

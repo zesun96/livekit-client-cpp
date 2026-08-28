@@ -335,6 +335,7 @@ $originalEnvironment = @{
   LIVEKIT_TOKEN_CAPI_RESTART = $env:LIVEKIT_TOKEN_CAPI_RESTART
   LIVEKIT_TOKEN_CAPI_RESTART_2 = $env:LIVEKIT_TOKEN_CAPI_RESTART_2
   LIVEKIT_TOKEN_REFRESH = $env:LIVEKIT_TOKEN_REFRESH
+  LIVEKIT_TOKEN_SINGLE = $env:LIVEKIT_TOKEN_SINGLE
   LIVEKIT_TOKEN_PARTICIPANT_OBSERVER = $env:LIVEKIT_TOKEN_PARTICIPANT_OBSERVER
   LIVEKIT_TOKEN_PARTICIPANT_1 = $env:LIVEKIT_TOKEN_PARTICIPANT_1
   LIVEKIT_TOKEN_PARTICIPANT_2 = $env:LIVEKIT_TOKEN_PARTICIPANT_2
@@ -380,6 +381,8 @@ try {
   $refreshIdentity = "refresh-client"
   $env:LIVEKIT_TOKEN_RESTART = New-ParticipantToken $room $restartIdentity
   $env:LIVEKIT_TOKEN_REFRESH = New-ParticipantToken $room $refreshIdentity
+  $singleRoom = "cpp-signal-resume-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  $env:LIVEKIT_TOKEN_SINGLE = New-ParticipantToken $singleRoom "signal-resume-client"
   $participantRoom = "cpp-participant-matrix-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
   $env:LIVEKIT_TOKEN_PARTICIPANT_OBSERVER =
     New-ParticipantToken $participantRoom "participant-observer"
@@ -413,36 +416,50 @@ try {
   }
 
   if ($Scenario -in @("All", "Restart")) {
-    Invoke-CoordinatedTest "RecoversAfterExplicitServerRestart" `
-      $env:LIVEKIT_SERVER_RESTART_READY_FILE {
-        Stop-OwnedProcess $server
-        Start-Sleep -Seconds 2
-        $script:server = Start-TestServer
-      }
+    for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
+      Write-Host "Server restart iteration $iteration/$Iterations"
+      Invoke-CoordinatedTest "RecoversAfterExplicitServerRestart" `
+        $env:LIVEKIT_SERVER_RESTART_READY_FILE {
+          Stop-OwnedProcess $server
+          Start-Sleep -Seconds 2
+          $script:server = Start-TestServer
+        }
+    }
   }
 
   if ($Scenario -in @("All", "Restart", "CAPI")) {
-    Invoke-CoordinatedTest "CApiRecoversAfterExplicitServerRestart" `
-      $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE {
-        Stop-OwnedProcess $server
-        Start-Sleep -Seconds 2
-        $script:server = Start-TestServer
-      }
+    for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
+      Write-Host "C API server restart iteration $iteration/$Iterations"
+      Invoke-CoordinatedTest "CApiRecoversAfterExplicitServerRestart" `
+        $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE {
+          Stop-OwnedProcess $server
+          Start-Sleep -Seconds 2
+          $script:server = Start-TestServer
+        }
+    }
   }
 
   if ($Scenario -in @("All", "TokenRefresh")) {
-    Invoke-CoordinatedTest "UsesRefreshedTokenForResumeAndFullReconnect" `
-      $env:LIVEKIT_TOKEN_REFRESH_READY_FILE {
-        # JoinResponse supplies a server-refreshed token. Reaching this point
-        # confirms that the client retained it before recovery is triggered.
-        Start-Sleep -Milliseconds 100
-      }
+    for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
+      Write-Host "Resume and full reconnect iteration $iteration/$Iterations"
+      Invoke-SimpleTest "RecoversAfterSignalTransportDisconnect"
+      Invoke-CoordinatedTest "UsesRefreshedTokenForResumeAndFullReconnect" `
+        $env:LIVEKIT_TOKEN_REFRESH_READY_FILE {
+          # JoinResponse supplies a server-refreshed token. Reaching this point
+          # confirms that the client retained it before recovery is triggered.
+          Start-Sleep -Milliseconds 100
+        }
+    }
   }
 
   if ($Scenario -in @("All", "Media")) {
-    Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
-    Invoke-SimpleTest "PublishesBackupCodecWhenRequestedByServer"
-    Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
+    for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
+      Write-Host "Media recovery iteration $iteration/$Iterations"
+      Invoke-SimpleTest "RepublishesAudioAfterReconnect"
+      Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
+      Invoke-SimpleTest "PublishesBackupCodecWhenRequestedByServer"
+      Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
+    }
   }
 
   if ($Scenario -in @("All", "E2EE")) {
