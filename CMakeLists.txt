@@ -4,7 +4,7 @@
 # ----------------------------------------------------------------------------
 cmake_minimum_required (VERSION 3.15)
 
-set(LKC_VERSION 0.3.0)
+set(LKC_VERSION 0.4.0)
 project ("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES C CXX)
 
 set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
