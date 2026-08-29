@@ -226,6 +226,26 @@ DataTrackSchemaResult Room::GetDataTrackSchema(std::string participant_identity,
 }
 
 bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) {
+	return ConnectInternal(std::move(url), std::move(token), std::move(opts), nullptr, {});
+}
+
+bool Room::Connect(std::shared_ptr<TokenSourceInterface> source,
+                   TokenSourceFetchOptions source_options, RoomConnectOptions opts) {
+	if (!source) {
+		return false;
+	}
+	auto result = source->Fetch(source_options, false);
+	if (!result) {
+		return false;
+	}
+	return ConnectInternal(std::move(result.response.server_url),
+	                       std::move(result.response.participant_token), std::move(opts),
+	                       std::move(source), std::move(source_options));
+}
+
+bool Room::ConnectInternal(std::string url, std::string token, RoomConnectOptions opts,
+                           std::shared_ptr<TokenSourceInterface> source,
+                           TokenSourceFetchOptions source_options) {
 	auto expected = state_.load();
 	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {
 		return false;
@@ -249,6 +269,8 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 	try {
 		ConfigureE2ee(opts.e2ee);
 		EngineOptions engine_options = make_engine_config(opts);
+		engine_options.token_source = std::move(source);
+		engine_options.token_source_options = std::move(source_options);
 		livekit::JoinResponse join_response = rtc_engine_->Connect(url, token, engine_options);
 		if (!join_response.has_room()) {
 			rtc_engine_->Disconnect();
@@ -1016,10 +1038,11 @@ bool Room::TransitionState(RoomState expected, RoomState state) {
 	return true;
 }
 
-void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting) {
+void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting,
+                             bool emit_participant_events) {
 	if (join_response.has_server_info()) {
 		server_info_ = from_proto(join_response.server_info());
-	} else {
+	} else if (!join_response.server_region().empty() || !join_response.server_version().empty()) {
 		server_info_.region = join_response.server_region();
 		server_info_.version = join_response.server_version();
 	}
@@ -1078,7 +1101,7 @@ void Room::ApplyJoinResponse(const livekit::JoinResponse& join_response, bool re
 	// also take participants_mutex_, so release track ownership only after leaving the critical
 	// section above.
 	detached_tracks.clear();
-	ApplyParticipantUpdates(participants, false);
+	ApplyParticipantUpdates(participants, emit_participant_events);
 }
 
 void Room::ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) {
@@ -1183,13 +1206,21 @@ void Room::SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates
 void Room::RoomUpdateEvent(const livekit::Room& update) {
 	bool metadata_changed = false;
 	bool recording_changed = false;
+	std::string previous_sid;
 	{
 		std::lock_guard<std::mutex> guard(room_info_mutex_);
+		previous_sid = room_info_.sid();
 		metadata_changed = room_info_.metadata() != update.metadata();
 		recording_changed = room_info_.active_recording() != update.active_recording();
 		room_info_ = update;
 	}
 	if (auto* listener = event_listener_.load()) {
+		const RoomSnapshot snapshot{update.sid(), update.name(), update.metadata(),
+		                            update.active_recording()};
+		listener->OnRoomUpdated(snapshot);
+		if (previous_sid != update.sid()) {
+			listener->OnRoomSidChanged(previous_sid, update.sid());
+		}
 		if (metadata_changed) {
 			listener->OnRoomMetadataChanged(update.metadata());
 		}
@@ -1197,6 +1228,59 @@ void Room::RoomUpdateEvent(const livekit::Room& update) {
 			listener->OnRecordingStatusChanged(update.active_recording());
 		}
 	}
+}
+
+void Room::TokenRefreshedEvent() {
+	if (auto* listener = event_listener_.load()) {
+		listener->OnTokenRefreshed();
+	}
+}
+
+void Room::RoomMovedEvent(const livekit::RoomMovedResponse& response) {
+	if (!response.has_room()) {
+		return;
+	}
+	std::string previous_sid;
+	{
+		std::lock_guard<std::mutex> guard(room_info_mutex_);
+		previous_sid = room_info_.sid();
+	}
+	livekit::JoinResponse join_response;
+	*join_response.mutable_room() = response.room();
+	if (response.has_participant()) {
+		*join_response.mutable_participant() = response.participant();
+	}
+	std::vector<livekit::ParticipantInfo> moved_participants;
+	moved_participants.reserve(static_cast<std::size_t>(response.other_participants_size()));
+	for (const auto& participant : response.other_participants()) {
+		moved_participants.push_back(participant);
+	}
+	// A room move is a boundary between participant sets. Report the old set leaving before the
+	// new snapshot is ingested, matching the lifecycle visible in other LiveKit clients.
+	std::vector<livekit::ParticipantInfo> disconnected;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		disconnected.reserve(remote_participants_.size());
+		for (const auto& [sid, participant] : remote_participants_) {
+			livekit::ParticipantInfo info;
+			info.set_sid(sid);
+			info.set_identity(participant->Identity());
+			info.set_state(livekit::ParticipantInfo_State_DISCONNECTED);
+			disconnected.push_back(std::move(info));
+		}
+	}
+	ApplyParticipantUpdates(disconnected, true);
+	ApplyJoinResponse(join_response, true, false);
+	if (auto* listener = event_listener_.load()) {
+		const RoomSnapshot snapshot{response.room().sid(), response.room().name(),
+		                            response.room().metadata(), response.room().active_recording()};
+		listener->OnRoomMoved(snapshot);
+		listener->OnRoomUpdated(snapshot);
+		if (previous_sid != response.room().sid()) {
+			listener->OnRoomSidChanged(previous_sid, response.room().sid());
+		}
+	}
+	ApplyParticipantUpdates(moved_participants, true);
 }
 
 void Room::ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) {

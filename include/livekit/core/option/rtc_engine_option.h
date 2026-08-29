@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_OPTION_RTC_ENGINE_OPTION_H_
 #define _LKC_CORE_OPTION_RTC_ENGINE_OPTION_H_
 
+#include "livekit/core/token_source.h"
 #include "reconnect_policy.h"
 #include "signal_option.h"
 
@@ -54,6 +55,8 @@ struct EngineOptions {
 	uint32_t join_retries = 3;
 	std::chrono::milliseconds reconnect_timeout{15'000};
 	std::shared_ptr<ReconnectPolicy> reconnect_policy;
+	std::shared_ptr<TokenSourceInterface> token_source;
+	TokenSourceFetchOptions token_source_options;
 };
 
 } // namespace core

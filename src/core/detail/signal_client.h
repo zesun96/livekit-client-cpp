@@ -59,6 +59,7 @@ public:
 	virtual void OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) = 0;
 
 	virtual void OnTokenRefresh(const std::string& token) = 0;
+	virtual void OnRoomMoved(const livekit::RoomMovedResponse&) {}
 
 	virtual void OnTrickle(std::string& candidate, livekit::SignalTarget target) = 0;
 

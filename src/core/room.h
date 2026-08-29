@@ -48,6 +48,9 @@ public:
 
 	virtual bool Connect(std::string url, std::string token,
 	                     RoomConnectOptions opts = default_room_connect_options()) override;
+	bool Connect(std::shared_ptr<TokenSourceInterface> source,
+	             TokenSourceFetchOptions source_options = {},
+	             RoomConnectOptions opts = default_room_connect_options()) override;
 	virtual void AddEventListener(RoomEventInterface* listener) override;
 	virtual void RemoveEventListener() override;
 	bool RegisterRpcMethod(std::string method, RpcHandler handler) override;
@@ -110,6 +113,8 @@ public:
 	void LocalTrackUnpublishedEvent(const std::string& sid) override;
 	void SpeakersChangedEvent(const std::vector<livekit::SpeakerInfo>& updates) override;
 	void RoomUpdateEvent(const livekit::Room& update) override;
+	void TokenRefreshedEvent() override;
+	void RoomMovedEvent(const livekit::RoomMovedResponse& response) override;
 	void
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
 	void
@@ -128,9 +133,13 @@ public:
 	void ReconnectedEvent(livekit::JoinResponse join_resp) override;
 
 private:
+	bool ConnectInternal(std::string url, std::string token, RoomConnectOptions opts,
+	                     std::shared_ptr<TokenSourceInterface> source,
+	                     TokenSourceFetchOptions source_options);
 	void ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& updates,
 	                             bool emit_events = true);
-	void ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting);
+	void ApplyJoinResponse(const livekit::JoinResponse& join_response, bool reconnecting,
+	                       bool emit_participant_events = false);
 	std::shared_ptr<RemoteParticipant> FindRemoteParticipantForTrack(const std::string& track_sid);
 	std::shared_ptr<RemoteParticipant>
 	FindRemoteParticipantForDataTrack(const std::string& track_sid);

@@ -15,6 +15,41 @@ attempt. `RoomConnectOptions::reconnect_policy` runs before each full-reconnect 
 a delay or `std::nullopt` to stop recovery. `join_retries` remains the full-reconnect attempt limit.
 The default policy retries immediately and then uses quadratic backoff capped at seven seconds.
 
+### Dynamic credentials and room migration
+
+The existing `Connect(url, token)` overload remains supported. Applications that obtain short-lived
+credentials dynamically can provide a `TokenSourceInterface` instead:
+
+```cpp
+auto source = livekit::core::CreateCallbackTokenSource(
+    [](const livekit::core::TokenSourceFetchOptions& request, bool force_refresh) {
+        // Call the application's authenticated token service here. Never embed an API secret in
+        // a client application.
+        return livekit::core::TokenSourceResult{{server_url, participant_token}, {}};
+    });
+
+livekit::core::TokenSourceFetchOptions request;
+request.room_name = "support";
+request.participant_identity = "desktop-user";
+room->Connect(source, request);
+```
+
+`CreateLiteralTokenSource()` provides a fixed credential source. Callback sources serialize fetches
+and cache a result only while its JWT is valid for more than 60 seconds and the request options are
+unchanged. A full reconnect always performs a forced fetch; signal resume uses the newest
+server-issued token. The SDK does not log or expose token contents.
+
+Applications can implement an HTTP endpoint source in the callback with their existing HTTP stack,
+timeout, cancellation, and authentication policy. The C ABI provides
+`lk_room_connect_with_token_source()` with the same recovery behavior; its callback and `user_data`
+must remain valid until disconnect or room destruction. Its optional E2EE argument preserves the
+same encrypted-room configuration available through `lk_room_connect_e2ee()`.
+
+`RoomEventInterface` reports token refresh without credential contents and exposes immutable room
+snapshots for room updates and moves, plus old/new room SID values. `RoomMovedResponse` replaces the
+room and participant snapshot while preserving local publication state. Equivalent callbacks are
+appended to `lk_room_callbacks_t` using its existing `struct_size` compatibility rule.
+
 ## Video codecs and sender control
 
 Video uses libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d adapters. The selected

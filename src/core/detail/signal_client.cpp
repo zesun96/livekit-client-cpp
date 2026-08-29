@@ -618,6 +618,19 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 		}
 		break;
 	}
+	case livekit::SignalResponse::MessageCase::kRoomMoved: {
+		const auto& moved = resp.room_moved();
+		if (!moved.token().empty()) {
+			token_ = moved.token();
+			if (observer_) {
+				observer_->OnTokenRefresh(token_);
+			}
+		}
+		if (observer_) {
+			observer_->OnRoomMoved(moved);
+		}
+		break;
+	}
 	case livekit::SignalResponse::MessageCase::kTrackUnpublished: {
 		if (observer_) {
 			auto& track_unpublished = resp.track_unpublished();

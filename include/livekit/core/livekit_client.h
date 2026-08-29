@@ -25,6 +25,7 @@
 #include "media_device.h"
 #include "room_event_interface.h"
 #include "room_interface.h"
+#include "token_source.h"
 
 #include <string>
 namespace livekit {
