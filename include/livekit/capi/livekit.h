@@ -816,6 +816,10 @@ typedef void (*lk_connection_quality_callback)(void* user_data, lk_room_t* room,
 typedef void (*lk_active_speakers_callback)(void* user_data, lk_room_t* room,
                                             const lk_participant_info_t* participants,
                                             size_t participant_count);
+/* Participant values and strings are borrowed for the callback duration. */
+typedef void (*lk_participants_updated_callback)(void* user_data, lk_room_t* room,
+                                                 const lk_participant_info_t* participants,
+                                                 size_t participant_count);
 typedef void (*lk_track_subscription_permission_callback)(void* user_data, lk_room_t* room,
                                                           const lk_track_publication_info_t* track,
                                                           const lk_participant_info_t* participant,
@@ -900,6 +904,8 @@ typedef struct lk_room_callbacks {
 	lk_room_snapshot_callback on_room_updated;
 	lk_room_sid_changed_callback on_room_sid_changed;
 	lk_room_snapshot_callback on_room_moved;
+	lk_room_event_callback on_room_eos;
+	lk_participants_updated_callback on_participants_updated;
 } lk_room_callbacks_t;
 
 typedef struct lk_e2ee_options {

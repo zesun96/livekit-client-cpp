@@ -90,6 +90,8 @@ private:
 	size_t reconnect_attempts_ = 0;
 	std::optional<std::chrono::time_point<std::chrono::steady_clock>> restart_after_ = std::nullopt;
 	std::queue<WebsocketData> msg_tx_queue_;
+	std::vector<std::uint8_t> rx_message_buffer_;
+	WebsocketDataType rx_message_type_ = WebsocketDataType::Unknown;
 	std::atomic<bool> conn_established_ = false;
 	struct lws_context* context_ = nullptr;
 	struct lws* wsi_ = nullptr;

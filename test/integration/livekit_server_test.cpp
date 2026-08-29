@@ -1203,6 +1203,44 @@ private:
 	std::atomic<bool> disconnected_{false};
 };
 
+class RoomMigrationEvents final : public RoomEventInterface {
+public:
+	void OnConnected() override {}
+	void OnReconnecting() override { reconnecting_.fetch_add(1); }
+	void OnReconnected() override { reconnected_.fetch_add(1); }
+	void OnTokenRefreshed() override { token_refreshed_.fetch_add(1); }
+	void OnRoomMoved(const RoomSnapshot& snapshot) override {
+		{
+			std::lock_guard<std::mutex> guard(lock_);
+			moved_room_name_ = snapshot.name;
+			moved_room_sid_ = snapshot.sid;
+		}
+		moved_.store(true);
+	}
+
+	bool moved_to(const std::string& room_name) const {
+		if (!moved_.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> guard(lock_);
+		// LiveKit Cloud can announce the destination name before assigning or publishing its room
+		// SID. The next room update or a reconnect fills the SID in.
+		return moved_room_name_ == room_name;
+	}
+	uint32_t token_refreshed() const { return token_refreshed_.load(); }
+	uint32_t reconnecting() const { return reconnecting_.load(); }
+	uint32_t reconnected() const { return reconnected_.load(); }
+
+private:
+	mutable std::mutex lock_;
+	std::string moved_room_name_;
+	std::string moved_room_sid_;
+	std::atomic_bool moved_{false};
+	std::atomic<uint32_t> token_refreshed_{0};
+	std::atomic<uint32_t> reconnecting_{0};
+	std::atomic<uint32_t> reconnected_{0};
+};
+
 class RecordingReconnectPolicy final : public ReconnectPolicy {
 public:
 	std::optional<std::chrono::milliseconds>
@@ -1702,6 +1740,78 @@ TEST(LiveKitServerTest, UsesRefreshedTokenForResumeAndFullReconnect) {
 	EXPECT_FALSE(logs.ContainsValue("candidate:"));
 	EXPECT_FALSE(logs.ContainsValue("a=candidate"));
 	EXPECT_FALSE(logs.ContainsValue("v=0\r\n"));
+}
+
+TEST(LiveKitServerTest, MovesRoomAndRefreshesDynamicCredentials) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* source_token = std::getenv("LIVEKIT_TOKEN_ROOM_MOVE_SOURCE");
+	const char* destination_token = std::getenv("LIVEKIT_TOKEN_ROOM_MOVE_DESTINATION");
+	const char* source_room = std::getenv("LIVEKIT_ROOM_MOVE_SOURCE");
+	const char* destination_room = std::getenv("LIVEKIT_ROOM_MOVE_DESTINATION");
+	if (url == nullptr || source_token == nullptr || destination_token == nullptr ||
+	    source_room == nullptr || destination_room == nullptr || *url == '\0' ||
+	    *source_token == '\0' || *destination_token == '\0' || *source_room == '\0' ||
+	    *destination_room == '\0' || std::getenv("LIVEKIT_ROOM_MOVE_READY_FILE") == nullptr) {
+		GTEST_SKIP() << "Use run_room_move_integration.ps1 to run the room-move test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	std::atomic<uint32_t> fetch_count{0};
+	std::atomic<uint32_t> forced_fetch_count{0};
+	std::atomic_bool forced_destination_fetch{false};
+	const std::string source_room_name = source_room;
+	const std::string destination_room_name = destination_room;
+	auto token_source =
+	    CreateCallbackTokenSource([&](const TokenSourceFetchOptions& request, bool force_refresh) {
+		    fetch_count.fetch_add(1);
+		    if (force_refresh) {
+			    forced_fetch_count.fetch_add(1);
+			    forced_destination_fetch.store(request.room_name == destination_room_name);
+		    }
+		    if (request.room_name == source_room_name) {
+			    return TokenSourceResult{{url, source_token}, {}};
+		    }
+		    if (request.room_name == destination_room_name) {
+			    return TokenSourceResult{{url, destination_token}, {}};
+		    }
+		    return TokenSourceResult{{}, "unexpected room requested by token source"};
+	    });
+	TokenSourceFetchOptions source_options;
+	source_options.room_name = source_room_name;
+	RoomOptions options;
+	options.join_retries = 5;
+	options.reconnect_timeout = std::chrono::seconds(5);
+	auto room = CreateRoomUnique(options);
+	ASSERT_NE(room, nullptr);
+	RoomMigrationEvents events;
+	room->AddEventListener(&events);
+	ASSERT_TRUE(room->Connect(token_source, source_options, options));
+	ASSERT_TRUE(WaitUntil([&] { return room->IsConnected(); }, std::chrono::seconds(30)));
+	const auto source_sid = room->Sid();
+	ASSERT_FALSE(source_sid.empty());
+	ASSERT_TRUE(NotifyExternalHarness("LIVEKIT_ROOM_MOVE_READY_FILE"));
+
+	ASSERT_TRUE(WaitUntil([&] { return events.moved_to(destination_room_name); },
+	                      std::chrono::seconds(20)));
+	EXPECT_EQ(room->Name(), destination_room_name);
+	EXPECT_GE(events.token_refreshed(), 1u);
+	auto* concrete_room = dynamic_cast<Room*>(room.get());
+	ASSERT_NE(concrete_room, nullptr);
+	ASSERT_TRUE(concrete_room->SimulateFullReconnectForTesting());
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnecting() >= 1; }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return events.reconnected() >= 1 && room->IsConnected(); },
+	                      std::chrono::seconds(30)));
+	EXPECT_GE(fetch_count.load(), 2u);
+	EXPECT_GE(forced_fetch_count.load(), 1u);
+	EXPECT_TRUE(forced_destination_fetch.load());
+	EXPECT_EQ(room->Name(), destination_room_name);
+	EXPECT_FALSE(room->Sid().empty());
+	EXPECT_NE(room->Sid(), source_sid);
+	EXPECT_TRUE(room->GetLocalParticipant()->PublishData({7, 7, 7}));
+
+	room->RemoveEventListener();
+	EXPECT_TRUE(room->Disconnect());
 }
 
 TEST(LiveKitServerTest, RepublishesAudioAfterReconnect) {

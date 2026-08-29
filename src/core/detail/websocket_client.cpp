@@ -22,8 +22,71 @@
 #include <stdexcept>
 #include <utility>
 
+#if defined(_WIN32) && defined(LWS_WITH_MBEDTLS)
+#include <mbedtls/x509_crt.h>
+#include <wincrypt.h>
+#include <windows.h>
+#endif
+
 namespace livekit {
 namespace core {
+
+namespace {
+
+constexpr std::size_t kMaxWebsocketMessageBytes = 16U * 1024U * 1024U;
+
+} // namespace
+
+#if defined(_WIN32) && defined(LWS_WITH_MBEDTLS)
+namespace {
+
+bool IsMbedTlsCertificateSupported(const CERT_CONTEXT& certificate) {
+	mbedtls_x509_crt parsed;
+	mbedtls_x509_crt_init(&parsed);
+	const int result =
+	    mbedtls_x509_crt_parse_der(&parsed, certificate.pbCertEncoded, certificate.cbCertEncoded);
+	mbedtls_x509_crt_free(&parsed);
+	return result == 0;
+}
+
+void LoadWindowsRootCertificates(struct lws* wsi) {
+	auto* vhost = lws_get_vhost(wsi);
+	HCERTSTORE store = CertOpenSystemStoreW(0, L"ROOT");
+	if (store == nullptr) {
+		LKC_LOG_ERROR << "failed to open Windows root certificate store: code=" << GetLastError();
+		return;
+	}
+
+	std::size_t loaded = 0;
+	std::size_t rejected = 0;
+	PCCERT_CONTEXT certificate = nullptr;
+	while ((certificate = CertEnumCertificatesInStore(store, certificate)) != nullptr) {
+		// libwebsockets 4.3.3's mbedTLS wrapper frees the complete accumulated CA chain when one
+		// certificate fails to parse. Preflight each Windows root independently so an obsolete or
+		// unsupported root cannot discard all previously accepted trust anchors.
+		if (!IsMbedTlsCertificateSupported(*certificate)) {
+			++rejected;
+			continue;
+		}
+		if (lws_tls_client_vhost_extra_cert_mem(vhost, certificate->pbCertEncoded,
+		                                        certificate->cbCertEncoded) == 0) {
+			++loaded;
+		} else {
+			++rejected;
+		}
+	}
+	CertCloseStore(store, 0);
+
+	if (loaded == 0) {
+		LKC_LOG_ERROR << "Windows root certificate store did not provide a usable TLS root";
+	} else {
+		LKC_LOG_DEBUG << "loaded Windows TLS root certificates: accepted=" << loaded
+		              << ", rejected=" << rejected;
+	}
+}
+
+} // namespace
+#endif
 
 WebsocketClient::WebsocketClient(const WebsocketConnectionOptions& connection_options,
                                  std::string uri)
@@ -135,8 +198,8 @@ void WebsocketClient::send(WebsocketData message) {
 		msg_tx_queue_.push(std::move(message));
 	}
 
-	auto res = lws_callback_on_writable(wsi_);
-	if (res != 0) {
+	const auto res = lws_callback_on_writable(wsi_);
+	if (res < 0) {
 		LKC_LOG_ERROR << "failed to schedule WebSocket write: code=" << res;
 	}
 	lws_cancel_service(context_);
@@ -167,6 +230,12 @@ int WebsocketClient::callback_wrapper(struct lws* wsi, enum lws_callback_reasons
 int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons reason, void* in,
                                      size_t len) {
 	switch (reason) {
+#if defined(_WIN32) && defined(LWS_WITH_MBEDTLS)
+	case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS: {
+		LoadWindowsRootCertificates(wsi);
+		break;
+	}
+#endif
 	case LWS_CALLBACK_CLIENT_ESTABLISHED: {
 		LKC_LOG_INFO << "WebSocket connection established";
 		this->conn_established_ = true;
@@ -177,11 +246,33 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_RECEIVE: {
-		if (this->func_recv_cb_) {
-			const auto type =
-			    lws_frame_is_binary(wsi) ? WebsocketDataType::Binary : WebsocketDataType::Text;
-			const WebsocketData data(in, len, type);
-			this->func_recv_cb_(data);
+		const auto type =
+		    lws_frame_is_binary(wsi) ? WebsocketDataType::Binary : WebsocketDataType::Text;
+		if (lws_is_first_fragment(wsi)) {
+			rx_message_buffer_.clear();
+			rx_message_type_ = type;
+		} else if (rx_message_type_ == WebsocketDataType::Unknown) {
+			LKC_LOG_ERROR << "received WebSocket continuation without an initial fragment";
+			return -1;
+		}
+		if (len > kMaxWebsocketMessageBytes - rx_message_buffer_.size()) {
+			LKC_LOG_ERROR << "WebSocket message exceeds the configured receive limit";
+			rx_message_buffer_.clear();
+			rx_message_type_ = WebsocketDataType::Unknown;
+			return -1;
+		}
+		const auto* bytes = static_cast<const std::uint8_t*>(in);
+		if (len != 0) {
+			rx_message_buffer_.insert(rx_message_buffer_.end(), bytes, bytes + len);
+		}
+		if (lws_is_final_fragment(wsi) && lws_remaining_packet_payload(wsi) == 0) {
+			const WebsocketData data(rx_message_buffer_.data(), rx_message_buffer_.size(),
+			                         rx_message_type_);
+			rx_message_buffer_.clear();
+			rx_message_type_ = WebsocketDataType::Unknown;
+			if (this->func_recv_cb_) {
+				this->func_recv_cb_(data);
+			}
 		}
 
 		break;
@@ -193,7 +284,10 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 		break;
 	}
 	case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-		LKC_LOG_WARNING << "WebSocket connection error";
+		const std::string connection_error =
+		    in == nullptr ? std::string() : std::string(static_cast<const char*>(in));
+		LKC_LOG_WARNING << "WebSocket connection error"
+		                << (connection_error.empty() ? std::string() : ": " + connection_error);
 		if (this->conn_established_) {
 			break;
 		}
@@ -204,6 +298,8 @@ int WebsocketClient::handle_callback(struct lws* wsi, enum lws_callback_reasons 
 		LKC_LOG_WARNING << "WebSocket connection closed";
 		this->conn_established_ = false;
 		this->wsi_ = nullptr;
+		this->rx_message_buffer_.clear();
+		this->rx_message_type_ = WebsocketDataType::Unknown;
 		this->restart_after_ =
 		    std::chrono::steady_clock::now() +
 		    std::chrono::seconds(std::max(2 * (int)this->reconnect_attempts_, 10));

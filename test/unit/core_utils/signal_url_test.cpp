@@ -31,7 +31,7 @@ TEST(SignalUrlTest, AppliesConfiguredConnectionParameters) {
 	EXPECT_EQ(parameters.at("sid"), "PA_test%2Bsid");
 	EXPECT_EQ(parameters.at("sdk"), "cpp%20test");
 	EXPECT_EQ(parameters.at("version"), "1.2.3%2Bdev");
-	EXPECT_EQ(parameters.at("protocol"), "15");
+	EXPECT_EQ(parameters.at("protocol"), "17");
 }
 
 TEST(SignalUrlTest, OmitsDisabledOptionalParametersAndUsesSdkDefaults) {

@@ -469,6 +469,8 @@ void SignalClient::handleWsBinaryMessage(const WebsocketData& data) {
 		}
 
 		this->handleSignalResponse(resp);
+	} else {
+		LKC_LOG_WARNING << "failed to parse WebSocket signal protobuf, bytes=" << data.size();
 	}
 
 	return;
@@ -620,6 +622,10 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 	}
 	case livekit::SignalResponse::MessageCase::kRoomMoved: {
 		const auto& moved = resp.room_moved();
+		LKC_LOG_DEBUG << "received room move response: has_room=" << moved.has_room()
+		              << ", room=" << (moved.has_room() ? moved.room().name() : std::string{})
+		              << ", room_sid=" << (moved.has_room() ? moved.room().sid() : std::string{})
+		              << ", has_participant=" << moved.has_participant();
 		if (!moved.token().empty()) {
 			token_ = moved.token();
 			if (observer_) {
