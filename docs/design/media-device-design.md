@@ -160,7 +160,7 @@ which continues to accept application-provided PCM.
 Use `PublishScreenShareAudioTrack()` or set `TrackPublishOptions::source` to
 `TrackSource::ScreenShareAudio` so the server and subscribers receive the correct LiveKit track
 source metadata. The complete flow is demonstrated by
-[`publish_system_audio`](../../examples/publish_system_audio/publish_system_audio.cpp).
+[`publish_system_audio`](https://github.com/zesun96/livekit-client-cpp/blob/main/examples/publish_system_audio/publish_system_audio.cpp).
 
 ## Remote-audio playback and AEC reference
 

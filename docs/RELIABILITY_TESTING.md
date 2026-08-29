@@ -109,12 +109,9 @@ post-startup baseline. Override them with `-MaxHandleGrowth`, `-MaxThreadGrowth`
 `-MaxPrivateMemoryGrowthMb` only when the acceptance environment has documented reasons. A result
 log contains no generated token or API secret.
 
-The Windows Release H264 acceptance gates completed successfully. The 30-minute run recorded
-baseline/final/peak values of 404/408/412 handles, 33/31/33 threads, and
-32391168/38150144/38240256 Private Bytes; peak growth was 8 handles, 0 threads, and 5.6 MB. The
-subsequent 2-hour run recorded 404/410/413 handles, 33/31/33 threads, and
-33226752/40411136/40411136 Private Bytes; peak growth was 9 handles, 0 threads, and 6.9 MB. Both
-credential-free result logs passed the sensitive-data scan.
+The recorded Windows Release H264 30-minute and 2-hour measurements are kept in
+[Integration testing and acceptance results](integration.md). Keep this document focused on the
+procedure and update the result record after rerunning release-candidate gates.
 
 ## Failure diagnostics and credential audit
 
@@ -128,11 +125,9 @@ Every harness exit scans temporary `*.log` files and the retained result log for
 API secret, JWTs, authorization/access-token fields, raw SDP, ICE candidates, and credentialed TURN
 URLs. A match fails the run without printing the matched value. Runs that started an SDK integration
 process must also contain at least one `[livekit-sdk]` record; successful audits report the captured
-source names. The Windows Release H264 media-recovery acceptance run captured
-`livekit,webrtc,websocket` and passed the sensitive-data audit in three consecutive media-matrix
-iterations (12 real-server subtests). An intentionally failing 30-second resource gate also
-retained structured diagnostics and passed the audit and cleanup checks. SDK sanitization and the
-harness audit additionally cover WebRTC's `Cand[]`, `Conn[]`, and `Port[]` ICE-detail formats.
+source names. SDK sanitization and the harness audit additionally cover WebRTC's `Cand[]`,
+`Conn[]`, and `Port[]` ICE-detail formats. Recorded audit results are summarized in
+[Integration testing and acceptance results](integration.md).
 
 ## Weak-network matrix
 
