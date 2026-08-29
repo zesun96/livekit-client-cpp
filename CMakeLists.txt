@@ -332,8 +332,11 @@ if(MSVC AND BUILD_SHARED_LIBS)
     OPTIONAL)
 endif()
 install(DIRECTORY include/livekit DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(FILES LICENSE Readme.md docs/WINDOWS_SDK_PACKAGING.md
+install(FILES LICENSE Readme.md
   DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp)
+install(DIRECTORY docs/
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp/docs
+  FILES_MATCHING PATTERN "*.md")
 if(EXISTS "${libwebrtc_SOURCE_DIR}/NOTICE")
   install(FILES "${libwebrtc_SOURCE_DIR}/NOTICE"
     DESTINATION ${CMAKE_INSTALL_DATADIR}/livekit-client-cpp

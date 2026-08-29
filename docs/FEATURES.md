@@ -1,0 +1,106 @@
+# SDK features
+
+This document records capability details and behavioral boundaries that are intentionally kept out
+of the project README.
+
+## Rooms and recovery
+
+The SDK exposes connection state, participants, track publications, active speakers, connection
+quality, metadata, recording status, permissions, subscription errors, and remote video preference
+events. Publisher track-subscription permissions are restored after reconnect.
+
+Connection recovery first attempts protocol-level signal resume with SyncState and ICE restart,
+then falls back to a full reconnect. `RoomConnectOptions::reconnect_timeout` bounds each RTC
+attempt. `RoomConnectOptions::reconnect_policy` runs before each full-reconnect attempt and returns
+a delay or `std::nullopt` to stop recovery. `join_retries` remains the full-reconnect attempt limit.
+The default policy retries immediately and then uses quadratic backoff capped at seven seconds.
+
+## Video codecs and sender control
+
+Video uses libwebrtc's VP8, VP9, optional OpenH264, and AV1/Dav1d adapters. The selected
+`TrackPublishOptions::video_codec`, or its C equivalent, becomes the transceiver codec preference.
+Publication fails rather than silently choosing another codec when the linked libwebrtc package
+lacks the requested codec.
+
+VP8 and H264 support LiveKit-compatible `q`, `h`, and `f` simulcast layers and optional dynacast
+activation through `RoomOptions::dynacast`. VP9 and AV1 use one RTP encoding with SVC;
+`TrackPublishOptions::scalability_mode` defaults to `L3T3_KEY`.
+
+Advanced-codec publications can advertise an H264 or VP8 backup codec. The SDK creates the backup
+sender only when LiveKit requests it. `BackupCodecPolicy::PreferRegression`, `Simulcast`, or
+`Regression` controls server selection. Backup senders remain disabled for E2EE publications,
+matching the official client capability boundary.
+
+`LocalParticipantInterface::UpdateVideoEncoding()` changes the maximum bitrate and frame rate of
+an existing primary or backup sender without replacing the track or renegotiating. Zero restores
+resolution-derived defaults. The C equivalent is `lk_local_video_track_update_encoding()`.
+
+## Native media and audio processing
+
+Applications can create microphone, camera, monitor, window, and system-audio sources through C++
+or C APIs. Connected rooms play mixed remote WebRTC audio through a selectable output device.
+Applications that already capture I420 or signed 16-bit PCM frames can continue using external
+sources.
+
+Native microphone capture uses libwebrtc Audio Processing Module support for AEC, AGC, and noise
+suppression. These features are application switches with stable SDK defaults; applications do not
+normally tune low-level WebRTC parameters. Processing statistics and errors are available through
+`MicrophoneAudioSourceInterface::ProcessingStats()` and
+`lk_audio_source_microphone_processing_stats()`.
+
+The detailed device identity, lifetime, thread, playback-reference, and system-audio rules are in
+[Media device design](design/media-device-design.md). Recorded acoustic acceptance results are in
+[Integration testing](integration.md).
+
+## RTC statistics
+
+Published local tracks and subscribed remote tracks expose selector-scoped libwebrtc
+`RTCStatsReport` JSON through `TrackInterface::GetRTCStats()`. The C API exposes local-track JSON
+through `lk_local_track_rtc_stats()`.
+
+C++ applications can use `GetRTCStatsSnapshot()` for normalized RTP stream counters or schedule
+`RTCStatsMonitor` samples for bitrate, RTT, loss, jitter, audio, video, and codec metrics.
+
+## Data, streams, and RPC
+
+The SDK supports reliable and lossy data messages, SIP DTMF, structured chat, transcription
+segments, metrics batches, chunked file transfer, and incremental text/byte streams.
+
+DataStreams can opt into LiveKit-compatible raw-deflate compression. Compression is disabled by
+default. Receivers enforce 64 MiB compressed-input and decompressed-output limits before data is
+dispatched to applications.
+
+DataTrack schema definitions are stored once by the publisher and referenced by ID. Remote
+participants query definitions by publisher identity; successful lookups remain cached through
+connection recovery. LiveKit Server must enable `enable_participant_data_blob` for schema storage
+and lookup. See the
+[`data_track_schema`](https://github.com/zesun96/livekit-client-cpp/blob/main/examples/data_track_schema/data_track_schema.cpp)
+example.
+
+Participant RPC includes ACK and response timeouts, standard errors, async C API completion, and
+handler restoration across reconnect. DataChannel sends use bounded backpressure and expose
+high/low-water events.
+
+## E2EE
+
+Pure C++ media and data E2EE supports shared and participant keys, key-slot changes, automatic
+ratcheting, reconnect restoration, and missing/wrong-key recovery. Both C++ and C APIs are covered.
+See [E2EE](E2EE.md) for design and official JavaScript/C++ interoperability commands.
+
+## C ABI and ownership
+
+The stable C ABI exposes opaque handles and never passes a C++ type or exception across the
+boundary. Caller-owned handles have explicit destroy functions. Strings and byte arrays use
+two-phase size/query operations. Synchronous failures provide a thread-local structured domain,
+code, and diagnostic message.
+
+Remote participant snapshots own their immutable publication and subscribed-track views.
+Incremental writers produce one completed, cancelled, or failed callback. Borrowed RPC results can
+be cloned when they must outlive a callback.
+
+## Logging
+
+The SDK defines its own logging interface rather than exposing plog as a public dependency.
+Applications install a sink and select levels independently for LiveKit, WebRTC, and WebSocket
+sources. Callbacks should return quickly and must not re-enter blocking SDK operations. Examples
+use plog to demonstrate formatted console/file output.
