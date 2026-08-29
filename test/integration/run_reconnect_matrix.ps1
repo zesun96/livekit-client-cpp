@@ -22,7 +22,7 @@ param(
   [switch]$ReplaceExistingServer,
   [ValidateSet(
     "All", "Participants", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI",
-    "OfficialCpp", "WeakNetwork", "DataRecovery", "CodecMatrix", "Soak"
+    "OfficialCpp", "WeakNetwork", "DataRecovery", "CodecMatrix", "Soak", "AudioQuality"
   )]
   [string]$Scenario = "All",
   [ValidateRange(1, 100)]
@@ -35,6 +35,28 @@ param(
   [int]$CodecSoakSeconds = 30,
   [ValidateRange(30, 7200)]
   [int]$SoakSeconds = 1800,
+  [ValidateRange(5, 60)]
+  [int]$AudioQualitySeconds = 10,
+  [ValidateRange(-20.0, 60.0)]
+  [double]$AudioQualityMinErleDb = 6.0,
+  [ValidateRange(0.0, 1.0)]
+  [double]$AudioQualityMaxResidualEcho = 0.75,
+  [ValidateRange(0.01, 1.0)]
+  [double]$AudioQualitySpeakerVolume = 0.50,
+  [ValidateRange(0.01, 1.0)]
+  [double]$AudioFixtureVolume = 0.80,
+  [ValidateRange(0.01, 1.0)]
+  [double]$AudioDoubleTalkFarEndVolume = 0.20,
+  [ValidateRange(0.01, 1.0)]
+  [double]$AudioNoiseFixtureVolume = 1.0,
+  [ValidateRange(0.0, 2.0)]
+  [double]$AudioDoubleTalkMinRetention = 0.60,
+  [ValidateRange(0.0, 2.0)]
+  [double]$AudioNoiseMaxRatio = 0.75,
+  [ValidateRange(3, 15)]
+  [int]$AudioHardwarePhaseSeconds = 5,
+  [string]$AudioQualityInputDeviceId = "",
+  [string]$AudioQualityOutputDeviceId = "",
   [ValidateRange(0, 1024)]
   [int]$MaxHandleGrowth = 64,
   [ValidateRange(0, 256)]
@@ -732,6 +754,19 @@ $originalEnvironment = @{
   LIVEKIT_VIDEO_CODEC = $env:LIVEKIT_VIDEO_CODEC
   LIVEKIT_CODEC_SOAK_SECONDS = $env:LIVEKIT_CODEC_SOAK_SECONDS
   LIVEKIT_CODEC_SOAK_READY_FILE = $env:LIVEKIT_CODEC_SOAK_READY_FILE
+  LIVEKIT_AUDIO_QUALITY = $env:LIVEKIT_AUDIO_QUALITY
+  LIVEKIT_AUDIO_QUALITY_SECONDS = $env:LIVEKIT_AUDIO_QUALITY_SECONDS
+  LIVEKIT_AUDIO_QUALITY_MIN_ERLE_DB = $env:LIVEKIT_AUDIO_QUALITY_MIN_ERLE_DB
+  LIVEKIT_AUDIO_QUALITY_MAX_RESIDUAL_ECHO = $env:LIVEKIT_AUDIO_QUALITY_MAX_RESIDUAL_ECHO
+  LIVEKIT_AUDIO_QUALITY_SPEAKER_VOLUME = $env:LIVEKIT_AUDIO_QUALITY_SPEAKER_VOLUME
+  LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID = $env:LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID
+  LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID = $env:LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID
+  LIVEKIT_AUDIO_FIXTURE_VOLUME = $env:LIVEKIT_AUDIO_FIXTURE_VOLUME
+  LIVEKIT_AUDIO_DOUBLE_TALK_FAR_END_VOLUME = $env:LIVEKIT_AUDIO_DOUBLE_TALK_FAR_END_VOLUME
+  LIVEKIT_AUDIO_NOISE_FIXTURE_VOLUME = $env:LIVEKIT_AUDIO_NOISE_FIXTURE_VOLUME
+  LIVEKIT_AUDIO_DOUBLE_TALK_MIN_RETENTION = $env:LIVEKIT_AUDIO_DOUBLE_TALK_MIN_RETENTION
+  LIVEKIT_AUDIO_NOISE_MAX_RATIO = $env:LIVEKIT_AUDIO_NOISE_MAX_RATIO
+  LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS = $env:LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS
   LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY = $env:LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY
   LIVEKIT_SERVER_RESTART_READY_FILE = $env:LIVEKIT_SERVER_RESTART_READY_FILE
   LIVEKIT_CAPI_SERVER_RESTART_READY_FILE = $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE
@@ -869,6 +904,73 @@ try {
     $env:LIVEKIT_VIDEO_CODEC = $VideoCodec
     Write-HarnessResult "Resource soak $VideoCodec for $SoakSeconds seconds"
     Invoke-ResourceSoakTest "PublishesAndReceivesSelectedVideoCodec" $VideoCodec $SoakSeconds
+  }
+
+  if ($Scenario -eq "AudioQuality") {
+    $env:LIVEKIT_AUDIO_QUALITY = "1"
+    $env:LIVEKIT_AUDIO_QUALITY_SECONDS = [string]$AudioQualitySeconds
+    $env:LIVEKIT_AUDIO_QUALITY_MIN_ERLE_DB =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioQualityMinErleDb)
+    $env:LIVEKIT_AUDIO_QUALITY_MAX_RESIDUAL_ECHO =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioQualityMaxResidualEcho)
+    $env:LIVEKIT_AUDIO_QUALITY_SPEAKER_VOLUME =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioQualitySpeakerVolume)
+    $env:LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID = $AudioQualityInputDeviceId
+    $env:LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID = $AudioQualityOutputDeviceId
+    $env:LIVEKIT_AUDIO_FIXTURE_VOLUME =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioFixtureVolume)
+    $env:LIVEKIT_AUDIO_DOUBLE_TALK_FAR_END_VOLUME =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioDoubleTalkFarEndVolume)
+    $env:LIVEKIT_AUDIO_NOISE_FIXTURE_VOLUME =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioNoiseFixtureVolume)
+    $env:LIVEKIT_AUDIO_DOUBLE_TALK_MIN_RETENTION =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioDoubleTalkMinRetention)
+    $env:LIVEKIT_AUDIO_NOISE_MAX_RATIO =
+      [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}",
+        $AudioNoiseMaxRatio)
+    $env:LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS = [string]$AudioHardwarePhaseSeconds
+    $audioQualityFailures = @()
+    try {
+      Write-HarnessResult "Acoustic AEC quality measurement for $AudioQualitySeconds seconds"
+      Invoke-SimpleTest "MeasuresHardwareAecQuality"
+      $audioQualityOutput = Join-Path $tempRoot "MeasuresHardwareAecQuality.out.log"
+      $audioQualityResult = Select-String -LiteralPath $audioQualityOutput `
+        -Pattern '^AUDIO_QUALITY_RESULT ' | Select-Object -Last 1
+      if ($null -eq $audioQualityResult) {
+        throw "Audio quality test passed without emitting raw measurement evidence"
+      }
+      Write-HarnessResult $audioQualityResult.Line
+    } catch {
+      $audioQualityFailures += $_.Exception.Message
+      Write-HarnessResult "FAIL acoustic AEC quality gate"
+    }
+    try {
+      Write-HarnessResult (
+        "Hardware double-talk and noise suppression measurement for " +
+        "$AudioHardwarePhaseSeconds seconds per phase")
+      Invoke-SimpleTest "MeasuresHardwareDoubleTalkAndNoiseSuppression"
+      $hardwareProcessingOutput =
+        Join-Path $tempRoot "MeasuresHardwareDoubleTalkAndNoiseSuppression.out.log"
+      $hardwareProcessingResult = Select-String -LiteralPath $hardwareProcessingOutput `
+        -Pattern '^AUDIO_HARDWARE_PROCESSING_RESULT ' | Select-Object -Last 1
+      if ($null -eq $hardwareProcessingResult) {
+        throw "Hardware processing test passed without emitting raw measurement evidence"
+      }
+      Write-HarnessResult $hardwareProcessingResult.Line
+    } catch {
+      $audioQualityFailures += $_.Exception.Message
+      Write-HarnessResult "FAIL hardware double-talk/noise-suppression quality gate"
+    }
+    if ($audioQualityFailures.Count -gt 0) {
+      throw "Audio quality gates failed:`n$($audioQualityFailures -join "`n")"
+    }
   }
 
   if ($Scenario -in @("All", "E2EE")) {

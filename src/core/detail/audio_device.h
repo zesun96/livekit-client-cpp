@@ -137,6 +137,7 @@ private:
 	mutable webrtc::Mutex mutex_;
 	mutable webrtc::Mutex render_data_mutex_;
 	std::vector<int16_t> data_;
+	std::vector<int16_t> render_reference_;
 	std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> audio_queue_;
 	webrtc::RepeatingTaskHandle audio_task_;
 	webrtc::AudioTransport* audio_transport_ RTC_GUARDED_BY(mutex_) = nullptr;

@@ -244,6 +244,15 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(microphone_stats.struct_size, sizeof(microphone_stats));
 	EXPECT_EQ(microphone_stats.capture_frames_processed, 0u);
 	EXPECT_EQ(microphone_stats.render_frames_processed, 0u);
+	EXPECT_EQ(microphone_stats.echo_return_loss_available, 0);
+	EXPECT_DOUBLE_EQ(microphone_stats.echo_return_loss_db, 0.0);
+	EXPECT_EQ(microphone_stats.echo_return_loss_enhancement_available, 0);
+	EXPECT_DOUBLE_EQ(microphone_stats.echo_return_loss_enhancement_db, 0.0);
+	EXPECT_EQ(microphone_stats.residual_echo_likelihood_available, 0);
+	EXPECT_EQ(microphone_stats.residual_echo_likelihood_recent_max_available, 0);
+	EXPECT_EQ(microphone_stats.delay_median_available, 0);
+	EXPECT_EQ(microphone_stats.delay_standard_deviation_available, 0);
+	EXPECT_EQ(microphone_stats.delay_available, 0);
 	lk_audio_playback_stats_t playback_stats;
 	lk_audio_playback_stats_init(&playback_stats);
 	EXPECT_EQ(playback_stats.struct_size, sizeof(playback_stats));

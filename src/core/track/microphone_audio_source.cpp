@@ -107,12 +107,31 @@ AudioSourceOptions MicrophoneAudioSource::ProcessingOptions() const {
 
 MicrophoneAudioProcessingStats MicrophoneAudioSource::ProcessingStats() const {
 	const auto options = ProcessingOptions();
-	return {capture_frames_processed_.load(),
-	        render_frames_processed_.load(),
-	        capture_processing_errors_.load(),
-	        render_processing_errors_.load(),
-	        frames_dropped_.load(),
-	        options.echo_cancellation};
+	const auto aec = processor_.GetStats();
+	MicrophoneAudioProcessingStats result;
+	result.capture_frames_processed = capture_frames_processed_.load();
+	result.render_frames_processed = render_frames_processed_.load();
+	result.capture_processing_errors = capture_processing_errors_.load();
+	result.render_processing_errors = render_processing_errors_.load();
+	result.frames_dropped = frames_dropped_.load();
+	result.echo_cancellation_enabled = options.echo_cancellation;
+	result.echo_return_loss_available = aec.echo_return_loss_available;
+	result.echo_return_loss_db = aec.echo_return_loss_db;
+	result.echo_return_loss_enhancement_available =
+	    aec.echo_return_loss_enhancement_available;
+	result.echo_return_loss_enhancement_db = aec.echo_return_loss_enhancement_db;
+	result.residual_echo_likelihood_available = aec.residual_echo_likelihood_available;
+	result.residual_echo_likelihood = aec.residual_echo_likelihood;
+	result.residual_echo_likelihood_recent_max_available =
+	    aec.residual_echo_likelihood_recent_max_available;
+	result.residual_echo_likelihood_recent_max = aec.residual_echo_likelihood_recent_max;
+	result.delay_median_available = aec.delay_median_available;
+	result.delay_median_ms = aec.delay_median_ms;
+	result.delay_standard_deviation_available = aec.delay_standard_deviation_available;
+	result.delay_standard_deviation_ms = aec.delay_standard_deviation_ms;
+	result.delay_available = aec.delay_available;
+	result.delay_ms = aec.delay_ms;
+	return result;
 }
 
 bool MicrophoneAudioSource::BindAudioDevice(webrtc::scoped_refptr<AudioDevice> audio_device) {
