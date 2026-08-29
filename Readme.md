@@ -244,8 +244,8 @@ Firewall requires a rule for a newly downloaded server executable. To test a dif
 version while restoring the current one, also pass `-ExistingServerExecutable` and, when their
 RTC addresses differ, `-ExistingServerNodeIp`. Use `-Scenario Participants`, `-Scenario Restart`,
 `-Scenario TokenRefresh`, `-Scenario Media`, `-Scenario E2EE`, `-Scenario CAPI`,
-`-Scenario DataRecovery`, `-Scenario CodecMatrix`, `-Scenario Soak`, or `-Scenario WeakNetwork` to
-run one part
+`-Scenario DataRecovery`, `-Scenario CodecMatrix`, `-Scenario Soak`, `-Scenario AudioQuality`, or
+`-Scenario WeakNetwork` to run one part
 of the matrix. The participant scenario concurrently joins and leaves four clients and verifies
 duplicate-identity replacement and same-identity rejoin. `-Iterations N` repeats the participant,
 restart, token-refresh, and media-recovery scenario blocks; the latter covers signal resume, ICE
@@ -260,6 +260,34 @@ The codec matrix sustains VP8, VP9, H264, and AV1 publish/subscribe with periodi
 checks; configure its per-codec duration with `-CodecSoakSeconds`.
 The resource soak additionally samples handle, thread, and Private Bytes growth; configure its
 duration with `-SoakSeconds` and retain a credential-free summary with `-ResultLogPath`.
+The opt-in audio-quality scenario runs two controlled tests through the real
+speaker-to-microphone path. The AEC test plays deterministic wide-band noise, records a
+three-second AEC-disabled baseline, warms AEC for eight seconds and at least 400 render frames,
+then measures a ten-second residual window. The hardware-processing test uses a second playback
+stream that is deliberately absent from AEC's render reference: a repository speech fixture
+checks double-talk preservation, and stationary noise checks noise suppression. The measurement
+room is physically muted so microphone PCM callbacks cannot form a LiveKit feedback loop. Keep the
+selected microphone and speaker in their target deployment positions, avoid headphones, and run
+the scenario in a documented room condition.
+
+The AEC evidence includes overall and median-frame baseline/residual RMS, clipping, measured ERLE,
+raw WebRTC ERL/ERLE/residual-echo/delay statistics, playback delay, and frame counters. The second
+evidence line includes speech RMS, median RMS and P90 active-frame RMS, stationary-noise median RMS,
+configured playback levels, clipping, processing errors, and queue drops. Default gates require
+measured ERLE >= 6 dB, any available residual-echo likelihood <= 0.75, double-talk P90 retention >=
+60%, noise-with-NS/noise-without-NS <= 75%, and zero processing or playback drops. Defaults are a
+50% AEC speaker level, 20% referenced double-talk far end, 80% unreferenced speech fixture, and
+100% unreferenced noise fixture. Override these with `-AudioQualityMinErleDb`,
+`-AudioQualityMaxResidualEcho`, `-AudioQualitySeconds`, `-AudioQualitySpeakerVolume`,
+`-AudioDoubleTalkFarEndVolume`, `-AudioFixtureVolume`, `-AudioNoiseFixtureVolume`,
+`-AudioDoubleTalkMinRetention`, `-AudioNoiseMaxRatio`, and `-AudioHardwarePhaseSeconds`.
+Use `-AudioQualityInputDeviceId` and `-AudioQualityOutputDeviceId` when the system defaults do not
+form an acoustic path; IDs are shown by the media-capture `media_capture_audio_devices` example.
+Retain the result using `-ResultLogPath`; a successful run writes raw `AUDIO_QUALITY_RESULT` and
+`AUDIO_HARDWARE_PROCESSING_RESULT` lines before temporary logs are removed. Both gates run even if
+one fails, so a single diagnostic run preserves all available evidence. This scenario is never
+included in `All` because it requires an intentional acoustic setup and produces about 55 seconds
+of audible sound with the default windows.
 Integration failures append bounded gtest, unified SDK/transport, and server diagnostics to that
 result log. Before cleanup, the harness rejects raw credentials, tokens, SDP, ICE candidates, or
 credentialed TURN URLs and reports which SDK log sources were captured.
@@ -295,6 +323,11 @@ the AV1 interoperability boundary.
 
 The old manual WebRTC test executable is excluded by default because it is not
 deterministic; enable it only with `-DBUILD_LEGACY_TEST_TOOLS=ON`.
+
+The functional APM suite also applies deterministic quality gates without hardware: high-level
+noise suppression must reduce stationary wide-band noise RMS below 75% after adaptation, and the
+double-talk fixture must retain more than 60% near-end speech projection while leaving less than
+25% far-end projection after searching the APM's 0–200 ms processing delay.
 
 ### Continuous integration
 

@@ -3812,6 +3812,24 @@ lk_status_t lk_audio_source_microphone_processing_stats(const lk_audio_source_t*
 		result.render_processing_errors = values.render_processing_errors;
 		result.frames_dropped = values.frames_dropped;
 		result.echo_cancellation_enabled = values.echo_cancellation_enabled ? 1 : 0;
+		result.echo_return_loss_available = values.echo_return_loss_available ? 1 : 0;
+		result.echo_return_loss_db = values.echo_return_loss_db;
+		result.echo_return_loss_enhancement_available =
+		    values.echo_return_loss_enhancement_available ? 1 : 0;
+		result.echo_return_loss_enhancement_db = values.echo_return_loss_enhancement_db;
+		result.residual_echo_likelihood_available =
+		    values.residual_echo_likelihood_available ? 1 : 0;
+		result.residual_echo_likelihood = values.residual_echo_likelihood;
+		result.residual_echo_likelihood_recent_max_available =
+		    values.residual_echo_likelihood_recent_max_available ? 1 : 0;
+		result.residual_echo_likelihood_recent_max = values.residual_echo_likelihood_recent_max;
+		result.delay_median_available = values.delay_median_available ? 1 : 0;
+		result.delay_median_ms = values.delay_median_ms;
+		result.delay_standard_deviation_available =
+		    values.delay_standard_deviation_available ? 1 : 0;
+		result.delay_standard_deviation_ms = values.delay_standard_deviation_ms;
+		result.delay_available = values.delay_available ? 1 : 0;
+		result.delay_ms = values.delay_ms;
 		std::memcpy(stats, &result, std::min(stats->struct_size, sizeof(result)));
 		return LK_STATUS_OK;
 	});

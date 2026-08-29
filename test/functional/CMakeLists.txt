@@ -16,6 +16,9 @@ add_executable(
   webrtc_audio_processor_test.cpp
 )
 target_compile_features(livekit_public_api_tests PRIVATE cxx_std_20)
+target_compile_definitions(livekit_public_api_tests PRIVATE
+  LIVEKIT_TEST_RESOURCE_DIR="${PROJECT_SOURCE_DIR}/resources"
+)
 target_link_libraries(livekit_public_api_tests PRIVATE livekitclient GTest::gtest_main)
 target_include_directories(livekit_public_api_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/core/detail

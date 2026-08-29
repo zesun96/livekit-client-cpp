@@ -4,7 +4,14 @@ add_executable(
   livekit_server_test.cpp
 )
 target_compile_features(livekit_server_integration_tests PRIVATE cxx_std_20)
-target_link_libraries(livekit_server_integration_tests PRIVATE livekitclient GTest::gtest)
+target_link_libraries(livekit_server_integration_tests PRIVATE
+  livekitclient
+  media_capture::audio
+  GTest::gtest
+)
+target_compile_definitions(livekit_server_integration_tests PRIVATE
+  LIVEKIT_TEST_RESOURCE_DIR="${PROJECT_SOURCE_DIR}/resources"
+)
 
 if(OFFICIAL_LIVEKIT_CPP_ROOT)
   find_package(

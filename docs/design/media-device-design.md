@@ -135,8 +135,11 @@ observes a partially configured processor.
 
 Microphone volume is a normalized software gain in the inclusive range `[0, 1]` and is applied
 after APM. Mute is equivalent to zero output gain without stopping the capture device. Processing
-statistics report capture/render frames, processing failures, queue drops, and whether AEC is
-currently enabled.
+statistics report capture/render frames, processing failures, queue drops, whether AEC is
+currently enabled, and WebRTC's optional ERL, ERLE, residual-echo-likelihood, and delay metrics.
+Each optional metric has an explicit availability flag because AEC cannot estimate it before it
+has observed enough correlated render and capture audio. The C ABI appends the same value/flag
+pairs to its size-versioned statistics structure.
 
 ### System-audio path
 
@@ -162,21 +165,23 @@ source metadata. The complete flow is demonstrated by
 ## Remote-audio playback and AEC reference
 
 Each connected room owns one WebRTC audio device and one native playback adapter. WebRTC calls
-`AudioTransport::NeedMorePlayData()` every 10 ms to obtain its actual mixed remote audio. That data
-is sent to both the output queue and the microphone AEC reference buffer:
+`AudioTransport::NeedMorePlayData()` every 10 ms to obtain its actual mixed remote audio. The room
+volume and mute state are applied to both the device output and the microphone AEC reference:
 
 ```text
 Subscribed remote tracks
   -> WebRTC decode, gain, and mix
   -> NeedMorePlayData (48 kHz, stereo, 10 ms)
-       |-> bounded playback ring -> miniaudio/WASAPI output
-       `-> latest mixed frame ----> microphone APM reverse stream
-                                      + estimated playout delay
+       |-> bounded playback ring -> room gain/mute -> miniaudio/WASAPI output
+       `-> same room gain/mute ---> latest mixed frame -> microphone APM reverse stream
+                                                        + estimated playout delay
 ```
 
 Using the mixed playout callback is important: track-observer callbacks are suitable for
 application observation but are not guaranteed to represent the exact signal delivered to the
-speaker.
+speaker. The AEC reference must also include software output volume and mute. Supplying the
+pre-volume PCM overestimates echo at reduced speaker levels and can suppress unrelated near-end
+speech during double-talk.
 
 The playback ring is preallocated and bounded. Its default capacity is 200 ms. If a producer
 overruns the queue, the oldest frames are discarded to keep latency bounded. If the device consumes
@@ -257,6 +262,8 @@ Automated local tests cover:
 - C ABI argument and `struct_size` handling;
 - microphone runtime gain and processing reconfiguration;
 - 10 ms APM capture/reverse-stream validation;
+- deterministic stationary-noise suppression and delayed-projection double-talk preservation
+  using the repository's 48 kHz mono speech fixture;
 - bounded frame-copy behavior and rotation metadata;
 - invalid native device/source IDs;
 - playback and system-audio public API surfaces.
@@ -268,10 +275,20 @@ Windows hardware acceptance additionally covers:
 - output playback with zero queue drops under nominal load;
 - concurrent tone playback and WASAPI loopback with non-zero captured samples;
 - repeated connect/publish runs to distinguish stable behavior from one successful attempt.
+- an opt-in physical speaker-to-microphone AEC measurement using explicit device IDs when needed,
+  deterministic wide-band excitation, median-frame AEC-disabled baseline and AEC-enabled residual
+  RMS levels, clipped-sample counts, measured ERLE, and raw WebRTC ERL/ERLE, residual-echo,
+  AEC-delay, playback-delay,
+  processing-error, and queue-drop evidence.
+- controlled physical double-talk using an unreferenced speech playback stream and P90 active-frame
+  retention, plus stationary-noise suppression using an unreferenced noise stream and median-frame
+  RMS ratios; both retain playback levels, clipping, processing-error, and queue-drop evidence.
 
 Physical device removal/reinsertion, multiple cameras with orientation differences, display
-hot-plug, and acoustic AEC quality/ERLE require a controlled hardware matrix and remain manual
-acceptance items. Network integration tests remain opt-in and require explicit LiveKit credentials.
+hot-plug, and additional hardware/room layouts remain manual acceptance items. AEC, double-talk,
+and noise-suppression measurements are automated but opt-in because their results are only
+meaningful with a documented acoustic layout. Network integration tests remain opt-in and require
+explicit LiveKit credentials.
 
 Linux CI and Ubuntu hardware validation are paused as of 2026-08-22 because no Ubuntu environment
 is currently available. They must be completed before GNU/Linux is marked supported.

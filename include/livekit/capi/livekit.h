@@ -905,6 +905,20 @@ typedef struct lk_microphone_processing_stats {
 	uint64_t render_processing_errors;
 	uint64_t frames_dropped;
 	int echo_cancellation_enabled;
+	int echo_return_loss_available;
+	double echo_return_loss_db;
+	int echo_return_loss_enhancement_available;
+	double echo_return_loss_enhancement_db;
+	int residual_echo_likelihood_available;
+	double residual_echo_likelihood;
+	int residual_echo_likelihood_recent_max_available;
+	double residual_echo_likelihood_recent_max;
+	int delay_median_available;
+	int32_t delay_median_ms;
+	int delay_standard_deviation_available;
+	int32_t delay_standard_deviation_ms;
+	int delay_available;
+	int32_t delay_ms;
 } lk_microphone_processing_stats_t;
 
 typedef struct lk_video_source_options {

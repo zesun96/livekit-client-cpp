@@ -18,6 +18,7 @@
 #include "audio_device.h"
 
 #include "../../capture/audio_capture_adapter.h"
+#include "../../capture/audio_gain.h"
 
 #include <algorithm>
 #include <cstring>
@@ -35,6 +36,7 @@ namespace core {
 
 AudioDevice::AudioDevice(webrtc::TaskQueueFactory* task_queue_factory)
     : task_queue_factory_(task_queue_factory), data_(kSamplesPer10Ms * kChannels),
+      render_reference_(kSamplesPer10Ms * kChannels),
       playback_(std::make_unique<capture::AudioPlaybackAdapter>()) {}
 
 AudioDevice::~AudioDevice() { Terminate(); }
@@ -101,8 +103,17 @@ int32_t AudioDevice::Init() {
 		                                   &ntp_time_ms);
 		samples_out = std::min(samples_out, static_cast<std::size_t>(kSamplesPer10Ms));
 		if (samples_out > 0 && playback_) {
-			DeliverRenderData(data_.data(), kSampleRate, kChannels,
-			                  static_cast<std::uint32_t>(samples_out));
+			const auto sample_count = samples_out * kChannels;
+			const float render_gain = playback_->IsMuted() ? 0.0F : playback_->Volume();
+			if (capture::ApplyAudioGain(
+			        std::span<const std::int16_t>(data_.data(), sample_count),
+			        std::span<std::int16_t>(render_reference_.data(), sample_count), render_gain)) {
+				// AEC must observe the PCM that actually reaches the output device. Supplying the
+				// pre-volume signal overestimates echo after SetSpeakerVolume and can suppress
+				// unrelated near-end speech during double-talk.
+				DeliverRenderData(render_reference_.data(), kSampleRate, kChannels,
+				                  static_cast<std::uint32_t>(samples_out));
+			}
 			playback_->QueueFrame(data_.data(), kSampleRate, kChannels,
 			                      static_cast<std::uint32_t>(samples_out));
 		}

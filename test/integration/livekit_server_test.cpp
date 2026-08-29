@@ -9,6 +9,8 @@
 #include "livekit/core/track/audio_source_interface.h"
 #include "livekit/core/track/remote_track_interface.h"
 #include "livekit/core/track/video_source_interface.h"
+#include "media_capture/audio_playback.h"
+#include "../support/audio_fixture.h"
 
 #include <gtest/gtest.h>
 
@@ -16,12 +18,15 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -101,6 +106,21 @@ bool WaitUntil(const std::function<bool()>& predicate,
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	} while (std::chrono::steady_clock::now() < deadline);
 	return predicate();
+}
+
+double EnvironmentDouble(const char* name, double default_value, double minimum,
+                         double maximum) {
+	const char* value = std::getenv(name);
+	if (value == nullptr || *value == '\0') {
+		return default_value;
+	}
+	char* end = nullptr;
+	const double parsed = std::strtod(value, &end);
+	if (end == value || *end != '\0' || !std::isfinite(parsed) || parsed < minimum ||
+	    parsed > maximum) {
+		throw std::runtime_error(std::string("Invalid ") + name + " value: " + value);
+	}
+	return parsed;
 }
 
 struct CApiE2eeEvents {
@@ -706,6 +726,15 @@ std::string PublicationSummary(ParticipantInterface* participant) {
 
 class MediaEvents final : public RoomEventInterface {
 public:
+	struct AudioLevelMeasurement {
+		uint64_t samples = 0;
+		double rms = 0.0;
+		double median_frame_rms = 0.0;
+		double p90_frame_rms = 0.0;
+		int32_t peak = 0;
+		uint64_t clipped_samples = 0;
+	};
+
 	void OnConnected() override {}
 	void OnReconnecting() override { reconnecting_.fetch_add(1); }
 	void OnReconnected() override { reconnected_.fetch_add(1); }
@@ -761,7 +790,24 @@ public:
 			audio_frames_.fetch_add(1);
 			if (track != nullptr) {
 				std::lock_guard<std::mutex> guard(lock_);
-				++media_frames_by_name_[track->Name()];
+				const auto name = track->Name();
+				++media_frames_by_name_[name];
+				auto& level = audio_levels_by_name_[name];
+				double frame_sum_squares = 0.0;
+				for (const auto sample : frame.data) {
+					const auto magnitude = static_cast<int32_t>(sample) < 0
+					                           ? -static_cast<int32_t>(sample)
+					                           : static_cast<int32_t>(sample);
+					const double square = static_cast<double>(sample) * sample;
+					frame_sum_squares += square;
+					level.sum_squares += square;
+					level.peak = std::max(level.peak, magnitude);
+					if (magnitude >= 32760) {
+						++level.clipped_samples;
+					}
+				}
+				level.samples += frame.data.size();
+				level.frame_rms.push_back(std::sqrt(frame_sum_squares / frame.data.size()));
 			}
 		}
 	}
@@ -905,6 +951,27 @@ public:
 		const auto found = media_frames_by_name_.find(track_name);
 		return found != media_frames_by_name_.end() ? found->second : 0;
 	}
+	void reset_audio_level(const std::string& track_name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		audio_levels_by_name_.erase(track_name);
+	}
+	AudioLevelMeasurement audio_level(const std::string& track_name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		const auto found = audio_levels_by_name_.find(track_name);
+		if (found == audio_levels_by_name_.end() || found->second.samples == 0) {
+			return {};
+		}
+		auto frame_rms = found->second.frame_rms;
+		const auto middle = frame_rms.begin() + frame_rms.size() / 2;
+		std::nth_element(frame_rms.begin(), middle, frame_rms.end());
+		const double median_frame_rms = *middle;
+		const auto p90 = frame_rms.begin() +
+		                 static_cast<std::ptrdiff_t>((frame_rms.size() - 1) * 9 / 10);
+		std::nth_element(frame_rms.begin(), p90, frame_rms.end());
+		return {found->second.samples,
+		        std::sqrt(found->second.sum_squares / found->second.samples), median_frame_rms,
+		        *p90, found->second.peak, found->second.clipped_samples};
+	}
 	TrackDimensions video_dimensions(const std::string& track_name) {
 		std::lock_guard<std::mutex> guard(lock_);
 		const auto found = video_dimensions_by_name_.find(track_name);
@@ -912,6 +979,14 @@ public:
 	}
 
 private:
+	struct AudioLevelAccumulator {
+		uint64_t samples = 0;
+		double sum_squares = 0.0;
+		int32_t peak = 0;
+		uint64_t clipped_samples = 0;
+		std::vector<double> frame_rms;
+	};
+
 	std::atomic<bool> audio_subscribed_{false};
 	std::atomic<bool> video_subscribed_{false};
 	std::atomic<uint64_t> reconnecting_{0};
@@ -949,6 +1024,7 @@ private:
 	TrackSubscriptionStatus subscription_status_ = TrackSubscriptionStatus::Unsubscribed;
 	uint64_t subscription_status_count_ = 0;
 	std::unordered_map<std::string, uint64_t> media_frames_by_name_;
+	std::unordered_map<std::string, AudioLevelAccumulator> audio_levels_by_name_;
 	std::unordered_map<std::string, TrackDimensions> video_dimensions_by_name_;
 	std::map<std::pair<FrameCryptorDirection, std::string>, FrameCryptorState> encryption_states_;
 };
@@ -4059,6 +4135,8 @@ TEST(LiveKitServerTest, PublishesAndReceivesHardwareCapturedMedia) {
 
 	ClientRuntime runtime;
 	ASSERT_TRUE(runtime.initialized());
+	auto microphone_source = CreateMicrophoneAudioSourceUnique();
+	ASSERT_NE(microphone_source, nullptr);
 	MediaEvents events;
 	auto receiver = CreateRoomUnique();
 	auto sender = CreateRoomUnique();
@@ -4074,8 +4152,6 @@ TEST(LiveKitServerTest, PublishesAndReceivesHardwareCapturedMedia) {
 	constexpr std::string_view screen_name = "hardware-screen";
 	constexpr std::string_view window_name = "hardware-window";
 	constexpr std::string_view aec_reference_name = "aec-reference";
-	auto microphone_source = CreateMicrophoneAudioSourceUnique();
-	ASSERT_NE(microphone_source, nullptr);
 	auto camera_source = CreateCameraVideoSourceUnique({{}, 1280, 720, 30});
 	ASSERT_NE(camera_source, nullptr);
 	ASSERT_TRUE(
@@ -4221,6 +4297,439 @@ TEST(LiveKitServerTest, PublishesAndReceivesHardwareCapturedMedia) {
 	sender->RemoveEventListener();
 	EXPECT_TRUE(sender->Disconnect());
 	EXPECT_TRUE(receiver->Disconnect());
+}
+
+TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
+	const char* quality_enabled = std::getenv("LIVEKIT_AUDIO_QUALITY");
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* microphone_token = std::getenv("LIVEKIT_TOKEN");
+	const char* reference_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (quality_enabled == nullptr || std::string_view(quality_enabled) != "1") {
+		GTEST_SKIP() << "Set LIVEKIT_AUDIO_QUALITY=1 to run the acoustic AEC quality test";
+	}
+	if (url == nullptr || microphone_token == nullptr || reference_token == nullptr ||
+	    *url == '\0' || *microphone_token == '\0' || *reference_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the "
+		                "acoustic AEC quality test";
+	}
+
+	const double minimum_erle_db =
+	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_MIN_ERLE_DB", 6.0, -20.0, 60.0);
+	const double maximum_residual_echo =
+	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_MAX_RESIDUAL_ECHO", 0.75, 0.0, 1.0);
+	const double speaker_volume =
+	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_SPEAKER_VOLUME", 0.50, 0.01, 1.0);
+	const char* input_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID");
+	const char* output_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID");
+	const auto measurement_seconds = static_cast<int>(
+	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_SECONDS", 10.0, 5.0, 60.0));
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MicrophoneCaptureOptions microphone_capture_options;
+	// Disable every processor for the acoustic baseline. AEC is enabled after measuring the same
+	// speaker signal, while AGC and NS remain disabled so they cannot be mistaken for echo removal.
+	microphone_capture_options.processing = {false, false, false};
+	if (input_device_id != nullptr && *input_device_id != '\0') {
+		microphone_capture_options.device_id = input_device_id;
+	}
+	auto microphone_source = CreateMicrophoneAudioSourceUnique(microphone_capture_options);
+	ASSERT_NE(microphone_source, nullptr)
+	    << "The requested/default microphone is unavailable; connect the acceptance microphone";
+	MediaEvents microphone_events;
+	auto microphone_room = CreateRoomUnique();
+	auto reference_room = CreateRoomUnique();
+	reference_room->AddEventListener(&microphone_events);
+	ASSERT_TRUE(microphone_room->Connect(url, microphone_token));
+	ASSERT_TRUE(reference_room->Connect(url, reference_token));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return microphone_room->IsConnected() && reference_room->IsConnected(); },
+	    std::chrono::seconds(10)));
+	// The reference room receives microphone PCM for measurement, but must never play that track
+	// into the room. Doing so creates a microphone -> LiveKit -> speaker feedback loop that clips
+	// both the baseline and residual measurements. Muting output does not suppress frame callbacks.
+	ASSERT_TRUE(reference_room->SetSpeakerMuted(true));
+	if (output_device_id != nullptr && *output_device_id != '\0') {
+		ASSERT_TRUE(microphone_room->SetAudioOutputDevice(output_device_id))
+		    << "The requested acoustic-test output device is unavailable";
+	}
+	ASSERT_TRUE(microphone_room->SetSpeakerVolume(static_cast<float>(speaker_volume)));
+
+	constexpr std::string_view microphone_name = "aec-quality-microphone";
+	constexpr std::string_view reference_name = "aec-quality-reference";
+	auto microphone_track = microphone_room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(microphone_name), microphone_source.get());
+	ASSERT_NE(microphone_track, nullptr);
+	TrackPublishOptions microphone_options;
+	microphone_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(microphone_room->GetLocalParticipant()->PublishTrack(microphone_track.get(),
+	                                                                microphone_options));
+
+	auto reference_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	ASSERT_NE(reference_source, nullptr);
+	auto reference_track = reference_room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(reference_name), reference_source.get());
+	ASSERT_NE(reference_track, nullptr);
+	TrackPublishOptions reference_options;
+	reference_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(reference_room->GetLocalParticipant()->PublishTrack(reference_track.get(),
+	                                                               reference_options));
+
+	std::array<int16_t, 480> reference_samples{};
+	// A periodic tone makes several acoustic delays look equally plausible to the AEC delay
+	// estimator. Deterministic wide-band noise has a sharp autocorrelation peak, so the reported
+	// delay and ERLE describe the physical speaker-to-microphone path instead of a tone period.
+	uint32_t reference_noise_state = 0x6d2b79f5u;
+	const auto send_reference_frame = [&] {
+		for (auto& output : reference_samples) {
+			reference_noise_state ^= reference_noise_state << 13;
+			reference_noise_state ^= reference_noise_state >> 17;
+			reference_noise_state ^= reference_noise_state << 5;
+			const auto centered = static_cast<int32_t>(reference_noise_state & 0xffffu) - 32768;
+			// Keep enough acoustic energy for a stable AEC-disabled baseline even when the
+			// acceptance microphone is not adjacent to the USB speaker. The configured 50%
+			// playback gain keeps this below approximately -11 dBFS at the device.
+			output = static_cast<int16_t>(centered * 18000 / 32768);
+		}
+		return reference_source->CaptureFrame(reference_samples.data(), 48000, 1,
+		                                      reference_samples.size());
+	};
+	const auto run_reference_for = [&](std::chrono::seconds duration) {
+		auto next_frame = std::chrono::steady_clock::now();
+		const auto deadline = next_frame + duration;
+		while (std::chrono::steady_clock::now() < deadline) {
+			if (!send_reference_frame()) {
+				return false;
+			}
+			next_frame += std::chrono::milliseconds(10);
+			std::this_thread::sleep_until(next_frame);
+		}
+		return true;
+	};
+
+	ASSERT_TRUE(run_reference_for(std::chrono::seconds(2)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto stats = microphone_source->ProcessingStats();
+		    return stats.capture_frames_processed >= 100 &&
+		           microphone_events.media_frames(std::string(microphone_name)) >= 20;
+	    },
+	    std::chrono::seconds(10)))
+	    << "The microphone loop did not become active. Confirm that the default microphone is "
+	       "available.";
+
+	microphone_events.reset_audio_level(std::string(microphone_name));
+	ASSERT_TRUE(run_reference_for(std::chrono::seconds(3)));
+	const auto echo_baseline = microphone_events.audio_level(std::string(microphone_name));
+	ASSERT_GE(echo_baseline.samples, 48000u)
+	    << "Too few decoded microphone samples for the AEC-disabled baseline";
+	ASSERT_GT(echo_baseline.median_frame_rms, 25.0)
+	    << "The AEC-disabled microphone signal is too quiet. Confirm that the selected output is "
+	       "audible and physically reaches the default microphone.";
+
+	ASSERT_TRUE(microphone_source->SetProcessingOptions({true, false, false}));
+	// AEC3 delay estimation can take several seconds to converge on a real USB speaker/microphone
+	// path. Do not open the measurement window while its adaptive filter is still starting.
+	ASSERT_TRUE(run_reference_for(std::chrono::seconds(8)));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return microphone_source->ProcessingStats().render_frames_processed >= 400; },
+	    std::chrono::seconds(5)))
+	    << "The AEC render-reference loop did not become active";
+	// Starts WebRTC's documented one-second statistics aggregation window after warm-up.
+	(void)microphone_source->ProcessingStats();
+	microphone_events.reset_audio_level(std::string(microphone_name));
+	ASSERT_TRUE(run_reference_for(std::chrono::seconds(measurement_seconds)));
+
+	const auto stats = microphone_source->ProcessingStats();
+	const auto playback = microphone_room->GetAudioPlaybackStats();
+	const auto echo_residual = microphone_events.audio_level(std::string(microphone_name));
+	ASSERT_GE(echo_residual.samples, 48000u)
+	    << "Too few decoded microphone samples for the AEC-enabled measurement";
+	const double measured_erle_db =
+	    20.0 * std::log10(echo_baseline.median_frame_rms /
+	                      std::max(echo_residual.median_frame_rms, 1.0));
+	std::cout << "AUDIO_QUALITY_RESULT"
+	          << " baseline_rms=" << echo_baseline.rms
+	          << " baseline_median_frame_rms=" << echo_baseline.median_frame_rms
+	          << " baseline_peak=" << echo_baseline.peak
+	          << " baseline_clipped_samples=" << echo_baseline.clipped_samples
+	          << " residual_rms=" << echo_residual.rms
+	          << " residual_median_frame_rms=" << echo_residual.median_frame_rms
+	          << " residual_peak=" << echo_residual.peak
+	          << " residual_clipped_samples=" << echo_residual.clipped_samples
+	          << " measured_erle_db=" << measured_erle_db
+	          << " erle_available=" << stats.echo_return_loss_enhancement_available
+	          << " erle_db=" << stats.echo_return_loss_enhancement_db
+	          << " erl_available=" << stats.echo_return_loss_available
+	          << " erl_db=" << stats.echo_return_loss_db
+	          << " residual_available=" << stats.residual_echo_likelihood_recent_max_available
+	          << " residual_recent_max=" << stats.residual_echo_likelihood_recent_max
+	          << " delay_available=" << stats.delay_available
+	          << " delay_ms=" << stats.delay_ms
+	          << " delay_median_available=" << stats.delay_median_available
+	          << " delay_median_ms=" << stats.delay_median_ms
+	          << " delay_stddev_available=" << stats.delay_standard_deviation_available
+	          << " delay_stddev_ms=" << stats.delay_standard_deviation_ms
+	          << " playback_estimated_delay_ms=" << playback.estimated_delay_ms
+	          << " playback_device_latency_ms=" << playback.device_latency_ms
+	          << " playback_dropped_frames=" << playback.dropped_frames
+	          << " capture_frames=" << stats.capture_frames_processed
+	          << " render_frames=" << stats.render_frames_processed << std::endl;
+
+	EXPECT_GE(measured_erle_db, minimum_erle_db);
+	// WebRTC exposes residual-echo likelihood as an optional statistic. Some libwebrtc builds do
+	// not enable the separate echo-detector metric even while AEC3 reports ERLE. Enforce the
+	// threshold when either form is present and retain the availability bits in the raw result.
+	if (stats.residual_echo_likelihood_recent_max_available) {
+		EXPECT_LE(stats.residual_echo_likelihood_recent_max, maximum_residual_echo);
+	} else if (stats.residual_echo_likelihood_available) {
+		EXPECT_LE(stats.residual_echo_likelihood, maximum_residual_echo);
+	}
+	EXPECT_EQ(stats.capture_processing_errors, 0u);
+	EXPECT_EQ(stats.render_processing_errors, 0u);
+	EXPECT_EQ(stats.frames_dropped, 0u);
+	EXPECT_EQ(playback.dropped_frames, 0u);
+
+	EXPECT_TRUE(microphone_room->GetLocalParticipant()->UnpublishTrack(microphone_track.get()));
+	EXPECT_TRUE(reference_room->GetLocalParticipant()->UnpublishTrack(reference_track.get()));
+	microphone_track.reset();
+	reference_track.reset();
+	microphone_source->Stop();
+	microphone_source.reset();
+	reference_source.reset();
+	reference_room->RemoveEventListener();
+	EXPECT_TRUE(microphone_room->Disconnect());
+	EXPECT_TRUE(reference_room->Disconnect());
+}
+
+TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
+	const char* quality_enabled = std::getenv("LIVEKIT_AUDIO_QUALITY");
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* microphone_token = std::getenv("LIVEKIT_TOKEN");
+	const char* reference_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (quality_enabled == nullptr || std::string_view(quality_enabled) != "1") {
+		GTEST_SKIP() << "Set LIVEKIT_AUDIO_QUALITY=1 to run hardware audio processing tests";
+	}
+	if (url == nullptr || microphone_token == nullptr || reference_token == nullptr ||
+	    *url == '\0' || *microphone_token == '\0' || *reference_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run hardware "
+		                "audio processing tests";
+	}
+
+	const char* input_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID");
+	const char* output_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID");
+	const double far_end_volume =
+	    EnvironmentDouble("LIVEKIT_AUDIO_DOUBLE_TALK_FAR_END_VOLUME", 0.20, 0.01, 1.0);
+	const double fixture_volume =
+	    EnvironmentDouble("LIVEKIT_AUDIO_FIXTURE_VOLUME", 0.80, 0.01, 1.0);
+	const double noise_fixture_volume =
+	    EnvironmentDouble("LIVEKIT_AUDIO_NOISE_FIXTURE_VOLUME", 1.0, 0.01, 1.0);
+	const double minimum_double_talk_retention =
+	    EnvironmentDouble("LIVEKIT_AUDIO_DOUBLE_TALK_MIN_RETENTION", 0.60, 0.0, 2.0);
+	const double maximum_noise_ratio =
+	    EnvironmentDouble("LIVEKIT_AUDIO_NOISE_MAX_RATIO", 0.75, 0.0, 2.0);
+	const auto phase_seconds = static_cast<int>(
+	    EnvironmentDouble("LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS", 5.0, 3.0, 15.0));
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MicrophoneCaptureOptions microphone_options;
+	microphone_options.processing = {true, false, false};
+	if (input_device_id != nullptr && *input_device_id != '\0') {
+		microphone_options.device_id = input_device_id;
+	}
+	auto microphone_source = CreateMicrophoneAudioSourceUnique(microphone_options);
+	ASSERT_NE(microphone_source, nullptr)
+	    << "The requested/default microphone is unavailable";
+
+	MediaEvents events;
+	auto microphone_room = CreateRoomUnique();
+	auto measurement_room = CreateRoomUnique();
+	measurement_room->AddEventListener(&events);
+	ASSERT_TRUE(microphone_room->Connect(url, microphone_token));
+	ASSERT_TRUE(measurement_room->Connect(url, reference_token));
+	ASSERT_TRUE(WaitUntil(
+	    [&] { return microphone_room->IsConnected() && measurement_room->IsConnected(); },
+	    std::chrono::seconds(10)));
+	// This room receives microphone PCM only for measurement. Physical playback would create an
+	// uncontrolled feedback loop and invalidate both double-talk and noise measurements.
+	ASSERT_TRUE(measurement_room->SetSpeakerMuted(true));
+	if (output_device_id != nullptr && *output_device_id != '\0') {
+		ASSERT_TRUE(microphone_room->SetAudioOutputDevice(output_device_id));
+	}
+	ASSERT_TRUE(microphone_room->SetSpeakerVolume(static_cast<float>(far_end_volume)));
+
+	constexpr std::string_view microphone_name = "hardware-processing-microphone";
+	constexpr std::string_view far_end_name = "hardware-processing-far-end";
+	auto microphone_track = microphone_room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(microphone_name), microphone_source.get());
+	ASSERT_NE(microphone_track, nullptr);
+	TrackPublishOptions publish_options;
+	publish_options.source = TrackSource::Microphone;
+	ASSERT_TRUE(microphone_room->GetLocalParticipant()->PublishTrack(microphone_track.get(),
+	                                                               publish_options));
+	auto far_end_source = CreateAudioSourceUnique({}, 48000, 1, 200);
+	ASSERT_NE(far_end_source, nullptr);
+	auto far_end_track = measurement_room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
+	    std::string(far_end_name), far_end_source.get());
+	ASSERT_NE(far_end_track, nullptr);
+	ASSERT_TRUE(measurement_room->GetLocalParticipant()->PublishTrack(far_end_track.get(),
+	                                                                publish_options));
+
+	media_capture::AudioPlaybackConfig fixture_config;
+	if (output_device_id != nullptr && *output_device_id != '\0') {
+		fixture_config.device_id = output_device_id;
+	}
+	fixture_config.sample_rate = 48000;
+	fixture_config.channels = 2;
+	fixture_config.buffer_duration_ms = 100;
+	auto fixture_playback = media_capture::CreateAudioPlayback(std::move(fixture_config));
+	ASSERT_NE(fixture_playback, nullptr);
+	ASSERT_TRUE(fixture_playback->SetVolume(static_cast<float>(fixture_volume)));
+	ASSERT_TRUE(fixture_playback->Start()) << fixture_playback->LastError();
+
+	const auto speech = test_support::LoadPcm16Mono48Khz(
+	    std::filesystem::path(LIVEKIT_TEST_RESOURCE_DIR) / "audio" / "change-sophie.wav");
+	ASSERT_GE(speech.size(), static_cast<std::size_t>(phase_seconds) * 48000u);
+	std::array<int16_t, 480> far_end_samples{};
+	std::array<int16_t, 960> fixture_samples{};
+	uint32_t far_end_state = 0x6d2b79f5u;
+	const auto fill_far_end = [&] {
+		for (auto& output : far_end_samples) {
+			far_end_state ^= far_end_state << 13;
+			far_end_state ^= far_end_state >> 17;
+			far_end_state ^= far_end_state << 5;
+			const auto centered = static_cast<int32_t>(far_end_state & 0xffffu) - 32768;
+			output = static_cast<int16_t>(centered * 6000 / 32768);
+		}
+	};
+	const auto run_fixture_phase = [&](std::span<const int16_t> mono_fixture,
+	                                  bool send_far_end) {
+		auto next_frame = std::chrono::steady_clock::now();
+		const auto total_frames = static_cast<std::size_t>(phase_seconds) * 100;
+		for (std::size_t frame = 0; frame < total_frames; ++frame) {
+			for (std::size_t index = 0; index < 480; ++index) {
+				const auto sample = mono_fixture[(frame * 480 + index) % mono_fixture.size()];
+				fixture_samples[index * 2] = sample;
+				fixture_samples[index * 2 + 1] = sample;
+			}
+			if (!fixture_playback->QueueFrame(
+			        {fixture_samples.data(), 48000, 2, 480, 0})) {
+				return false;
+			}
+			if (send_far_end) {
+				fill_far_end();
+				if (!far_end_source->CaptureFrame(far_end_samples.data(), 48000, 1, 480)) {
+					return false;
+				}
+			}
+			next_frame += std::chrono::milliseconds(10);
+			std::this_thread::sleep_until(next_frame);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+		return true;
+	};
+
+	// Establish the remote far-end track and AEC reverse stream before quality phases.
+	std::array<int16_t, 48000> warmup_noise{};
+	uint32_t warmup_state = 0xa4093822u;
+	for (auto& sample : warmup_noise) {
+		warmup_state ^= warmup_state << 13;
+		warmup_state ^= warmup_state >> 17;
+		warmup_state ^= warmup_state << 5;
+		const auto centered = static_cast<int32_t>(warmup_state & 0xffffu) - 32768;
+		sample = static_cast<int16_t>(centered * 15000 / 32768);
+	}
+	ASSERT_TRUE(run_fixture_phase(std::span<const int16_t>(warmup_noise).first(480), true));
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    const auto stats = microphone_source->ProcessingStats();
+		    return stats.render_frames_processed >= 100 &&
+		           events.media_frames(std::string(microphone_name)) >= 20;
+	    },
+	    std::chrono::seconds(5)));
+
+	events.reset_audio_level(std::string(microphone_name));
+	ASSERT_TRUE(run_fixture_phase(speech, false));
+	const auto near_only = events.audio_level(std::string(microphone_name));
+	ASSERT_GT(near_only.p90_frame_rms, 25.0)
+	    << "The unreferenced speech fixture does not reach the microphone";
+
+	events.reset_audio_level(std::string(microphone_name));
+	far_end_state = 0x6d2b79f5u;
+	ASSERT_TRUE(run_fixture_phase(speech, true));
+	const auto double_talk = events.audio_level(std::string(microphone_name));
+	const double double_talk_retention =
+	    double_talk.p90_frame_rms / near_only.p90_frame_rms;
+
+	ASSERT_TRUE(microphone_source->SetProcessingOptions({false, false, false}));
+	ASSERT_TRUE(fixture_playback->SetVolume(static_cast<float>(noise_fixture_volume)));
+	events.reset_audio_level(std::string(microphone_name));
+	ASSERT_TRUE(run_fixture_phase(warmup_noise, false));
+	const auto noise_without_ns = events.audio_level(std::string(microphone_name));
+	ASSERT_GT(noise_without_ns.median_frame_rms, 25.0)
+	    << "The unreferenced noise fixture does not reach the microphone";
+
+	ASSERT_TRUE(microphone_source->SetProcessingOptions({false, false, true}));
+	// Warm up NS with the same stationary fixture before opening the measurement window.
+	ASSERT_TRUE(run_fixture_phase(std::span<const int16_t>(warmup_noise).first(480), false));
+	events.reset_audio_level(std::string(microphone_name));
+	ASSERT_TRUE(run_fixture_phase(warmup_noise, false));
+	const auto noise_with_ns = events.audio_level(std::string(microphone_name));
+	const double noise_ratio =
+	    noise_with_ns.median_frame_rms / noise_without_ns.median_frame_rms;
+
+	const auto processing = microphone_source->ProcessingStats();
+	const auto far_end_playback = microphone_room->GetAudioPlaybackStats();
+	const auto fixture_stats = fixture_playback->Stats();
+	std::cout << "AUDIO_HARDWARE_PROCESSING_RESULT"
+	          << " near_only_median_rms=" << near_only.median_frame_rms
+	          << " near_only_p90_rms=" << near_only.p90_frame_rms
+	          << " near_only_rms=" << near_only.rms
+	          << " double_talk_median_rms=" << double_talk.median_frame_rms
+	          << " double_talk_p90_rms=" << double_talk.p90_frame_rms
+	          << " double_talk_rms=" << double_talk.rms
+	          << " double_talk_retention=" << double_talk_retention
+	          << " noise_without_ns_median_rms=" << noise_without_ns.median_frame_rms
+	          << " noise_with_ns_median_rms=" << noise_with_ns.median_frame_rms
+	          << " noise_ratio=" << noise_ratio
+	          << " far_end_volume=" << far_end_volume
+	          << " speech_fixture_volume=" << fixture_volume
+	          << " noise_fixture_volume=" << noise_fixture_volume
+	          << " near_only_clipped_samples=" << near_only.clipped_samples
+	          << " double_talk_clipped_samples=" << double_talk.clipped_samples
+	          << " noise_without_ns_clipped_samples=" << noise_without_ns.clipped_samples
+	          << " noise_with_ns_clipped_samples=" << noise_with_ns.clipped_samples
+	          << " capture_processing_errors=" << processing.capture_processing_errors
+	          << " render_processing_errors=" << processing.render_processing_errors
+	          << " capture_dropped_frames=" << processing.frames_dropped
+	          << " far_end_playback_dropped_frames=" << far_end_playback.dropped_frames
+	          << " fixture_playback_dropped_frames=" << fixture_stats.dropped_frames
+	          << std::endl;
+
+	EXPECT_GE(double_talk_retention, minimum_double_talk_retention);
+	EXPECT_LE(noise_ratio, maximum_noise_ratio);
+	EXPECT_EQ(processing.capture_processing_errors, 0u);
+	EXPECT_EQ(processing.render_processing_errors, 0u);
+	EXPECT_EQ(processing.frames_dropped, 0u);
+	EXPECT_EQ(far_end_playback.dropped_frames, 0u);
+	EXPECT_EQ(fixture_stats.dropped_frames, 0u);
+	EXPECT_LT(near_only.clipped_samples, near_only.samples / 100 + 1);
+	EXPECT_LT(double_talk.clipped_samples, double_talk.samples / 100 + 1);
+	EXPECT_LT(noise_without_ns.clipped_samples, noise_without_ns.samples / 100 + 1);
+	EXPECT_LT(noise_with_ns.clipped_samples, noise_with_ns.samples / 100 + 1);
+
+	fixture_playback->Stop();
+	EXPECT_TRUE(microphone_room->GetLocalParticipant()->UnpublishTrack(microphone_track.get()));
+	EXPECT_TRUE(measurement_room->GetLocalParticipant()->UnpublishTrack(far_end_track.get()));
+	microphone_track.reset();
+	far_end_track.reset();
+	microphone_source->Stop();
+	microphone_source.reset();
+	far_end_source.reset();
+	measurement_room->RemoveEventListener();
+	EXPECT_TRUE(microphone_room->Disconnect());
+	EXPECT_TRUE(measurement_room->Disconnect());
 }
 
 TEST(LiveKitServerTest, TransfersDataAndFileWithoutMediaTracks) {

@@ -52,6 +52,22 @@ struct MicrophoneAudioProcessingStats {
 	uint64_t render_processing_errors = 0;
 	uint64_t frames_dropped = 0;
 	bool echo_cancellation_enabled = false;
+	// The following AEC quality metrics are populated only after WebRTC has observed enough
+	// correlated capture and render audio. Check the matching availability flag before use.
+	bool echo_return_loss_available = false;
+	double echo_return_loss_db = 0.0;
+	bool echo_return_loss_enhancement_available = false;
+	double echo_return_loss_enhancement_db = 0.0;
+	bool residual_echo_likelihood_available = false;
+	double residual_echo_likelihood = 0.0;
+	bool residual_echo_likelihood_recent_max_available = false;
+	double residual_echo_likelihood_recent_max = 0.0;
+	bool delay_median_available = false;
+	int32_t delay_median_ms = 0;
+	bool delay_standard_deviation_available = false;
+	int32_t delay_standard_deviation_ms = 0;
+	bool delay_available = false;
+	int32_t delay_ms = 0;
 };
 
 class AudioSourceInterface {

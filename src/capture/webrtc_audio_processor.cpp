@@ -93,6 +93,49 @@ public:
 		}
 	}
 
+	WebRtcAudioProcessingStats GetStats() const noexcept {
+		try {
+			std::lock_guard<std::mutex> guard(processing_mutex_);
+			if (processing_ == nullptr) {
+				return {};
+			}
+			const auto stats = processing_->GetStatistics();
+			WebRtcAudioProcessingStats result;
+			if (stats.echo_return_loss.has_value()) {
+				result.echo_return_loss_available = true;
+				result.echo_return_loss_db = *stats.echo_return_loss;
+			}
+			if (stats.echo_return_loss_enhancement.has_value()) {
+				result.echo_return_loss_enhancement_available = true;
+				result.echo_return_loss_enhancement_db = *stats.echo_return_loss_enhancement;
+			}
+			if (stats.residual_echo_likelihood.has_value()) {
+				result.residual_echo_likelihood_available = true;
+				result.residual_echo_likelihood = *stats.residual_echo_likelihood;
+			}
+			if (stats.residual_echo_likelihood_recent_max.has_value()) {
+				result.residual_echo_likelihood_recent_max_available = true;
+				result.residual_echo_likelihood_recent_max =
+				    *stats.residual_echo_likelihood_recent_max;
+			}
+			if (stats.delay_median_ms.has_value()) {
+				result.delay_median_available = true;
+				result.delay_median_ms = *stats.delay_median_ms;
+			}
+			if (stats.delay_standard_deviation_ms.has_value()) {
+				result.delay_standard_deviation_available = true;
+				result.delay_standard_deviation_ms = *stats.delay_standard_deviation_ms;
+			}
+			if (stats.delay_ms.has_value()) {
+				result.delay_available = true;
+				result.delay_ms = *stats.delay_ms;
+			}
+			return result;
+		} catch (...) {
+			return {};
+		}
+	}
+
 private:
 	static bool IsValidFrame(std::size_t sample_count, std::uint32_t sample_rate,
 	                         std::uint32_t channels) noexcept {
@@ -101,7 +144,7 @@ private:
 	}
 
 	bool echo_cancellation_ = false;
-	std::mutex processing_mutex_;
+	mutable std::mutex processing_mutex_;
 	webrtc::scoped_refptr<webrtc::AudioProcessing> processing_;
 };
 
@@ -126,6 +169,10 @@ bool WebRtcAudioProcessor::ProcessRender(std::span<const std::int16_t> samples,
 bool WebRtcAudioProcessor::Configure(bool echo_cancellation, bool auto_gain_control,
                                      bool noise_suppression) noexcept {
 	return impl_->Configure(echo_cancellation, auto_gain_control, noise_suppression);
+}
+
+WebRtcAudioProcessingStats WebRtcAudioProcessor::GetStats() const noexcept {
+	return impl_->GetStats();
 }
 
 } // namespace livekit::capture
