@@ -293,6 +293,14 @@ public:
 	void OnParticipantDisconnected(RemoteParticipantInterface*) override {
 		++participant_disconnected;
 	}
+	void OnParticipantsUpdated(const std::vector<ParticipantInterface*>& participants) override {
+		std::vector<std::pair<std::string, bool>> batch;
+		batch.reserve(participants.size());
+		for (auto* participant : participants) {
+			batch.emplace_back(participant->Identity(), participant->IsLocalParticipant());
+		}
+		participant_batches.push_back(std::move(batch));
+	}
 
 	int metadata_change_count = 0;
 	int token_refresh_count = 0;
@@ -303,6 +311,7 @@ public:
 	std::optional<RoomSnapshot> moved;
 	int participant_connected = 0;
 	int participant_disconnected = 0;
+	std::vector<std::vector<std::pair<std::string, bool>>> participant_batches;
 };
 
 TEST(RoomStateTest, ReportsRecordingChangesOnlyWhenStateTransitions) {
@@ -375,7 +384,58 @@ TEST(RoomStateTest, AppliesRoomMoveAndReportsCredentialLifecycleWithoutExposingT
 	EXPECT_EQ(events.token_refresh_count, 1);
 	EXPECT_EQ(events.participant_disconnected, 1);
 	EXPECT_EQ(events.participant_connected, 2);
+	ASSERT_EQ(events.participant_batches.size(), 2u);
+	EXPECT_EQ(events.participant_batches.back(),
+	          (std::vector<std::pair<std::string, bool>>{{"remote", false}}));
 	ASSERT_NE(room.GetRemoteParticipantByIdentity("remote"), nullptr);
+
+	livekit::ParticipantInfo local_update;
+	local_update.set_sid("PA_local");
+	local_update.set_identity("local");
+	local_update.set_name("local-updated");
+	livekit::ParticipantInfo remote_update;
+	remote_update.set_sid("PA_remote");
+	remote_update.set_identity("remote");
+	remote_update.set_name("remote-updated");
+	livekit::ParticipantInfo unknown_disconnect;
+	unknown_disconnect.set_sid("PA_missing");
+	unknown_disconnect.set_identity("missing");
+	unknown_disconnect.set_state(livekit::ParticipantInfo_State_DISCONNECTED);
+	room.ParticipantUpdateEvent({local_update, remote_update, unknown_disconnect});
+	ASSERT_EQ(events.participant_batches.size(), 3u);
+	EXPECT_EQ(events.participant_batches.back(),
+	          (std::vector<std::pair<std::string, bool>>{{"local", true}, {"remote", false}}));
+	room.RemoveEventListener();
+}
+
+TEST(RoomStateTest, DefersSidChangeWhenRoomMoveDoesNotContainDestinationSid) {
+	Room room;
+	RoomStateEvents events;
+	room.AddEventListener(&events);
+	livekit::Room initial;
+	initial.set_sid("RM_old");
+	initial.set_name("old-room");
+	room.RoomUpdateEvent(initial);
+	ASSERT_EQ(events.sid_changes.size(), 1u);
+
+	livekit::RoomMovedResponse moved;
+	moved.mutable_room()->set_name("new-room");
+	room.RoomMovedEvent(moved);
+
+	EXPECT_EQ(room.Name(), "new-room");
+	EXPECT_TRUE(room.Sid().empty());
+	ASSERT_TRUE(events.moved.has_value());
+	EXPECT_EQ(events.moved->name, "new-room");
+	EXPECT_TRUE(events.moved->sid.empty());
+	EXPECT_EQ(events.sid_changes.size(), 1u);
+
+	livekit::Room destination;
+	destination.set_sid("RM_new");
+	destination.set_name("new-room");
+	room.RoomUpdateEvent(destination);
+	ASSERT_EQ(events.sid_changes.size(), 2u);
+	EXPECT_EQ(events.sid_changes.back(),
+	          std::make_pair(std::string(), std::string("RM_new")));
 	room.RemoveEventListener();
 }
 
@@ -695,14 +755,23 @@ public:
 	void OnConnected() override { ++connected_count; }
 	void OnReconnecting() override { ++reconnecting_count; }
 	void OnReconnected() override { ++reconnected_count; }
-	void OnDisconnected() override { ++disconnected_count; }
+	void OnDisconnected() override {
+		++disconnected_count;
+		lifecycle.push_back("disconnected");
+	}
+	void OnRoomEos() override {
+		++room_eos_count;
+		lifecycle.push_back("eos");
+	}
 	void OnConnectionStateChanged(RoomState state) override { states.push_back(state); }
 
 	int connected_count = 0;
 	int reconnecting_count = 0;
 	int reconnected_count = 0;
 	int disconnected_count = 0;
+	int room_eos_count = 0;
 	std::vector<RoomState> states;
+	std::vector<std::string> lifecycle;
 };
 
 class DetailedConnectionEvents final : public RoomEventInterface {
@@ -745,6 +814,8 @@ TEST(RoomConnectionStateTest, TransitionsThroughSuccessfulReconnect) {
 	ASSERT_EQ(events.states.size(), 5u);
 	EXPECT_EQ(events.states[3], RoomState::Disconnecting);
 	EXPECT_EQ(events.states[4], RoomState::Disconnected);
+	EXPECT_EQ(events.room_eos_count, 1);
+	EXPECT_EQ(events.lifecycle, (std::vector<std::string>{"disconnected", "eos"}));
 	room.RemoveEventListener();
 }
 
@@ -779,6 +850,8 @@ TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Failed);
 	EXPECT_FALSE(room.IsConnected());
 	EXPECT_EQ(events.disconnected_count, 1);
+	EXPECT_EQ(events.room_eos_count, 0);
+	EXPECT_EQ(events.lifecycle, (std::vector<std::string>{"disconnected"}));
 	EXPECT_EQ(room.LastDisconnectReason(), DisconnectReason::SignalClose);
 	ASSERT_EQ(events.states.size(), 2u);
 	EXPECT_EQ(events.states[0], RoomState::Connected);
@@ -786,12 +859,16 @@ TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
 
 	room.SignalDisconnectedEvent(livekit::DisconnectReason::SIGNAL_CLOSE);
 	EXPECT_EQ(events.disconnected_count, 1);
-	EXPECT_TRUE(room.Disconnect());
+	EXPECT_EQ(events.room_eos_count, 0);
+	room.RoomEosEvent();
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Disconnected);
-	EXPECT_EQ(events.disconnected_count, 1);
-	ASSERT_EQ(events.states.size(), 4u);
-	EXPECT_EQ(events.states[2], RoomState::Disconnecting);
-	EXPECT_EQ(events.states[3], RoomState::Disconnected);
+	EXPECT_EQ(events.room_eos_count, 1);
+	EXPECT_EQ(events.lifecycle, (std::vector<std::string>{"disconnected", "eos"}));
+	room.RoomEosEvent();
+	EXPECT_EQ(events.room_eos_count, 1);
+	EXPECT_FALSE(room.Disconnect());
+	ASSERT_EQ(events.states.size(), 3u);
+	EXPECT_EQ(events.states[2], RoomState::Disconnected);
 	room.RemoveEventListener();
 }
 

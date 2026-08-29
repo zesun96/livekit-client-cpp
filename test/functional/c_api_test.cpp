@@ -755,6 +755,8 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_room_updated, nullptr);
 	EXPECT_EQ(callbacks.on_room_sid_changed, nullptr);
 	EXPECT_EQ(callbacks.on_room_moved, nullptr);
+	EXPECT_EQ(callbacks.on_room_eos, nullptr);
+	EXPECT_EQ(callbacks.on_participants_updated, nullptr);
 	token_options.room_name = "token-room";
 	int token_source_calls = 0;
 	EXPECT_EQ(lk_room_connect_with_token_source(room, EmptyTokenSource, &token_source_calls,

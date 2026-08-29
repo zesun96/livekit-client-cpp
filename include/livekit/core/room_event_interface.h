@@ -150,6 +150,12 @@ public:
 	virtual void OnRoomUpdated(const RoomSnapshot&) {}
 	virtual void OnRoomSidChanged(const std::string&, const std::string&) {}
 	virtual void OnRoomMoved(const RoomSnapshot&) {}
+	// Fired after OnDisconnected when the current room event lifecycle has terminated. No further
+	// events for that connection are emitted after this callback.
+	virtual void OnRoomEos() {}
+	// Fired once after all granular callbacks produced by a single participant-update batch. The
+	// pointers are borrowed for the callback duration and remain owned by the Room.
+	virtual void OnParticipantsUpdated(const std::vector<ParticipantInterface*>&) {}
 };
 
 } // namespace core

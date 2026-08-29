@@ -2,7 +2,7 @@
 
 This document is the entry point for real-server, recovery, interoperability, hardware-media, and
 long-running acceptance tests. It also records the credential-free results completed for the
-Windows H264 release baseline through 2026-08-29.
+Windows H264 release baseline through 2026-08-30.
 
 The detailed scenario definitions and acceptance gates remain in
 [Reliability and weak-network testing](RELIABILITY_TESTING.md). E2EE protocol and interoperability
@@ -13,7 +13,8 @@ details are in [E2EE](E2EE.md).
 - SDK: `livekit-client-cpp` 0.3.0.
 - Platform: Windows x64, Visual Studio 2022, Release unless stated otherwise.
 - WebRTC: locally packaged Release/Debug libwebrtc with H264 enabled.
-- Server: a harness-owned local LiveKit Server with short-lived test-only credentials.
+- Server: a harness-owned local LiveKit Server, plus LiveKit Cloud for the room-migration gate,
+  using short-lived test-only credentials.
 - Logs: retained summaries were scanned for API keys, secrets, JWTs, SDP, ICE candidates, and
   credentialed TURN URLs.
 
@@ -26,6 +27,7 @@ release-candidate gates on its target hardware and network.
 | --- | --- |
 | Participant lifecycle | Four concurrent clients, join/leave convergence, duplicate-identity replacement, and same-identity rejoin passed |
 | Recovery | Signal resume, ICE restart, forced full reconnect, token refresh, and server restart passed for C++ and C rooms |
+| Room migration | LiveKit Cloud move notification, server token refresh, destination-room TokenSource fetch, full reconnect, new room SID, and post-reconnect data publish passed |
 | Media and data recovery | Three H264 media-matrix iterations (12 real-server subtests), plus DataStreams, DataTrack state, and RPC recovery passed |
 | E2EE | Encrypted audio/video/data, key-slot switching, ratcheting, reconnect, and missing/wrong-key recovery passed |
 | Codec matrix | Sustained VP8, VP9, H264, and AV1 publish/subscribe frame progress passed |
@@ -133,6 +135,35 @@ before starting it and explicitly select input/output IDs when the defaults do n
 speaker-to-microphone path.
 
 Neither disruptive scenario is part of ordinary unit/functional test execution.
+
+## Room migration
+
+Room migration requires a deployment whose Room Service implements `MoveParticipant`. The bundled
+single-node LiveKit Server currently returns `not implemented` for this operation, so room migration
+is deliberately excluded from the local `All` matrix. The dedicated gate passed against LiveKit
+Cloud on 2026-08-30 using signalling protocol 17 and strict WSS certificate verification.
+
+On a supported multi-node or cloud deployment, generate short-lived tokens for the same identity in
+the source and destination rooms, then run:
+
+```powershell
+$apiSecret = Read-Host "LiveKit API secret"
+.\test\integration\run_room_move_integration.ps1 `
+  -ServerUrl "https://livekit.example.com" `
+  -LkExecutable "C:\path\to\lk.exe" `
+  -ApiKey "<api-key>" -ApiSecret $apiSecret `
+  -SourceToken "<source-room-token>" `
+  -DestinationToken "<destination-room-token>" `
+  -SourceRoom "source-room" -DestinationRoom "destination-room" `
+  -Identity "room-move-client"
+```
+
+The test verifies the moved room snapshot and server token-refresh event, then forces a full
+reconnect and confirms that `TokenSourceFetchOptions::room_name` was changed to the destination
+room before fetching replacement credentials. It also verifies that the destination room SID is
+available after reconnect and that data can still be published. LiveKit Cloud may leave the SID
+empty in the initial move notification; applications should treat the room name as authoritative at
+that point and observe the later room update or reconnect for the new SID.
 
 ## Direct credential-based integration tests
 

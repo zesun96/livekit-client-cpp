@@ -754,6 +754,7 @@ void RtcEngine::RunRecovery() {
 		recovery_allowed_ = false;
 		if (auto* listener = room_listener_.load()) {
 			listener->SignalDisconnectedEvent(recovery_failure_reason_.load());
+			listener->RoomEosEvent();
 		}
 	}
 	force_full_reconnect_ = false;
@@ -1728,6 +1729,10 @@ void RtcEngine::OnTokenRefresh(const std::string& token) {
 }
 
 void RtcEngine::OnRoomMoved(const livekit::RoomMovedResponse& response) {
+	if (response.has_room() && !response.room().name().empty()) {
+		std::lock_guard<std::mutex> guard(connection_params_mutex_);
+		connection_options_.token_source_options.room_name = response.room().name();
+	}
 	{
 		std::lock_guard<std::mutex> guard(session_lock_);
 		if (response.has_room()) {
@@ -1772,6 +1777,7 @@ void RtcEngine::OnClose() {
 	} else if (!recovery_in_progress_ && !recovery_stop_) {
 		if (auto* listener = room_listener_.load()) {
 			listener->SignalDisconnectedEvent(livekit::DisconnectReason::SIGNAL_CLOSE);
+			listener->RoomEosEvent();
 		}
 	}
 }

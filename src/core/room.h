@@ -115,6 +115,7 @@ public:
 	void RoomUpdateEvent(const livekit::Room& update) override;
 	void TokenRefreshedEvent() override;
 	void RoomMovedEvent(const livekit::RoomMovedResponse& response) override;
+	void RoomEosEvent() override;
 	void
 	ConnectionQualityEvent(const std::vector<livekit::ConnectionQualityInfo>& updates) override;
 	void
@@ -148,6 +149,7 @@ private:
 	void NotifyVideoFrame(const std::string& participant_sid, const std::string& track_sid,
 	                      const VideoFrame& frame);
 	void NotifyDisconnectedOnce(DisconnectReason reason);
+	void NotifyRoomEosOnce();
 	bool SetState(RoomState state);
 	bool TransitionState(RoomState expected, RoomState state);
 	bool SendRemoteTrackSubscribed(const std::string& participant_sid, const std::string& track_sid,
@@ -188,6 +190,7 @@ private:
 	RoomOptions options_;
 	std::atomic<RoomState> state_{RoomState::Disconnected};
 	std::atomic<bool> disconnected_event_emitted_{false};
+	std::atomic<bool> room_eos_emitted_{false};
 	std::atomic<bool> full_reconnect_prepared_{false};
 	std::atomic<DisconnectReason> disconnect_reason_{DisconnectReason::Unknown};
 	std::unique_ptr<RtcEngine> rtc_engine_ = nullptr;

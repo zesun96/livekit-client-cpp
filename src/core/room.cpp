@@ -257,6 +257,7 @@ bool Room::ConnectInternal(std::string url, std::string token, RoomConnectOption
 		listener->OnConnectionStateChanged(RoomState::Connecting);
 	}
 	disconnected_event_emitted_ = false;
+	room_eos_emitted_ = false;
 	full_reconnect_prepared_ = false;
 	disconnect_reason_ = DisconnectReason::Unknown;
 	{
@@ -416,6 +417,7 @@ bool Room::Disconnect() {
 	FailIncomingDataStreams("room disconnected");
 	SetState(RoomState::Disconnected);
 	NotifyDisconnectedOnce(DisconnectReason::ClientInitiated);
+	NotifyRoomEosOnce();
 	return true;
 }
 
@@ -1018,6 +1020,51 @@ void Room::NotifyDisconnectedOnce(DisconnectReason reason) {
 	}
 }
 
+void Room::NotifyRoomEosOnce() {
+	if (!room_eos_emitted_.exchange(true)) {
+		if (auto* listener = event_listener_.load()) {
+			listener->OnRoomEos();
+		}
+	}
+}
+
+void Room::RoomEosEvent() {
+	if (room_eos_emitted_.exchange(true)) {
+		return;
+	}
+	if (e2ee_manager_) {
+		E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
+	}
+	std::map<std::string, std::shared_ptr<RemoteTrack>> detached_tracks;
+	std::vector<std::shared_ptr<RemoteParticipant>> detached_participants;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		detached_tracks.swap(remote_tracks_);
+		pending_media_tracks_.clear();
+		for (const auto& [sid, participant] : remote_participants_) {
+			detached_participants.push_back(participant);
+		}
+		remote_participants_.clear();
+	}
+	for (const auto& participant : detached_participants) {
+		for (const auto& [sid, interface] : participant->DataTracksSnapshot()) {
+			if (auto* track = dynamic_cast<RemoteDataTrack*>(interface.get())) {
+				track->MarkUnpublished();
+			}
+		}
+	}
+	detached_tracks.clear();
+	{
+		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
+		data_track_schema_cache_.clear();
+	}
+	FailIncomingDataStreams("room event stream ended");
+	SetState(RoomState::Disconnected);
+	if (auto* listener = event_listener_.load()) {
+		listener->OnRoomEos();
+	}
+}
+
 bool Room::SetState(RoomState state) {
 	if (state_.exchange(state) == state) {
 		return false;
@@ -1276,7 +1323,10 @@ void Room::RoomMovedEvent(const livekit::RoomMovedResponse& response) {
 		                            response.room().metadata(), response.room().active_recording()};
 		listener->OnRoomMoved(snapshot);
 		listener->OnRoomUpdated(snapshot);
-		if (previous_sid != response.room().sid()) {
+		// Cloud moves can announce the destination by name before its SID is assigned. Do not
+		// report a transition to an invalid empty SID; the later room update or reconnect reports
+		// the actual SID change.
+		if (!response.room().sid().empty() && previous_sid != response.room().sid()) {
 			listener->OnRoomSidChanged(previous_sid, response.room().sid());
 		}
 	}
@@ -2218,6 +2268,8 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	std::vector<PermissionsEvent> permissions_changed;
 	std::vector<MuteEvent> mute_changed;
 	std::vector<std::string> removed_cryptors;
+	std::vector<ParticipantInterface*> updated_participants;
+	std::vector<std::shared_ptr<RemoteParticipant>> retained_updated_participants;
 
 	auto attribute_changes = [](const std::map<std::string, std::string>& old_attributes,
 	                            const std::map<std::string, std::string>& new_attributes) {
@@ -2455,6 +2507,30 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				++it;
 			}
 		}
+		if (emit_events) {
+			updated_participants.reserve(updates.size());
+			retained_updated_participants.reserve(updates.size());
+			for (const auto& info : updates) {
+				if (info.sid() == local_participant_->Sid() ||
+				    (!info.identity().empty() &&
+				     info.identity() == local_participant_->Identity())) {
+					updated_participants.push_back(local_participant_.get());
+					continue;
+				}
+				auto participant = remote_participants_.find(info.sid());
+				if (participant == remote_participants_.end() && !info.identity().empty()) {
+					participant =
+					    std::find_if(remote_participants_.begin(), remote_participants_.end(),
+					                 [&info](const auto& entry) {
+						                 return entry.second->Identity() == info.identity();
+					                 });
+				}
+				if (participant != remote_participants_.end()) {
+					retained_updated_participants.push_back(participant->second);
+					updated_participants.push_back(participant->second.get());
+				}
+			}
+		}
 	}
 	if (e2ee_manager_) {
 		for (const auto& track_id : removed_cryptors) {
@@ -2510,6 +2586,9 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 		}
 		for (const auto& participant : disconnected) {
 			listener->OnParticipantDisconnected(participant.get());
+		}
+		if (!updated_participants.empty()) {
+			listener->OnParticipantsUpdated(updated_participants);
 		}
 	}
 

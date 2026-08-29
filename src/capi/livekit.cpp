@@ -1955,6 +1955,35 @@ public:
 		});
 	}
 
+	void OnRoomEos() override {
+		owner_->state->connected.store(false);
+		InvokeRoomCallback(owner_, [this](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_room_eos != nullptr) {
+				callbacks.on_room_eos(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void
+	OnParticipantsUpdated(const std::vector<core::ParticipantInterface*>& participants) override {
+		std::vector<OwnedParticipantInfo> owned;
+		owned.reserve(participants.size());
+		for (auto* participant : participants) {
+			owned.emplace_back(participant);
+		}
+		std::vector<lk_participant_info_t> values;
+		values.reserve(owned.size());
+		for (const auto& participant : owned) {
+			values.push_back(participant.info);
+		}
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_participants_updated != nullptr) {
+				callbacks.on_participants_updated(callbacks.user_data, owner_, values.data(),
+				                                  values.size());
+			}
+		});
+	}
+
 	void OnRecordingStatusChanged(bool recording) override {
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_recording_status_changed != nullptr) {

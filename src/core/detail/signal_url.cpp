@@ -21,7 +21,10 @@
 namespace livekit::core::detail {
 namespace {
 
-constexpr char kProtocolVersion[] = "15";
+// Protocol 17 is the current signalling protocol. Optional additions such as encoded-frame packet
+// trailers are negotiated independently through ClientInfo capabilities; this SDK does not
+// advertise those capabilities until their corresponding public paths are implemented.
+constexpr char kProtocolVersion[] = "17";
 constexpr char kDefaultSdk[] = "cpp";
 constexpr char kDefaultSdkVersion[] = "0.0.1";
 

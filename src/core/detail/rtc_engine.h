@@ -82,6 +82,7 @@ public:
 		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
 		virtual void TokenRefreshedEvent() {}
 		virtual void RoomMovedEvent(const livekit::RoomMovedResponse&) {}
+		virtual void RoomEosEvent() {}
 		virtual void DataChannelBufferStatusEvent(const DataChannelBufferStatus&) {}
 		virtual void LocalTrackSubscribedEvent(const std::string&) {}
 		virtual void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate&) {}
