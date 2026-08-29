@@ -20,6 +20,7 @@ add_executable(
   data_track_packet_test.cpp
   reconnect_policy_test.cpp
   signal_url_test.cpp
+  token_source_test.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/signal_url.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/uri.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/websocket_uri.cpp
@@ -28,6 +29,7 @@ add_executable(
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_channel_backpressure.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/detail/data_track_packet.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/core/option/reconnect_policy.cpp
+  ${LIVEKIT_CLIENT_ROOT}/src/core/token_source.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/capture/audio_gain.cpp
   ${LIVEKIT_CLIENT_ROOT}/src/capture/frame_queue.cpp
 )

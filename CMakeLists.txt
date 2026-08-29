@@ -183,6 +183,7 @@ set(
   src/core/livekit_client.cpp
   src/core/media_device.cpp
   src/core/room.cpp
+  src/core/token_source.cpp
 
   src/capi/livekit.cpp
 

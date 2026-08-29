@@ -72,6 +72,13 @@ enum class RoomState {
 	Reconnecting,
 };
 
+struct RoomSnapshot {
+	std::string sid;
+	std::string name;
+	std::string metadata;
+	bool is_recording = false;
+};
+
 class RoomEventInterface {
 public:
 	virtual ~RoomEventInterface() {}
@@ -137,6 +144,12 @@ public:
 	virtual void OnLocalDataTrackUnpublished(LocalDataTrackInterface*, ParticipantInterface*) {}
 	virtual void OnDataTrackFrame(RemoteDataTrackInterface*, RemoteParticipantInterface*,
 	                              const DataTrackFrame&) {}
+	// Credential contents are deliberately not exposed through events. Applications only receive
+	// a lifecycle notification and may use their TokenSource for future full reconnects.
+	virtual void OnTokenRefreshed() {}
+	virtual void OnRoomUpdated(const RoomSnapshot&) {}
+	virtual void OnRoomSidChanged(const std::string&, const std::string&) {}
+	virtual void OnRoomMoved(const RoomSnapshot&) {}
 };
 
 } // namespace core

@@ -1916,6 +1916,45 @@ public:
 		});
 	}
 
+	void OnTokenRefreshed() override {
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_token_refreshed != nullptr) {
+				callbacks.on_token_refreshed(callbacks.user_data, owner_);
+			}
+		});
+	}
+
+	void OnRoomUpdated(const core::RoomSnapshot& snapshot) override {
+		const lk_room_snapshot_t value{sizeof(lk_room_snapshot_t), snapshot.sid.c_str(),
+		                               snapshot.name.c_str(), snapshot.metadata.c_str(),
+		                               snapshot.is_recording ? 1 : 0};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_room_updated != nullptr) {
+				callbacks.on_room_updated(callbacks.user_data, owner_, &value);
+			}
+		});
+	}
+
+	void OnRoomMoved(const core::RoomSnapshot& snapshot) override {
+		const lk_room_snapshot_t value{sizeof(lk_room_snapshot_t), snapshot.sid.c_str(),
+		                               snapshot.name.c_str(), snapshot.metadata.c_str(),
+		                               snapshot.is_recording ? 1 : 0};
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_room_moved != nullptr) {
+				callbacks.on_room_moved(callbacks.user_data, owner_, &value);
+			}
+		});
+	}
+
+	void OnRoomSidChanged(const std::string& previous_sid, const std::string& sid) override {
+		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
+			if (callbacks.on_room_sid_changed != nullptr) {
+				callbacks.on_room_sid_changed(callbacks.user_data, owner_, previous_sid.c_str(),
+				                              sid.c_str());
+			}
+		});
+	}
+
 	void OnRecordingStatusChanged(bool recording) override {
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_recording_status_changed != nullptr) {
@@ -2320,6 +2359,27 @@ void lk_room_callbacks_init(lk_room_callbacks_t* callbacks) {
 	}
 }
 
+void lk_token_source_fetch_options_init(lk_token_source_fetch_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+	}
+}
+
+void lk_token_source_response_init(lk_token_source_response_t* response) {
+	if (response != nullptr) {
+		*response = {};
+		response->struct_size = sizeof(*response);
+	}
+}
+
+void lk_room_snapshot_init(lk_room_snapshot_t* snapshot) {
+	if (snapshot != nullptr) {
+		*snapshot = {};
+		snapshot->struct_size = sizeof(*snapshot);
+	}
+}
+
 void lk_e2ee_options_init(lk_e2ee_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -2647,6 +2707,104 @@ lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token)
 		}
 		if (!room->room->Connect(url, token)) {
 			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room");
+		}
+		room->state->connected.store(true);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_connect_with_token_source(lk_room_t* room, lk_token_source_callback callback,
+                                              void* user_data,
+                                              const lk_token_source_fetch_options_t* options,
+                                              const lk_e2ee_options_t* e2ee_options) {
+	return Guard([&] {
+		if (room == nullptr || callback == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and token source callback are required");
+		}
+		core::TokenSourceFetchOptions source_options;
+		core::RoomConnectOptions connect_options;
+		if (e2ee_options != nullptr) {
+			core::E2eeOptions e2ee;
+			const auto status = ToCoreE2eeOptions(e2ee_options, e2ee);
+			if (status != LK_STATUS_OK) {
+				return status;
+			}
+			connect_options.e2ee = std::move(e2ee);
+		}
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid token source options size");
+			}
+			auto copy = [](const char* value) { return value == nullptr ? std::string{} : value; };
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, room_name)) {
+				source_options.room_name = copy(options->room_name);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_name)) {
+				source_options.participant_name = copy(options->participant_name);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_identity)) {
+				source_options.participant_identity = copy(options->participant_identity);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_metadata)) {
+				source_options.participant_metadata = copy(options->participant_metadata);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t,
+			                  participant_attribute_count)) {
+				if (options->participant_attribute_count != 0 &&
+				    (!LKC_HAS_FIELD(options, lk_token_source_fetch_options_t,
+				                    participant_attributes) ||
+				     options->participant_attributes == nullptr)) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "token source attributes are null");
+				}
+				for (size_t index = 0; index < options->participant_attribute_count; ++index) {
+					const auto& attribute = options->participant_attributes[index];
+					if (attribute.key == nullptr) {
+						return Failure(LK_STATUS_INVALID_ARGUMENT,
+						               "token source attribute key is null");
+					}
+					source_options.participant_attributes[attribute.key] = copy(attribute.value);
+				}
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_name)) {
+				source_options.agent_name = copy(options->agent_name);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_metadata)) {
+				source_options.agent_metadata = copy(options->agent_metadata);
+			}
+			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, deployment)) {
+				source_options.deployment = copy(options->deployment);
+			}
+		}
+		auto source = core::CreateCallbackTokenSource(
+		    [callback, user_data](const core::TokenSourceFetchOptions& requested, bool force) {
+			    const auto attributes = AttributeViews(requested.participant_attributes);
+			    const lk_token_source_fetch_options_t request{
+			        sizeof(lk_token_source_fetch_options_t),
+			        requested.room_name.c_str(),
+			        requested.participant_name.c_str(),
+			        requested.participant_identity.c_str(),
+			        requested.participant_metadata.c_str(),
+			        attributes.data(),
+			        attributes.size(),
+			        requested.agent_name.c_str(),
+			        requested.agent_metadata.c_str(),
+			        requested.deployment.c_str()};
+			    lk_token_source_response_t response{};
+			    lk_token_source_response_init(&response);
+			    const auto status = callback(user_data, &request, force ? 1 : 0, &response);
+			    if (status != LK_STATUS_OK) {
+				    return core::TokenSourceResult{
+				        {}, "C token source callback failed with status " + std::to_string(status)};
+			    }
+			    return core::TokenSourceResult{
+			        {response.server_url == nullptr ? "" : response.server_url,
+			         response.participant_token == nullptr ? "" : response.participant_token},
+			        {}};
+		    });
+		if (!room->room->Connect(std::move(source), std::move(source_options),
+		                         std::move(connect_options))) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room with token source");
 		}
 		room->state->connected.store(true);
 		return LK_STATUS_OK;

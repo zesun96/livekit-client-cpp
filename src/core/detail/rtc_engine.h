@@ -80,6 +80,8 @@ public:
 		virtual void SignalResumedEvent() = 0;
 		virtual void ResumedEvent() = 0;
 		virtual void ReconnectedEvent(livekit::JoinResponse join_resp) = 0;
+		virtual void TokenRefreshedEvent() {}
+		virtual void RoomMovedEvent(const livekit::RoomMovedResponse&) {}
 		virtual void DataChannelBufferStatusEvent(const DataChannelBufferStatus&) {}
 		virtual void LocalTrackSubscribedEvent(const std::string&) {}
 		virtual void SubscribedQualityUpdateEvent(const livekit::SubscribedQualityUpdate&) {}
@@ -157,6 +159,7 @@ public:
 	virtual void OnRemoteMuteChanged(std::string sid, bool muted) override;
 	virtual void OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) override;
 	virtual void OnTokenRefresh(const std::string& token) override;
+	void OnRoomMoved(const livekit::RoomMovedResponse& response) override;
 	virtual void OnTrickle(std::string& candidate, livekit::SignalTarget target) override;
 	virtual void OnClose() override;
 	virtual void OnParticipantUpdate(const std::vector<livekit::ParticipantInfo>& updates) override;

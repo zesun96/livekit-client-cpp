@@ -23,6 +23,18 @@ lk_rpc_handler_result_t EchoRpc(void*, const lk_rpc_invocation_t* invocation) {
 void TextStream(void*, lk_room_t*, const lk_text_stream_event_t*) {}
 void ByteStream(void*, lk_room_t*, const lk_byte_stream_event_t*) {}
 
+lk_status_t EmptyTokenSource(void* user_data, const lk_token_source_fetch_options_t* options,
+                             int force_refresh, lk_token_source_response_t* response) {
+	auto* calls = static_cast<int*>(user_data);
+	++*calls;
+	EXPECT_NE(options, nullptr);
+	EXPECT_STREQ(options->room_name, "token-room");
+	EXPECT_EQ(force_refresh, 0);
+	EXPECT_NE(response, nullptr);
+	EXPECT_EQ(response->struct_size, sizeof(*response));
+	return LK_STATUS_OK;
+}
+
 struct CapturedLog {
 	size_t struct_size;
 	lk_log_level_t level;
@@ -702,6 +714,15 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 
 	lk_room_callbacks_t callbacks;
 	lk_room_callbacks_init(&callbacks);
+	lk_token_source_fetch_options_t token_options;
+	lk_token_source_fetch_options_init(&token_options);
+	EXPECT_EQ(token_options.struct_size, sizeof(token_options));
+	lk_token_source_response_t token_response;
+	lk_token_source_response_init(&token_response);
+	EXPECT_EQ(token_response.struct_size, sizeof(token_response));
+	lk_room_snapshot_t room_snapshot;
+	lk_room_snapshot_init(&room_snapshot);
+	EXPECT_EQ(room_snapshot.struct_size, sizeof(room_snapshot));
 	EXPECT_EQ(callbacks.on_reconnecting, nullptr);
 	EXPECT_EQ(callbacks.on_reconnected, nullptr);
 	EXPECT_EQ(callbacks.on_disconnected_with_reason, nullptr);
@@ -730,6 +751,16 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(callbacks.on_local_data_track_published, nullptr);
 	EXPECT_EQ(callbacks.on_local_data_track_unpublished, nullptr);
 	EXPECT_EQ(callbacks.on_data_track_frame, nullptr);
+	EXPECT_EQ(callbacks.on_token_refreshed, nullptr);
+	EXPECT_EQ(callbacks.on_room_updated, nullptr);
+	EXPECT_EQ(callbacks.on_room_sid_changed, nullptr);
+	EXPECT_EQ(callbacks.on_room_moved, nullptr);
+	token_options.room_name = "token-room";
+	int token_source_calls = 0;
+	EXPECT_EQ(lk_room_connect_with_token_source(room, EmptyTokenSource, &token_source_calls,
+	                                            &token_options, nullptr),
+	          LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(token_source_calls, 1);
 	EXPECT_EQ(lk_room_publish_dtmf(room, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_send_chat_message(room, nullptr, nullptr, 0, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);

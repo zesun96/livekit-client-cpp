@@ -596,6 +596,43 @@ typedef struct lk_attribute {
 	const char* value;
 } lk_attribute_t;
 
+typedef struct lk_token_source_fetch_options {
+	size_t struct_size;
+	const char* room_name;
+	const char* participant_name;
+	const char* participant_identity;
+	const char* participant_metadata;
+	const lk_attribute_t* participant_attributes;
+	size_t participant_attribute_count;
+	const char* agent_name;
+	const char* agent_metadata;
+	const char* deployment;
+} lk_token_source_fetch_options_t;
+
+typedef struct lk_token_source_response {
+	size_t struct_size;
+	const char* server_url;
+	const char* participant_token;
+} lk_token_source_response_t;
+
+typedef struct lk_room_snapshot {
+	size_t struct_size;
+	const char* sid;
+	const char* name;
+	const char* metadata;
+	int is_recording;
+} lk_room_snapshot_t;
+
+/*
+ * May run on the calling thread initially and on the SDK recovery thread later. Input and output
+ * strings are borrowed for the callback duration. user_data must remain valid until the room is
+ * disconnected or destroyed.
+ */
+typedef lk_status_t (*lk_token_source_callback)(void* user_data,
+                                                const lk_token_source_fetch_options_t* options,
+                                                int force_refresh,
+                                                lk_token_source_response_t* response);
+
 /* All pointer fields in received and stream events are borrowed for the callback duration. */
 typedef struct lk_file_received {
 	const uint8_t* data;
@@ -768,6 +805,10 @@ typedef void (*lk_file_received_callback)(void* user_data, lk_room_t* room,
 typedef void (*lk_text_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_text_received_t* event);
 typedef void (*lk_room_metadata_callback)(void* user_data, lk_room_t* room, const char* metadata);
+typedef void (*lk_room_snapshot_callback)(void* user_data, lk_room_t* room,
+                                          const lk_room_snapshot_t* snapshot);
+typedef void (*lk_room_sid_changed_callback)(void* user_data, lk_room_t* room,
+                                             const char* previous_sid, const char* sid);
 typedef void (*lk_recording_status_callback)(void* user_data, lk_room_t* room, int recording);
 typedef void (*lk_connection_quality_callback)(void* user_data, lk_room_t* room,
                                                lk_connection_quality_t quality,
@@ -855,6 +896,10 @@ typedef struct lk_room_callbacks {
 	lk_data_track_event_callback on_local_data_track_published;
 	lk_data_track_event_callback on_local_data_track_unpublished;
 	lk_data_track_frame_callback on_data_track_frame;
+	lk_room_event_callback on_token_refreshed;
+	lk_room_snapshot_callback on_room_updated;
+	lk_room_sid_changed_callback on_room_sid_changed;
+	lk_room_snapshot_callback on_room_moved;
 } lk_room_callbacks_t;
 
 typedef struct lk_e2ee_options {
@@ -1151,6 +1196,9 @@ LKC_API size_t lk_screen_source_list_label(const lk_screen_source_list_t* source
                                            char* buffer, size_t buffer_size);
 
 LKC_API void lk_room_callbacks_init(lk_room_callbacks_t* callbacks);
+LKC_API void lk_token_source_fetch_options_init(lk_token_source_fetch_options_t* options);
+LKC_API void lk_token_source_response_init(lk_token_source_response_t* response);
+LKC_API void lk_room_snapshot_init(lk_room_snapshot_t* snapshot);
 LKC_API void lk_e2ee_options_init(lk_e2ee_options_t* options);
 LKC_API void lk_frame_cryptor_info_init(lk_frame_cryptor_info_t* info);
 LKC_API void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats);
@@ -1185,6 +1233,9 @@ LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
 LKC_API lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbacks_t* callbacks);
 LKC_API lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token);
+LKC_API lk_status_t lk_room_connect_with_token_source(
+    lk_room_t* room, lk_token_source_callback callback, void* user_data,
+    const lk_token_source_fetch_options_t* options, const lk_e2ee_options_t* e2ee_options);
 LKC_API lk_status_t lk_room_connect_e2ee(lk_room_t* room, const char* url, const char* token,
                                          const lk_e2ee_options_t* options);
 LKC_API lk_status_t lk_room_disconnect(lk_room_t* room);

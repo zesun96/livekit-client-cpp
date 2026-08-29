@@ -10,6 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <utility>
+
 namespace livekit::core {
 namespace {
 
@@ -280,10 +283,26 @@ public:
 	void OnRecordingStatusChanged(bool recording) override {
 		recording_states.push_back(recording);
 	}
+	void OnTokenRefreshed() override { ++token_refresh_count; }
+	void OnRoomUpdated(const RoomSnapshot& snapshot) override { snapshots.push_back(snapshot); }
+	void OnRoomSidChanged(const std::string& previous_sid, const std::string& sid) override {
+		sid_changes.emplace_back(previous_sid, sid);
+	}
+	void OnRoomMoved(const RoomSnapshot& snapshot) override { moved = snapshot; }
+	void OnParticipantConnected(RemoteParticipantInterface*) override { ++participant_connected; }
+	void OnParticipantDisconnected(RemoteParticipantInterface*) override {
+		++participant_disconnected;
+	}
 
 	int metadata_change_count = 0;
+	int token_refresh_count = 0;
 	std::string last_metadata;
 	std::vector<bool> recording_states;
+	std::vector<RoomSnapshot> snapshots;
+	std::vector<std::pair<std::string, std::string>> sid_changes;
+	std::optional<RoomSnapshot> moved;
+	int participant_connected = 0;
+	int participant_disconnected = 0;
 };
 
 TEST(RoomStateTest, ReportsRecordingChangesOnlyWhenStateTransitions) {
@@ -297,6 +316,8 @@ TEST(RoomStateTest, ReportsRecordingChangesOnlyWhenStateTransitions) {
 	EXPECT_EQ(events.last_metadata, "room metadata");
 	EXPECT_TRUE(events.recording_states.empty());
 	EXPECT_FALSE(room.IsRecording());
+	ASSERT_EQ(events.snapshots.size(), 1u);
+	EXPECT_EQ(events.snapshots.back().metadata, "room metadata");
 
 	update.set_active_recording(true);
 	room.RoomUpdateEvent(update);
@@ -311,6 +332,50 @@ TEST(RoomStateTest, ReportsRecordingChangesOnlyWhenStateTransitions) {
 	ASSERT_EQ(events.recording_states.size(), 2u);
 	EXPECT_FALSE(events.recording_states[1]);
 	EXPECT_FALSE(room.IsRecording());
+	room.RemoveEventListener();
+}
+
+TEST(RoomStateTest, AppliesRoomMoveAndReportsCredentialLifecycleWithoutExposingToken) {
+	Room room;
+	RoomStateEvents events;
+	room.AddEventListener(&events);
+	livekit::Room initial;
+	initial.set_sid("RM_old");
+	initial.set_name("old-room");
+	room.RoomUpdateEvent(initial);
+	livekit::ParticipantInfo old_remote;
+	old_remote.set_sid("PA_old_remote");
+	old_remote.set_identity("old-remote");
+	old_remote.set_state(livekit::ParticipantInfo_State_ACTIVE);
+	room.ParticipantUpdateEvent({old_remote});
+
+	livekit::RoomMovedResponse moved;
+	moved.mutable_room()->set_sid("RM_new");
+	moved.mutable_room()->set_name("new-room");
+	moved.mutable_room()->set_metadata("moved metadata");
+	moved.mutable_room()->set_active_recording(true);
+	moved.mutable_participant()->set_sid("PA_local");
+	moved.mutable_participant()->set_identity("local");
+	auto* remote = moved.add_other_participants();
+	remote->set_sid("PA_remote");
+	remote->set_identity("remote");
+	remote->set_state(livekit::ParticipantInfo_State_ACTIVE);
+	room.RoomMovedEvent(moved);
+	room.TokenRefreshedEvent();
+
+	EXPECT_EQ(room.Sid(), "RM_new");
+	EXPECT_EQ(room.Name(), "new-room");
+	EXPECT_EQ(room.Metadata(), "moved metadata");
+	EXPECT_TRUE(room.IsRecording());
+	ASSERT_TRUE(events.moved.has_value());
+	EXPECT_EQ(events.moved->sid, "RM_new");
+	ASSERT_EQ(events.sid_changes.size(), 2u);
+	EXPECT_EQ(events.sid_changes.back(),
+	          std::make_pair(std::string("RM_old"), std::string("RM_new")));
+	EXPECT_EQ(events.token_refresh_count, 1);
+	EXPECT_EQ(events.participant_disconnected, 1);
+	EXPECT_EQ(events.participant_connected, 2);
+	ASSERT_NE(room.GetRemoteParticipantByIdentity("remote"), nullptr);
 	room.RemoveEventListener();
 }
 

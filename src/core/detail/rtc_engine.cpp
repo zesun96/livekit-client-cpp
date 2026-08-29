@@ -692,7 +692,26 @@ void RtcEngine::RunRecovery() {
 		}
 		ResetTransport(false);
 		std::string token;
-		{
+		if (options.token_source) {
+			auto credentials = options.token_source->Fetch(options.token_source_options, true);
+			if (!credentials) {
+				LKC_LOG_WARNING << "full reconnect token source failed: " << credentials.error;
+				continue;
+			}
+			url = std::move(credentials.response.server_url);
+			token = std::move(credentials.response.participant_token);
+			{
+				std::lock_guard<std::mutex> guard(access_token_mutex_);
+				access_token_ = token;
+			}
+			{
+				std::lock_guard<std::mutex> guard(connection_params_mutex_);
+				connection_url_ = url;
+			}
+			if (auto* listener = room_listener_.load()) {
+				listener->TokenRefreshedEvent();
+			}
+		} else {
 			std::lock_guard<std::mutex> guard(access_token_mutex_);
 			token = access_token_;
 		}
@@ -1699,8 +1718,45 @@ void RtcEngine::OnTokenRefresh(const std::string& token) {
 	if (token.empty()) {
 		return;
 	}
-	std::lock_guard<std::mutex> guard(access_token_mutex_);
-	access_token_ = token;
+	{
+		std::lock_guard<std::mutex> guard(access_token_mutex_);
+		access_token_ = token;
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->TokenRefreshedEvent();
+	}
+}
+
+void RtcEngine::OnRoomMoved(const livekit::RoomMovedResponse& response) {
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (response.has_room()) {
+			*join_resp_.mutable_room() = response.room();
+		}
+		if (response.has_participant()) {
+			*join_resp_.mutable_participant() = response.participant();
+		}
+		join_resp_.clear_other_participants();
+		for (const auto& participant : response.other_participants()) {
+			*join_resp_.add_other_participants() = participant;
+		}
+	}
+	{
+		std::lock_guard<std::mutex> guard(rpc_participants_mutex_);
+		rpc_participant_identities_.clear();
+		if (response.has_participant() && !response.participant().identity().empty()) {
+			rpc_participant_identities_.insert(response.participant().identity());
+		}
+		for (const auto& participant : response.other_participants()) {
+			if (!participant.identity().empty() &&
+			    participant.state() != livekit::ParticipantInfo_State_DISCONNECTED) {
+				rpc_participant_identities_.insert(participant.identity());
+			}
+		}
+	}
+	if (auto* listener = room_listener_.load()) {
+		listener->RoomMovedEvent(response);
+	}
 }
 
 void RtcEngine::OnTrickle(std::string& candidate, livekit::SignalTarget target) {

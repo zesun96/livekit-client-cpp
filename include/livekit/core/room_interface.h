@@ -29,6 +29,7 @@
 #include "protostruct/livekit_rtc_struct.h"
 #include "room_event_interface.h"
 #include "rpc.h"
+#include "token_source.h"
 
 #include <memory>
 
@@ -104,6 +105,18 @@ public:
 	}
 	virtual DataTrackSchemaResult GetDataTrackSchema(std::string, DataTrackSchemaId) {
 		return {{}, {DataTrackErrorCode::Disconnected, "room is disconnected"}};
+	}
+	// Appended for ABI compatibility. The source is retained for full reconnects; the legacy
+	// URL/token overload remains available for applications that manage credentials themselves.
+	virtual bool Connect(std::shared_ptr<TokenSourceInterface> source,
+	                     TokenSourceFetchOptions source_options = {},
+	                     RoomConnectOptions opts = default_room_connect_options()) {
+		if (!source) {
+			return false;
+		}
+		auto result = source->Fetch(source_options, false);
+		return result && Connect(std::move(result.response.server_url),
+		                         std::move(result.response.participant_token), std::move(opts));
 	}
 
 	// These controls return false when the room is disconnected or the participant/track SID does
