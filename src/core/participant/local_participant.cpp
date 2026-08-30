@@ -92,6 +92,18 @@ livekit::BackupCodecPolicy ToProtoBackupCodecPolicy(BackupCodecPolicy policy) {
 	return static_cast<livekit::BackupCodecPolicy>(static_cast<int>(policy));
 }
 
+bool ApplyVideoDegradationPreference(
+    const webrtc::scoped_refptr<webrtc::RtpSenderInterface>& sender,
+    VideoDegradationPreference preference) {
+	const auto converted = ToRtcVideoDegradationPreference(preference);
+	if (sender == nullptr || !converted) {
+		return false;
+	}
+	auto parameters = sender->GetParameters();
+	parameters.degradation_preference = *converted;
+	return sender->SetParameters(parameters).ok();
+}
+
 } // namespace
 
 class OutgoingDataStreamState {
@@ -442,9 +454,15 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity,
       outgoing_stream_state_(std::make_shared<OutgoingDataStreamState>(engine)) {
 	is_local_participant_ = true;
 	backup_codec_worker_ = std::thread([this] { RunBackupCodecWorker(); });
+	preconnect_worker_ = std::thread([this] { RunPreconnectWorker(); });
 }
 
 LocalParticipant::~LocalParticipant() {
+	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
+		if (auto* audio_track = dynamic_cast<LocalAudioTrack*>(publication->Track())) {
+			audio_track->DiscardPreconnectBuffer();
+		}
+	}
 	{
 		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
 		stop_backup_codec_worker_ = true;
@@ -453,6 +471,15 @@ LocalParticipant::~LocalParticipant() {
 	backup_codec_cv_.notify_all();
 	if (backup_codec_worker_.joinable()) {
 		backup_codec_worker_.join();
+	}
+	{
+		std::lock_guard<std::mutex> guard(preconnect_mutex_);
+		stop_preconnect_worker_ = true;
+		preconnect_flush_requests_.clear();
+	}
+	preconnect_cv_.notify_all();
+	if (preconnect_worker_.joinable()) {
+		preconnect_worker_.join();
 	}
 	outgoing_stream_state_->Invalidate();
 }
@@ -567,6 +594,14 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	req.set_disable_red(!option.red);
 	req.set_encryption(to_proto(encryption_type_));
 	req.set_stream(option.stream);
+	auto* preconnect_track = dynamic_cast<LocalAudioTrack*>(local_track);
+	if (option.preconnect_buffer) {
+		if (kind != TrackKind::Audio || option.source != TrackSource::Microphone ||
+		    preconnect_track == nullptr) {
+			return false;
+		}
+		req.add_audio_features(livekit::TF_PRECONNECT_BUFFER);
+	}
 	std::shared_ptr<detail::FrameMetadataStore> frame_metadata_store;
 	FrameMetadataFeatures frame_metadata_features;
 	if (kind == TrackKind::Video) {
@@ -576,6 +611,11 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 			return false;
 		}
 		if (!engine_->SupportsVideoCodec(option.video_codec)) {
+			return false;
+		}
+		option.degradation_preference = option.degradation_preference.value_or(
+		    DefaultVideoDegradationPreference(option.source));
+		if (!ToRtcVideoDegradationPreference(*option.degradation_preference)) {
 			return false;
 		}
 		if (option.backup_video_codec.has_value() &&
@@ -631,11 +671,26 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 			backup_codec->set_codec(VideoCodecName(*option.backup_video_codec));
 		}
 	}
+	bool preconnect_started = false;
+	if (option.preconnect_buffer) {
+		if (!preconnect_track->StartPreconnectBuffer(
+		        [this] { NotifyPreconnectAudioAvailable(); })) {
+			return false;
+		}
+		preconnect_started = preconnect_track->HasPreconnectBuffer();
+	}
+	auto discard_failed_preconnect = [&] {
+		if (preconnect_started) {
+			preconnect_track->DiscardPreconnectBuffer();
+			preconnect_started = false;
+		}
+	};
 
 	try {
 		LKC_LOG_INFO << "publishing track: name=" << req.name() << ", kind=" << req.type();
 		auto option_ti = engine_->AddTrack(req);
 		if (!option_ti.has_value()) {
+			discard_failed_preconnect();
 			return false;
 		}
 		auto& ti = option_ti.value();
@@ -654,6 +709,14 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		    engine_->CreateSender(local_track, option, video_encoding_plan.encodings);
 
 		if (!transceiver) {
+			discard_failed_preconnect();
+			return false;
+		}
+		if (kind == TrackKind::Video &&
+		    !ApplyVideoDegradationPreference(transceiver->sender(),
+		                                     *option.degradation_preference)) {
+			engine_->RemoveSender(transceiver);
+			discard_failed_preconnect();
 			return false;
 		}
 		if (e2ee_manager_ != nullptr &&
@@ -661,6 +724,7 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		                                           kind, transceiver->sender(),
 		                                           frame_metadata_store, frame_metadata_features)) {
 			engine_->RemoveSender(local_track);
+			discard_failed_preconnect();
 			return false;
 		}
 		if (e2ee_manager_ == nullptr && frame_metadata_store) {
@@ -689,9 +753,15 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 				listener->OnLocalTrackSubscribed(publication.get(), this);
 			}
 		}
+		TryQueuePreconnectBuffers();
 
 	} catch (const std::exception& e) {
+		discard_failed_preconnect();
 		LKC_LOG_ERROR << "failed to publish track: " << e.what();
+		return false;
+	} catch (...) {
+		discard_failed_preconnect();
+		LKC_LOG_ERROR << "failed to publish track: unknown error";
 		return false;
 	}
 	return true;
@@ -774,6 +844,56 @@ bool LocalParticipant::UpdateVideoEncoding(LocalTrackInterface* track, VideoEnco
 	return true;
 }
 
+bool LocalParticipant::UpdateVideoDegradationPreference(LocalTrackInterface* track,
+                                                        VideoDegradationPreference preference) {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
+	const auto converted = ToRtcVideoDegradationPreference(preference);
+	auto* local_track = dynamic_cast<LocalVideoTrack*>(track);
+	if (!converted || local_track == nullptr || local_track->Sid().empty()) {
+		return false;
+	}
+	const auto publications = TrackPublicationsSnapshot();
+	const auto publication = publications.find(local_track->Sid());
+	if (publication == publications.end() || publication->second->Track() != local_track) {
+		return false;
+	}
+	auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication->second.get());
+	if (local_publication == nullptr || local_track->Transceiver() == nullptr) {
+		return false;
+	}
+
+	std::vector<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> senders;
+	senders.push_back(local_track->Transceiver()->sender());
+	for (const auto& additional : local_track->AdditionalCodecs()) {
+		if (additional.transceiver != nullptr) {
+			senders.push_back(additional.transceiver->sender());
+		}
+	}
+	if (std::any_of(senders.begin(), senders.end(),
+	                [](const auto& sender) { return sender == nullptr; })) {
+		return false;
+	}
+
+	std::vector<webrtc::RtpParameters> originals;
+	originals.reserve(senders.size());
+	for (std::size_t index = 0; index < senders.size(); ++index) {
+		auto parameters = senders[index]->GetParameters();
+		originals.push_back(parameters);
+		parameters.degradation_preference = *converted;
+		if (!senders[index]->SetParameters(parameters).ok()) {
+			for (std::size_t rollback = 0; rollback < index; ++rollback) {
+				senders[rollback]->SetParameters(originals[rollback]);
+			}
+			return false;
+		}
+	}
+
+	auto options = local_publication->PublishOptions();
+	options.degradation_preference = preference;
+	local_publication->UpdatePublishOptions(std::move(options));
+	return true;
+}
+
 bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) {
 	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
@@ -800,6 +920,9 @@ bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_u
 	if (e2ee_manager_ != nullptr) {
 		E2EEManagerNativeAccess::Detach(*e2ee_manager_, local_track->Sid(),
 		                                FrameCryptorDirection::Sender);
+	}
+	if (auto* audio_track = dynamic_cast<LocalAudioTrack*>(local_track)) {
+		audio_track->DiscardPreconnectBuffer();
 	}
 
 	local_track->SetTransceiver(nullptr);
@@ -840,6 +963,125 @@ void LocalParticipant::LocalTrackSubscribed(const std::string& track_sid) {
 	}
 	if (auto* listener = event_listener_.load()) {
 		listener->OnLocalTrackSubscribed(publication->second.get(), this);
+	}
+	TryQueuePreconnectBuffers();
+}
+
+void LocalParticipant::UpdateAgentIdentities(std::vector<std::string> identities) {
+	{
+		std::lock_guard<std::mutex> guard(preconnect_mutex_);
+		agent_identities_.clear();
+		for (auto& identity : identities) {
+			if (!identity.empty()) {
+				agent_identities_.insert(std::move(identity));
+			}
+		}
+	}
+	TryQueuePreconnectBuffers();
+}
+
+void LocalParticipant::TryQueuePreconnectBuffers() {
+	std::vector<std::string> destinations;
+	{
+		std::lock_guard<std::mutex> guard(preconnect_mutex_);
+		if (stop_preconnect_worker_ || agent_identities_.empty()) {
+			return;
+		}
+		destinations.assign(agent_identities_.begin(), agent_identities_.end());
+	}
+	std::set<std::string> subscribed;
+	{
+		std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+		subscribed = subscribed_local_track_sids_;
+	}
+	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
+		if (subscribed.count(sid) == 0) {
+			continue;
+		}
+		auto* local_publication = dynamic_cast<LocalTrackPublication*>(publication.get());
+		auto* audio_track = local_publication != nullptr
+		                        ? dynamic_cast<LocalAudioTrack*>(local_publication->Track())
+		                        : nullptr;
+		if (audio_track == nullptr || !local_publication->PublishOptions().preconnect_buffer) {
+			continue;
+		}
+		if (!audio_track->HasPreconnectBuffer()) {
+			audio_track->DiscardPreconnectBuffer();
+			continue;
+		}
+		if (audio_track->PreconnectBufferSize() == 0) {
+			continue;
+		}
+		auto data = audio_track->TakePreconnectBuffer();
+		if (!data || data->bytes.empty()) {
+			continue;
+		}
+		PreconnectFlushRequest request;
+		request.track_sid = sid;
+		request.bytes = std::move(data->bytes);
+		request.sample_rate = data->sample_rate;
+		request.channels = data->channels;
+		request.dropped_bytes = data->dropped_bytes;
+		request.destination_identities = destinations;
+		{
+			std::lock_guard<std::mutex> guard(preconnect_mutex_);
+			if (stop_preconnect_worker_) {
+				return;
+			}
+			preconnect_flush_requests_.push_back(std::move(request));
+		}
+		preconnect_cv_.notify_one();
+	}
+}
+
+void LocalParticipant::NotifyPreconnectAudioAvailable() {
+	{
+		std::lock_guard<std::mutex> guard(preconnect_mutex_);
+		if (stop_preconnect_worker_) {
+			return;
+		}
+		preconnect_scan_requested_ = true;
+	}
+	preconnect_cv_.notify_one();
+}
+
+void LocalParticipant::RunPreconnectWorker() {
+	for (;;) {
+		PreconnectFlushRequest request;
+		{
+			std::unique_lock<std::mutex> lock(preconnect_mutex_);
+			preconnect_cv_.wait(lock, [this] {
+				return stop_preconnect_worker_ || preconnect_scan_requested_ ||
+				       !preconnect_flush_requests_.empty();
+			});
+			if (stop_preconnect_worker_) {
+				return;
+			}
+			if (preconnect_scan_requested_) {
+				preconnect_scan_requested_ = false;
+				lock.unlock();
+				TryQueuePreconnectBuffers();
+				continue;
+			}
+			request = std::move(preconnect_flush_requests_.front());
+			preconnect_flush_requests_.pop_front();
+		}
+		ByteSendOptions options;
+		options.topic = "lk.agent.pre-connect-audio-buffer";
+		options.name = "preconnect-audio-buffer";
+		options.destination_identities = std::move(request.destination_identities);
+		options.attributes = {{"trackId", request.track_sid},
+		                      {"sampleRate", std::to_string(request.sample_rate)},
+		                      {"channels", std::to_string(request.channels)},
+		                      {"commonFormat", "int16"}};
+		if (!SendBytes(request.bytes, std::move(options))) {
+			LKC_LOG_WARNING << "failed to send preconnect audio buffer: track="
+			                << request.track_sid;
+		} else {
+			LKC_LOG_INFO << "sent preconnect audio buffer: track=" << request.track_sid
+			             << ", bytes=" << request.bytes.size()
+			             << ", dropped_bytes=" << request.dropped_bytes;
+		}
 	}
 }
 
@@ -980,6 +1222,12 @@ bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, Vide
 	if (transceiver == nullptr) {
 		return false;
 	}
+	if (!backup_options.degradation_preference ||
+	    !ApplyVideoDegradationPreference(transceiver->sender(),
+	                                     *backup_options.degradation_preference)) {
+		engine_->RemoveSender(transceiver);
+		return false;
+	}
 	if (frame_metadata_store) {
 		transceiver->sender()->SetFrameTransformer(detail::CreateFrameMetadataTransformer(
 		    true, std::move(frame_metadata_store), frame_metadata_features));
@@ -1104,6 +1352,9 @@ void LocalParticipant::DetachTrackTransceiversForReconnect() {
 		                        ? dynamic_cast<LocalTrack*>(publication->Track())
 		                        : nullptr;
 		if (local_track != nullptr) {
+			if (auto* audio_track = dynamic_cast<LocalAudioTrack*>(local_track)) {
+				audio_track->DiscardPreconnectBuffer();
+			}
 			if (e2ee_manager_ != nullptr) {
 				E2EEManagerNativeAccess::Detach(*e2ee_manager_, sid, FrameCryptorDirection::Sender);
 			}

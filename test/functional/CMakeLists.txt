@@ -10,6 +10,7 @@ add_executable(
   media_stream_test.cpp
   microphone_source_test.cpp
   participant_state_test.cpp
+  preconnect_audio_buffer_test.cpp
   public_api_test.cpp
   video_frame_format_test.cpp
   video_frame_converter_test.cpp

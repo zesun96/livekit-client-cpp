@@ -2335,6 +2335,7 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 	std::vector<std::string> removed_cryptors;
 	std::vector<ParticipantInterface*> updated_participants;
 	std::vector<std::shared_ptr<RemoteParticipant>> retained_updated_participants;
+	std::vector<std::string> agent_identities;
 
 	auto attribute_changes = [](const std::map<std::string, std::string>& old_attributes,
 	                            const std::map<std::string, std::string>& new_attributes) {
@@ -2596,7 +2597,13 @@ void Room::ApplyParticipantUpdates(const std::vector<livekit::ParticipantInfo>& 
 				}
 			}
 		}
+		for (const auto& [sid, participant] : remote_participants_) {
+			if (participant->IsActiveAgent()) {
+				agent_identities.push_back(participant->Identity());
+			}
+		}
 	}
+	local_participant_->UpdateAgentIdentities(std::move(agent_identities));
 	if (e2ee_manager_) {
 		for (const auto& track_id : removed_cryptors) {
 			E2EEManagerNativeAccess::Detach(*e2ee_manager_, track_id,

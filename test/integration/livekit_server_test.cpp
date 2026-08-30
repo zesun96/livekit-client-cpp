@@ -2261,6 +2261,16 @@ TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
 	ASSERT_NE(concrete_video_track->Transceiver()->sender(), nullptr);
 	const auto initial_parameters = concrete_video_track->Transceiver()->sender()->GetParameters();
 	ASSERT_FALSE(initial_parameters.encodings.empty());
+	ASSERT_TRUE(initial_parameters.degradation_preference.has_value());
+	EXPECT_EQ(*initial_parameters.degradation_preference,
+	          webrtc::DegradationPreference::MAINTAIN_FRAMERATE);
+	ASSERT_TRUE(sender->GetLocalParticipant()->UpdateVideoDegradationPreference(
+	    video_track.get(), VideoDegradationPreference::MaintainResolution));
+	const auto degradation_parameters =
+	    concrete_video_track->Transceiver()->sender()->GetParameters();
+	ASSERT_TRUE(degradation_parameters.degradation_preference.has_value());
+	EXPECT_EQ(*degradation_parameters.degradation_preference,
+	          webrtc::DegradationPreference::MAINTAIN_RESOLUTION);
 	ASSERT_TRUE(
 	    sender->GetLocalParticipant()->UpdateVideoEncoding(video_track.get(), {900000, 12}));
 	const auto updated_parameters = concrete_video_track->Transceiver()->sender()->GetParameters();
@@ -2460,6 +2470,7 @@ TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 	options.video_codec = VideoCodec::VP9;
 	options.backup_video_codec = VideoCodec::VP8;
 	options.backup_codec_policy = BackupCodecPolicy::PreferRegression;
+	options.degradation_preference = VideoDegradationPreference::MaintainResolution;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(track.get(), options));
 	ASSERT_TRUE(
 	    sender->GetLocalParticipant()->UpdateVideoEncoding(track.get(), {320000, 15}, true));
@@ -2469,6 +2480,12 @@ TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 	ASSERT_NE(concrete_participant, nullptr);
 	ASSERT_NE(concrete_track, nullptr);
 	EXPECT_TRUE(concrete_track->AdditionalCodecs().empty());
+	ASSERT_NE(concrete_track->Transceiver(), nullptr);
+	ASSERT_NE(concrete_track->Transceiver()->sender(), nullptr);
+	const auto primary_parameters = concrete_track->Transceiver()->sender()->GetParameters();
+	ASSERT_TRUE(primary_parameters.degradation_preference.has_value());
+	EXPECT_EQ(*primary_parameters.degradation_preference,
+	          webrtc::DegradationPreference::MAINTAIN_RESOLUTION);
 
 	SubscribedQualityUpdate request;
 	request.track_sid = track->Sid();
@@ -2497,6 +2514,21 @@ TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 		ASSERT_TRUE(encoding.max_framerate.has_value());
 		EXPECT_DOUBLE_EQ(*encoding.max_framerate, 15.0);
 	}
+	ASSERT_TRUE(backup_parameters.degradation_preference.has_value());
+	EXPECT_EQ(*backup_parameters.degradation_preference,
+	          webrtc::DegradationPreference::MAINTAIN_RESOLUTION);
+	ASSERT_TRUE(sender->GetLocalParticipant()->UpdateVideoDegradationPreference(
+	    track.get(), VideoDegradationPreference::Balanced));
+	const auto updated_primary_parameters =
+	    concrete_track->Transceiver()->sender()->GetParameters();
+	const auto updated_backup_parameters =
+	    additional_codecs[0].transceiver->sender()->GetParameters();
+	ASSERT_TRUE(updated_primary_parameters.degradation_preference.has_value());
+	ASSERT_TRUE(updated_backup_parameters.degradation_preference.has_value());
+	EXPECT_EQ(*updated_primary_parameters.degradation_preference,
+	          webrtc::DegradationPreference::BALANCED);
+	EXPECT_EQ(*updated_backup_parameters.degradation_preference,
+	          webrtc::DegradationPreference::BALANCED);
 
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
@@ -2554,6 +2586,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_NE(audio_track, nullptr);
 	TrackPublishOptions audio_options;
 	audio_options.source = TrackSource::Microphone;
+	audio_options.preconnect_buffer = true;
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(audio_track.get(), audio_options));
 	ASSERT_TRUE(WaitUntil([&] {
 		auto* participant =
@@ -2572,6 +2605,12 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(audio_publication->Name(), "integration-audio");
 	EXPECT_EQ(audio_publication->Kind(), TrackKind::Audio);
 	EXPECT_FALSE(audio_publication->IsMuted());
+	auto* concrete_audio_publication = dynamic_cast<TrackPublication*>(audio_publication);
+	ASSERT_NE(concrete_audio_publication, nullptr);
+	const auto audio_info = concrete_audio_publication->Info();
+	EXPECT_NE(std::find(audio_info.audio_features().begin(), audio_info.audio_features().end(),
+	                    livekit::TF_PRECONNECT_BUFFER),
+	          audio_info.audio_features().end());
 	ASSERT_NE(audio_publication->Track(), nullptr);
 	EXPECT_EQ(audio_publication->Track()->Name(), "integration-audio");
 	auto audio_stream = receiver->CreateAudioStream(sender->GetLocalParticipant()->Identity(),

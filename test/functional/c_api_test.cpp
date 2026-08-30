@@ -132,6 +132,9 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(publish.frame_metadata_features.user_timestamp, 0);
 	EXPECT_EQ(publish.frame_metadata_features.frame_id, 0);
 	EXPECT_EQ(publish.frame_metadata_features.user_data, 0);
+	EXPECT_EQ(publish.preconnect_buffer, 0);
+	EXPECT_EQ(publish.has_degradation_preference, 0);
+	EXPECT_EQ(publish.degradation_preference, LK_VIDEO_DEGRADATION_PREFERENCE_BALANCED);
 
 	lk_video_encoding_t encoding;
 	lk_video_encoding_init(&encoding);

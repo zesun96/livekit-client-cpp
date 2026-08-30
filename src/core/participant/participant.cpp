@@ -74,6 +74,12 @@ ConnectionQuality Participant::GetConnectionQuality() {
 	return connection_quality_;
 }
 
+bool Participant::IsActiveAgent() const {
+	std::lock_guard<std::mutex> guard(participant_mutex_);
+	return info_.state() == livekit::ParticipantInfo_State_ACTIVE &&
+	       (kind_ == livekit::ParticipantInfo_Kind_AGENT || permissions_.agent);
+}
+
 ParticipantPermissions Participant::Permissions() {
 	std::lock_guard<std::mutex> guard(participant_mutex_);
 	return permissions_;

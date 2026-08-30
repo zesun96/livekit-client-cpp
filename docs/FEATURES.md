@@ -89,6 +89,14 @@ matching the official client capability boundary.
 an existing primary or backup sender without replacing the track or renegotiating. Zero restores
 resolution-derived defaults. The C equivalent is `lk_local_video_track_update_encoding()`.
 
+`TrackPublishOptions::degradation_preference` controls whether constrained video prioritizes frame
+rate, resolution, a balance of both, or disables quality adaptation. When omitted, camera tracks
+maintain frame rate, screen shares maintain resolution, and other sources use balanced adaptation.
+The resolved preference is retained across full reconnect and applied to both primary and on-demand
+backup senders. Applications can update every sender of a published track with
+`UpdateVideoDegradationPreference()`; the C equivalent is
+`lk_local_video_track_update_degradation_preference()`.
+
 ## Native media and audio processing
 
 Applications can create microphone, camera, monitor, window, and system-audio sources through C++
@@ -114,6 +122,14 @@ suppression. These features are application switches with stable SDK defaults; a
 normally tune low-level WebRTC parameters. Processing statistics and errors are available through
 `MicrophoneAudioSourceInterface::ProcessingStats()` and
 `lk_audio_source_microphone_processing_stats()`.
+
+For LiveKit Agent sessions, `TrackPublishOptions::preconnect_buffer` retains at most 10 MiB and 10
+seconds of the newest normalized 48 kHz mono signed 16-bit microphone PCM while the initial
+subscriber becomes ready. Once an active agent has subscribed, the SDK sends the buffer only to
+agent identities using the standard `lk.agent.pre-connect-audio-buffer` byte-stream topic and
+advertises `TF_PRECONNECT_BUFFER` on the audio publication. Timeout, failed publication,
+unpublication, reconnect replacement, and SDK shutdown discard unsent audio. The C ABI exposes the
+same opt-in field as `lk_track_publish_options_t::preconnect_buffer`.
 
 The detailed device identity, lifetime, thread, playback-reference, and system-audio rules are in
 [Media device design](design/media-device-design.md). Recorded acoustic acceptance results are in

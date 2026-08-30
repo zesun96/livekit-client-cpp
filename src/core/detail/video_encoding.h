@@ -10,6 +10,7 @@
 #include "livekit_models.pb.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace livekit {
@@ -23,6 +24,9 @@ struct VideoEncodingPlan {
 };
 
 const char* VideoCodecName(VideoCodec codec);
+VideoDegradationPreference DefaultVideoDegradationPreference(TrackSource source);
+std::optional<webrtc::DegradationPreference>
+ToRtcVideoDegradationPreference(VideoDegradationPreference preference);
 VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool screen_share,
                                          const TrackPublishOptions& options);
 bool ApplySubscribedQualities(std::vector<webrtc::RtpEncodingParameters>& encodings,

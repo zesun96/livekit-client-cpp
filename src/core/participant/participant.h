@@ -69,6 +69,7 @@ public:
 	std::map<std::string, std::shared_ptr<DataTrackInterface>> DataTracksSnapshot();
 	void SetSpeakerInfo(float audio_level, bool is_speaking);
 	void SetConnectionQuality(ConnectionQuality quality);
+	bool IsActiveAgent() const;
 
 protected:
 	virtual std::shared_ptr<TrackPublicationInterface>

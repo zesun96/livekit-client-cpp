@@ -51,6 +51,10 @@ Generate tokens with different participant identities but the same room name whe
 publisher and receiver together. Never put API secrets or generated tokens in source files or
 repository configuration.
 
+Set `LIVEKIT_PRECONNECT_BUFFER=1` when running `publish_microphone` against a LiveKit Agent room to
+record the short microphone startup window and deliver it through the standard agent pre-connect
+audio stream after the agent subscribes. The option is intentionally off for ordinary rooms.
+
 ## Examples
 
 ### `media_devices`

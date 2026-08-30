@@ -888,6 +888,26 @@ bool ToCoreBackupCodecPolicy(lk_backup_codec_policy_t policy, core::BackupCodecP
 	}
 }
 
+bool ToCoreVideoDegradationPreference(lk_video_degradation_preference_t preference,
+                                      core::VideoDegradationPreference& result) {
+	switch (preference) {
+	case LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_FRAMERATE:
+		result = core::VideoDegradationPreference::MaintainFramerate;
+		return true;
+	case LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_RESOLUTION:
+		result = core::VideoDegradationPreference::MaintainResolution;
+		return true;
+	case LK_VIDEO_DEGRADATION_PREFERENCE_BALANCED:
+		result = core::VideoDegradationPreference::Balanced;
+		return true;
+	case LK_VIDEO_DEGRADATION_PREFERENCE_DISABLED:
+		result = core::VideoDegradationPreference::Disabled;
+		return true;
+	default:
+		return false;
+	}
+}
+
 lk_status_t ToCoreVideoEncoding(const lk_video_encoding_t* encoding, core::VideoEncoding& result) {
 	if (encoding == nullptr || encoding->struct_size < sizeof(encoding->struct_size)) {
 		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video encoding struct size");
@@ -1066,6 +1086,18 @@ lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
 		if (converted.Any()) {
 			result.frame_metadata_features = converted;
 		}
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, preconnect_buffer)) {
+		result.preconnect_buffer = options->preconnect_buffer != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, has_degradation_preference) &&
+	    options->has_degradation_preference != 0) {
+		core::VideoDegradationPreference converted;
+		if (!LKC_HAS_FIELD(options, lk_track_publish_options_t, degradation_preference) ||
+		    !ToCoreVideoDegradationPreference(options->degradation_preference, converted)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video degradation preference");
+		}
+		result.degradation_preference = converted;
 	}
 	return LK_STATUS_OK;
 }
@@ -2651,6 +2683,7 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->scalability_mode = "L3T3_KEY";
 		options->backup_video_codec = LK_VIDEO_CODEC_VP8;
 		options->backup_codec_policy = LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION;
+		options->degradation_preference = LK_VIDEO_DEGRADATION_PREFERENCE_BALANCED;
 		lk_video_encoding_init(&options->video_encoding);
 		lk_video_encoding_init(&options->backup_video_encoding);
 		lk_frame_metadata_features_init(&options->frame_metadata_features);
@@ -4731,6 +4764,32 @@ lk_status_t lk_local_video_track_update_encoding(lk_local_track_t* track,
 		if (participant == nullptr || !participant->UpdateVideoEncoding(
 		                                  track->track.get(), core_encoding, backup_codec != 0)) {
 			return Failure(LK_STATUS_OPERATION_FAILED, "failed to update video encoding");
+		}
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t
+lk_local_video_track_update_degradation_preference(lk_local_track_t* track,
+                                                   lk_video_degradation_preference_t preference) {
+	return Guard([&] {
+		if (track == nullptr || track->track == nullptr || track->owner == nullptr ||
+		    track->room_state == nullptr || !track->room_state->alive.load() ||
+		    track->track->Kind() != core::TrackKind::Video) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "live local video track is required");
+		}
+		if (!track->published.load()) {
+			return Failure(LK_STATUS_INVALID_STATE, "track is not published");
+		}
+		core::VideoDegradationPreference converted;
+		if (!ToCoreVideoDegradationPreference(preference, converted)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video degradation preference");
+		}
+		auto* participant = LocalParticipant(track->owner);
+		if (participant == nullptr ||
+		    !participant->UpdateVideoDegradationPreference(track->track.get(), converted)) {
+			return Failure(LK_STATUS_OPERATION_FAILED,
+			               "failed to update video degradation preference");
 		}
 		return LK_STATUS_OK;
 	});

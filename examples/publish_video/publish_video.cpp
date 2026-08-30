@@ -69,6 +69,7 @@ int main(int argc, char* argv[]) {
 	livekit::core::TrackPublishOptions options;
 	options.source = livekit::core::TrackSource::Camera;
 	options.simulcast = false;
+	options.degradation_preference = livekit::core::VideoDegradationPreference::MaintainFramerate;
 	options.frame_metadata_features = livekit::core::FrameMetadataFeatures{true, true, true};
 	if (!track || !room->GetLocalParticipant()->PublishTrack(track.get(), options)) {
 		std::cerr << "Failed to publish video track" << std::endl;
