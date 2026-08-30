@@ -47,6 +47,10 @@ void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 	const std::size_t chroma_height = (frame.height + 1) / 2;
 	const std::size_t chroma_size = chroma_width * chroma_height;
 	frame.data.resize(y_size + chroma_size * 2);
+	frame.format = VideoBufferType::I420;
+	frame.planes = {{0, y_size, frame.width},
+	                {y_size, chroma_size, static_cast<std::uint32_t>(chroma_width)},
+	                {y_size + chroma_size, chroma_size, static_cast<std::uint32_t>(chroma_width)}};
 	for (uint32_t row = 0; row < frame.height; ++row) {
 		std::memcpy(frame.data.data() + static_cast<std::size_t>(row) * frame.width,
 		            buffer->DataY() + static_cast<std::size_t>(row) * buffer->StrideY(),

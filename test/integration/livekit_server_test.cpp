@@ -2513,9 +2513,14 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	VideoFrame video_frame;
 	video_frame.width = 640;
 	video_frame.height = 360;
-	video_frame.data.resize(video_frame.width * video_frame.height * 3 / 2, 128);
-	std::fill(video_frame.data.begin(),
-	          video_frame.data.begin() + video_frame.width * video_frame.height, 64);
+	video_frame.format = VideoBufferType::RGBA;
+	video_frame.data.resize(video_frame.width * video_frame.height * 4);
+	for (std::size_t offset = 0; offset < video_frame.data.size(); offset += 4) {
+		video_frame.data[offset] = 64;
+		video_frame.data[offset + 1] = 96;
+		video_frame.data[offset + 2] = 160;
+		video_frame.data[offset + 3] = 255;
+	}
 	video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
 	                               std::chrono::steady_clock::now().time_since_epoch())
 	                               .count();

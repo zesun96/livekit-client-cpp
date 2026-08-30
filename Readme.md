@@ -17,7 +17,8 @@ A C++20 client SDK for [LiveKit](https://livekit.io/), with a native C++ API and
 - Room signaling, participant state, track publication, subscriptions, and lifecycle events.
 - Signal resume, ICE restart, full-reconnect fallback, dynamic token sources, room migration, and
   configurable retry policy.
-- PCM audio and I420 video publishing/receiving with VP8, VP9, H264, and AV1.
+- PCM audio and multi-format video publishing (RGBA, ABGR, ARGB, BGRA, RGB24, I420/I420A,
+  I422, I444, I010, and NV12) with VP8, VP9, H264, and AV1 transport.
 - Native microphone, camera, monitor, window, system-audio capture, and remote-audio playback.
 - WebRTC AEC, AGC, and noise suppression for native microphone capture.
 - Reliable/lossy data, DataTrack schemas, DataStreams, chat, transcription, metrics, SIP DTMF,

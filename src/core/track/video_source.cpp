@@ -1,10 +1,10 @@
 #include "video_source.h"
 
+#include "public_video_frame_converter.h"
+
 #include "api/make_ref_counted.h"
 #include "api/video/i420_buffer.h"
 #include "api/video/video_frame.h"
-
-#include <limits>
 
 namespace livekit {
 namespace core {
@@ -22,26 +22,20 @@ bool VideoSource::InternalSource::is_screencast() const { return is_screencast_;
 std::optional<bool> VideoSource::InternalSource::needs_denoising() const { return std::nullopt; }
 
 bool VideoSource::InternalSource::CaptureFrame(const VideoFrame& frame) {
-	if (frame.width == 0 || frame.height == 0 || frame.width % 2 != 0 || frame.height % 2 != 0 ||
-	    frame.width > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
-	    frame.height > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
-	    (frame.rotation != VideoRotation::Rotation0 &&
-	     frame.rotation != VideoRotation::Rotation90 &&
-	     frame.rotation != VideoRotation::Rotation180 &&
-	     frame.rotation != VideoRotation::Rotation270)) {
+	std::vector<std::uint8_t> i420;
+	if (!detail::ConvertVideoFrameToI420(frame, i420)) {
 		return false;
 	}
 	const std::size_t y_size = static_cast<std::size_t>(frame.width) * frame.height;
-	const std::size_t chroma_size = y_size / 4;
-	if (frame.data.size() != y_size + chroma_size * 2) {
-		return false;
-	}
+	const std::size_t chroma_width = (static_cast<std::size_t>(frame.width) + 1U) / 2U;
+	const std::size_t chroma_height = (static_cast<std::size_t>(frame.height) + 1U) / 2U;
+	const std::size_t chroma_size = chroma_width * chroma_height;
 
 	const int width = static_cast<int>(frame.width);
 	const int height = static_cast<int>(frame.height);
-	auto buffer = webrtc::I420Buffer::Copy(width, height, frame.data.data(), width,
-	                                       frame.data.data() + y_size, width / 2,
-	                                       frame.data.data() + y_size + chroma_size, width / 2);
+	auto buffer = webrtc::I420Buffer::Copy(
+	    width, height, i420.data(), width, i420.data() + y_size, static_cast<int>(chroma_width),
+	    i420.data() + y_size + chroma_size, static_cast<int>(chroma_width));
 	if (!buffer) {
 		return false;
 	}

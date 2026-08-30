@@ -164,6 +164,28 @@ typedef enum lk_screen_source_kind {
 	LK_SCREEN_SOURCE_KIND_WINDOW = 1
 } lk_screen_source_kind_t;
 
+typedef enum lk_video_rotation {
+	LK_VIDEO_ROTATION_0 = 0,
+	LK_VIDEO_ROTATION_90 = 90,
+	LK_VIDEO_ROTATION_180 = 180,
+	LK_VIDEO_ROTATION_270 = 270
+} lk_video_rotation_t;
+
+/* Pixel byte order is the order in memory. */
+typedef enum lk_video_buffer_type {
+	LK_VIDEO_BUFFER_RGBA = 0,
+	LK_VIDEO_BUFFER_ABGR = 1,
+	LK_VIDEO_BUFFER_ARGB = 2,
+	LK_VIDEO_BUFFER_BGRA = 3,
+	LK_VIDEO_BUFFER_RGB24 = 4,
+	LK_VIDEO_BUFFER_I420 = 5,
+	LK_VIDEO_BUFFER_I420A = 6,
+	LK_VIDEO_BUFFER_I422 = 7,
+	LK_VIDEO_BUFFER_I444 = 8,
+	LK_VIDEO_BUFFER_I010 = 9,
+	LK_VIDEO_BUFFER_NV12 = 10
+} lk_video_buffer_type_t;
+
 typedef enum lk_track_source {
 	LK_TRACK_SOURCE_UNKNOWN = 0,
 	LK_TRACK_SOURCE_CAMERA = 1,
@@ -463,6 +485,29 @@ typedef struct lk_video_frame {
 	uint32_t height;
 	int64_t timestamp_us;
 } lk_video_frame_t;
+
+typedef struct lk_video_plane {
+	size_t offset;
+	size_t size;
+	uint32_t stride;
+} lk_video_plane_t;
+
+/*
+ * Owned by the caller for the duration of lk_video_source_capture_frame(). An empty plane list
+ * selects the canonical tightly packed layout for format. Stride and plane size are in bytes.
+ */
+typedef struct lk_video_frame_input {
+	size_t struct_size;
+	const uint8_t* data;
+	size_t data_size;
+	uint32_t width;
+	uint32_t height;
+	int64_t timestamp_us;
+	lk_video_rotation_t rotation;
+	lk_video_buffer_type_t format;
+	const lk_video_plane_t* planes;
+	size_t plane_count;
+} lk_video_frame_input_t;
 
 typedef struct lk_data_received {
 	const uint8_t* data;
@@ -1213,6 +1258,7 @@ LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t*
 LKC_API void lk_system_audio_capture_options_init(lk_system_audio_capture_options_t* options);
 LKC_API void lk_microphone_processing_stats_init(lk_microphone_processing_stats_t* stats);
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
+LKC_API void lk_video_frame_input_init(lk_video_frame_input_t* frame);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
 LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options);
 LKC_API void lk_video_encoding_init(lk_video_encoding_t* encoding);
@@ -1420,6 +1466,8 @@ LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_option
 LKC_API lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* options,
                                                   lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_destroy(lk_video_source_t* source);
+LKC_API lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
+                                                  const lk_video_frame_input_t* frame);
 LKC_API lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,
                                                  size_t data_size, uint32_t width, uint32_t height,
                                                  int64_t timestamp_us);

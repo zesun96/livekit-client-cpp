@@ -237,6 +237,11 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(screen.source_id, nullptr);
 	EXPECT_EQ(screen.frames_per_second, 15u);
 	EXPECT_EQ(screen.include_cursor, 1);
+	lk_video_frame_input_t video_frame;
+	lk_video_frame_input_init(&video_frame);
+	EXPECT_EQ(video_frame.struct_size, sizeof(video_frame));
+	EXPECT_EQ(video_frame.rotation, LK_VIDEO_ROTATION_0);
+	EXPECT_EQ(video_frame.format, LK_VIDEO_BUFFER_I420);
 
 	lk_microphone_capture_options_t microphone;
 	lk_microphone_capture_options_init(&microphone);
@@ -849,6 +854,27 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_video_source_capture_i420(video, i420.data(), i420.size(), 4, 2, 123),
 	          LK_STATUS_OK)
 	    << lk_last_error();
+	std::vector<uint8_t> rgba(32, 255);
+	lk_video_frame_input_t video_frame;
+	lk_video_frame_input_init(&video_frame);
+	video_frame.data = rgba.data();
+	video_frame.data_size = rgba.size();
+	video_frame.width = 4;
+	video_frame.height = 2;
+	video_frame.timestamp_us = 124;
+	video_frame.rotation = LK_VIDEO_ROTATION_90;
+	video_frame.format = LK_VIDEO_BUFFER_RGBA;
+	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_OK) << lk_last_error();
+	std::vector<uint8_t> padded_i420(20, 128);
+	const lk_video_plane_t padded_planes[] = {{0, 10, 6}, {12, 2, 4}, {16, 2, 4}};
+	video_frame.data = padded_i420.data();
+	video_frame.data_size = padded_i420.size();
+	video_frame.format = LK_VIDEO_BUFFER_I420;
+	video_frame.planes = padded_planes;
+	video_frame.plane_count = 3;
+	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_OK) << lk_last_error();
+	video_frame.format = static_cast<lk_video_buffer_type_t>(999);
+	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_INVALID_ARGUMENT);
 	i420.pop_back();
 	EXPECT_EQ(lk_video_source_capture_i420(video, i420.data(), i420.size(), 4, 2, 124),
 	          LK_STATUS_OPERATION_FAILED);
