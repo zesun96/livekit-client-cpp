@@ -195,6 +195,7 @@ set(
   src/core/detail/data_track_proto.cpp
   src/core/detail/data_stream_compression.cpp
   src/core/detail/debouncer.cpp
+  src/core/detail/frame_metadata.cpp
   src/core/detail/internals.cpp
   src/core/detail/logging.cpp
   src/core/detail/global_task_queue.cpp

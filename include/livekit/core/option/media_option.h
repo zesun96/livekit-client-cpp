@@ -115,6 +115,15 @@ struct AudioPreset {
 	AudioEncoding encoding = {0};
 };
 
+// Selects the per-frame fields advertised for and carried by a published video track.
+struct FrameMetadataFeatures {
+	bool user_timestamp = false;
+	bool frame_id = false;
+	bool user_data = false;
+
+	bool Any() const noexcept { return user_timestamp || frame_id || user_data; }
+};
+
 struct TrackPublishOptions {
 	VideoEncoding video_encoding;
 	AudioEncoding audio_encoding;
@@ -128,6 +137,7 @@ struct TrackPublishOptions {
 	std::optional<VideoCodec> backup_video_codec;
 	VideoEncoding backup_video_encoding;
 	BackupCodecPolicy backup_codec_policy = BackupCodecPolicy::PreferRegression;
+	std::optional<FrameMetadataFeatures> frame_metadata_features;
 };
 
 } // namespace core

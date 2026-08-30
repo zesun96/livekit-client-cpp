@@ -2,6 +2,7 @@
 #include "livekit/core/room_interface.h"
 
 #include "e2ee_manager_internal.h"
+#include "frame_metadata.h"
 #include "key_provider_internal.h"
 
 #include "api/crypto/frame_crypto_transformer.h"
@@ -58,9 +59,10 @@ private:
 class MockTransformableVideoFrame final : public TransformableVideoFrameInterface {
 public:
 	MockTransformableVideoFrame(std::vector<std::uint8_t> data, Direction direction,
-	                            VideoCodecType codec, bool key_frame)
+	                            VideoCodecType codec, bool key_frame,
+	                            std::optional<Timestamp> capture_time = std::nullopt)
 	    : TransformableVideoFrameInterface(Passkey()), data_(std::move(data)),
-	      direction_(direction), key_frame_(key_frame) {
+	      direction_(direction), key_frame_(key_frame), capture_time_(capture_time) {
 		header_.codec = codec;
 	}
 
@@ -75,7 +77,7 @@ public:
 	Direction GetDirection() const override { return direction_; }
 	std::string GetMimeType() const override { return "video/test"; }
 	std::optional<Timestamp> ReceiveTime() const override { return std::nullopt; }
-	std::optional<Timestamp> CaptureTime() const override { return std::nullopt; }
+	std::optional<Timestamp> CaptureTime() const override { return capture_time_; }
 	std::optional<TimeDelta> SenderCaptureTimeOffset() const override { return std::nullopt; }
 	bool IsKeyFrame() const override { return key_frame_; }
 	VideoFrameMetadata Metadata() const override { return metadata_; }
@@ -86,6 +88,7 @@ private:
 	std::vector<std::uint8_t> data_;
 	Direction direction_;
 	bool key_frame_;
+	std::optional<Timestamp> capture_time_;
 	std::uint32_t timestamp_ = 5678;
 	RTPVideoHeader header_;
 	VideoFrameMetadata metadata_;
@@ -126,17 +129,18 @@ TransformAudioFrame(const webrtc::scoped_refptr<webrtc::FrameCryptorTransformer>
 }
 
 std::vector<std::uint8_t>
-TransformVideoFrame(const webrtc::scoped_refptr<webrtc::FrameCryptorTransformer>& transformer,
+TransformVideoFrame(const webrtc::scoped_refptr<webrtc::FrameTransformerInterface>& transformer,
                     std::vector<std::uint8_t> data,
                     webrtc::TransformableFrameInterface::Direction direction,
-                    webrtc::VideoCodecType codec, bool key_frame) {
+                    webrtc::VideoCodecType codec, bool key_frame,
+                    std::optional<webrtc::Timestamp> capture_time = std::nullopt) {
 	auto promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
 	auto future = promise->get_future();
 	auto callback = webrtc::make_ref_counted<webrtc::CapturingFrameCallback>(promise);
 	webrtc::scoped_refptr<webrtc::FrameTransformerInterface> public_transformer(transformer);
 	public_transformer->RegisterTransformedFrameSinkCallback(callback, 84);
 	public_transformer->Transform(std::make_unique<webrtc::MockTransformableVideoFrame>(
-	    std::move(data), direction, codec, key_frame));
+	    std::move(data), direction, codec, key_frame, capture_time));
 	EXPECT_EQ(future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 	return future.get();
 }
@@ -342,6 +346,76 @@ TEST(E2EEManagerTest, NativeEncodedVideoFramesRoundTripForSupportedFraming) {
 		    true);
 		EXPECT_EQ(decrypted, plaintext);
 	}
+}
+
+TEST(E2EEManagerTest, VideoFrameMetadataTrailerWrapsEncryptedPayloadAndIsStrippedBeforeDecrypt) {
+	KeyProvider provider;
+	ASSERT_TRUE(provider.SetSharedKey({0, 1, 2, 3, 4, 5, 6, 7}).Ok());
+	auto signaling_thread = webrtc::Thread::Create();
+	ASSERT_NE(signaling_thread, nullptr);
+	ASSERT_TRUE(signaling_thread->Start());
+	auto make_cryptor = [&]() {
+		auto cryptor = webrtc::scoped_refptr<webrtc::FrameCryptorTransformer>(
+		    new webrtc::FrameCryptorTransformer(
+		        signaling_thread.get(), "alice",
+		        webrtc::FrameCryptorTransformer::MediaType::kVideoFrame,
+		        webrtc::FrameCryptorTransformer::Algorithm::kAesGcm,
+		        KeyProviderNativeAccess::Get(provider)));
+		cryptor->SetEnabled(true);
+		return cryptor;
+	};
+
+	auto sender_store = std::make_shared<detail::FrameMetadataStore>();
+	VideoFrameMetadata expected_metadata;
+	expected_metadata.user_timestamp_us = 1'744'249'600'123'456ULL;
+	expected_metadata.frame_id = 42;
+	expected_metadata.user_data = std::vector<std::uint8_t>{0x00, 0xab, 0xff};
+	sender_store->Store(5678, expected_metadata);
+	auto sender = detail::CreateFrameMetadataTransformer(
+	    true, sender_store, FrameMetadataFeatures{true, true, true}, make_cryptor());
+
+	const std::vector<std::uint8_t> plaintext{0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6};
+	auto encrypted_with_metadata = TransformVideoFrame(
+	    sender, plaintext, webrtc::TransformableFrameInterface::Direction::kSender,
+	    webrtc::VideoCodecType::kVideoCodecVP8, true);
+	const auto encrypted = detail::ExtractFrameMetadataTrailer(encrypted_with_metadata);
+	ASSERT_TRUE(encrypted.metadata.has_value());
+	EXPECT_EQ(encrypted.metadata->user_timestamp_us, expected_metadata.user_timestamp_us);
+	EXPECT_EQ(encrypted.metadata->frame_id, expected_metadata.frame_id);
+	EXPECT_EQ(encrypted.metadata->user_data, expected_metadata.user_data);
+	EXPECT_NE(encrypted.payload, plaintext);
+
+	auto receiver_store = std::make_shared<detail::FrameMetadataStore>();
+	auto receiver = detail::CreateFrameMetadataTransformer(false, receiver_store,
+	                                                       FrameMetadataFeatures{}, make_cryptor());
+	auto decrypted = TransformVideoFrame(receiver, encrypted_with_metadata,
+	                                     webrtc::TransformableFrameInterface::Direction::kReceiver,
+	                                     webrtc::VideoCodecType::kVideoCodecVP8, true);
+	EXPECT_EQ(decrypted, plaintext);
+	const auto received_metadata = receiver_store->Find(5678);
+	ASSERT_TRUE(received_metadata.has_value());
+	EXPECT_EQ(received_metadata->user_timestamp_us, expected_metadata.user_timestamp_us);
+	EXPECT_EQ(received_metadata->frame_id, expected_metadata.frame_id);
+	EXPECT_EQ(received_metadata->user_data, expected_metadata.user_data);
+}
+
+TEST(E2EEManagerTest, VideoFrameMetadataSenderFallsBackToMillisecondCaptureTime) {
+	auto store = std::make_shared<detail::FrameMetadataStore>();
+	VideoFrameMetadata expected_metadata;
+	expected_metadata.frame_id = 77;
+	store->Store(92'999, expected_metadata, 1'033'333);
+	auto transformer = detail::CreateFrameMetadataTransformer(
+	    true, store, FrameMetadataFeatures{false, true, false});
+
+	const std::vector<std::uint8_t> payload{0x10, 0x20, 0x30};
+	const auto transformed = TransformVideoFrame(
+	    transformer, payload, webrtc::TransformableFrameInterface::Direction::kSender,
+	    webrtc::VideoCodecType::kVideoCodecVP8, true, webrtc::Timestamp::Micros(1'033'000));
+
+	const auto extracted = detail::ExtractFrameMetadataTrailer(transformed);
+	EXPECT_EQ(extracted.payload, payload);
+	ASSERT_TRUE(extracted.metadata.has_value());
+	EXPECT_EQ(extracted.metadata->frame_id, expected_metadata.frame_id);
 }
 
 } // namespace

@@ -4,6 +4,7 @@ add_executable(
   data_track_reader_test.cpp
   data_track_schema_test.cpp
   e2ee_manager_test.cpp
+  frame_metadata_test.cpp
   key_provider_test.cpp
   logging_test.cpp
   media_stream_test.cpp

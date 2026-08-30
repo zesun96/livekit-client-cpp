@@ -16,6 +16,7 @@
  */
 #include "livekit/core/e2ee/e2ee_manager.h"
 
+#include "../detail/frame_metadata.h"
 #include "e2ee_manager_internal.h"
 #include "key_provider_internal.h"
 
@@ -155,29 +156,35 @@ public:
 		webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender;
 		webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver;
 		webrtc::scoped_refptr<webrtc::FrameCryptorTransformer> transformer;
+		webrtc::scoped_refptr<webrtc::FrameTransformerInterface> installed_transformer;
 		webrtc::scoped_refptr<webrtc::FrameCryptorTransformerObserver> observer;
 	};
 
 	bool AttachSender(std::string track_id, std::string participant_identity, TrackKind kind,
-	                  webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender) {
+	                  webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender,
+	                  std::shared_ptr<detail::FrameMetadataStore> metadata_store,
+	                  FrameMetadataFeatures metadata_features) {
 		if (!sender) {
 			return false;
 		}
 		Entry entry;
 		entry.sender = std::move(sender);
 		return Attach(std::move(track_id), std::move(participant_identity), kind,
-		              FrameCryptorDirection::Sender, std::move(entry));
+		              FrameCryptorDirection::Sender, std::move(entry), std::move(metadata_store),
+		              metadata_features);
 	}
 
 	bool AttachReceiver(std::string track_id, std::string participant_identity, TrackKind kind,
-	                    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
+	                    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	                    std::shared_ptr<detail::FrameMetadataStore> metadata_store) {
 		if (!receiver) {
 			return false;
 		}
 		Entry entry;
 		entry.receiver = std::move(receiver);
 		return Attach(std::move(track_id), std::move(participant_identity), kind,
-		              FrameCryptorDirection::Receiver, std::move(entry));
+		              FrameCryptorDirection::Receiver, std::move(entry), std::move(metadata_store),
+		              {});
 	}
 
 	bool Detach(const std::string& track_id, FrameCryptorDirection direction) {
@@ -369,7 +376,9 @@ public:
 
 private:
 	bool Attach(std::string track_id, std::string participant_identity, TrackKind kind,
-	            FrameCryptorDirection direction, Entry entry) {
+	            FrameCryptorDirection direction, Entry entry,
+	            std::shared_ptr<detail::FrameMetadataStore> metadata_store,
+	            FrameMetadataFeatures metadata_features) {
 		if (track_id.empty() || participant_identity.empty() || kind == TrackKind::Unknown) {
 			return false;
 		}
@@ -384,10 +393,16 @@ private:
 		entry.observer = webrtc::make_ref_counted<CryptorObserver>(shared_state_, key);
 		entry.transformer->RegisterFrameCryptorTransformerObserver(entry.observer);
 		entry.transformer->SetEnabled(enabled);
+		entry.installed_transformer = entry.transformer;
+		if (kind == TrackKind::Video && metadata_store) {
+			entry.installed_transformer = detail::CreateFrameMetadataTransformer(
+			    direction == FrameCryptorDirection::Sender, std::move(metadata_store),
+			    metadata_features, entry.transformer);
+		}
 		if (entry.sender) {
-			entry.sender->SetFrameTransformer(entry.transformer);
+			entry.sender->SetFrameTransformer(entry.installed_transformer);
 		} else {
-			entry.receiver->SetFrameTransformer(entry.transformer);
+			entry.receiver->SetFrameTransformer(entry.installed_transformer);
 		}
 		{
 			std::lock_guard<std::mutex> guard(shared_state_->mutex);
@@ -414,6 +429,7 @@ private:
 		entry.sender = nullptr;
 		entry.receiver = nullptr;
 		entry.observer = nullptr;
+		entry.installed_transformer = nullptr;
 		entry.transformer = nullptr;
 	}
 
@@ -469,16 +485,20 @@ void E2EEManager::SetStateCallback(EncryptionStateCallback callback) {
 
 bool E2EEManagerNativeAccess::AttachSender(
     E2EEManager& manager, std::string track_id, std::string participant_identity, TrackKind kind,
-    webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender) {
+    webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender,
+    std::shared_ptr<detail::FrameMetadataStore> metadata_store,
+    FrameMetadataFeatures metadata_features) {
 	return manager.impl_->AttachSender(std::move(track_id), std::move(participant_identity), kind,
-	                                   std::move(sender));
+	                                   std::move(sender), std::move(metadata_store),
+	                                   metadata_features);
 }
 
 bool E2EEManagerNativeAccess::AttachReceiver(
     E2EEManager& manager, std::string track_id, std::string participant_identity, TrackKind kind,
-    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver) {
+    webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+    std::shared_ptr<detail::FrameMetadataStore> metadata_store) {
 	return manager.impl_->AttachReceiver(std::move(track_id), std::move(participant_identity), kind,
-	                                     std::move(receiver));
+	                                     std::move(receiver), std::move(metadata_store));
 }
 
 bool E2EEManagerNativeAccess::Detach(E2EEManager& manager, const std::string& track_id,

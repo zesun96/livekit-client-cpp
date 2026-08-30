@@ -21,10 +21,10 @@
 namespace livekit::core::detail {
 namespace {
 
-// Protocol 17 is the current signalling protocol. Optional additions such as encoded-frame packet
-// trailers are negotiated independently through ClientInfo capabilities; this SDK does not
-// advertise those capabilities until their corresponding public paths are implemented.
+// Protocol 17 is the current signalling protocol. Encoded-frame packet trailers are negotiated
+// independently through ClientInfo capabilities.
 constexpr char kProtocolVersion[] = "17";
+constexpr char kClientCapabilities[] = "CAP_PACKET_TRAILER";
 constexpr char kDefaultSdk[] = "cpp";
 constexpr char kDefaultSdkVersion[] = "0.0.1";
 
@@ -37,6 +37,11 @@ void SetParameter(Url& url, const std::string& key, const std::string& value) {
 std::string BuildSignalUrl(const std::string& url, const std::string& token,
                            const SignalOptions& options) {
 	Url request(url);
+	// LiveKit Cloud and the CLI expose a project root URL, while the signalling WebSocket lives at
+	// /rtc. Preserve explicit/custom paths, but make the common root URL work directly.
+	if (request.GetPath().empty()) {
+		request.SetPath("rtc");
+	}
 	SetParameter(request, "access_token", token);
 	SetParameter(request, "auto_subscribe", options.auto_subscribe ? "1" : "0");
 	SetParameter(request, "sdk",
@@ -45,6 +50,7 @@ std::string BuildSignalUrl(const std::string& url, const std::string& token,
 	             options.sdk_options.sdk_version.empty() ? kDefaultSdkVersion
 	                                                     : options.sdk_options.sdk_version);
 	SetParameter(request, "protocol", kProtocolVersion);
+	SetParameter(request, "capabilities", kClientCapabilities);
 	if (options.adaptive_stream) {
 		SetParameter(request, "adaptive_stream", "1");
 	}

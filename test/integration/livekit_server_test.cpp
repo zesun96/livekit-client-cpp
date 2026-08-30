@@ -2,6 +2,7 @@
 #include "../../src/core/room.h"
 #include "../../src/core/track/local_video_track.h"
 #include "../../src/core/track/track_publication.h"
+#include "../support/audio_fixture.h"
 #include "livekit/capi/livekit.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/participant/local_participant_interface.h"
@@ -10,7 +11,6 @@
 #include "livekit/core/track/remote_track_interface.h"
 #include "livekit/core/track/video_source_interface.h"
 #include "media_capture/audio_playback.h"
-#include "../support/audio_fixture.h"
 
 #include <gtest/gtest.h>
 
@@ -108,8 +108,7 @@ bool WaitUntil(const std::function<bool()>& predicate,
 	return predicate();
 }
 
-double EnvironmentDouble(const char* name, double default_value, double minimum,
-                         double maximum) {
+double EnvironmentDouble(const char* name, double default_value, double minimum, double maximum) {
 	const char* value = std::getenv(name);
 	if (value == nullptr || *value == '\0') {
 		return default_value;
@@ -652,8 +651,7 @@ bool NotifyExternalHarness(const char* environment_name) {
 	return marker.good();
 }
 
-bool WaitForExternalHarness(const char* environment_name,
-                            std::chrono::milliseconds timeout) {
+bool WaitForExternalHarness(const char* environment_name, std::chrono::milliseconds timeout) {
 	const char* path = std::getenv(environment_name);
 	if (path == nullptr || *path == '\0') {
 		return false;
@@ -824,6 +822,9 @@ public:
 				const auto name = track->Name();
 				++media_frames_by_name_[name];
 				video_dimensions_by_name_[name] = {frame.width, frame.height};
+				if (frame.metadata) {
+					video_metadata_by_name_[name] = *frame.metadata;
+				}
 			}
 		}
 	}
@@ -965,17 +966,24 @@ public:
 		const auto middle = frame_rms.begin() + frame_rms.size() / 2;
 		std::nth_element(frame_rms.begin(), middle, frame_rms.end());
 		const double median_frame_rms = *middle;
-		const auto p90 = frame_rms.begin() +
-		                 static_cast<std::ptrdiff_t>((frame_rms.size() - 1) * 9 / 10);
+		const auto p90 =
+		    frame_rms.begin() + static_cast<std::ptrdiff_t>((frame_rms.size() - 1) * 9 / 10);
 		std::nth_element(frame_rms.begin(), p90, frame_rms.end());
-		return {found->second.samples,
-		        std::sqrt(found->second.sum_squares / found->second.samples), median_frame_rms,
-		        *p90, found->second.peak, found->second.clipped_samples};
+		return {found->second.samples, std::sqrt(found->second.sum_squares / found->second.samples),
+		        median_frame_rms,      *p90,
+		        found->second.peak,    found->second.clipped_samples};
 	}
 	TrackDimensions video_dimensions(const std::string& track_name) {
 		std::lock_guard<std::mutex> guard(lock_);
 		const auto found = video_dimensions_by_name_.find(track_name);
 		return found != video_dimensions_by_name_.end() ? found->second : TrackDimensions{};
+	}
+	std::optional<VideoFrameMetadata> video_metadata(const std::string& track_name) {
+		std::lock_guard<std::mutex> guard(lock_);
+		const auto found = video_metadata_by_name_.find(track_name);
+		return found != video_metadata_by_name_.end()
+		           ? std::optional<VideoFrameMetadata>(found->second)
+		           : std::nullopt;
 	}
 
 private:
@@ -1026,6 +1034,7 @@ private:
 	std::unordered_map<std::string, uint64_t> media_frames_by_name_;
 	std::unordered_map<std::string, AudioLevelAccumulator> audio_levels_by_name_;
 	std::unordered_map<std::string, TrackDimensions> video_dimensions_by_name_;
+	std::unordered_map<std::string, VideoFrameMetadata> video_metadata_by_name_;
 	std::map<std::pair<FrameCryptorDirection, std::string>, FrameCryptorState> encryption_states_;
 };
 
@@ -1423,9 +1432,9 @@ TEST(LiveKitServerTest, RecoversMediaAndDataAfterExternalNetworkFault) {
 	data_options.topic = std::string("weak-network-before-") + profile;
 	const std::vector<uint8_t> before_payload{'b', 'e', 'f', 'o', 'r', 'e'};
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(before_payload, data_options));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return events.received_data(data_options.topic, before_payload, true); },
-	    std::chrono::seconds(10)));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_data(data_options.topic, before_payload, true); },
+	              std::chrono::seconds(10)));
 
 	ASSERT_TRUE(NotifyExternalHarness("LIVEKIT_NETWORK_FAULT_READY_FILE"));
 	const char* done_path = std::getenv("LIVEKIT_NETWORK_FAULT_DONE_FILE");
@@ -1438,8 +1447,7 @@ TEST(LiveKitServerTest, RecoversMediaAndDataAfterExternalNetworkFault) {
 		ASSERT_TRUE(audio_source->CaptureFrame(samples.data(), 48000, 1, 480));
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
-	ASSERT_TRUE(WaitForExternalHarness("LIVEKIT_NETWORK_FAULT_DONE_FILE",
-	                                  std::chrono::seconds(1)));
+	ASSERT_TRUE(WaitForExternalHarness("LIVEKIT_NETWORK_FAULT_DONE_FILE", std::chrono::seconds(1)));
 	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(45)));
 
@@ -1456,9 +1464,9 @@ TEST(LiveKitServerTest, RecoversMediaAndDataAfterExternalNetworkFault) {
 	data_options.topic = std::string("weak-network-after-") + profile;
 	const std::vector<uint8_t> after_payload{'a', 'f', 't', 'e', 'r'};
 	ASSERT_TRUE(sender->GetLocalParticipant()->PublishData(after_payload, data_options));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return events.received_data(data_options.topic, after_payload, true); },
-	    std::chrono::seconds(20)))
+	ASSERT_TRUE(
+	    WaitUntil([&] { return events.received_data(data_options.topic, after_payload, true); },
+	              std::chrono::seconds(20)))
 	    << "reliable data did not recover after network fault profile " << profile;
 
 	EXPECT_TRUE(sender->GetLocalParticipant()->UnpublishTrack(audio_track.get()));
@@ -1491,13 +1499,13 @@ TEST(LiveKitServerTest, PreservesDataStreamsAndRpcAcrossFullReconnect) {
 
 	std::mutex stream_mutex;
 	std::vector<TextStreamEvent> stream_events;
-	ASSERT_TRUE(receiver->RegisterTextStreamHandler(
-	    "reconnect-stream", [&](const TextStreamEvent& event) {
+	ASSERT_TRUE(
+	    receiver->RegisterTextStreamHandler("reconnect-stream", [&](const TextStreamEvent& event) {
 		    std::lock_guard<std::mutex> guard(stream_mutex);
 		    stream_events.push_back(event);
 	    }));
-	ASSERT_TRUE(receiver->RegisterRpcMethod(
-	    "reconnect.echo", [](const RpcInvocationData& invocation) {
+	ASSERT_TRUE(
+	    receiver->RegisterRpcMethod("reconnect.echo", [](const RpcInvocationData& invocation) {
 		    return RpcResult::Success("echo:" + invocation.payload);
 	    }));
 
@@ -1557,8 +1565,7 @@ TEST(LiveKitServerTest, PreservesDataStreamsAndRpcAcrossFullReconnect) {
 	auto* concrete_sender = dynamic_cast<Room*>(sender.get());
 	ASSERT_NE(concrete_sender, nullptr);
 	ASSERT_TRUE(concrete_sender->SimulateMediaFailureForTesting());
-	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnecting(); },
-	                      std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnecting(); }, std::chrono::seconds(10)));
 	ASSERT_TRUE(WaitUntil([&] { return sender_events.reconnected() && sender->IsConnected(); },
 	                      std::chrono::seconds(30)));
 	ASSERT_TRUE(verify_data_paths("sender-full-reconnect"));
@@ -1566,11 +1573,10 @@ TEST(LiveKitServerTest, PreservesDataStreamsAndRpcAcrossFullReconnect) {
 	auto* concrete_receiver = dynamic_cast<Room*>(receiver.get());
 	ASSERT_NE(concrete_receiver, nullptr);
 	ASSERT_TRUE(concrete_receiver->SimulateMediaFailureForTesting());
-	ASSERT_TRUE(WaitUntil([&] { return receiver_events.reconnecting(); },
-	                      std::chrono::seconds(10)));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return receiver_events.reconnected() && receiver->IsConnected(); },
-	    std::chrono::seconds(30)));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return receiver_events.reconnecting(); }, std::chrono::seconds(10)));
+	ASSERT_TRUE(WaitUntil([&] { return receiver_events.reconnected() && receiver->IsConnected(); },
+	                      std::chrono::seconds(30)));
 	ASSERT_TRUE(verify_data_paths("receiver-full-reconnect"));
 
 	EXPECT_TRUE(receiver->UnregisterRpcMethod("reconnect.echo"));
@@ -2342,6 +2348,77 @@ TEST(LiveKitServerTest, PublishesAndReceivesSelectedVideoCodec) {
 	video_source.reset();
 }
 
+TEST(LiveKitServerTest, PublishesAndReceivesVideoFrameMetadata) {
+	const char* url = std::getenv("LIVEKIT_URL");
+	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
+	const char* receiver_token = std::getenv("LIVEKIT_TOKEN_2");
+	if (url == nullptr || sender_token == nullptr || receiver_token == nullptr || *url == '\0' ||
+	    *sender_token == '\0' || *receiver_token == '\0') {
+		GTEST_SKIP() << "Set LIVEKIT_URL, LIVEKIT_TOKEN, and LIVEKIT_TOKEN_2 to run the frame "
+		                "metadata integration test";
+	}
+
+	ClientRuntime runtime;
+	ASSERT_TRUE(runtime.initialized());
+	MediaEvents events;
+	auto receiver = CreateRoomUnique();
+	auto sender = CreateRoomUnique();
+	receiver->AddEventListener(&events);
+	ASSERT_TRUE(receiver->Connect(url, receiver_token));
+	ASSERT_TRUE(sender->Connect(url, sender_token));
+	ASSERT_TRUE(WaitUntil([&] { return receiver->IsConnected() && sender->IsConnected(); },
+	                      std::chrono::seconds(10)));
+
+	constexpr char kTrackName[] = "integration-frame-metadata-video";
+	const std::vector<std::uint8_t> expected_user_data{0x00, 0x01, 0xab, 0xcd, 0xef};
+	auto source = CreateVideoSourceUnique();
+	VideoFrame frame;
+	frame.width = 160;
+	frame.height = 90;
+	frame.data.resize(frame.width * frame.height * 3 / 2, 128);
+	frame.timestamp_us = 1'000'000;
+	frame.metadata = VideoFrameMetadata{};
+	frame.metadata->user_timestamp_us = 1'744'249'600'123'456ULL;
+	frame.metadata->frame_id = 42;
+	frame.metadata->user_data = expected_user_data;
+	ASSERT_TRUE(source->CaptureFrame(frame));
+	auto track =
+	    sender->GetLocalParticipant()->CreateLocalVideoTrackUnique(kTrackName, source.get());
+	ASSERT_NE(track, nullptr);
+	TrackPublishOptions options;
+	options.source = TrackSource::Camera;
+	options.simulcast = false;
+	options.frame_metadata_features = FrameMetadataFeatures{true, true, true};
+	ASSERT_TRUE(sender->GetLocalParticipant()->PublishTrack(track.get(), options));
+
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	std::uint32_t frame_id = 42;
+	while (std::chrono::steady_clock::now() < deadline) {
+		const auto received = events.video_metadata(kTrackName);
+		if (received && received->user_timestamp_us == frame.metadata->user_timestamp_us &&
+		    received->user_data == frame.metadata->user_data) {
+			break;
+		}
+		frame.timestamp_us += 33'333;
+		frame.metadata->frame_id = ++frame_id;
+		ASSERT_TRUE(source->CaptureFrame(frame));
+		std::this_thread::sleep_for(std::chrono::milliseconds(33));
+	}
+
+	const auto received = events.video_metadata(kTrackName);
+	ASSERT_TRUE(received.has_value());
+	EXPECT_EQ(received->user_timestamp_us, frame.metadata->user_timestamp_us);
+	ASSERT_TRUE(received->frame_id.has_value());
+	EXPECT_GT(*received->frame_id, 0u);
+	EXPECT_EQ(received->user_data, frame.metadata->user_data);
+
+	receiver->RemoveEventListener();
+	EXPECT_TRUE(sender->Disconnect());
+	EXPECT_TRUE(receiver->Disconnect());
+	track.reset();
+	source.reset();
+}
+
 TEST(LiveKitServerTest, PublishesBackupCodecWhenRequestedByServer) {
 	const char* url = std::getenv("LIVEKIT_URL");
 	const char* sender_token = std::getenv("LIVEKIT_TOKEN");
@@ -2592,8 +2669,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_LE(pulled_video.height, video_frame.height);
 	const auto pulled_chroma_width = (pulled_video.width + 1) / 2;
 	const auto pulled_chroma_height = (pulled_video.height + 1) / 2;
-	const auto pulled_y_size =
-	    static_cast<std::size_t>(pulled_video.width) * pulled_video.height;
+	const auto pulled_y_size = static_cast<std::size_t>(pulled_video.width) * pulled_video.height;
 	const auto pulled_chroma_size =
 	    static_cast<std::size_t>(pulled_chroma_width) * pulled_chroma_height;
 	EXPECT_EQ(pulled_video.data.size(), pulled_y_size + pulled_chroma_size * 2);
@@ -4471,8 +4547,8 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_SPEAKER_VOLUME", 0.50, 0.01, 1.0);
 	const char* input_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_INPUT_DEVICE_ID");
 	const char* output_device_id = std::getenv("LIVEKIT_AUDIO_QUALITY_OUTPUT_DEVICE_ID");
-	const auto measurement_seconds = static_cast<int>(
-	    EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_SECONDS", 10.0, 5.0, 60.0));
+	const auto measurement_seconds =
+	    static_cast<int>(EnvironmentDouble("LIVEKIT_AUDIO_QUALITY_SECONDS", 10.0, 5.0, 60.0));
 
 	ClientRuntime runtime;
 	ASSERT_TRUE(runtime.initialized());
@@ -4492,9 +4568,9 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	reference_room->AddEventListener(&microphone_events);
 	ASSERT_TRUE(microphone_room->Connect(url, microphone_token));
 	ASSERT_TRUE(reference_room->Connect(url, reference_token));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return microphone_room->IsConnected() && reference_room->IsConnected(); },
-	    std::chrono::seconds(10)));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return microphone_room->IsConnected() && reference_room->IsConnected(); },
+	              std::chrono::seconds(10)));
 	// The reference room receives microphone PCM for measurement, but must never play that track
 	// into the room. Doing so creates a microphone -> LiveKit -> speaker feedback loop that clips
 	// both the baseline and residual measurements. Muting output does not suppress frame callbacks.
@@ -4513,7 +4589,7 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	TrackPublishOptions microphone_options;
 	microphone_options.source = TrackSource::Microphone;
 	ASSERT_TRUE(microphone_room->GetLocalParticipant()->PublishTrack(microphone_track.get(),
-	                                                                microphone_options));
+	                                                                 microphone_options));
 
 	auto reference_source = CreateAudioSourceUnique({}, 48000, 1, 200);
 	ASSERT_NE(reference_source, nullptr);
@@ -4523,7 +4599,7 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	TrackPublishOptions reference_options;
 	reference_options.source = TrackSource::Microphone;
 	ASSERT_TRUE(reference_room->GetLocalParticipant()->PublishTrack(reference_track.get(),
-	                                                               reference_options));
+	                                                                reference_options));
 
 	std::array<int16_t, 480> reference_samples{};
 	// A periodic tone makes several acoustic delays look equally plausible to the AEC delay
@@ -4596,8 +4672,8 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	ASSERT_GE(echo_residual.samples, 48000u)
 	    << "Too few decoded microphone samples for the AEC-enabled measurement";
 	const double measured_erle_db =
-	    20.0 * std::log10(echo_baseline.median_frame_rms /
-	                      std::max(echo_residual.median_frame_rms, 1.0));
+	    20.0 *
+	    std::log10(echo_baseline.median_frame_rms / std::max(echo_residual.median_frame_rms, 1.0));
 	std::cout << "AUDIO_QUALITY_RESULT"
 	          << " baseline_rms=" << echo_baseline.rms
 	          << " baseline_median_frame_rms=" << echo_baseline.median_frame_rms
@@ -4614,8 +4690,7 @@ TEST(LiveKitServerTest, MeasuresHardwareAecQuality) {
 	          << " erl_db=" << stats.echo_return_loss_db
 	          << " residual_available=" << stats.residual_echo_likelihood_recent_max_available
 	          << " residual_recent_max=" << stats.residual_echo_likelihood_recent_max
-	          << " delay_available=" << stats.delay_available
-	          << " delay_ms=" << stats.delay_ms
+	          << " delay_available=" << stats.delay_available << " delay_ms=" << stats.delay_ms
 	          << " delay_median_available=" << stats.delay_median_available
 	          << " delay_median_ms=" << stats.delay_median_ms
 	          << " delay_stddev_available=" << stats.delay_standard_deviation_available
@@ -4678,8 +4753,8 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	    EnvironmentDouble("LIVEKIT_AUDIO_DOUBLE_TALK_MIN_RETENTION", 0.60, 0.0, 2.0);
 	const double maximum_noise_ratio =
 	    EnvironmentDouble("LIVEKIT_AUDIO_NOISE_MAX_RATIO", 0.75, 0.0, 2.0);
-	const auto phase_seconds = static_cast<int>(
-	    EnvironmentDouble("LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS", 5.0, 3.0, 15.0));
+	const auto phase_seconds =
+	    static_cast<int>(EnvironmentDouble("LIVEKIT_AUDIO_HARDWARE_PHASE_SECONDS", 5.0, 3.0, 15.0));
 
 	ClientRuntime runtime;
 	ASSERT_TRUE(runtime.initialized());
@@ -4689,8 +4764,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 		microphone_options.device_id = input_device_id;
 	}
 	auto microphone_source = CreateMicrophoneAudioSourceUnique(microphone_options);
-	ASSERT_NE(microphone_source, nullptr)
-	    << "The requested/default microphone is unavailable";
+	ASSERT_NE(microphone_source, nullptr) << "The requested/default microphone is unavailable";
 
 	MediaEvents events;
 	auto microphone_room = CreateRoomUnique();
@@ -4698,9 +4772,9 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	measurement_room->AddEventListener(&events);
 	ASSERT_TRUE(microphone_room->Connect(url, microphone_token));
 	ASSERT_TRUE(measurement_room->Connect(url, reference_token));
-	ASSERT_TRUE(WaitUntil(
-	    [&] { return microphone_room->IsConnected() && measurement_room->IsConnected(); },
-	    std::chrono::seconds(10)));
+	ASSERT_TRUE(
+	    WaitUntil([&] { return microphone_room->IsConnected() && measurement_room->IsConnected(); },
+	              std::chrono::seconds(10)));
 	// This room receives microphone PCM only for measurement. Physical playback would create an
 	// uncontrolled feedback loop and invalidate both double-talk and noise measurements.
 	ASSERT_TRUE(measurement_room->SetSpeakerMuted(true));
@@ -4717,14 +4791,14 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	TrackPublishOptions publish_options;
 	publish_options.source = TrackSource::Microphone;
 	ASSERT_TRUE(microphone_room->GetLocalParticipant()->PublishTrack(microphone_track.get(),
-	                                                               publish_options));
+	                                                                 publish_options));
 	auto far_end_source = CreateAudioSourceUnique({}, 48000, 1, 200);
 	ASSERT_NE(far_end_source, nullptr);
 	auto far_end_track = measurement_room->GetLocalParticipant()->CreateLocalAudioTrackUnique(
 	    std::string(far_end_name), far_end_source.get());
 	ASSERT_NE(far_end_track, nullptr);
 	ASSERT_TRUE(measurement_room->GetLocalParticipant()->PublishTrack(far_end_track.get(),
-	                                                                publish_options));
+	                                                                  publish_options));
 
 	media_capture::AudioPlaybackConfig fixture_config;
 	if (output_device_id != nullptr && *output_device_id != '\0') {
@@ -4753,8 +4827,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 			output = static_cast<int16_t>(centered * 6000 / 32768);
 		}
 	};
-	const auto run_fixture_phase = [&](std::span<const int16_t> mono_fixture,
-	                                  bool send_far_end) {
+	const auto run_fixture_phase = [&](std::span<const int16_t> mono_fixture, bool send_far_end) {
 		auto next_frame = std::chrono::steady_clock::now();
 		const auto total_frames = static_cast<std::size_t>(phase_seconds) * 100;
 		for (std::size_t frame = 0; frame < total_frames; ++frame) {
@@ -4763,8 +4836,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 				fixture_samples[index * 2] = sample;
 				fixture_samples[index * 2 + 1] = sample;
 			}
-			if (!fixture_playback->QueueFrame(
-			        {fixture_samples.data(), 48000, 2, 480, 0})) {
+			if (!fixture_playback->QueueFrame({fixture_samples.data(), 48000, 2, 480, 0})) {
 				return false;
 			}
 			if (send_far_end) {
@@ -4809,8 +4881,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	far_end_state = 0x6d2b79f5u;
 	ASSERT_TRUE(run_fixture_phase(speech, true));
 	const auto double_talk = events.audio_level(std::string(microphone_name));
-	const double double_talk_retention =
-	    double_talk.p90_frame_rms / near_only.p90_frame_rms;
+	const double double_talk_retention = double_talk.p90_frame_rms / near_only.p90_frame_rms;
 
 	ASSERT_TRUE(microphone_source->SetProcessingOptions({false, false, false}));
 	ASSERT_TRUE(fixture_playback->SetVolume(static_cast<float>(noise_fixture_volume)));
@@ -4826,8 +4897,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	events.reset_audio_level(std::string(microphone_name));
 	ASSERT_TRUE(run_fixture_phase(warmup_noise, false));
 	const auto noise_with_ns = events.audio_level(std::string(microphone_name));
-	const double noise_ratio =
-	    noise_with_ns.median_frame_rms / noise_without_ns.median_frame_rms;
+	const double noise_ratio = noise_with_ns.median_frame_rms / noise_without_ns.median_frame_rms;
 
 	const auto processing = microphone_source->ProcessingStats();
 	const auto far_end_playback = microphone_room->GetAudioPlaybackStats();
@@ -4842,8 +4912,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	          << " double_talk_retention=" << double_talk_retention
 	          << " noise_without_ns_median_rms=" << noise_without_ns.median_frame_rms
 	          << " noise_with_ns_median_rms=" << noise_with_ns.median_frame_rms
-	          << " noise_ratio=" << noise_ratio
-	          << " far_end_volume=" << far_end_volume
+	          << " noise_ratio=" << noise_ratio << " far_end_volume=" << far_end_volume
 	          << " speech_fixture_volume=" << fixture_volume
 	          << " noise_fixture_volume=" << noise_fixture_volume
 	          << " near_only_clipped_samples=" << near_only.clipped_samples
@@ -4854,8 +4923,7 @@ TEST(LiveKitServerTest, MeasuresHardwareDoubleTalkAndNoiseSuppression) {
 	          << " render_processing_errors=" << processing.render_processing_errors
 	          << " capture_dropped_frames=" << processing.frames_dropped
 	          << " far_end_playback_dropped_frames=" << far_end_playback.dropped_frames
-	          << " fixture_playback_dropped_frames=" << fixture_stats.dropped_frames
-	          << std::endl;
+	          << " fixture_playback_dropped_frames=" << fixture_stats.dropped_frames << std::endl;
 
 	EXPECT_GE(double_talk_retention, minimum_double_talk_retention);
 	EXPECT_LE(noise_ratio, maximum_noise_ratio);

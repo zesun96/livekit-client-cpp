@@ -18,6 +18,7 @@
 #include "room.h"
 #include "../capture/audio_capture_adapter.h"
 #include "detail/converted_proto.h"
+#include "detail/frame_metadata.h"
 #include "detail/rtc_engine.h"
 #include "e2ee/e2ee_manager_internal.h"
 #include "track/audio_track.h"
@@ -1516,6 +1517,7 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			subscribed_track = std::move(remote);
 			remote_tracks_.emplace(track_sid, subscribed_track);
 		} else if (rtc_track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
+			auto metadata_store = std::make_shared<detail::FrameMetadataStore>();
 			auto media =
 			    std::make_unique<VideoTrack>(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
 			        static_cast<webrtc::VideoTrackInterface*>(rtc_track.get())));
@@ -1523,7 +1525,8 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 			    track_sid, track_name, std::move(media),
 			    [this, participant_sid, track_sid](const VideoFrame& frame) {
 				    NotifyVideoFrame(participant_sid, track_sid, frame);
-			    });
+			    },
+			    std::move(metadata_store));
 			subscribed_track = std::move(remote);
 			remote_tracks_.emplace(track_sid, subscribed_track);
 		}
@@ -1544,11 +1547,21 @@ void Room::MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterfa
 		}
 	}
 	if (subscribed_track) {
+		std::shared_ptr<detail::FrameMetadataStore> metadata_store;
+		if (subscribed_track->Kind() == TrackKind::Video) {
+			auto* remote_video = dynamic_cast<RemoteVideoTrack*>(subscribed_track.get());
+			if (remote_video != nullptr) {
+				metadata_store = remote_video->GetFrameMetadataStore();
+			}
+		}
 		if (e2ee_manager_ && receiver && publication &&
 		    publication->Encryption() == EncryptionType::Gcm) {
-			E2EEManagerNativeAccess::AttachReceiver(*e2ee_manager_, track_sid,
-			                                        participant->Identity(),
-			                                        subscribed_track->Kind(), std::move(receiver));
+			E2EEManagerNativeAccess::AttachReceiver(
+			    *e2ee_manager_, track_sid, participant->Identity(), subscribed_track->Kind(),
+			    std::move(receiver), std::move(metadata_store));
+		} else if (receiver && metadata_store) {
+			receiver->SetFrameTransformer(
+			    detail::CreateFrameMetadataTransformer(false, std::move(metadata_store)));
 		}
 		if (auto* listener = event_listener_.load()) {
 			listener->OnTrackSubscribed(subscribed_track.get(), participant.get());

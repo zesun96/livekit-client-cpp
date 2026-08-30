@@ -1047,6 +1047,26 @@ lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
 			return status;
 		}
 	}
+	if (LKC_HAS_FIELD(options, lk_track_publish_options_t, frame_metadata_features)) {
+		const auto& features = options->frame_metadata_features;
+		if (features.struct_size < sizeof(features.struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "invalid frame metadata features struct size");
+		}
+		core::FrameMetadataFeatures converted;
+		if (LKC_HAS_FIELD(&features, lk_frame_metadata_features_t, user_timestamp)) {
+			converted.user_timestamp = features.user_timestamp != 0;
+		}
+		if (LKC_HAS_FIELD(&features, lk_frame_metadata_features_t, frame_id)) {
+			converted.frame_id = features.frame_id != 0;
+		}
+		if (LKC_HAS_FIELD(&features, lk_frame_metadata_features_t, user_data)) {
+			converted.user_data = features.user_data != 0;
+		}
+		if (converted.Any()) {
+			result.frame_metadata_features = converted;
+		}
+	}
 	return LK_STATUS_OK;
 }
 
@@ -1808,10 +1828,28 @@ public:
 		OwnedParticipantInfo owned_participant(participant);
 		const lk_video_frame_t c_frame{frame.data.data(), frame.data.size(), frame.width,
 		                               frame.height, frame.timestamp_us};
+		lk_video_frame_metadata_t c_metadata{};
+		c_metadata.struct_size = sizeof(c_metadata);
+		if (frame.metadata) {
+			c_metadata.has_user_timestamp_us = frame.metadata->user_timestamp_us.has_value();
+			c_metadata.user_timestamp_us = frame.metadata->user_timestamp_us.value_or(0);
+			c_metadata.has_frame_id = frame.metadata->frame_id.has_value();
+			c_metadata.frame_id = frame.metadata->frame_id.value_or(0);
+			c_metadata.has_user_data = frame.metadata->user_data.has_value();
+			if (frame.metadata->user_data) {
+				c_metadata.user_data = frame.metadata->user_data->data();
+				c_metadata.user_data_size = frame.metadata->user_data->size();
+			}
+		}
 		InvokeRoomCallback(owner_, [&](const lk_room_callbacks_t& callbacks) {
 			if (callbacks.on_video_frame != nullptr) {
 				callbacks.on_video_frame(callbacks.user_data, owner_, &owned_track.info,
 				                         &owned_participant.info, &c_frame);
+			}
+			if (callbacks.on_video_frame_with_metadata != nullptr) {
+				callbacks.on_video_frame_with_metadata(
+				    callbacks.user_data, owner_, &owned_track.info, &owned_participant.info,
+				    &c_frame, frame.metadata ? &c_metadata : nullptr);
 			}
 		});
 	}
@@ -2553,6 +2591,13 @@ void lk_video_source_options_init(lk_video_source_options_t* options) {
 	}
 }
 
+void lk_video_frame_metadata_init(lk_video_frame_metadata_t* metadata) {
+	if (metadata != nullptr) {
+		*metadata = {};
+		metadata->struct_size = sizeof(*metadata);
+	}
+}
+
 void lk_video_frame_input_init(lk_video_frame_input_t* frame) {
 	if (frame != nullptr) {
 		*frame = {};
@@ -2588,6 +2633,13 @@ void lk_video_encoding_init(lk_video_encoding_t* encoding) {
 	}
 }
 
+void lk_frame_metadata_features_init(lk_frame_metadata_features_t* features) {
+	if (features != nullptr) {
+		*features = {};
+		features->struct_size = sizeof(*features);
+	}
+}
+
 void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -2601,6 +2653,7 @@ void lk_track_publish_options_init(lk_track_publish_options_t* options) {
 		options->backup_codec_policy = LK_BACKUP_CODEC_POLICY_PREFER_REGRESSION;
 		lk_video_encoding_init(&options->video_encoding);
 		lk_video_encoding_init(&options->backup_video_encoding);
+		lk_frame_metadata_features_init(&options->frame_metadata_features);
 	}
 }
 
@@ -4319,6 +4372,47 @@ lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
 				                        input->planes[index].stride});
 			}
 		}
+		if (LKC_HAS_FIELD(input, lk_video_frame_input_t, metadata) && input->metadata != nullptr) {
+			const auto* metadata = input->metadata;
+			if (metadata->struct_size < sizeof(metadata->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "invalid video frame metadata struct size");
+			}
+			core::VideoFrameMetadata converted;
+			if (LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, has_user_timestamp_us) &&
+			    metadata->has_user_timestamp_us != 0) {
+				if (!LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, user_timestamp_us)) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT,
+					               "video frame metadata timestamp is missing");
+				}
+				converted.user_timestamp_us = metadata->user_timestamp_us;
+			}
+			if (LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, has_frame_id) &&
+			    metadata->has_frame_id != 0) {
+				if (!LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, frame_id)) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT,
+					               "video frame metadata frame ID is missing");
+				}
+				converted.frame_id = metadata->frame_id;
+			}
+			if (LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, has_user_data) &&
+			    metadata->has_user_data != 0) {
+				if (!LKC_HAS_FIELD(metadata, lk_video_frame_metadata_t, user_data_size) ||
+				    (metadata->user_data_size != 0 && metadata->user_data == nullptr) ||
+				    metadata->user_data_size > core::kMaxVideoFrameMetadataUserDataSize) {
+					return Failure(LK_STATUS_INVALID_ARGUMENT,
+					               "video frame metadata user data is invalid or too large");
+				}
+				converted.user_data = std::vector<std::uint8_t>{};
+				if (metadata->user_data_size != 0) {
+					converted.user_data->assign(metadata->user_data,
+					                            metadata->user_data + metadata->user_data_size);
+				}
+			}
+			if (converted.user_timestamp_us || converted.frame_id || converted.user_data) {
+				frame.metadata = std::move(converted);
+			}
+		}
 		return source->source->CaptureFrame(frame)
 		           ? LK_STATUS_OK
 		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture video frame");
@@ -5566,6 +5660,33 @@ lk_status_t lk_owned_video_frame_data(const lk_owned_video_frame_t* frame, lk_vi
 		}
 		*data = {frame->frame.data.data(), frame->frame.data.size(), frame->frame.width,
 		         frame->frame.height, frame->frame.timestamp_us};
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_owned_video_frame_metadata(const lk_owned_video_frame_t* frame,
+                                          lk_video_frame_metadata_t* metadata) {
+	return Guard([&] {
+		if (frame == nullptr || metadata == nullptr ||
+		    metadata->struct_size < sizeof(metadata->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "owned video frame and versioned metadata output are required");
+		}
+		const auto output_size = metadata->struct_size;
+		lk_video_frame_metadata_t value{};
+		value.struct_size = output_size;
+		if (frame->frame.metadata) {
+			value.has_user_timestamp_us = frame->frame.metadata->user_timestamp_us.has_value();
+			value.user_timestamp_us = frame->frame.metadata->user_timestamp_us.value_or(0);
+			value.has_frame_id = frame->frame.metadata->frame_id.has_value();
+			value.frame_id = frame->frame.metadata->frame_id.value_or(0);
+			value.has_user_data = frame->frame.metadata->user_data.has_value();
+			if (frame->frame.metadata->user_data) {
+				value.user_data = frame->frame.metadata->user_data->data();
+				value.user_data_size = frame->frame.metadata->user_data->size();
+			}
+		}
+		std::memcpy(metadata, &value, std::min(output_size, sizeof(value)));
 		return LK_STATUS_OK;
 	});
 }

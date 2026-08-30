@@ -32,6 +32,7 @@ TEST(SignalUrlTest, AppliesConfiguredConnectionParameters) {
 	EXPECT_EQ(parameters.at("sdk"), "cpp%20test");
 	EXPECT_EQ(parameters.at("version"), "1.2.3%2Bdev");
 	EXPECT_EQ(parameters.at("protocol"), "17");
+	EXPECT_EQ(parameters.at("capabilities"), "CAP_PACKET_TRAILER");
 }
 
 TEST(SignalUrlTest, OmitsDisabledOptionalParametersAndUsesSdkDefaults) {
@@ -41,10 +42,19 @@ TEST(SignalUrlTest, OmitsDisabledOptionalParametersAndUsesSdkDefaults) {
 	EXPECT_EQ(parameters.at("auto_subscribe"), "1");
 	EXPECT_EQ(parameters.at("sdk"), "cpp");
 	EXPECT_EQ(parameters.at("version"), "0.0.1");
+	EXPECT_EQ(parameters.at("capabilities"), "CAP_PACKET_TRAILER");
 	EXPECT_FALSE(parameters.contains("adaptive_stream"));
 	EXPECT_FALSE(parameters.contains("reconnect"));
 	EXPECT_FALSE(parameters.contains("reconnect_reason"));
 	EXPECT_FALSE(parameters.contains("sid"));
+}
+
+TEST(SignalUrlTest, AddsRtcPathToProjectRootUrl) {
+	const Url url(BuildSignalUrl("wss://project.livekit.cloud", "token", SignalOptions{}));
+
+	EXPECT_EQ(url.GetScheme(), "wss");
+	EXPECT_EQ(url.GetHost(), "project.livekit.cloud");
+	EXPECT_EQ(url.GetPath(), "rtc");
 }
 
 } // namespace

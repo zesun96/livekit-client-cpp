@@ -17,6 +17,7 @@
 
 #include "remote_video_track.h"
 
+#include "../detail/frame_metadata.h"
 #include "api/video/i420_buffer.h"
 
 #include <algorithm>
@@ -26,9 +27,10 @@ namespace livekit {
 namespace core {
 
 RemoteVideoTrack::RemoteVideoTrack(std::string sid, std::string name,
-                                   std::unique_ptr<VideoTrack> video_track, FrameCallback callback)
+                                   std::unique_ptr<VideoTrack> video_track, FrameCallback callback,
+                                   std::shared_ptr<detail::FrameMetadataStore> metadata_store)
     : RemoteTrack(std::move(sid), std::move(name), TrackKind::Video, std::move(video_track)),
-      callback_(std::move(callback)) {
+      callback_(std::move(callback)), metadata_store_(std::move(metadata_store)) {
 	static_cast<VideoTrack*>(media_track())->AddSink(this);
 }
 
@@ -50,6 +52,10 @@ std::shared_ptr<VideoStream> RemoteVideoTrack::CreateVideoStream(MediaStreamOpti
 	return stream;
 }
 
+std::shared_ptr<detail::FrameMetadataStore> RemoteVideoTrack::GetFrameMetadataStore() const {
+	return metadata_store_;
+}
+
 void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 	auto buffer = rtc_frame.video_frame_buffer()->ToI420();
 	if (!buffer) {
@@ -59,6 +65,9 @@ void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 	frame.width = static_cast<uint32_t>(buffer->width());
 	frame.height = static_cast<uint32_t>(buffer->height());
 	frame.timestamp_us = rtc_frame.timestamp_us();
+	if (metadata_store_) {
+		frame.metadata = metadata_store_->Find(rtc_frame.rtp_timestamp());
+	}
 	const std::size_t y_size = static_cast<std::size_t>(frame.width) * frame.height;
 	const std::size_t chroma_width = (frame.width + 1) / 2;
 	const std::size_t chroma_height = (frame.height + 1) / 2;

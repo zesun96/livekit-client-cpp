@@ -7,11 +7,16 @@
 #include "api/scoped_refptr.h"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace livekit {
 namespace core {
+
+namespace detail {
+class FrameMetadataStore;
+}
 
 class E2EEManagerNativeAccess {
 public:
@@ -23,10 +28,13 @@ public:
 
 	static bool AttachSender(E2EEManager& manager, std::string track_id,
 	                         std::string participant_identity, TrackKind kind,
-	                         webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender);
+	                         webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender,
+	                         std::shared_ptr<detail::FrameMetadataStore> metadata_store = {},
+	                         FrameMetadataFeatures metadata_features = {});
 	static bool AttachReceiver(E2EEManager& manager, std::string track_id,
 	                           std::string participant_identity, TrackKind kind,
-	                           webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver);
+	                           webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
+	                           std::shared_ptr<detail::FrameMetadataStore> metadata_store = {});
 	static bool Detach(E2EEManager& manager, const std::string& track_id,
 	                   FrameCryptorDirection direction);
 	static void DetachAll(E2EEManager& manager);

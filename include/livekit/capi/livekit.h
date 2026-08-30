@@ -503,6 +503,18 @@ typedef struct lk_video_plane {
 	uint32_t stride;
 } lk_video_plane_t;
 
+/* Versioned borrowed view. user_data is valid only for the call or callback duration. */
+typedef struct lk_video_frame_metadata {
+	size_t struct_size;
+	int has_user_timestamp_us;
+	uint64_t user_timestamp_us;
+	int has_frame_id;
+	uint32_t frame_id;
+	int has_user_data;
+	const uint8_t* user_data;
+	size_t user_data_size;
+} lk_video_frame_metadata_t;
+
 /*
  * Owned by the caller for the duration of lk_video_source_capture_frame(). An empty plane list
  * selects the canonical tightly packed layout for format. Stride and plane size are in bytes.
@@ -518,6 +530,7 @@ typedef struct lk_video_frame_input {
 	lk_video_buffer_type_t format;
 	const lk_video_plane_t* planes;
 	size_t plane_count;
+	const lk_video_frame_metadata_t* metadata;
 } lk_video_frame_input_t;
 
 typedef struct lk_data_received {
@@ -847,6 +860,11 @@ typedef void (*lk_video_frame_callback)(void* user_data, lk_room_t* room,
                                         const lk_track_publication_info_t* track,
                                         const lk_participant_info_t* participant,
                                         const lk_video_frame_t* frame);
+typedef void (*lk_video_frame_with_metadata_callback)(void* user_data, lk_room_t* room,
+                                                      const lk_track_publication_info_t* track,
+                                                      const lk_participant_info_t* participant,
+                                                      const lk_video_frame_t* frame,
+                                                      const lk_video_frame_metadata_t* metadata);
 typedef void (*lk_data_received_callback)(void* user_data, lk_room_t* room,
                                           const lk_data_received_t* event);
 typedef void (*lk_sip_dtmf_callback)(void* user_data, lk_room_t* room, const lk_sip_dtmf_t* event);
@@ -962,6 +980,7 @@ typedef struct lk_room_callbacks {
 	lk_room_snapshot_callback on_room_moved;
 	lk_room_event_callback on_room_eos;
 	lk_participants_updated_callback on_participants_updated;
+	lk_video_frame_with_metadata_callback on_video_frame_with_metadata;
 } lk_room_callbacks_t;
 
 typedef struct lk_e2ee_options {
@@ -1054,6 +1073,13 @@ typedef struct lk_video_encoding {
 	float max_framerate;
 } lk_video_encoding_t;
 
+typedef struct lk_frame_metadata_features {
+	size_t struct_size;
+	int user_timestamp;
+	int frame_id;
+	int user_data;
+} lk_frame_metadata_features_t;
+
 typedef struct lk_track_publish_options {
 	size_t struct_size;
 	lk_track_source_t source;
@@ -1068,6 +1094,7 @@ typedef struct lk_track_publish_options {
 	lk_backup_codec_policy_t backup_codec_policy;
 	lk_video_encoding_t video_encoding;
 	lk_video_encoding_t backup_video_encoding;
+	lk_frame_metadata_features_t frame_metadata_features;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {
@@ -1274,10 +1301,12 @@ LKC_API void lk_microphone_capture_options_init(lk_microphone_capture_options_t*
 LKC_API void lk_system_audio_capture_options_init(lk_system_audio_capture_options_t* options);
 LKC_API void lk_microphone_processing_stats_init(lk_microphone_processing_stats_t* stats);
 LKC_API void lk_video_source_options_init(lk_video_source_options_t* options);
+LKC_API void lk_video_frame_metadata_init(lk_video_frame_metadata_t* metadata);
 LKC_API void lk_video_frame_input_init(lk_video_frame_input_t* frame);
 LKC_API void lk_camera_capture_options_init(lk_camera_capture_options_t* options);
 LKC_API void lk_screen_capture_options_init(lk_screen_capture_options_t* options);
 LKC_API void lk_video_encoding_init(lk_video_encoding_t* encoding);
+LKC_API void lk_frame_metadata_features_init(lk_frame_metadata_features_t* features);
 LKC_API void lk_track_publish_options_init(lk_track_publish_options_t* options);
 LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_data_track_schema_id_init(lk_data_track_schema_id_t* schema_id);
@@ -1658,6 +1687,8 @@ LKC_API lk_status_t lk_owned_audio_frame_data(const lk_owned_audio_frame_t* fram
 LKC_API void lk_owned_video_frame_destroy(lk_owned_video_frame_t* frame);
 LKC_API lk_status_t lk_owned_video_frame_data(const lk_owned_video_frame_t* frame,
                                               lk_video_frame_t* data);
+LKC_API lk_status_t lk_owned_video_frame_metadata(const lk_owned_video_frame_t* frame,
+                                                  lk_video_frame_metadata_t* metadata);
 LKC_API lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit);
 LKC_API lk_status_t lk_room_send_chat_message(lk_room_t* room, const char* message,
                                               char* message_id, size_t message_id_size,

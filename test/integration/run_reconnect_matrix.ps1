@@ -22,7 +22,8 @@ param(
   [switch]$ReplaceExistingServer,
   [ValidateSet(
     "All", "Participants", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI",
-    "OfficialCpp", "WeakNetwork", "DataRecovery", "CodecMatrix", "Soak", "AudioQuality"
+    "OfficialCpp", "WeakNetwork", "DataRecovery", "CodecMatrix", "Soak", "AudioQuality",
+    "FrameMetadata"
   )]
   [string]$Scenario = "All",
   [ValidateRange(1, 100)]
@@ -884,9 +885,14 @@ try {
       Write-Host "Media recovery iteration $iteration/$Iterations"
       Invoke-SimpleTest "RepublishesAudioAfterReconnect"
       Invoke-SimpleTest "PublishesAndReceivesSelectedVideoCodec"
+      Invoke-SimpleTest "PublishesAndReceivesVideoFrameMetadata"
       Invoke-SimpleTest "PublishesBackupCodecWhenRequestedByServer"
       Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
     }
+  }
+
+  if ($Scenario -eq "FrameMetadata") {
+    Invoke-SimpleTest "PublishesAndReceivesVideoFrameMetadata"
   }
 
   if ($Scenario -eq "CodecMatrix") {

@@ -138,8 +138,16 @@ $apiSecret = Read-Host "LiveKit API secret"
 ```
 
 Available scenarios are `Participants`, `Restart`, `TokenRefresh`, `Media`, `E2EE`, `CAPI`,
-`DataRecovery`, `CodecMatrix`, `Soak`, `AudioQuality`, `WeakNetwork`, and `OfficialCpp`. Use
+`DataRecovery`, `FrameMetadata`, `CodecMatrix`, `Soak`, `AudioQuality`, `WeakNetwork`, and
+`OfficialCpp`. Use
 `-VideoCodec vp8`, `h264`, or `av1` where supported. The codec matrix also covers VP9.
+
+The `FrameMetadata` gate passed on 2026-08-30 against both the bundled local LiveKit Server and
+LiveKit Cloud. It publishes synthetic I420 frames carrying a user timestamp, frame ID, and opaque
+user data, then verifies all three fields at a second C++ participant. `Connect()` accepts either a
+LiveKit project root URL or an explicit signalling URL ending in `/rtc`; the SDK appends `/rtc` only
+when the supplied URL has no path. The `lk` CLI continues to use the project root URL while
+generating short-lived tokens.
 
 The harness owns the temporary server it starts, uses short-lived identities, removes temporary
 configuration and logs, and restores a replaced existing server in a `finally` block. It verifies
@@ -207,7 +215,7 @@ When a server and short-lived tokens are already available, the integration exec
 - `LIVEKIT_HARDWARE_MEDIA=1` to opt into real capture.
 
 ```powershell
-$env:LIVEKIT_URL = "http://<livekit-host>:7880/rtc"
+$env:LIVEKIT_URL = "http://<livekit-host>:7880" # An explicit /rtc suffix is also accepted.
 $env:LIVEKIT_TOKEN_SINGLE = "<unique-client-token>"
 $env:LIVEKIT_TOKEN = "<first-client-token>"
 $env:LIVEKIT_TOKEN_2 = "<second-client-token>"

@@ -143,6 +143,15 @@ public:
 			std::cout << "Receiving " << frame.width << 'x' << frame.height << " video frames"
 			          << std::endl;
 		}
+		if (frame.metadata && frame.metadata->frame_id) {
+			std::cout << "Video frame metadata: frame_id=" << *frame.metadata->frame_id;
+			if (frame.metadata->user_timestamp_us) {
+				std::cout << ", user_timestamp_us=" << *frame.metadata->user_timestamp_us;
+			}
+			std::cout << ", user_data_bytes="
+			          << (frame.metadata->user_data ? frame.metadata->user_data->size() : 0U)
+			          << std::endl;
+		}
 	}
 
 	void OnDataReceived(const livekit::core::DataReceivedEvent& event) override {
