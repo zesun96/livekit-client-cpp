@@ -73,6 +73,12 @@ public:
 	std::vector<RemoteDataTrackSnapshot> GetRemoteDataTrackSnapshots() const;
 	std::shared_ptr<RemoteDataTrackInterface> GetRemoteDataTrack(std::string participant_identity,
 	                                                             std::string track_sid);
+	std::shared_ptr<AudioStream> CreateAudioStream(std::string participant_identity,
+	                                               std::string track_sid,
+	                                               MediaStreamOptions options);
+	std::shared_ptr<VideoStream> CreateVideoStream(std::string participant_identity,
+	                                               std::string track_sid,
+	                                               MediaStreamOptions options);
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
 	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) override;
 	virtual std::vector<ParticipantInterface*> Participants() override;

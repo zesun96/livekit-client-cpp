@@ -26,6 +26,8 @@
 #include "livekit/core/track/audio_frame.h"
 
 #include <functional>
+#include <mutex>
+#include <vector>
 
 namespace livekit {
 namespace core {
@@ -36,10 +38,17 @@ public:
 
 	RemoteAudioTrack(std::string sid, std::string name, std::unique_ptr<AudioTrack> audio_track,
 	                 FrameCallback callback);
-	~RemoteAudioTrack() override = default;
+	~RemoteAudioTrack() override;
+	std::shared_ptr<AudioStream> CreateAudioStream(MediaStreamOptions options = {}) override;
 
 private:
+	void OnFrame(const AudioFrame& frame);
+	void CloseStreams();
+
 	std::shared_ptr<AudioSink> sink_;
+	FrameCallback callback_;
+	std::mutex streams_mutex_;
+	std::vector<std::weak_ptr<AudioStream>> streams_;
 };
 
 } // namespace core

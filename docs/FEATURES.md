@@ -101,6 +101,14 @@ SDK validates and converts them to WebRTC I420 before publication. Existing `Vid
 size-versioned `lk_video_frame_input_t` and `lk_video_source_capture_frame` path. I420A alpha is
 validated but discarded by the current WebRTC encoder path.
 
+Remote audio and video tracks also expose bounded pull readers through `AudioStream` and
+`VideoStream`. Readers support blocking, timed, and non-blocking reads, drop the oldest unread frame
+when their configured capacity is full, report the drop count, and wake blocked consumers when the
+reader or track closes. Existing `RoomEventInterface::OnAudioFrame` and `OnVideoFrame` callbacks
+continue to receive the same frames. C applications can create equivalent readers by participant
+identity and track SID, consume owned frame handles, and destroy each handle after reading its
+borrowed frame view.
+
 Native microphone capture uses libwebrtc Audio Processing Module support for AEC, AGC, and noise
 suppression. These features are application switches with stable SDK defaults; applications do not
 normally tune low-level WebRTC parameters. Processing statistics and errors are available through

@@ -171,6 +171,10 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(data_subscription.struct_size, sizeof(data_subscription));
 	EXPECT_EQ(data_subscription.buffer_capacity, 16u);
 	EXPECT_EQ(data_subscription.max_partial_frames, 1u);
+	lk_media_stream_options_t media_stream;
+	lk_media_stream_options_init(&media_stream);
+	EXPECT_EQ(media_stream.struct_size, sizeof(media_stream));
+	EXPECT_EQ(media_stream.capacity, 16u);
 
 	lk_data_track_snapshot_info_t data_track_info;
 	lk_data_track_snapshot_info_init(&data_track_info);
@@ -688,6 +692,31 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	    lk_room_subscribe_data_track(room, "participant", "DT_missing", nullptr, &data_reader),
 	    LK_DATA_TRACK_ERROR_DISCONNECTED);
 	EXPECT_EQ(data_reader, nullptr);
+	lk_audio_stream_t* audio_stream = nullptr;
+	lk_video_stream_t* video_stream = nullptr;
+	lk_media_stream_options_t stream_options;
+	lk_media_stream_options_init(&stream_options);
+	EXPECT_EQ(lk_room_create_audio_stream(room, "participant", "TR_missing", &stream_options,
+	                                      &audio_stream),
+	          LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(audio_stream, nullptr);
+	EXPECT_EQ(lk_room_create_video_stream(room, "participant", "TR_missing", &stream_options,
+	                                      &video_stream),
+	          LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(video_stream, nullptr);
+	stream_options.struct_size = sizeof(stream_options.struct_size);
+	EXPECT_EQ(lk_room_create_audio_stream(room, "participant", "TR_missing", &stream_options,
+	                                      &audio_stream),
+	          LK_STATUS_OPERATION_FAILED);
+	stream_options.capacity = 0;
+	stream_options.struct_size = sizeof(stream_options);
+	EXPECT_EQ(lk_room_create_audio_stream(room, "participant", "TR_missing", &stream_options,
+	                                      &audio_stream),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_stream_try_read(nullptr, nullptr), LK_MEDIA_STREAM_READ_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_stream_read_for(nullptr, 1, nullptr), LK_MEDIA_STREAM_READ_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_owned_audio_frame_data(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_owned_video_frame_data(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, -0.1F), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_set_speaker_volume(room, 1.1F), LK_STATUS_INVALID_ARGUMENT);
 	lk_audio_playback_stats_t playback_stats;
