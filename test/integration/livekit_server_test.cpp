@@ -2497,6 +2497,9 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_FALSE(audio_publication->IsMuted());
 	ASSERT_NE(audio_publication->Track(), nullptr);
 	EXPECT_EQ(audio_publication->Track()->Name(), "integration-audio");
+	auto audio_stream = receiver->CreateAudioStream(sender->GetLocalParticipant()->Identity(),
+	                                                audio_publication->Sid(), {4});
+	ASSERT_NE(audio_stream, nullptr);
 	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), true));
 	ASSERT_TRUE(WaitUntil([&] { return audio_publication->IsMuted(); }));
 	ASSERT_TRUE(sender->SetLocalTrackMuted(audio_track->Sid(), false));
@@ -2509,6 +2512,11 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	ASSERT_TRUE(events.audio_received());
+	AudioFrame pulled_audio;
+	ASSERT_TRUE(audio_stream->ReadFor(pulled_audio, std::chrono::seconds(2)));
+	EXPECT_EQ(pulled_audio.sample_rate, 48000u);
+	EXPECT_EQ(pulled_audio.num_channels, 1u);
+	EXPECT_FALSE(pulled_audio.data.empty());
 
 	VideoFrame video_frame;
 	video_frame.width = 640;
@@ -2568,6 +2576,31 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	auto* video_publication = sender_participant->GetTrackPublication(TrackSource::Camera);
 	ASSERT_NE(video_publication, nullptr);
 	ASSERT_NE(video_publication->Track(), nullptr);
+	auto video_stream = receiver->CreateVideoStream(sender->GetLocalParticipant()->Identity(),
+	                                                video_publication->Sid(), {2});
+	ASSERT_NE(video_stream, nullptr);
+	video_frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+	                               std::chrono::steady_clock::now().time_since_epoch())
+	                               .count();
+	ASSERT_TRUE(video_source->CaptureFrame(video_frame));
+	VideoFrame pulled_video;
+	ASSERT_TRUE(video_stream->ReadFor(pulled_video, std::chrono::seconds(5)));
+	EXPECT_EQ(pulled_video.format, VideoBufferType::I420);
+	ASSERT_GT(pulled_video.width, 0u);
+	ASSERT_GT(pulled_video.height, 0u);
+	EXPECT_LE(pulled_video.width, video_frame.width);
+	EXPECT_LE(pulled_video.height, video_frame.height);
+	const auto pulled_chroma_width = (pulled_video.width + 1) / 2;
+	const auto pulled_chroma_height = (pulled_video.height + 1) / 2;
+	const auto pulled_y_size =
+	    static_cast<std::size_t>(pulled_video.width) * pulled_video.height;
+	const auto pulled_chroma_size =
+	    static_cast<std::size_t>(pulled_chroma_width) * pulled_chroma_height;
+	EXPECT_EQ(pulled_video.data.size(), pulled_y_size + pulled_chroma_size * 2);
+	ASSERT_EQ(pulled_video.planes.size(), 3u);
+	EXPECT_EQ(pulled_video.planes[0].stride, pulled_video.width);
+	EXPECT_EQ(pulled_video.planes[1].stride, pulled_chroma_width);
+	EXPECT_EQ(pulled_video.planes[2].stride, pulled_chroma_width);
 	std::string inbound_stats;
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
@@ -2605,6 +2638,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 		       events.subscription_status(video_publication->Sid(),
 		                                  TrackSubscriptionStatus::Unsubscribed);
 	}));
+	EXPECT_TRUE(video_stream->IsClosed());
 	ASSERT_TRUE(receiver->SetRemoteTrackSubscribed(sender_participant->Sid(),
 	                                               video_publication->Sid(), true));
 	ASSERT_TRUE(WaitUntil([&] {
@@ -2742,6 +2776,7 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	ASSERT_TRUE(WaitUntil([&] {
 		return sender_participant->GetTrackPublication(TrackSource::Microphone) == nullptr;
 	}));
+	EXPECT_TRUE(audio_stream->IsClosed());
 
 	video_track.reset();
 	video_source.reset();

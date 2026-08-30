@@ -157,6 +157,7 @@ set(
   src/core/track/local_track.cpp
   src/core/track/local_track_publication.cpp
   src/core/track/local_video_track.cpp
+  src/core/track/media_stream.cpp
   src/core/track/media_stream_track.cpp
   src/core/track/microphone_audio_source.cpp
   src/core/track/screen_video_source.cpp

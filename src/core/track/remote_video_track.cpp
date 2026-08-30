@@ -19,6 +19,7 @@
 
 #include "api/video/i420_buffer.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace livekit {
@@ -31,7 +32,23 @@ RemoteVideoTrack::RemoteVideoTrack(std::string sid, std::string name,
 	static_cast<VideoTrack*>(media_track())->AddSink(this);
 }
 
-RemoteVideoTrack::~RemoteVideoTrack() { static_cast<VideoTrack*>(media_track())->RemoveSink(this); }
+RemoteVideoTrack::~RemoteVideoTrack() {
+	static_cast<VideoTrack*>(media_track())->RemoveSink(this);
+	CloseStreams();
+}
+
+std::shared_ptr<VideoStream> RemoteVideoTrack::CreateVideoStream(MediaStreamOptions options) {
+	if (options.capacity == 0) {
+		return nullptr;
+	}
+	auto stream = std::shared_ptr<VideoStream>(new VideoStream(options.capacity));
+	std::lock_guard<std::mutex> guard(streams_mutex_);
+	streams_.erase(std::remove_if(streams_.begin(), streams_.end(),
+	                              [](const auto& weak) { return weak.expired(); }),
+	               streams_.end());
+	streams_.push_back(stream);
+	return stream;
+}
 
 void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 	auto buffer = rtc_frame.video_frame_buffer()->ToI420();
@@ -62,7 +79,40 @@ void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 		std::memcpy(frame.data.data() + y_size + chroma_size + row * chroma_width,
 		            buffer->DataV() + row * buffer->StrideV(), chroma_width);
 	}
-	callback_(frame);
+	std::vector<std::shared_ptr<VideoStream>> streams;
+	{
+		std::lock_guard<std::mutex> guard(streams_mutex_);
+		for (auto it = streams_.begin(); it != streams_.end();) {
+			if (auto stream = it->lock()) {
+				streams.push_back(std::move(stream));
+				++it;
+			} else {
+				it = streams_.erase(it);
+			}
+		}
+	}
+	for (const auto& stream : streams) {
+		stream->Push(frame);
+	}
+	if (callback_) {
+		callback_(frame);
+	}
+}
+
+void RemoteVideoTrack::CloseStreams() {
+	std::vector<std::shared_ptr<VideoStream>> streams;
+	{
+		std::lock_guard<std::mutex> guard(streams_mutex_);
+		for (const auto& weak : streams_) {
+			if (auto stream = weak.lock()) {
+				streams.push_back(std::move(stream));
+			}
+		}
+		streams_.clear();
+	}
+	for (const auto& stream : streams) {
+		stream->Close();
+	}
 }
 
 } // namespace core

@@ -30,6 +30,7 @@
 #include "room_event_interface.h"
 #include "rpc.h"
 #include "token_source.h"
+#include "track/media_stream.h"
 
 #include <memory>
 
@@ -72,6 +73,14 @@ public:
 	// subscription while participant updates are processed concurrently.
 	std::shared_ptr<RemoteDataTrackInterface> GetRemoteDataTrack(std::string participant_identity,
 	                                                             std::string track_sid);
+	// Opens a bounded pull reader for a currently subscribed media track. The participant identity
+	// and track SID must identify the same live remote publication.
+	std::shared_ptr<AudioStream> CreateAudioStream(std::string participant_identity,
+	                                               std::string track_sid,
+	                                               MediaStreamOptions options = {});
+	std::shared_ptr<VideoStream> CreateVideoStream(std::string participant_identity,
+	                                               std::string track_sid,
+	                                               MediaStreamOptions options = {});
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
 	// LiveKit identity is stable for a participant session and should normally be preferred over
 	// the mutable display name.

@@ -112,7 +112,9 @@ Connects to a room, prints the local participant identity and SID, and disconnec
 ### `room_event`
 
 Receives room events, subscribed and unsubscribed tracks, SFU pause/resume state, decoded PCM/I420
-frames, data messages, structured chat messages, SIP DTMF events, and completed files. It also
+frames, data messages, structured chat messages, SIP DTMF events, and completed files. For every
+subscribed media track it also creates a bounded `AudioStream` or `VideoStream` and pulls frames on
+a consumer thread, demonstrating that pull readers and event callbacks can run together. It also
 reports transcription segments, metrics batches, recording and connection state changes,
 participant permission changes, `OnReconnecting`, and `OnReconnected`
 It also reports when a published local track gains its first remote subscriber and prints

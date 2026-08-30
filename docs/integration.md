@@ -103,6 +103,19 @@ tests were skipped in that ordinary run. Release and Debug DLL builds each match
 260 C ABI declarations. The local `Media` scenario also passed all four real-server tests, including
 640x360 RGBA publication, remote decoding, audio/video frame progress, and sensitive-log audit.
 
+## Pull-based remote-media acceptance
+
+The next source batch added bounded `AudioStream` and `VideoStream` readers without replacing the
+existing remote-frame callbacks. The Windows Release suite passed all 180 registered CTest cases:
+149 deterministic tests executed successfully and 31 credential, network, or hardware opt-in tests
+were skipped as designed. Release and Debug DLL builds each matched all 279 C ABI declarations.
+
+The local H.264 `Media` scenario passed all four real-server gates outside the sandbox. Its dual-end
+media test consumed audio and I420 video through pull readers while the legacy callbacks continued
+to receive frames, then verified reader closure after video unsubscribe and audio unpublish. Video
+dimensions are validated as legal decoded I420 dimensions rather than hard-coded to the publication
+size because LiveKit simulcast and adaptive subscription may select a lower layer such as 320x180.
+
 ## Running the integration harness
 
 Configure with `BUILD_INTEGRATION_TESTS=ON`, build `livekit_server_integration_tests`, and invoke the

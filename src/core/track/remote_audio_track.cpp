@@ -17,6 +17,8 @@
 
 #include "remote_audio_track.h"
 
+#include <algorithm>
+
 namespace livekit {
 namespace core {
 namespace {
@@ -47,9 +49,66 @@ private:
 
 RemoteAudioTrack::RemoteAudioTrack(std::string sid, std::string name,
                                    std::unique_ptr<AudioTrack> audio_track, FrameCallback callback)
-    : RemoteTrack(std::move(sid), std::move(name), TrackKind::Audio, std::move(audio_track)) {
-	sink_ = std::make_shared<AudioSink>(std::make_unique<FrameSink>(std::move(callback)), 48000, 1);
+    : RemoteTrack(std::move(sid), std::move(name), TrackKind::Audio, std::move(audio_track)),
+      callback_(std::move(callback)) {
+	sink_ = std::make_shared<AudioSink>(
+	    std::make_unique<FrameSink>([this](const AudioFrame& frame) { OnFrame(frame); }), 48000, 1);
 	static_cast<AudioTrack*>(media_track())->add_sink(sink_);
+}
+
+RemoteAudioTrack::~RemoteAudioTrack() {
+	static_cast<AudioTrack*>(media_track())->remove_sink(sink_);
+	CloseStreams();
+}
+
+std::shared_ptr<AudioStream> RemoteAudioTrack::CreateAudioStream(MediaStreamOptions options) {
+	if (options.capacity == 0) {
+		return nullptr;
+	}
+	auto stream = std::shared_ptr<AudioStream>(new AudioStream(options.capacity));
+	std::lock_guard<std::mutex> guard(streams_mutex_);
+	streams_.erase(std::remove_if(streams_.begin(), streams_.end(),
+	                              [](const auto& weak) { return weak.expired(); }),
+	               streams_.end());
+	streams_.push_back(stream);
+	return stream;
+}
+
+void RemoteAudioTrack::OnFrame(const AudioFrame& frame) {
+	std::vector<std::shared_ptr<AudioStream>> streams;
+	{
+		std::lock_guard<std::mutex> guard(streams_mutex_);
+		for (auto it = streams_.begin(); it != streams_.end();) {
+			if (auto stream = it->lock()) {
+				streams.push_back(std::move(stream));
+				++it;
+			} else {
+				it = streams_.erase(it);
+			}
+		}
+	}
+	for (const auto& stream : streams) {
+		stream->Push(frame);
+	}
+	if (callback_) {
+		callback_(frame);
+	}
+}
+
+void RemoteAudioTrack::CloseStreams() {
+	std::vector<std::shared_ptr<AudioStream>> streams;
+	{
+		std::lock_guard<std::mutex> guard(streams_mutex_);
+		for (const auto& weak : streams_) {
+			if (auto stream = weak.lock()) {
+				streams.push_back(std::move(stream));
+			}
+		}
+		streams_.clear();
+	}
+	for (const auto& stream : streams) {
+		stream->Close();
+	}
 }
 
 } // namespace core

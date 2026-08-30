@@ -26,6 +26,8 @@
 #include "livekit/core/track/video_frame.h"
 
 #include <functional>
+#include <mutex>
+#include <vector>
 
 namespace livekit {
 namespace core {
@@ -38,11 +40,15 @@ public:
 	RemoteVideoTrack(std::string sid, std::string name, std::unique_ptr<VideoTrack> video_track,
 	                 FrameCallback callback);
 	~RemoteVideoTrack() override;
+	std::shared_ptr<VideoStream> CreateVideoStream(MediaStreamOptions options = {}) override;
 
 private:
 	void OnFrame(const webrtc::VideoFrame& frame) override;
+	void CloseStreams();
 
 	FrameCallback callback_;
+	std::mutex streams_mutex_;
+	std::vector<std::weak_ptr<VideoStream>> streams_;
 };
 
 } // namespace core

@@ -56,6 +56,10 @@ typedef struct lk_remote_data_track_snapshot lk_remote_data_track_snapshot_t;
 typedef struct lk_data_track_reader lk_data_track_reader_t;
 typedef struct lk_data_track_frame lk_data_track_frame_t;
 typedef struct lk_data_track_schema lk_data_track_schema_t;
+typedef struct lk_audio_stream lk_audio_stream_t;
+typedef struct lk_video_stream lk_video_stream_t;
+typedef struct lk_owned_audio_frame lk_owned_audio_frame_t;
+typedef struct lk_owned_video_frame lk_owned_video_frame_t;
 
 typedef enum lk_status {
 	LK_STATUS_OK = 0,
@@ -335,6 +339,13 @@ typedef enum lk_data_track_read_status {
 	LK_DATA_TRACK_READ_CLOSED = 2,
 	LK_DATA_TRACK_READ_INVALID_ARGUMENT = 3
 } lk_data_track_read_status_t;
+
+typedef enum lk_media_stream_read_status {
+	LK_MEDIA_STREAM_READ_FRAME = 0,
+	LK_MEDIA_STREAM_READ_EMPTY = 1,
+	LK_MEDIA_STREAM_READ_CLOSED = 2,
+	LK_MEDIA_STREAM_READ_INVALID_ARGUMENT = 3
+} lk_media_stream_read_status_t;
 
 typedef struct lk_participant_info {
 	const char* sid;
@@ -1092,6 +1103,11 @@ typedef struct lk_data_track_subscription_options {
 	size_t max_partial_frames;
 } lk_data_track_subscription_options_t;
 
+typedef struct lk_media_stream_options {
+	size_t struct_size;
+	size_t capacity;
+} lk_media_stream_options_t;
+
 typedef struct lk_file_send_options {
 	size_t struct_size;
 	const char* topic;
@@ -1267,6 +1283,7 @@ LKC_API void lk_data_publish_options_init(lk_data_publish_options_t* options);
 LKC_API void lk_data_track_schema_id_init(lk_data_track_schema_id_t* schema_id);
 LKC_API void lk_data_track_publish_options_init(lk_data_track_publish_options_t* options);
 LKC_API void lk_data_track_subscription_options_init(lk_data_track_subscription_options_t* options);
+LKC_API void lk_media_stream_options_init(lk_media_stream_options_t* options);
 LKC_API void lk_data_track_snapshot_info_init(lk_data_track_snapshot_info_t* info);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
@@ -1602,6 +1619,45 @@ LKC_API size_t lk_data_track_frame_data(const lk_data_track_frame_t* frame, uint
                                         size_t buffer_size);
 LKC_API int lk_data_track_frame_has_user_timestamp(const lk_data_track_frame_t* frame);
 LKC_API uint64_t lk_data_track_frame_user_timestamp(const lk_data_track_frame_t* frame);
+/*
+ * Media stream handles own bounded pull readers. A successful read transfers one owned frame
+ * handle to the caller; its borrowed data pointer remains valid until that frame is destroyed.
+ * EMPTY means no frame arrived before the timeout, while CLOSED is terminal for that reader.
+ * Destroying or closing a stream wakes blocked reads. Track unsubscribe/unpublish closes all of
+ * that track's readers. Existing room frame callbacks continue independently.
+ */
+LKC_API lk_status_t lk_room_create_audio_stream(lk_room_t* room, const char* participant_identity,
+                                                const char* track_sid,
+                                                const lk_media_stream_options_t* options,
+                                                lk_audio_stream_t** stream);
+LKC_API lk_status_t lk_room_create_video_stream(lk_room_t* room, const char* participant_identity,
+                                                const char* track_sid,
+                                                const lk_media_stream_options_t* options,
+                                                lk_video_stream_t** stream);
+LKC_API void lk_audio_stream_destroy(lk_audio_stream_t* stream);
+LKC_API void lk_audio_stream_close(lk_audio_stream_t* stream);
+LKC_API int lk_audio_stream_is_closed(const lk_audio_stream_t* stream);
+LKC_API size_t lk_audio_stream_dropped_frames(const lk_audio_stream_t* stream);
+LKC_API lk_media_stream_read_status_t lk_audio_stream_try_read(lk_audio_stream_t* stream,
+                                                               lk_owned_audio_frame_t** frame);
+LKC_API lk_media_stream_read_status_t lk_audio_stream_read_for(lk_audio_stream_t* stream,
+                                                               uint32_t timeout_ms,
+                                                               lk_owned_audio_frame_t** frame);
+LKC_API void lk_video_stream_destroy(lk_video_stream_t* stream);
+LKC_API void lk_video_stream_close(lk_video_stream_t* stream);
+LKC_API int lk_video_stream_is_closed(const lk_video_stream_t* stream);
+LKC_API size_t lk_video_stream_dropped_frames(const lk_video_stream_t* stream);
+LKC_API lk_media_stream_read_status_t lk_video_stream_try_read(lk_video_stream_t* stream,
+                                                               lk_owned_video_frame_t** frame);
+LKC_API lk_media_stream_read_status_t lk_video_stream_read_for(lk_video_stream_t* stream,
+                                                               uint32_t timeout_ms,
+                                                               lk_owned_video_frame_t** frame);
+LKC_API void lk_owned_audio_frame_destroy(lk_owned_audio_frame_t* frame);
+LKC_API lk_status_t lk_owned_audio_frame_data(const lk_owned_audio_frame_t* frame,
+                                              lk_audio_frame_t* data);
+LKC_API void lk_owned_video_frame_destroy(lk_owned_video_frame_t* frame);
+LKC_API lk_status_t lk_owned_video_frame_data(const lk_owned_video_frame_t* frame,
+                                              lk_video_frame_t* data);
 LKC_API lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit);
 LKC_API lk_status_t lk_room_send_chat_message(lk_room_t* room, const char* message,
                                               char* message_id, size_t message_id_size,

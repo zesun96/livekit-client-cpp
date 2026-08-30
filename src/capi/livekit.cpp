@@ -116,6 +116,22 @@ struct lk_data_track_schema {
 	core::DataTrackSchema schema;
 };
 
+struct lk_audio_stream {
+	std::shared_ptr<core::AudioStream> stream;
+};
+
+struct lk_video_stream {
+	std::shared_ptr<core::VideoStream> stream;
+};
+
+struct lk_owned_audio_frame {
+	core::AudioFrame frame;
+};
+
+struct lk_owned_video_frame {
+	core::VideoFrame frame;
+};
+
 struct lk_rpc_result {
 	core::RpcResult result;
 };
@@ -2617,6 +2633,14 @@ void lk_data_track_subscription_options_init(lk_data_track_subscription_options_
 		options->struct_size = sizeof(*options);
 		options->buffer_capacity = 16;
 		options->max_partial_frames = 1;
+	}
+}
+
+void lk_media_stream_options_init(lk_media_stream_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->capacity = 16;
 	}
 }
 
@@ -5324,6 +5348,226 @@ int lk_data_track_frame_has_user_timestamp(const lk_data_track_frame_t* frame) {
 
 uint64_t lk_data_track_frame_user_timestamp(const lk_data_track_frame_t* frame) {
 	return frame != nullptr ? frame->frame.user_timestamp.value_or(0) : 0;
+}
+
+lk_status_t lk_room_create_audio_stream(lk_room_t* room, const char* participant_identity,
+                                        const char* track_sid,
+                                        const lk_media_stream_options_t* options,
+                                        lk_audio_stream_t** stream) {
+	return Guard([&] {
+		if (stream == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio stream output is required");
+		}
+		*stream = nullptr;
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0' || track_sid == nullptr || *track_sid == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room, participant identity, and track SID are required");
+		}
+		core::MediaStreamOptions converted;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid media stream options size");
+			}
+			if (LKC_HAS_FIELD(options, lk_media_stream_options_t, capacity) &&
+			    options->capacity == 0) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "media stream capacity must be positive");
+			}
+			if (LKC_HAS_FIELD(options, lk_media_stream_options_t, capacity)) {
+				converted.capacity = options->capacity;
+			}
+		}
+		auto created = room->room->CreateAudioStream(participant_identity, track_sid, converted);
+		if (!created) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "remote audio track is unavailable");
+		}
+		auto output = std::make_unique<lk_audio_stream_t>();
+		output->stream = std::move(created);
+		*stream = output.release();
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_room_create_video_stream(lk_room_t* room, const char* participant_identity,
+                                        const char* track_sid,
+                                        const lk_media_stream_options_t* options,
+                                        lk_video_stream_t** stream) {
+	return Guard([&] {
+		if (stream == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video stream output is required");
+		}
+		*stream = nullptr;
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0' || track_sid == nullptr || *track_sid == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room, participant identity, and track SID are required");
+		}
+		core::MediaStreamOptions converted;
+		if (options != nullptr) {
+			if (options->struct_size < sizeof(options->struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid media stream options size");
+			}
+			if (LKC_HAS_FIELD(options, lk_media_stream_options_t, capacity) &&
+			    options->capacity == 0) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "media stream capacity must be positive");
+			}
+			if (LKC_HAS_FIELD(options, lk_media_stream_options_t, capacity)) {
+				converted.capacity = options->capacity;
+			}
+		}
+		auto created = room->room->CreateVideoStream(participant_identity, track_sid, converted);
+		if (!created) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "remote video track is unavailable");
+		}
+		auto output = std::make_unique<lk_video_stream_t>();
+		output->stream = std::move(created);
+		*stream = output.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_audio_stream_destroy(lk_audio_stream_t* stream) { delete stream; }
+
+void lk_audio_stream_close(lk_audio_stream_t* stream) {
+	if (stream != nullptr && stream->stream != nullptr) {
+		stream->stream->Close();
+	}
+}
+
+int lk_audio_stream_is_closed(const lk_audio_stream_t* stream) {
+	return stream == nullptr || stream->stream == nullptr || stream->stream->IsClosed();
+}
+
+size_t lk_audio_stream_dropped_frames(const lk_audio_stream_t* stream) {
+	return stream != nullptr && stream->stream != nullptr ? stream->stream->DroppedFrames() : 0;
+}
+
+static lk_media_stream_read_status_t ReadAudioStreamFrame(lk_audio_stream_t* stream,
+                                                          lk_owned_audio_frame_t** frame, bool wait,
+                                                          uint32_t timeout_ms) {
+	try {
+		ClearError();
+		if (frame == nullptr || stream == nullptr || stream->stream == nullptr) {
+			Failure(LK_STATUS_INVALID_ARGUMENT, "audio stream and frame output are required");
+			return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+		}
+		*frame = nullptr;
+		core::AudioFrame value;
+		const bool received =
+		    wait ? stream->stream->ReadFor(value, std::chrono::milliseconds(timeout_ms))
+		         : stream->stream->TryRead(value);
+		if (!received) {
+			return stream->stream->IsClosed() ? LK_MEDIA_STREAM_READ_CLOSED
+			                                  : LK_MEDIA_STREAM_READ_EMPTY;
+		}
+		auto output = std::make_unique<lk_owned_audio_frame_t>();
+		output->frame = std::move(value);
+		*frame = output.release();
+		return LK_MEDIA_STREAM_READ_FRAME;
+	} catch (const std::exception& exception) {
+		Failure(LK_STATUS_EXCEPTION, exception.what());
+		return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+	} catch (...) {
+		Failure(LK_STATUS_EXCEPTION, "unknown C++ exception");
+		return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+	}
+}
+
+lk_media_stream_read_status_t lk_audio_stream_try_read(lk_audio_stream_t* stream,
+                                                       lk_owned_audio_frame_t** frame) {
+	return ReadAudioStreamFrame(stream, frame, false, 0);
+}
+
+lk_media_stream_read_status_t lk_audio_stream_read_for(lk_audio_stream_t* stream,
+                                                       uint32_t timeout_ms,
+                                                       lk_owned_audio_frame_t** frame) {
+	return ReadAudioStreamFrame(stream, frame, true, timeout_ms);
+}
+
+void lk_video_stream_destroy(lk_video_stream_t* stream) { delete stream; }
+
+void lk_video_stream_close(lk_video_stream_t* stream) {
+	if (stream != nullptr && stream->stream != nullptr) {
+		stream->stream->Close();
+	}
+}
+
+int lk_video_stream_is_closed(const lk_video_stream_t* stream) {
+	return stream == nullptr || stream->stream == nullptr || stream->stream->IsClosed();
+}
+
+size_t lk_video_stream_dropped_frames(const lk_video_stream_t* stream) {
+	return stream != nullptr && stream->stream != nullptr ? stream->stream->DroppedFrames() : 0;
+}
+
+static lk_media_stream_read_status_t ReadVideoStreamFrame(lk_video_stream_t* stream,
+                                                          lk_owned_video_frame_t** frame, bool wait,
+                                                          uint32_t timeout_ms) {
+	try {
+		ClearError();
+		if (frame == nullptr || stream == nullptr || stream->stream == nullptr) {
+			Failure(LK_STATUS_INVALID_ARGUMENT, "video stream and frame output are required");
+			return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+		}
+		*frame = nullptr;
+		core::VideoFrame value;
+		const bool received =
+		    wait ? stream->stream->ReadFor(value, std::chrono::milliseconds(timeout_ms))
+		         : stream->stream->TryRead(value);
+		if (!received) {
+			return stream->stream->IsClosed() ? LK_MEDIA_STREAM_READ_CLOSED
+			                                  : LK_MEDIA_STREAM_READ_EMPTY;
+		}
+		auto output = std::make_unique<lk_owned_video_frame_t>();
+		output->frame = std::move(value);
+		*frame = output.release();
+		return LK_MEDIA_STREAM_READ_FRAME;
+	} catch (const std::exception& exception) {
+		Failure(LK_STATUS_EXCEPTION, exception.what());
+		return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+	} catch (...) {
+		Failure(LK_STATUS_EXCEPTION, "unknown C++ exception");
+		return LK_MEDIA_STREAM_READ_INVALID_ARGUMENT;
+	}
+}
+
+lk_media_stream_read_status_t lk_video_stream_try_read(lk_video_stream_t* stream,
+                                                       lk_owned_video_frame_t** frame) {
+	return ReadVideoStreamFrame(stream, frame, false, 0);
+}
+
+lk_media_stream_read_status_t lk_video_stream_read_for(lk_video_stream_t* stream,
+                                                       uint32_t timeout_ms,
+                                                       lk_owned_video_frame_t** frame) {
+	return ReadVideoStreamFrame(stream, frame, true, timeout_ms);
+}
+
+void lk_owned_audio_frame_destroy(lk_owned_audio_frame_t* frame) { delete frame; }
+
+lk_status_t lk_owned_audio_frame_data(const lk_owned_audio_frame_t* frame, lk_audio_frame_t* data) {
+	return Guard([&] {
+		if (frame == nullptr || data == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "owned audio frame and output are required");
+		}
+		*data = {frame->frame.data.data(), frame->frame.data.size(), frame->frame.sample_rate,
+		         frame->frame.num_channels, frame->frame.samples_per_channel};
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_owned_video_frame_destroy(lk_owned_video_frame_t* frame) { delete frame; }
+
+lk_status_t lk_owned_video_frame_data(const lk_owned_video_frame_t* frame, lk_video_frame_t* data) {
+	return Guard([&] {
+		if (frame == nullptr || data == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "owned video frame and output are required");
+		}
+		*data = {frame->frame.data.data(), frame->frame.data.size(), frame->frame.width,
+		         frame->frame.height, frame->frame.timestamp_us};
+		return LK_STATUS_OK;
+	});
 }
 
 lk_status_t lk_room_publish_dtmf(lk_room_t* room, uint32_t code, const char* digit) {

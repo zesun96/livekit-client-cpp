@@ -581,6 +581,40 @@ std::shared_ptr<RemoteDataTrackInterface> Room::GetRemoteDataTrack(std::string p
 	           : nullptr;
 }
 
+std::shared_ptr<AudioStream> Room::CreateAudioStream(std::string participant_identity,
+                                                     std::string track_sid,
+                                                     MediaStreamOptions options) {
+	std::lock_guard<std::mutex> guard(participants_mutex_);
+	const auto participant =
+	    std::find_if(remote_participants_.begin(), remote_participants_.end(),
+	                 [&participant_identity](const auto& entry) {
+		                 return entry.second->Identity() == participant_identity;
+	                 });
+	const auto track = remote_tracks_.find(track_sid);
+	if (participant == remote_participants_.end() || track == remote_tracks_.end() ||
+	    !participant->second->HasTrackSid(track_sid)) {
+		return nullptr;
+	}
+	return track->second->CreateAudioStream(options);
+}
+
+std::shared_ptr<VideoStream> Room::CreateVideoStream(std::string participant_identity,
+                                                     std::string track_sid,
+                                                     MediaStreamOptions options) {
+	std::lock_guard<std::mutex> guard(participants_mutex_);
+	const auto participant =
+	    std::find_if(remote_participants_.begin(), remote_participants_.end(),
+	                 [&participant_identity](const auto& entry) {
+		                 return entry.second->Identity() == participant_identity;
+	                 });
+	const auto track = remote_tracks_.find(track_sid);
+	if (participant == remote_participants_.end() || track == remote_tracks_.end() ||
+	    !participant->second->HasTrackSid(track_sid)) {
+		return nullptr;
+	}
+	return track->second->CreateVideoStream(options);
+}
+
 RemoteParticipantInterface* Room::GetRemoteParticipantBySid(std::string sid) {
 	std::lock_guard<std::mutex> guard(participants_mutex_);
 	auto participant = remote_participants_.find(sid);
@@ -834,6 +868,24 @@ RoomInterface::GetRemoteDataTrack(std::string participant_identity, std::string 
 	return room != nullptr
 	           ? room->GetRemoteDataTrack(std::move(participant_identity), std::move(track_sid))
 	           : nullptr;
+}
+
+std::shared_ptr<AudioStream> RoomInterface::CreateAudioStream(std::string participant_identity,
+                                                              std::string track_sid,
+                                                              MediaStreamOptions options) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr ? room->CreateAudioStream(std::move(participant_identity),
+	                                                 std::move(track_sid), options)
+	                       : nullptr;
+}
+
+std::shared_ptr<VideoStream> RoomInterface::CreateVideoStream(std::string participant_identity,
+                                                              std::string track_sid,
+                                                              MediaStreamOptions options) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr ? room->CreateVideoStream(std::move(participant_identity),
+	                                                 std::move(track_sid), options)
+	                       : nullptr;
 }
 
 RoomInterface::RoomState RoomInterface::State() const {

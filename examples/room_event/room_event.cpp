@@ -7,8 +7,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 class RoomEvents final : public livekit::core::RoomEventInterface {
 public:
@@ -35,6 +37,34 @@ public:
 		std::cout << "Subscribed "
 		          << (track->Kind() == livekit::core::TrackKind::Audio ? "audio" : "video")
 		          << " track " << track->Sid() << " from " << participant->Identity() << std::endl;
+		std::lock_guard<std::mutex> guard(stream_threads_mutex_);
+		if (track->Kind() == livekit::core::TrackKind::Audio) {
+			if (auto stream = track->CreateAudioStream({8})) {
+				stream_threads_.emplace_back([stream](std::stop_token stop) {
+					bool reported = false;
+					while (!stop.stop_requested() && !stream->IsClosed()) {
+						livekit::core::AudioFrame frame;
+						if (stream->ReadFor(frame, std::chrono::milliseconds(200)) && !reported) {
+							std::cout << "AudioStream pulled " << frame.samples_per_channel
+							          << " samples per channel" << std::endl;
+							reported = true;
+						}
+					}
+				});
+			}
+		} else if (auto stream = track->CreateVideoStream({2})) {
+			stream_threads_.emplace_back([stream](std::stop_token stop) {
+				bool reported = false;
+				while (!stop.stop_requested() && !stream->IsClosed()) {
+					livekit::core::VideoFrame frame;
+					if (stream->ReadFor(frame, std::chrono::milliseconds(200)) && !reported) {
+						std::cout << "VideoStream pulled " << frame.width << 'x' << frame.height
+						          << " frame" << std::endl;
+						reported = true;
+					}
+				}
+			});
+		}
 	}
 
 	void OnLocalTrackSubscribed(livekit::core::TrackPublicationInterface* publication,
@@ -178,6 +208,8 @@ private:
 	std::atomic<bool> connected_{false};
 	std::atomic<uint64_t> audio_frames_{0};
 	std::atomic<uint64_t> video_frames_{0};
+	std::mutex stream_threads_mutex_;
+	std::vector<std::jthread> stream_threads_;
 };
 
 int main(int argc, char* argv[]) {
