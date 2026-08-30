@@ -508,6 +508,65 @@ bool ToCoreDataTrackFrameEncoding(lk_data_track_frame_encoding_t encoding,
 	}
 }
 
+bool ToCoreVideoBufferType(lk_video_buffer_type_t type, core::VideoBufferType& result) {
+	switch (type) {
+	case LK_VIDEO_BUFFER_RGBA:
+		result = core::VideoBufferType::RGBA;
+		return true;
+	case LK_VIDEO_BUFFER_ABGR:
+		result = core::VideoBufferType::ABGR;
+		return true;
+	case LK_VIDEO_BUFFER_ARGB:
+		result = core::VideoBufferType::ARGB;
+		return true;
+	case LK_VIDEO_BUFFER_BGRA:
+		result = core::VideoBufferType::BGRA;
+		return true;
+	case LK_VIDEO_BUFFER_RGB24:
+		result = core::VideoBufferType::RGB24;
+		return true;
+	case LK_VIDEO_BUFFER_I420:
+		result = core::VideoBufferType::I420;
+		return true;
+	case LK_VIDEO_BUFFER_I420A:
+		result = core::VideoBufferType::I420A;
+		return true;
+	case LK_VIDEO_BUFFER_I422:
+		result = core::VideoBufferType::I422;
+		return true;
+	case LK_VIDEO_BUFFER_I444:
+		result = core::VideoBufferType::I444;
+		return true;
+	case LK_VIDEO_BUFFER_I010:
+		result = core::VideoBufferType::I010;
+		return true;
+	case LK_VIDEO_BUFFER_NV12:
+		result = core::VideoBufferType::NV12;
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool ToCoreVideoRotation(lk_video_rotation_t rotation, core::VideoRotation& result) {
+	switch (rotation) {
+	case LK_VIDEO_ROTATION_0:
+		result = core::VideoRotation::Rotation0;
+		return true;
+	case LK_VIDEO_ROTATION_90:
+		result = core::VideoRotation::Rotation90;
+		return true;
+	case LK_VIDEO_ROTATION_180:
+		result = core::VideoRotation::Rotation180;
+		return true;
+	case LK_VIDEO_ROTATION_270:
+		result = core::VideoRotation::Rotation270;
+		return true;
+	default:
+		return false;
+	}
+}
+
 lk_data_track_frame_encoding_t
 ToCDataTrackFrameEncoding(core::DataTrackFrameEncodingKind encoding) {
 	switch (encoding) {
@@ -2478,6 +2537,15 @@ void lk_video_source_options_init(lk_video_source_options_t* options) {
 	}
 }
 
+void lk_video_frame_input_init(lk_video_frame_input_t* frame) {
+	if (frame != nullptr) {
+		*frame = {};
+		frame->struct_size = sizeof(*frame);
+		frame->rotation = LK_VIDEO_ROTATION_0;
+		frame->format = LK_VIDEO_BUFFER_I420;
+	}
+}
+
 void lk_camera_capture_options_init(lk_camera_capture_options_t* options) {
 	if (options != nullptr) {
 		*options = {};
@@ -4192,6 +4260,45 @@ lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
 	}
 	delete source;
 	return LK_STATUS_OK;
+}
+
+lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
+                                          const lk_video_frame_input_t* input) {
+	return Guard([&] {
+		constexpr std::size_t required_input_size =
+		    offsetof(lk_video_frame_input_t, format) + sizeof(lk_video_buffer_type_t);
+		if (source == nullptr || input == nullptr || input->struct_size < required_input_size ||
+		    input->data == nullptr || input->data_size == 0 || input->width == 0 ||
+		    input->height == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video frame");
+		}
+		core::VideoBufferType format;
+		core::VideoRotation rotation;
+		if (!ToCoreVideoBufferType(input->format, format) ||
+		    !ToCoreVideoRotation(input->rotation, rotation)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid video frame format or rotation");
+		}
+		core::VideoFrame frame;
+		frame.data.assign(input->data, input->data + input->data_size);
+		frame.width = input->width;
+		frame.height = input->height;
+		frame.timestamp_us = input->timestamp_us;
+		frame.rotation = rotation;
+		frame.format = format;
+		if (LKC_HAS_FIELD(input, lk_video_frame_input_t, plane_count) && input->plane_count != 0) {
+			if (input->planes == nullptr) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "video frame planes are null");
+			}
+			frame.planes.reserve(input->plane_count);
+			for (std::size_t index = 0; index < input->plane_count; ++index) {
+				frame.planes.push_back({input->planes[index].offset, input->planes[index].size,
+				                        input->planes[index].stride});
+			}
+		}
+		return source->source->CaptureFrame(frame)
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "failed to capture video frame");
+	});
 }
 
 lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,

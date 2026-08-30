@@ -9,6 +9,7 @@ add_executable(
   microphone_source_test.cpp
   participant_state_test.cpp
   public_api_test.cpp
+  video_frame_format_test.cpp
   video_frame_converter_test.cpp
   track_stats_test.cpp
   video_codec_factory_test.cpp

@@ -232,8 +232,12 @@ adjust sender limits without republishing. Add `true` as the third argument to t
 backup codec; the SDK retains that value if its sender has not been requested yet. Zero values
 restore the SDK defaults for the current source dimensions.
 
-Publishes synthetic 640x360 I420 video at approximately 30 frames per second for five seconds.
-The SDK encodes the frames as VP8 for transport.
+Publishes synthetic 640x360 RGBA video at approximately 30 frames per second for five seconds,
+demonstrating the SDK's conversion to the I420 representation consumed by WebRTC. External
+`VideoFrame` producers may also submit ABGR, ARGB, BGRA, RGB24, I420, I420A, I422, I444, I010, or
+NV12 and may describe padded buffers through `VideoFrame::planes`. I420A alpha is accepted and
+validated but is discarded by the current WebRTC encoder path. The C API offers
+the equivalent size-versioned `lk_video_frame_input_t` and `lk_video_source_capture_frame` call.
 The example samples `RTCStatsMonitor` every two seconds and prints normalized codec, packet, and
 bitrate values. The monitor is caller-scheduled and does not create a background thread.
 It then unpublishes the local track and renegotiates before disconnecting.

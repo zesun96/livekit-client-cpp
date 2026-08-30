@@ -34,7 +34,8 @@ release-candidate gates on its target hardware and network.
 | Weak network | Scoped packet loss, latency, jitter, and temporary-outage profiles passed |
 | Resource soak | H264 30-minute and 2-hour gates passed within handle, thread, and Private Bytes limits |
 | Hardware audio processing | Physical AEC, double-talk preservation, noise suppression, and zero-drop gates passed |
-| Installed Windows package | Release/Debug C++ and C consumers built; 0.3.0 runtime smoke and all C ABI export checks passed |
+| Installed Windows package | Release C++ and Release/Debug C runtime smoke plus all C ABI export checks passed; Debug C++ static-CRT ABI caveat recorded below |
+| External video formats | Eleven public input formats, odd dimensions, padded planes, C/C++ entry points, and RGBA real-server publication passed |
 
 ## Resource soak results
 
@@ -79,11 +80,28 @@ switches and defaults; the SDK does not implement separate acoustic algorithms.
 The 0.3.0 DLL package was independently consumed through its installed
 `LiveKitClientConfig.cmake`:
 
-- Release and Debug C++ consumers built and reported `LiveKit SDK 0.3.0`.
+- Release and Debug C++ consumers built and reported `LiveKit SDK 0.3.0`; Release terminated
+  normally, while Debug exposed the static-CRT teardown issue recorded below.
 - Release and Debug pure C consumers built and reported `LiveKit C API 0.3.0`.
 - Release and Debug DLLs each matched all 254 declarations in the public C header.
 - The package contained configuration-matching `livekitclient[d].dll`, import libraries,
   `websockets.dll`, and the Debug PDB.
+
+The separately generated 0.4.0 DLL archive passed Release C/C++ and Debug C runtime smoke tests and
+matched all 258 C ABI declarations present at packaging time. Its Debug C++ smoke executable builds
+and prints the version but does not terminate cleanly. The same behavior reproduces with the prior
+0.3.0 archive and is the known static-CRT cross-DLL C++ ABI boundary, not a 0.4.0 source regression;
+the C ABI remains the supported stable DLL boundary. A future Windows packaging pass must move the
+C++ DLL configuration to a shared, matching MSVC runtime before advertising Debug C++ ABI support.
+
+## Multi-format video-frame acceptance
+
+After producing the 0.4.0 archive, the next source batch added RGBA, ABGR, ARGB, BGRA, RGB24, I420,
+I420A, I422, I444, I010, and NV12 input with canonical or explicit plane layouts. The Windows
+Release deterministic suite passed all 37 unit and 109 functional tests; the 31 opt-in integration
+tests were skipped in that ordinary run. Release and Debug DLL builds each matched the resulting
+260 C ABI declarations. The local `Media` scenario also passed all four real-server tests, including
+640x360 RGBA publication, remote decoding, audio/video frame progress, and sensitive-log audit.
 
 ## Running the integration harness
 

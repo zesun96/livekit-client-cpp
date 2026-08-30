@@ -93,8 +93,13 @@ resolution-derived defaults. The C equivalent is `lk_local_video_track_update_en
 
 Applications can create microphone, camera, monitor, window, and system-audio sources through C++
 or C APIs. Connected rooms play mixed remote WebRTC audio through a selectable output device.
-Applications that already capture I420 or signed 16-bit PCM frames can continue using external
-sources.
+Applications that already capture signed 16-bit PCM can use external audio sources. External video
+sources accept RGBA, ABGR, ARGB, BGRA, RGB24, I420, I420A, I422, I444, I010, and NV12. Frames may
+use the canonical tightly packed layout or explicit per-plane byte offsets, sizes, and strides; the
+SDK validates and converts them to WebRTC I420 before publication. Existing `VideoFrame` and
+`lk_video_source_capture_i420` callers remain source compatible, while C callers can use the
+size-versioned `lk_video_frame_input_t` and `lk_video_source_capture_frame` path. I420A alpha is
+validated but discarded by the current WebRTC encoder path.
 
 Native microphone capture uses libwebrtc Audio Processing Module support for AEC, AGC, and noise
 suppression. These features are application switches with stable SDK defaults; applications do not

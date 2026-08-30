@@ -199,6 +199,7 @@ set(
   src/core/detail/global_task_queue.cpp
   src/core/detail/peer_transport.cpp
   src/core/detail/peer_transport_factory.cpp
+  src/core/detail/public_video_frame_converter.cpp
   src/core/detail/rtc_engine.cpp
   src/core/detail/rtc_session.cpp
   src/core/detail/signal_client.cpp
@@ -241,6 +242,7 @@ target_include_directories(
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(livekitclient PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/detail
   ${libwebrtc_SOURCE_DIR}/include/third_party/boringssl/src/include
   ${libwebrtc_SOURCE_DIR}/include/third_party/libyuv/include
 )

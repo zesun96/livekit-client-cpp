@@ -4,11 +4,29 @@
 #include "livekit/core/track/rtc_stats.h"
 #include "livekit/core/track/video_source_interface.h"
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <thread>
+#include <vector>
+
+namespace {
+
+void FillRgbaFrame(std::vector<std::uint8_t>& data, std::uint32_t width, std::uint32_t height,
+                   std::uint8_t phase) {
+	data.resize(static_cast<std::size_t>(width) * height * 4U);
+	for (std::uint32_t y = 0; y < height; ++y) {
+		for (std::uint32_t x = 0; x < width; ++x) {
+			const auto offset = (static_cast<std::size_t>(y) * width + x) * 4U;
+			data[offset] = static_cast<std::uint8_t>((x + phase) & 0xffU);
+			data[offset + 1U] = static_cast<std::uint8_t>((y + phase * 2U) & 0xffU);
+			data[offset + 2U] = static_cast<std::uint8_t>((x + y + phase * 3U) & 0xffU);
+			data[offset + 3U] = 255U;
+		}
+	}
+}
+
+} // namespace
 
 int main(int argc, char* argv[]) {
 	const auto arguments = livekit::examples::ReadConnectionArguments(argc, argv);
@@ -33,9 +51,8 @@ int main(int argc, char* argv[]) {
 	livekit::core::VideoFrame frame;
 	frame.width = width;
 	frame.height = height;
-	frame.data.resize(width * height * 3 / 2);
-	std::fill(frame.data.begin(), frame.data.begin() + width * height, 64);
-	std::fill(frame.data.begin() + width * height, frame.data.end(), 128);
+	frame.format = livekit::core::VideoBufferType::RGBA;
+	FillRgbaFrame(frame.data, width, height, 0);
 	frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
 	                         std::chrono::steady_clock::now().time_since_epoch())
 	                         .count();
@@ -55,9 +72,7 @@ int main(int argc, char* argv[]) {
 
 	livekit::core::RTCStatsMonitor stats_monitor;
 	for (uint32_t index = 0; index < 150; ++index) {
-		const uint8_t luma = static_cast<uint8_t>(32 + index % 180);
-		std::fill(frame.data.begin(), frame.data.begin() + width * height, luma);
-		std::fill(frame.data.begin() + width * height, frame.data.end(), 128);
+		FillRgbaFrame(frame.data, width, height, static_cast<std::uint8_t>(index));
 		frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
 		                         std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
@@ -79,7 +94,7 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	std::cout << "Published 640x360 synthetic video for 5 seconds" << std::endl;
+	std::cout << "Published 640x360 synthetic RGBA video for 5 seconds" << std::endl;
 	if (!room->GetLocalParticipant()->UnpublishTrack(track.get())) {
 		std::cerr << "Failed to unpublish video track" << std::endl;
 		return 1;
