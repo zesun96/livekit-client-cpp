@@ -4,6 +4,7 @@
 #include "livekit/core/track/audio_source_interface.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -58,6 +59,7 @@ int main(int argc, char* argv[]) {
 	    room->GetLocalParticipant()->CreateLocalAudioTrackUnique("microphone", source.get());
 	livekit::core::TrackPublishOptions publish_options;
 	publish_options.source = livekit::core::TrackSource::Microphone;
+	publish_options.preconnect_buffer = std::getenv("LIVEKIT_PRECONNECT_BUFFER") != nullptr;
 	if (!track || !room->GetLocalParticipant()->PublishTrack(track.get(), publish_options)) {
 		std::cerr << "Failed to publish microphone track" << std::endl;
 		return 1;

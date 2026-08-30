@@ -230,6 +230,13 @@ typedef enum lk_backup_codec_policy {
 	LK_BACKUP_CODEC_POLICY_REGRESSION = 2
 } lk_backup_codec_policy_t;
 
+typedef enum lk_video_degradation_preference {
+	LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_FRAMERATE = 0,
+	LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_RESOLUTION = 1,
+	LK_VIDEO_DEGRADATION_PREFERENCE_BALANCED = 2,
+	LK_VIDEO_DEGRADATION_PREFERENCE_DISABLED = 3
+} lk_video_degradation_preference_t;
+
 typedef enum lk_e2ee_key_derivation {
 	LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256 = 0,
 	LK_E2EE_KEY_DERIVATION_HKDF_SHA256 = 1
@@ -1095,6 +1102,9 @@ typedef struct lk_track_publish_options {
 	lk_video_encoding_t video_encoding;
 	lk_video_encoding_t backup_video_encoding;
 	lk_frame_metadata_features_t frame_metadata_features;
+	int preconnect_buffer;
+	int has_degradation_preference;
+	lk_video_degradation_preference_t degradation_preference;
 } lk_track_publish_options_t;
 
 typedef struct lk_data_publish_options {
@@ -1549,6 +1559,8 @@ LKC_API lk_status_t lk_local_track_set_muted(lk_local_track_t* track, int muted)
 LKC_API lk_status_t lk_local_video_track_update_encoding(lk_local_track_t* track,
                                                          const lk_video_encoding_t* encoding,
                                                          int backup_codec);
+LKC_API lk_status_t lk_local_video_track_update_degradation_preference(
+    lk_local_track_t* track, lk_video_degradation_preference_t preference);
 LKC_API size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer,
                                         size_t buffer_size);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);

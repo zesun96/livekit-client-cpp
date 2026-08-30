@@ -149,6 +149,12 @@ LiveKit project root URL or an explicit signalling URL ending in `/rtc`; the SDK
 when the supplied URL has no path. The `lk` CLI continues to use the project root URL while
 generating short-lived tokens.
 
+The local H.264 `Media` gate passed on 2026-08-30 with microphone preconnect enabled. The second
+C++ participant observed `TF_PRECONNECT_BUFFER` on the remote audio publication, then received the
+synthetic PCM stream normally; the same run also passed audio reconnect, selected-codec,
+frame-metadata, backup-codec, and combined audio/video checks. A real Agent deployment is required
+to exercise the final `lk.agent.pre-connect-audio-buffer` byte-stream consumer.
+
 The harness owns the temporary server it starts, uses short-lived identities, removes temporary
 configuration and logs, and restores a replaced existing server in a `finally` block. It verifies
 the exact executable path before stopping a listener.

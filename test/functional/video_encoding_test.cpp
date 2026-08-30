@@ -12,6 +12,30 @@ TEST(VideoEncodingTest, MapsPublicVideoCodecNames) {
 	EXPECT_STREQ(VideoCodecName(VideoCodec::AV1), "AV1");
 }
 
+TEST(VideoEncodingTest, SelectsDegradationPreferenceDefaultForTrackSource) {
+	EXPECT_EQ(DefaultVideoDegradationPreference(TrackSource::Camera),
+	          VideoDegradationPreference::MaintainFramerate);
+	EXPECT_EQ(DefaultVideoDegradationPreference(TrackSource::ScreenShare),
+	          VideoDegradationPreference::MaintainResolution);
+	EXPECT_EQ(DefaultVideoDegradationPreference(TrackSource::Unknown),
+	          VideoDegradationPreference::Balanced);
+	EXPECT_EQ(DefaultVideoDegradationPreference(TrackSource::Microphone),
+	          VideoDegradationPreference::Balanced);
+}
+
+TEST(VideoEncodingTest, MapsVideoDegradationPreferencesToWebRtc) {
+	EXPECT_EQ(ToRtcVideoDegradationPreference(VideoDegradationPreference::MaintainFramerate),
+	          webrtc::DegradationPreference::MAINTAIN_FRAMERATE);
+	EXPECT_EQ(ToRtcVideoDegradationPreference(VideoDegradationPreference::MaintainResolution),
+	          webrtc::DegradationPreference::MAINTAIN_RESOLUTION);
+	EXPECT_EQ(ToRtcVideoDegradationPreference(VideoDegradationPreference::Balanced),
+	          webrtc::DegradationPreference::BALANCED);
+	EXPECT_EQ(ToRtcVideoDegradationPreference(VideoDegradationPreference::Disabled),
+	          webrtc::DegradationPreference::DISABLED);
+	EXPECT_FALSE(
+	    ToRtcVideoDegradationPreference(static_cast<VideoDegradationPreference>(999)).has_value());
+}
+
 TEST(VideoEncodingTest, BuildsThreeOrderedLayersForHdCamera) {
 	TrackPublishOptions options;
 	options.simulcast = true;

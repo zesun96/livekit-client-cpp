@@ -36,6 +36,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <vector>
 
 namespace livekit {
 namespace core {
@@ -61,6 +62,8 @@ public:
 	virtual bool PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) override;
 	bool UpdateVideoEncoding(LocalTrackInterface* track, VideoEncoding encoding,
 	                         bool backup_codec = false) override;
+	bool UpdateVideoDegradationPreference(LocalTrackInterface* track,
+	                                      VideoDegradationPreference preference) override;
 	bool UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) override;
 	std::size_t UnpublishTracks(const std::vector<LocalTrackInterface*>& tracks,
 	                            bool stop_on_unpublish) override;
@@ -92,6 +95,7 @@ public:
 	void SetE2EEManager(E2EEManager* manager, EncryptionType encryption_type);
 	void UpdateRoomOptions(RoomOptions options);
 	void LocalTrackSubscribed(const std::string& track_sid);
+	void UpdateAgentIdentities(std::vector<std::string> identities);
 	void SubscribedQualityUpdate(core::SubscribedQualityUpdate update);
 	bool RepublishAllDataTracksAfterReconnect();
 	void LocalDataTrackUnpublished(uint16_t publisher_handle);
@@ -101,10 +105,21 @@ private:
 		std::string track_sid;
 		VideoCodec codec;
 	};
+	struct PreconnectFlushRequest {
+		std::string track_sid;
+		std::vector<uint8_t> bytes;
+		uint32_t sample_rate = 0;
+		uint32_t channels = 0;
+		uint64_t dropped_bytes = 0;
+		std::vector<std::string> destination_identities;
+	};
 
 	void QueueBackupCodec(std::string track_sid, VideoCodec codec);
 	void RunBackupCodecWorker();
 	bool PublishAdditionalCodec(const std::string& track_sid, VideoCodec codec);
+	void TryQueuePreconnectBuffers();
+	void NotifyPreconnectAudioAvailable();
+	void RunPreconnectWorker();
 
 	RtcEngine* engine_;
 	E2EEManager* e2ee_manager_ = nullptr;
@@ -126,6 +141,13 @@ private:
 	std::set<std::pair<std::string, VideoCodec>> pending_backup_codecs_;
 	bool stop_backup_codec_worker_ = false;
 	std::thread backup_codec_worker_;
+	std::mutex preconnect_mutex_;
+	std::condition_variable preconnect_cv_;
+	std::set<std::string> agent_identities_;
+	std::deque<PreconnectFlushRequest> preconnect_flush_requests_;
+	bool preconnect_scan_requested_ = false;
+	bool stop_preconnect_worker_ = false;
+	std::thread preconnect_worker_;
 
 	// AudioSourceInterface* source_;
 };

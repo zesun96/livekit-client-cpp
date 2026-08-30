@@ -201,6 +201,7 @@ set(
   src/core/detail/global_task_queue.cpp
   src/core/detail/peer_transport.cpp
   src/core/detail/peer_transport_factory.cpp
+  src/core/detail/preconnect_audio_buffer.cpp
   src/core/detail/public_video_frame_converter.cpp
   src/core/detail/rtc_engine.cpp
   src/core/detail/rtc_session.cpp

@@ -96,6 +96,14 @@ enum class BackupCodecPolicy {
 	Regression = 2,
 };
 
+// Controls how the video encoder adapts when bandwidth or CPU resources are constrained.
+enum class VideoDegradationPreference {
+	MaintainFramerate,
+	MaintainResolution,
+	Balanced,
+	Disabled,
+};
+
 struct VideoEncoding {
 	uint64_t max_bitrate = 0;
 	float max_framerate = 0.0f;
@@ -137,7 +145,13 @@ struct TrackPublishOptions {
 	std::optional<VideoCodec> backup_video_codec;
 	VideoEncoding backup_video_encoding;
 	BackupCodecPolicy backup_codec_policy = BackupCodecPolicy::PreferRegression;
+	// Buffers up to ten seconds of microphone PCM while the first subscriber is becoming ready,
+	// then sends it to an active agent through the standard pre-connect byte-stream topic.
+	bool preconnect_buffer = false;
 	std::optional<FrameMetadataFeatures> frame_metadata_features;
+	// When omitted, camera tracks maintain framerate, screen shares maintain resolution, and
+	// tracks with another source use balanced adaptation.
+	std::optional<VideoDegradationPreference> degradation_preference;
 };
 
 } // namespace core

@@ -157,6 +157,32 @@ const char* VideoCodecName(VideoCodec codec) {
 	}
 }
 
+VideoDegradationPreference DefaultVideoDegradationPreference(TrackSource source) {
+	switch (source) {
+	case TrackSource::Camera:
+		return VideoDegradationPreference::MaintainFramerate;
+	case TrackSource::ScreenShare:
+		return VideoDegradationPreference::MaintainResolution;
+	default:
+		return VideoDegradationPreference::Balanced;
+	}
+}
+
+std::optional<webrtc::DegradationPreference>
+ToRtcVideoDegradationPreference(VideoDegradationPreference preference) {
+	switch (preference) {
+	case VideoDegradationPreference::MaintainFramerate:
+		return webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
+	case VideoDegradationPreference::MaintainResolution:
+		return webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
+	case VideoDegradationPreference::Balanced:
+		return webrtc::DegradationPreference::BALANCED;
+	case VideoDegradationPreference::Disabled:
+		return webrtc::DegradationPreference::DISABLED;
+	}
+	return std::nullopt;
+}
+
 VideoEncodingPlan BuildVideoEncodingPlan(uint32_t width, uint32_t height, bool screen_share,
                                          const TrackPublishOptions& options) {
 	VideoEncodingPlan result;

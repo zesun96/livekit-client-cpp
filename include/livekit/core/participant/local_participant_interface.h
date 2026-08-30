@@ -122,6 +122,11 @@ public:
 	                                 bool backup_codec = false) {
 		return false;
 	}
+	// Applies to the primary sender and every active or subsequently-created backup sender.
+	virtual bool UpdateVideoDegradationPreference(LocalTrackInterface*,
+	                                              VideoDegradationPreference) {
+		return false;
+	}
 };
 
 } // namespace core
