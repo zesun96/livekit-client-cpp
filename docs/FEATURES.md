@@ -119,6 +119,15 @@ The detailed device identity, lifetime, thread, playback-reference, and system-a
 [Media device design](design/media-device-design.md). Recorded acoustic acceptance results are in
 [Integration testing](integration.md).
 
+## Video frame metadata
+
+External video frames can carry an application timestamp, frame ID, and up to 232 bytes of user
+data. Publishers explicitly advertise the fields they intend to send. Metadata is appended to the
+encoded frame with LiveKit's packet-trailer format, forwarded by compatible servers, stripped
+before decoding, and exposed on callback and pull-reader frames. It composes with media E2EE by
+placing the trailer outside the encrypted payload. See [Video frame metadata](FRAME_METADATA.md)
+for C++ and C examples, limits, and compatibility behavior.
+
 ## RTC statistics
 
 Published local tracks and subscribed remote tracks expose selector-scoped libwebrtc

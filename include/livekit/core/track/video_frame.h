@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace livekit {
@@ -39,6 +40,17 @@ struct VideoPlaneInfo {
 	std::uint32_t stride = 0;
 };
 
+// Optional application metadata transported alongside an encoded video frame. The metadata is
+// carried by LiveKit's packet-trailer protocol and is removed before the receiver decodes the
+// frame. user_data is limited to 232 bytes so every combination of fields fits in one trailer.
+struct VideoFrameMetadata {
+	std::optional<std::uint64_t> user_timestamp_us;
+	std::optional<std::uint32_t> frame_id;
+	std::optional<std::vector<std::uint8_t>> user_data;
+};
+
+inline constexpr std::size_t kMaxVideoFrameMetadataUserDataSize = 232;
+
 // An owned video frame. An empty planes vector selects the canonical tightly packed layout for the
 // configured format. Existing callers that only populate the original fields continue to submit
 // tightly packed I420.
@@ -50,6 +62,7 @@ struct VideoFrame {
 	VideoRotation rotation = VideoRotation::Rotation0;
 	VideoBufferType format = VideoBufferType::I420;
 	std::vector<VideoPlaneInfo> planes;
+	std::optional<VideoFrameMetadata> metadata;
 };
 
 } // namespace core

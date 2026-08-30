@@ -196,6 +196,16 @@ TEST(MediaSourceTest, ValidatesI420VideoFrames) {
 	auto invalid_rotation = valid;
 	invalid_rotation.rotation = static_cast<VideoRotation>(45);
 	EXPECT_FALSE(source->CaptureFrame(invalid_rotation));
+	auto with_metadata = valid;
+	with_metadata.timestamp_us = 1'000'000;
+	with_metadata.metadata = VideoFrameMetadata{};
+	with_metadata.metadata->user_timestamp_us = 1'744'249'600'123'456ULL;
+	with_metadata.metadata->frame_id = 42;
+	with_metadata.metadata->user_data = std::vector<std::uint8_t>{1, 2, 3};
+	EXPECT_TRUE(source->CaptureFrame(with_metadata));
+	with_metadata.metadata->user_data =
+	    std::vector<std::uint8_t>(kMaxVideoFrameMetadataUserDataSize + 1, 0x7f);
+	EXPECT_FALSE(source->CaptureFrame(with_metadata));
 	source.reset();
 	EXPECT_TRUE(Destroy());
 }

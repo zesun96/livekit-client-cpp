@@ -21,6 +21,7 @@
 #include "../detail/converted_proto.h"
 #include "../detail/data_stream_compression.h"
 #include "../detail/data_track_proto.h"
+#include "../detail/frame_metadata.h"
 #include "../detail/logging.h"
 #include "../detail/video_encoding.h"
 #include "../e2ee/e2ee_manager_internal.h"
@@ -566,6 +567,8 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	req.set_disable_red(!option.red);
 	req.set_encryption(to_proto(encryption_type_));
 	req.set_stream(option.stream);
+	std::shared_ptr<detail::FrameMetadataStore> frame_metadata_store;
+	FrameMetadataFeatures frame_metadata_features;
 	if (kind == TrackKind::Video) {
 		auto* video_track = dynamic_cast<LocalVideoTrack*>(local_track);
 		if (video_track == nullptr || video_track->source() == nullptr ||
@@ -584,6 +587,24 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		}
 		req.set_width(video_track->source()->Width());
 		req.set_height(video_track->source()->Height());
+		if (option.frame_metadata_features && option.frame_metadata_features->Any()) {
+			frame_metadata_features = *option.frame_metadata_features;
+			if (frame_metadata_features.user_timestamp) {
+				req.add_packet_trailer_features(livekit::PTF_USER_TIMESTAMP);
+			}
+			if (frame_metadata_features.frame_id) {
+				req.add_packet_trailer_features(livekit::PTF_FRAME_ID);
+			}
+			if (frame_metadata_features.user_data) {
+				req.add_packet_trailer_features(livekit::PTF_USER_DATA);
+			}
+			if (auto* source = dynamic_cast<VideoSource*>(video_track->source())) {
+				frame_metadata_store = source->GetFrameMetadataStore();
+			}
+			if (!frame_metadata_store) {
+				return false;
+			}
+		}
 	}
 	VideoEncodingPlan video_encoding_plan;
 	if (kind == TrackKind::Video) {
@@ -637,9 +658,14 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 		}
 		if (e2ee_manager_ != nullptr &&
 		    !E2EEManagerNativeAccess::AttachSender(*e2ee_manager_, local_track->Sid(), Identity(),
-		                                           kind, transceiver->sender())) {
+		                                           kind, transceiver->sender(),
+		                                           frame_metadata_store, frame_metadata_features)) {
 			engine_->RemoveSender(local_track);
 			return false;
+		}
+		if (e2ee_manager_ == nullptr && frame_metadata_store) {
+			transceiver->sender()->SetFrameTransformer(detail::CreateFrameMetadataTransformer(
+			    true, std::move(frame_metadata_store), frame_metadata_features));
 		}
 		local_track->SetTransceiver(transceiver);
 
@@ -921,6 +947,21 @@ bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, Vide
 	req.set_stream(backup_options.stream);
 	req.set_width(video_source->Width());
 	req.set_height(video_source->Height());
+	FrameMetadataFeatures frame_metadata_features;
+	std::shared_ptr<detail::FrameMetadataStore> frame_metadata_store;
+	if (backup_options.frame_metadata_features && backup_options.frame_metadata_features->Any()) {
+		frame_metadata_features = *backup_options.frame_metadata_features;
+		if (frame_metadata_features.user_timestamp) {
+			req.add_packet_trailer_features(livekit::PTF_USER_TIMESTAMP);
+		}
+		if (frame_metadata_features.frame_id) {
+			req.add_packet_trailer_features(livekit::PTF_FRAME_ID);
+		}
+		if (frame_metadata_features.user_data) {
+			req.add_packet_trailer_features(livekit::PTF_USER_DATA);
+		}
+		frame_metadata_store = video_source->GetFrameMetadataStore();
+	}
 	for (const auto& layer : encoding_plan.layers) {
 		req.add_layers()->CopyFrom(layer);
 	}
@@ -938,6 +979,10 @@ bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, Vide
 	    engine_->CreateSender(rtc_video_track, backup_options, encoding_plan.encodings);
 	if (transceiver == nullptr) {
 		return false;
+	}
+	if (frame_metadata_store) {
+		transceiver->sender()->SetFrameTransformer(detail::CreateFrameMetadataTransformer(
+		    true, std::move(frame_metadata_store), frame_metadata_features));
 	}
 	if (!local_track->AddAdditionalCodec(codec, std::move(media_track), transceiver,
 	                                     encoding_plan.encodings)) {

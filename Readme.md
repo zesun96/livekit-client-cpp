@@ -20,6 +20,7 @@ A C++20 client SDK for [LiveKit](https://livekit.io/), with a native C++ API and
 - PCM audio and multi-format video publishing (RGBA, ABGR, ARGB, BGRA, RGB24, I420/I420A,
   I422, I444, I010, and NV12) with VP8, VP9, H264, and AV1 transport.
 - Bounded pull-based `AudioStream` and `VideoStream` readers alongside remote-frame callbacks.
+- End-to-end video frame metadata with timestamps, frame IDs, and application bytes.
 - Native microphone, camera, monitor, window, system-audio capture, and remote-audio playback.
 - WebRTC AEC, AGC, and noise suppression for native microphone capture.
 - Reliable/lossy data, DataTrack schemas, DataStreams, chat, transcription, metrics, SIP DTMF,
@@ -78,6 +79,7 @@ installation, runtime layout, and installed-package consumer checks.
 | --- | --- |
 | Dependencies and source builds | [Building from source](docs/BUILDING.md) |
 | Capability details and API behavior | [SDK features](docs/FEATURES.md) |
+| Video frame metadata | [Frame metadata](docs/FRAME_METADATA.md) / [帧元数据](docs/FRAME_METADATA_zh.md) |
 | Integration matrix and recorded acceptance results | [Integration testing](docs/integration.md) |
 | Reliability, soak, and weak-network procedures | [Reliability testing](docs/RELIABILITY_TESTING.md) |
 | Windows DLL packaging and deployment | [Windows SDK packaging](docs/WINDOWS_SDK_PACKAGING.md) |

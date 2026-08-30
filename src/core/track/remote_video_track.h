@@ -26,8 +26,13 @@
 #include "livekit/core/track/video_frame.h"
 
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <vector>
+
+namespace livekit::core::detail {
+class FrameMetadataStore;
+}
 
 namespace livekit {
 namespace core {
@@ -38,15 +43,18 @@ public:
 	using FrameCallback = std::function<void(const VideoFrame&)>;
 
 	RemoteVideoTrack(std::string sid, std::string name, std::unique_ptr<VideoTrack> video_track,
-	                 FrameCallback callback);
+	                 FrameCallback callback,
+	                 std::shared_ptr<detail::FrameMetadataStore> metadata_store = {});
 	~RemoteVideoTrack() override;
 	std::shared_ptr<VideoStream> CreateVideoStream(MediaStreamOptions options = {}) override;
+	std::shared_ptr<detail::FrameMetadataStore> GetFrameMetadataStore() const;
 
 private:
 	void OnFrame(const webrtc::VideoFrame& frame) override;
 	void CloseStreams();
 
 	FrameCallback callback_;
+	std::shared_ptr<detail::FrameMetadataStore> metadata_store_;
 	std::mutex streams_mutex_;
 	std::vector<std::weak_ptr<VideoStream>> streams_;
 };

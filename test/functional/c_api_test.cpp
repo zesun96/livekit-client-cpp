@@ -128,6 +128,10 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(publish.video_encoding.max_bitrate, 0u);
 	EXPECT_FLOAT_EQ(publish.video_encoding.max_framerate, 0.0F);
 	EXPECT_EQ(publish.backup_video_encoding.struct_size, sizeof(publish.backup_video_encoding));
+	EXPECT_EQ(publish.frame_metadata_features.struct_size, sizeof(publish.frame_metadata_features));
+	EXPECT_EQ(publish.frame_metadata_features.user_timestamp, 0);
+	EXPECT_EQ(publish.frame_metadata_features.frame_id, 0);
+	EXPECT_EQ(publish.frame_metadata_features.user_data, 0);
 
 	lk_video_encoding_t encoding;
 	lk_video_encoding_init(&encoding);
@@ -246,6 +250,13 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(video_frame.struct_size, sizeof(video_frame));
 	EXPECT_EQ(video_frame.rotation, LK_VIDEO_ROTATION_0);
 	EXPECT_EQ(video_frame.format, LK_VIDEO_BUFFER_I420);
+	EXPECT_EQ(video_frame.metadata, nullptr);
+	lk_video_frame_metadata_t video_metadata;
+	lk_video_frame_metadata_init(&video_metadata);
+	EXPECT_EQ(video_metadata.struct_size, sizeof(video_metadata));
+	EXPECT_EQ(video_metadata.has_user_timestamp_us, 0);
+	EXPECT_EQ(video_metadata.has_frame_id, 0);
+	EXPECT_EQ(video_metadata.has_user_data, 0);
 
 	lk_microphone_capture_options_t microphone;
 	lk_microphone_capture_options_init(&microphone);
@@ -893,6 +904,17 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	video_frame.timestamp_us = 124;
 	video_frame.rotation = LK_VIDEO_ROTATION_90;
 	video_frame.format = LK_VIDEO_BUFFER_RGBA;
+	lk_video_frame_metadata_t metadata;
+	lk_video_frame_metadata_init(&metadata);
+	const std::array<uint8_t, 3> metadata_data{1, 2, 3};
+	metadata.has_user_timestamp_us = 1;
+	metadata.user_timestamp_us = 1'744'249'600'123'456ULL;
+	metadata.has_frame_id = 1;
+	metadata.frame_id = 42;
+	metadata.has_user_data = 1;
+	metadata.user_data = metadata_data.data();
+	metadata.user_data_size = metadata_data.size();
+	video_frame.metadata = &metadata;
 	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_OK) << lk_last_error();
 	std::vector<uint8_t> padded_i420(20, 128);
 	const lk_video_plane_t padded_planes[] = {{0, 10, 6}, {12, 2, 4}, {16, 2, 4}};
@@ -902,6 +924,12 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	video_frame.planes = padded_planes;
 	video_frame.plane_count = 3;
 	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_OK) << lk_last_error();
+	std::vector<uint8_t> oversized_metadata(233, 0x7f);
+	metadata.user_data = oversized_metadata.data();
+	metadata.user_data_size = oversized_metadata.size();
+	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_INVALID_ARGUMENT);
+	metadata.user_data = metadata_data.data();
+	metadata.user_data_size = metadata_data.size();
 	video_frame.format = static_cast<lk_video_buffer_type_t>(999);
 	EXPECT_EQ(lk_video_source_capture_frame(video, &video_frame), LK_STATUS_INVALID_ARGUMENT);
 	i420.pop_back();

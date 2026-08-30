@@ -56,6 +56,10 @@ int main(int argc, char* argv[]) {
 	frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
 	                         std::chrono::steady_clock::now().time_since_epoch())
 	                         .count();
+	frame.metadata = livekit::core::VideoFrameMetadata{};
+	frame.metadata->user_timestamp_us = static_cast<std::uint64_t>(frame.timestamp_us);
+	frame.metadata->frame_id = 1;
+	frame.metadata->user_data = std::vector<std::uint8_t>{'d', 'e', 'm', 'o'};
 	if (!source->CaptureFrame(frame)) {
 		std::cerr << "Failed to capture initial video frame" << std::endl;
 		return 1;
@@ -65,6 +69,7 @@ int main(int argc, char* argv[]) {
 	livekit::core::TrackPublishOptions options;
 	options.source = livekit::core::TrackSource::Camera;
 	options.simulcast = false;
+	options.frame_metadata_features = livekit::core::FrameMetadataFeatures{true, true, true};
 	if (!track || !room->GetLocalParticipant()->PublishTrack(track.get(), options)) {
 		std::cerr << "Failed to publish video track" << std::endl;
 		return 1;
@@ -76,6 +81,8 @@ int main(int argc, char* argv[]) {
 		frame.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
 		                         std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
+		frame.metadata->user_timestamp_us = static_cast<std::uint64_t>(frame.timestamp_us);
+		frame.metadata->frame_id = index + 2;
 		if (!source->CaptureFrame(frame)) {
 			std::cerr << "Failed to capture video frame" << std::endl;
 			return 1;
