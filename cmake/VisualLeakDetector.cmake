@@ -43,7 +43,9 @@ function(lkc_enable_vld target)
   if(NOT TARGET "${target}")
     message(FATAL_ERROR "Cannot enable Visual Leak Detector for unknown target: ${target}")
   endif()
-  target_link_libraries("${target}" PRIVATE lkc_vld_runtime)
+  # VLD instruments local Debug builds only. Do not leak its helper target into the installed
+  # livekitclient export, where the developer-machine paths are neither available nor useful.
+  target_link_libraries("${target}" PRIVATE "$<BUILD_INTERFACE:lkc_vld_runtime>")
   add_custom_command(TARGET "${target}" POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${_lkc_vld_runtime}" "$<TARGET_FILE_DIR:${target}>"

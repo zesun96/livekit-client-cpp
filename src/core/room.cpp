@@ -152,6 +152,9 @@ Room::~Room() {
 		rtc_engine_->SetRoomObserver(nullptr);
 		rtc_engine_->Disconnect();
 	}
+	if (local_participant_) {
+		local_participant_->ClearPublishedTracksForDisconnect();
+	}
 }
 
 bool Room::RegisterRpcMethod(std::string method, RpcHandler handler) {
@@ -415,6 +418,7 @@ bool Room::Disconnect() {
 	}
 	detached_tracks.clear();
 	rtc_engine_->Disconnect();
+	local_participant_->ClearPublishedTracksForDisconnect();
 	{
 		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
 		data_track_schema_cache_.clear();
@@ -1055,6 +1059,7 @@ void Room::SignalDisconnectedEvent(livekit::DisconnectReason reason) {
 		}
 	}
 	if (current != RoomState::Disconnecting && current != RoomState::Disconnected) {
+		local_participant_->ClearPublishedTracksForDisconnect();
 		{
 			std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
 			data_track_schema_cache_.clear();
@@ -1141,6 +1146,7 @@ void Room::RoomEosEvent() {
 		}
 	}
 	detached_tracks.clear();
+	local_participant_->ClearPublishedTracksForDisconnect();
 	{
 		std::lock_guard<std::mutex> guard(data_track_schema_cache_mutex_);
 		data_track_schema_cache_.clear();

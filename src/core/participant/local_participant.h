@@ -72,6 +72,9 @@ public:
 	// reconnect. Unlike RepublishAllTracks(), this does not try to remove senders from the old PC.
 	void DetachTrackTransceiversForReconnect();
 	bool RepublishAllTracksAfterReconnect();
+	// A terminal room disconnect ends every local publication. Detach the non-owning Track
+	// pointers without dereferencing them so caller-owned tracks may already have been destroyed.
+	void ClearPublishedTracksForDisconnect();
 	bool SetMetadata(const std::string& metadata) override;
 	bool SetName(const std::string& name) override;
 	bool SetAttributes(const std::map<std::string, std::string>& attributes) override;
@@ -120,6 +123,10 @@ private:
 	void TryQueuePreconnectBuffers();
 	void NotifyPreconnectAudioAvailable();
 	void RunPreconnectWorker();
+	struct PreconnectNotificationState {
+		std::mutex mutex;
+		LocalParticipant* participant = nullptr;
+	};
 
 	RtcEngine* engine_;
 	E2EEManager* e2ee_manager_ = nullptr;
@@ -148,6 +155,7 @@ private:
 	bool preconnect_scan_requested_ = false;
 	bool stop_preconnect_worker_ = false;
 	std::thread preconnect_worker_;
+	std::shared_ptr<PreconnectNotificationState> preconnect_notification_state_;
 
 	// AudioSourceInterface* source_;
 };
