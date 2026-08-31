@@ -4676,6 +4676,42 @@ lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16
 	});
 }
 
+lk_status_t lk_audio_source_queued_duration_ms(const lk_audio_source_t* source,
+                                               uint32_t* duration_ms) {
+	return Guard([&] {
+		if (source == nullptr || duration_ms == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid audio source queue query");
+		}
+		const auto duration = source->source->QueuedDuration().count();
+		*duration_ms =
+		    static_cast<uint32_t>((std::min)(duration, static_cast<std::chrono::milliseconds::rep>(
+		                                                   std::numeric_limits<uint32_t>::max())));
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_audio_source_clear_queue(lk_audio_source_t* source) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is null");
+		}
+		return source->source->ClearQueue()
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "audio source queue cannot be cleared");
+	});
+}
+
+lk_status_t lk_audio_source_wait_for_playout(lk_audio_source_t* source, uint32_t timeout_ms) {
+	return Guard([&] {
+		if (source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "audio source is null");
+		}
+		return source->source->WaitForPlayout(std::chrono::milliseconds(timeout_ms))
+		           ? LK_STATUS_OK
+		           : Failure(LK_STATUS_OPERATION_FAILED, "audio source playout wait timed out");
+	});
+}
+
 lk_status_t lk_audio_source_microphone_start(lk_audio_source_t* source) {
 	return Guard([&] {
 		auto* microphone =

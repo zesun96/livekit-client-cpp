@@ -160,6 +160,13 @@ to receive frames, then verified reader closure after video unsubscribe and audi
 dimensions are validated as legal decoded I420 dimensions rather than hard-coded to the publication
 size because LiveKit simulcast and adaptive subscription may select a lower layer such as 320x180.
 
+## External PCM queue-flow acceptance
+
+The `AudioQueue` scenario publishes buffered external PCM to the bundled local LiveKit Server,
+verifies that a non-blocking playout wait reports pending audio, and then waits for the reported
+queue duration to drain to zero. Deterministic C++ and C API tests also cover explicit queue clearing,
+timed waits, and rejection of frames that are not complete 10 ms intervals.
+
 ## Running the integration harness
 
 Configure with `BUILD_INTEGRATION_TESTS=ON`, build `livekit_server_integration_tests`, and invoke the
@@ -181,8 +188,8 @@ $apiSecret = Read-Host "LiveKit API secret"
   -Scenario Participants -Iterations 3
 ```
 
-Available scenarios are `Participants`, `Restart`, `TokenRefresh`, `Media`, `E2EE`, `CAPI`,
-`DataRecovery`, `FrameMetadata`, `CodecMatrix`, `Soak`, `AudioQuality`, `WeakNetwork`, and
+Available scenarios are `Participants`, `Restart`, `TokenRefresh`, `Media`, `AudioQueue`, `E2EE`,
+`CAPI`, `DataRecovery`, `FrameMetadata`, `CodecMatrix`, `Soak`, `AudioQuality`, `WeakNetwork`, and
 `OfficialCpp`. Use
 `-VideoCodec vp8`, `h264`, or `av1` where supported. The codec matrix also covers VP9.
 

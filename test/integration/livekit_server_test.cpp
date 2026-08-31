@@ -2753,6 +2753,13 @@ TEST(LiveKitServerTest, PublishesAndReceivesAudioAndVideo) {
 	EXPECT_EQ(pulled_audio.num_channels, 1u);
 	EXPECT_FALSE(pulled_audio.data.empty());
 
+	ASSERT_TRUE(audio_source->ClearQueue());
+	std::vector<int16_t> queued_audio_samples(9600, 1500);
+	ASSERT_TRUE(audio_source->CaptureFrame(queued_audio_samples.data(), 48000, 1, 9600));
+	EXPECT_FALSE(audio_source->WaitForPlayout(std::chrono::milliseconds::zero()));
+	EXPECT_TRUE(audio_source->WaitForPlayout(std::chrono::seconds(2)));
+	EXPECT_EQ(audio_source->QueuedDuration(), std::chrono::milliseconds::zero());
+
 	VideoFrame video_frame;
 	video_frame.width = 640;
 	video_frame.height = 360;

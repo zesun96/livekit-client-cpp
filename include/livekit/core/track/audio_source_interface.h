@@ -20,6 +20,7 @@
 #ifndef _LKC_CORE_TRACK_AUDIO_SOURCE_INTERFACE_H_
 #define _LKC_CORE_TRACK_AUDIO_SOURCE_INTERFACE_H_
 
+#include <chrono>
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -70,17 +71,40 @@ struct MicrophoneAudioProcessingStats {
 	int32_t delay_ms = 0;
 };
 
+class AudioSourceInterface;
+std::chrono::milliseconds GetAudioSourceQueuedDuration(const AudioSourceInterface* source) noexcept;
+bool ClearAudioSourceQueue(AudioSourceInterface* source) noexcept;
+bool WaitForAudioSourcePlayout(AudioSourceInterface* source,
+                               std::chrono::milliseconds timeout) noexcept;
+
 class AudioSourceInterface {
 public:
 	virtual ~AudioSourceInterface() = default;
 
 	/**
 	 * Captures signed 16-bit interleaved PCM. The sample rate and channel count must match the
-	 * source configuration. A source with no queue accepts exactly one 10 ms frame per call;
-	 * a queued source returns false when the complete frame does not fit.
+	 * source configuration. Frames must contain one or more complete 10 ms intervals. A source with
+	 * no queue accepts exactly one 10 ms frame per call; a queued source returns false when the
+	 * complete frame does not fit.
 	 */
 	virtual bool CaptureFrame(void* audio_data, uint32_t sample_rate, uint32_t num_channels,
 	                          uint32_t samples_per_channel) = 0;
+
+	/** Returns the duration of PCM currently waiting in the internal queue. */
+	std::chrono::milliseconds QueuedDuration() const noexcept {
+		return GetAudioSourceQueuedDuration(this);
+	}
+
+	/** Clears queued PCM. Returns false for an unsupported custom implementation. */
+	bool ClearQueue() noexcept { return ClearAudioSourceQueue(this); }
+
+	/**
+	 * Waits until queued PCM has been consumed or cleared. A zero timeout performs a non-blocking
+	 * check. Returns false on timeout or for an unsupported custom implementation.
+	 */
+	bool WaitForPlayout(std::chrono::milliseconds timeout) noexcept {
+		return WaitForAudioSourcePlayout(this, timeout);
+	}
 };
 
 class MicrophoneAudioSourceInterface;

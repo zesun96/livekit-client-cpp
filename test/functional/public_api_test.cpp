@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <future>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -237,6 +238,7 @@ TEST(MediaSourceTest, EnforcesAudioSourceConfigurationAndQueueBounds) {
 	auto bounded = CreateAudioSourceUnique({}, 48000, 1, 20);
 	ASSERT_NE(bounded, nullptr);
 	EXPECT_TRUE(bounded->CaptureFrame(twenty_ms.data(), 48000, 1, 960));
+	EXPECT_FALSE(bounded->CaptureFrame(ten_ms.data(), 48000, 1, 479));
 
 	auto oversized = CreateAudioSourceUnique({}, 48000, 1, 20);
 	ASSERT_NE(oversized, nullptr);
@@ -248,7 +250,30 @@ TEST(MediaSourceTest, EnforcesAudioSourceConfigurationAndQueueBounds) {
 	ASSERT_NE(direct, nullptr);
 	EXPECT_TRUE(direct->CaptureFrame(ten_ms.data(), 48000, 1, 480));
 	EXPECT_FALSE(direct->CaptureFrame(ten_ms.data(), 48000, 1, 479));
+	EXPECT_EQ(direct->QueuedDuration(), std::chrono::milliseconds::zero());
+	EXPECT_TRUE(direct->ClearQueue());
+	EXPECT_TRUE(direct->WaitForPlayout(std::chrono::milliseconds::zero()));
 
+	std::vector<int16_t> two_hundred_ms(9600, 100);
+	auto controlled = CreateAudioSourceUnique({}, 48000, 1, 200);
+	ASSERT_NE(controlled, nullptr);
+	ASSERT_TRUE(controlled->CaptureFrame(two_hundred_ms.data(), 48000, 1, 9600));
+	EXPECT_GT(controlled->QueuedDuration(), std::chrono::milliseconds::zero());
+	EXPECT_LE(controlled->QueuedDuration(), std::chrono::milliseconds(200));
+	EXPECT_FALSE(controlled->WaitForPlayout(std::chrono::milliseconds::zero()));
+	auto waiter = std::async(std::launch::async, [&controlled] {
+		return controlled->WaitForPlayout(std::chrono::seconds(2));
+	});
+	EXPECT_EQ(waiter.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+	EXPECT_TRUE(controlled->ClearQueue());
+	EXPECT_EQ(waiter.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+	EXPECT_TRUE(waiter.get());
+	EXPECT_EQ(controlled->QueuedDuration(), std::chrono::milliseconds::zero());
+	EXPECT_TRUE(controlled->WaitForPlayout(std::chrono::milliseconds::zero()));
+	ASSERT_TRUE(controlled->CaptureFrame(twenty_ms.data(), 48000, 1, 960));
+	EXPECT_TRUE(controlled->WaitForPlayout(std::chrono::milliseconds(500)));
+
+	controlled.reset();
 	direct.reset();
 	oversized.reset();
 	bounded.reset();

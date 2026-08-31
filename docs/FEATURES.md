@@ -120,7 +120,9 @@ validated but discarded by the current WebRTC encoder path.
 External PCM sources enforce their configured sample rate and channel count. Their queue holds
 exactly `queue_size_ms` of interleaved samples and rejects a complete frame when it cannot fit;
 C++ callers may select a zero-length queue for direct delivery of exactly one 10 ms frame per call.
-All non-zero queue sizes use 10 ms increments. The C API keeps a non-zero queue requirement.
+All frames and non-zero queue sizes use 10 ms increments. Applications can query the queued
+duration, clear queued PCM, or wait with a timeout for playout to drain through C++ or C APIs. The
+C API keeps a non-zero queue requirement.
 
 Remote audio and video tracks also expose bounded pull readers through `AudioStream` and
 `VideoStream`. Readers support blocking, timed, and non-blocking reads, drop the oldest unread frame
