@@ -6,11 +6,19 @@ A C++20 client SDK for [LiveKit](https://livekit.io/), with a native C++ API and
 
 | Platform | Status |
 | --- | --- |
-| Microsoft Windows | Supported |
+| Microsoft Windows | Supported; prebuilt DLLs guarantee the C ABI only |
 | GNU/Linux | Planned |
 | Apple macOS | Planned |
 | iOS | Planned |
 | Android | Planned |
+
+> [!IMPORTANT]
+> **Windows DLL ABI:** The stable binary boundary of the prebuilt Windows DLL package is the C API
+> in `livekit/capi/livekit.h`. The native C++ API exposes STL and compiler-specific types and is not
+> a supported stable DLL ABI with the current static MSVC runtimes (`/MT` and `/MTd`). Use the C ABI
+> when consuming the prebuilt DLLs. Applications that require the native C++ API should build the
+> SDK from source and link it statically with an exactly matching MSVC toolset, runtime, build
+> configuration, and dependency set.
 
 ## Highlights
 
@@ -61,7 +69,14 @@ see [Building from source](docs/BUILDING.md).
 ## Consuming the Windows DLL package
 
 The Windows SDK ZIP contains Release and Debug DLLs, matching import libraries, the Debug PDB,
-headers, runtime dependencies, and an imported CMake target:
+headers, runtime dependencies, and an imported CMake target. Prebuilt-DLL applications should use
+the stable C ABI:
+
+```c
+#include <livekit/capi/livekit.h>
+```
+
+Link the application to the imported target:
 
 ```cmake
 find_package(LiveKitClient CONFIG REQUIRED)
@@ -69,8 +84,12 @@ target_link_libraries(my_app PRIVATE LiveKitClient::livekitclient)
 ```
 
 The target selects `livekitclient.dll` or `livekitclientd.dll` for the active configuration.
-Deploy it together with the configuration-matching `websockets.dll`. Static builds remain
-available from source but are not included in the prebuilt Windows package.
+Deploy it together with the configuration-matching `websockets.dll`.
+
+Although the DLL contains exported native C++ symbols, they are not a supported stable ABI. Do not
+rely on them across MSVC toolset, runtime, Debug/Release, compiler-option, or dependency changes.
+Native C++ consumers should build and statically link the SDK from source with a completely matching
+configuration. Static builds are not included in the prebuilt Windows package.
 
 See [Windows SDK packaging and deployment](docs/WINDOWS_SDK_PACKAGING.md) for packaging,
 installation, runtime layout, and installed-package consumer checks.
