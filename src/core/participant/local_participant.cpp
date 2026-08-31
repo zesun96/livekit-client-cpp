@@ -452,18 +452,20 @@ LocalParticipant::LocalParticipant(std::string sid, std::string identity,
     : engine_(engine), options_(options), encryption_type_(encryption_type),
       Participant(std::move(sid), std::move(identity), "", "",
                   std::map<std::string, std::string>{}),
-      outgoing_stream_state_(std::make_shared<OutgoingDataStreamState>(engine)) {
+      outgoing_stream_state_(std::make_shared<OutgoingDataStreamState>(engine)),
+      preconnect_notification_state_(std::make_shared<PreconnectNotificationState>()) {
 	is_local_participant_ = true;
+	preconnect_notification_state_->participant = this;
 	backup_codec_worker_ = std::thread([this] { RunBackupCodecWorker(); });
 	preconnect_worker_ = std::thread([this] { RunPreconnectWorker(); });
 }
 
 LocalParticipant::~LocalParticipant() {
-	for (const auto& [sid, publication] : TrackPublicationsSnapshot()) {
-		if (auto* audio_track = dynamic_cast<LocalAudioTrack*>(publication->Track())) {
-			audio_track->DiscardPreconnectBuffer();
-		}
+	{
+		std::lock_guard<std::mutex> guard(preconnect_notification_state_->mutex);
+		preconnect_notification_state_->participant = nullptr;
 	}
+	ClearPublishedTracksForDisconnect();
 	{
 		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
 		stop_backup_codec_worker_ = true;
@@ -675,8 +677,13 @@ bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOpti
 	}
 	bool preconnect_started = false;
 	if (option.preconnect_buffer) {
-		if (!preconnect_track->StartPreconnectBuffer(
-		        [this] { NotifyPreconnectAudioAvailable(); })) {
+		auto notification_state = preconnect_notification_state_;
+		if (!preconnect_track->StartPreconnectBuffer([notification_state] {
+			    std::lock_guard<std::mutex> guard(notification_state->mutex);
+			    if (notification_state->participant != nullptr) {
+				    notification_state->participant->NotifyPreconnectAudioAvailable();
+			    }
+		    })) {
 			return false;
 		}
 		preconnect_started = preconnect_track->HasPreconnectBuffer();
@@ -984,6 +991,7 @@ void LocalParticipant::UpdateAgentIdentities(std::vector<std::string> identities
 }
 
 void LocalParticipant::TryQueuePreconnectBuffers() {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	std::vector<std::string> destinations;
 	{
 		std::lock_guard<std::mutex> guard(preconnect_mutex_);
@@ -1345,6 +1353,33 @@ bool LocalParticipant::RepublishAllTracks() {
 		}
 	}
 	return success;
+}
+
+void LocalParticipant::ClearPublishedTracksForDisconnect() {
+	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
+	const auto publications = TrackPublicationsSnapshot();
+	for (const auto& [sid, publication] : publications) {
+		if (auto* concrete = dynamic_cast<TrackPublication*>(publication.get())) {
+			concrete->SetTrack(nullptr);
+		}
+		RemoveTrackPublication(sid);
+	}
+	{
+		std::lock_guard<std::mutex> guard(local_track_subscriptions_mutex_);
+		subscribed_local_track_sids_.clear();
+		emitted_local_track_subscriptions_.clear();
+	}
+	{
+		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+		backup_codec_requests_.clear();
+		pending_backup_codecs_.clear();
+	}
+	{
+		std::lock_guard<std::mutex> guard(preconnect_mutex_);
+		agent_identities_.clear();
+		preconnect_flush_requests_.clear();
+		preconnect_scan_requested_ = false;
+	}
 }
 
 void LocalParticipant::DetachTrackTransceiversForReconnect() {

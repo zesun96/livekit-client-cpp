@@ -891,10 +891,19 @@ TEST(RoomConnectionStateTest, ReportsUnexpectedSignalCloseOnlyOnce) {
 	room.AddEventListener(&events);
 	room.ConnectedEvent({});
 	ASSERT_EQ(room.State(), RoomInterface::RoomState::Connected);
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+	livekit::TrackInfo info = MakeTrack("TR_local", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	Track track("TR_local", "camera", TrackKind::Video);
+	auto publication = std::make_shared<TrackPublication>(info, &track);
+	participant->AddTrackPublication(publication);
 
 	room.SignalDisconnectedEvent(livekit::DisconnectReason::SIGNAL_CLOSE);
 	EXPECT_EQ(room.State(), RoomInterface::RoomState::Failed);
 	EXPECT_FALSE(room.IsConnected());
+	EXPECT_EQ(publication->Track(), nullptr);
+	EXPECT_TRUE(participant->GetTrackPublications().empty());
 	EXPECT_EQ(events.disconnected_count, 1);
 	EXPECT_EQ(events.room_eos_count, 0);
 	EXPECT_EQ(events.lifecycle, (std::vector<std::string>{"disconnected"}));
@@ -1417,6 +1426,40 @@ TEST(LocalTrackStateTest, HandlesServerInitiatedUnpublishOnce) {
 	room.LocalTrackUnpublishedEvent("TR_local");
 	EXPECT_EQ(events.unpublished_count, 1);
 	room.RemoveEventListener();
+}
+
+TEST(LocalTrackStateTest, TerminalDisconnectClearsNonOwningTrackReferences) {
+	Room room;
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+
+	livekit::TrackInfo info = MakeTrack("TR_local", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	auto track = std::make_unique<Track>("TR_local", "camera", TrackKind::Video);
+	auto publication = std::make_shared<TrackPublication>(info, track.get());
+	participant->AddTrackPublication(publication);
+	ASSERT_EQ(publication->Track(), track.get());
+
+	participant->ClearPublishedTracksForDisconnect();
+
+	EXPECT_EQ(publication->Track(), nullptr);
+	EXPECT_TRUE(participant->GetTrackPublications().empty());
+	track.reset();
+}
+
+TEST(LocalTrackStateTest, RoomDestructionDoesNotDereferenceDestroyedLocalTrack) {
+	auto room = std::make_unique<Room>();
+	auto* participant = dynamic_cast<LocalParticipant*>(room->GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+
+	livekit::TrackInfo info = MakeTrack("TR_local", "camera", livekit::TrackType::VIDEO,
+	                                    livekit::TrackSource::CAMERA, false);
+	auto track = std::make_unique<Track>("TR_local", "camera", TrackKind::Video);
+	participant->AddTrackPublication(std::make_shared<TrackPublication>(info, track.get()));
+
+	track.reset();
+	room.reset();
+	SUCCEED();
 }
 
 TEST(LocalTrackStateTest, ForwardsFirstRemoteSubscriptionOnce) {
