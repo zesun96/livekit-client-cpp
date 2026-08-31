@@ -12,6 +12,23 @@
 
 namespace livekit::examples {
 
+inline std::shared_ptr<livekit::core::TraceSinkInterface> ConfigureExampleTracing() {
+	const char* path = std::getenv("LIVEKIT_TRACE_FILE");
+	if (path == nullptr || *path == '\0') {
+		return nullptr;
+	}
+	auto sink = livekit::core::CreateJsonTraceSink(path);
+	if (!sink) {
+		std::cerr << "Unable to open trace file: " << path << std::endl;
+		return nullptr;
+	}
+	livekit::core::SetTraceOptions(
+	    {.enabled = true, .category_mask = livekit::core::kAllTraceCategories});
+	livekit::core::SetTraceSink(sink);
+	std::cout << "Writing Perfetto/Chrome Trace JSON to " << path << std::endl;
+	return sink;
+}
+
 struct ConnectionArguments {
 	std::string url;
 	std::string token;
@@ -57,10 +74,16 @@ inline bool WaitUntil(const std::function<bool()>& predicate,
 
 class ClientRuntime {
 public:
-	ClientRuntime() : log_sink_(ConfigureExampleLogging()), initialized_(livekit::core::Init()) {}
+	ClientRuntime()
+	    : trace_sink_(ConfigureExampleTracing()), log_sink_(ConfigureExampleLogging()),
+	      initialized_(livekit::core::Init()) {}
 	~ClientRuntime() {
 		if (initialized_) {
 			livekit::core::Destroy();
+		}
+		if (livekit::core::GetTraceSink() == trace_sink_) {
+			livekit::core::SetTraceSink(nullptr);
+			livekit::core::SetTraceOptions({});
 		}
 		if (livekit::core::GetLogSink() == log_sink_) {
 			livekit::core::SetLogSink(nullptr);
@@ -70,6 +93,7 @@ public:
 	bool initialized() const { return initialized_; }
 
 private:
+	std::shared_ptr<livekit::core::TraceSinkInterface> trace_sink_;
 	std::shared_ptr<livekit::core::LogSinkInterface> log_sink_;
 	bool initialized_;
 };

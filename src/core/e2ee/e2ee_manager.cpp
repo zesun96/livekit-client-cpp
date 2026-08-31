@@ -17,6 +17,7 @@
 #include "livekit/core/e2ee/e2ee_manager.h"
 
 #include "../detail/frame_metadata.h"
+#include "../detail/tracing.h"
 #include "e2ee_manager_internal.h"
 #include "key_provider_internal.h"
 
@@ -450,7 +451,10 @@ E2EEManager::~E2EEManager() = default;
 
 bool E2EEManager::Enabled() const noexcept { return impl_->Enabled(); }
 
-bool E2EEManager::SetEnabled(bool enabled) { return impl_->SetEnabled(enabled); }
+bool E2EEManager::SetEnabled(bool enabled) {
+	LKC_TRACE_SPAN(TraceCategory::E2ee, "e2ee.set_enabled");
+	return impl_->SetEnabled(enabled);
+}
 
 KeyProvider& E2EEManager::Keys() noexcept { return impl_->Keys(); }
 
@@ -488,6 +492,7 @@ bool E2EEManagerNativeAccess::AttachSender(
     webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender,
     std::shared_ptr<detail::FrameMetadataStore> metadata_store,
     FrameMetadataFeatures metadata_features) {
+	LKC_TRACE_SPAN(TraceCategory::E2ee, "e2ee.attach_sender");
 	return manager.impl_->AttachSender(std::move(track_id), std::move(participant_identity), kind,
 	                                   std::move(sender), std::move(metadata_store),
 	                                   metadata_features);
@@ -497,6 +502,7 @@ bool E2EEManagerNativeAccess::AttachReceiver(
     E2EEManager& manager, std::string track_id, std::string participant_identity, TrackKind kind,
     webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
     std::shared_ptr<detail::FrameMetadataStore> metadata_store) {
+	LKC_TRACE_SPAN(TraceCategory::E2ee, "e2ee.attach_receiver");
 	return manager.impl_->AttachReceiver(std::move(track_id), std::move(participant_identity), kind,
 	                                     std::move(receiver), std::move(metadata_store));
 }

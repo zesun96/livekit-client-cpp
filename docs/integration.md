@@ -39,6 +39,7 @@ release-candidate gates on its target hardware and network.
 | Hardware audio processing | Physical AEC, double-talk preservation, noise suppression, and zero-drop gates passed |
 | Installed Windows package | Release C++ and Release/Debug C runtime smoke plus all C ABI export checks passed; Debug C++ static-CRT ABI caveat recorded below |
 | External video formats | Eleven public input formats, odd dimensions, padded planes, C/C++ entry points, and RGBA real-server publication passed |
+| Runtime tracing | C++ sinks, C callbacks, Perfetto JSON, category filtering, callback-drain lifetime, installed C consumers, and correlated server-restart recovery passed |
 
 ## Resource soak results
 
@@ -127,6 +128,15 @@ configured CTest entries passed (32 opt-in entries skipped). The local `CAPI` ma
 real-server cases plus unified-log and sensitive-data audits. Release and Debug DLLs each matched
 all 325 public C declarations, and freshly installed pure C consumers built and ran against both
 configurations, reporting SDK 0.4.0.
+
+The runtime-tracing batch added process-wide C++ sinks and stable C callback/file APIs, with
+Perfetto/Chrome Trace JSON for lifecycle, signaling, transport, recovery, track, data, RPC, and
+E2EE events. All 204 configured CTest entries passed (32 opt-in entries skipped), including the
+pure C consumer generating and parsing an installed-DLL trace. Release and Debug DLLs each matched
+all 331 public C declarations. Freshly configured installed-package Release C/C++ and Debug C
+consumers built and ran. The local `CAPI` matrix passed four real-server cases; its forced restart
+trace contained matching async recovery correlation IDs and the reconnect-success event, then
+passed JWT, credential, SDP, ICE-candidate, TURN-URL, unified-log, and API-secret audits.
 
 ## Multi-format video-frame acceptance
 

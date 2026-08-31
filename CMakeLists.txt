@@ -207,6 +207,7 @@ set(
   src/core/detail/rtc_session.cpp
   src/core/detail/signal_client.cpp
   src/core/detail/signal_url.cpp
+  src/core/detail/tracing.cpp
   src/core/detail/uri.cpp
   src/core/detail/utils.cpp
   src/core/detail/video_encoding.cpp

@@ -5,6 +5,7 @@
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/logging.h"
 #include "livekit/core/rpc.h"
+#include "livekit/core/tracing.h"
 #include "livekit/core/track/audio_source_interface.h"
 #include "livekit/core/track/local_track_interface.h"
 #include "livekit/core/track/remote_track_interface.h"
@@ -282,6 +283,42 @@ lk_log_source_t FromCoreLogSource(core::LogSource source) {
 	return LK_LOG_SOURCE_LIVEKIT;
 }
 
+lk_trace_category_t FromCoreTraceCategory(core::TraceCategory category) {
+	switch (category) {
+	case core::TraceCategory::Lifecycle:
+		return LK_TRACE_CATEGORY_LIFECYCLE;
+	case core::TraceCategory::Signaling:
+		return LK_TRACE_CATEGORY_SIGNALING;
+	case core::TraceCategory::Transport:
+		return LK_TRACE_CATEGORY_TRANSPORT;
+	case core::TraceCategory::Track:
+		return LK_TRACE_CATEGORY_TRACK;
+	case core::TraceCategory::Data:
+		return LK_TRACE_CATEGORY_DATA;
+	case core::TraceCategory::Rpc:
+		return LK_TRACE_CATEGORY_RPC;
+	case core::TraceCategory::E2ee:
+		return LK_TRACE_CATEGORY_E2EE;
+	}
+	return LK_TRACE_CATEGORY_LIFECYCLE;
+}
+
+lk_trace_phase_t FromCoreTracePhase(core::TracePhase phase) {
+	switch (phase) {
+	case core::TracePhase::Instant:
+		return LK_TRACE_PHASE_INSTANT;
+	case core::TracePhase::DurationBegin:
+		return LK_TRACE_PHASE_DURATION_BEGIN;
+	case core::TracePhase::DurationEnd:
+		return LK_TRACE_PHASE_DURATION_END;
+	case core::TracePhase::AsyncBegin:
+		return LK_TRACE_PHASE_ASYNC_BEGIN;
+	case core::TracePhase::AsyncEnd:
+		return LK_TRACE_PHASE_ASYNC_END;
+	}
+	return LK_TRACE_PHASE_INSTANT;
+}
+
 class CLogSink final : public core::LogSinkInterface {
 public:
 	CLogSink(lk_log_callback callback, void* user_data)
@@ -334,8 +371,63 @@ private:
 	size_t callbacks_in_progress_ = 0;
 };
 
+class CTraceSink final : public core::TraceSinkInterface {
+public:
+	CTraceSink(lk_trace_callback callback, void* user_data)
+	    : callback_(callback), user_data_(user_data) {}
+
+	void OnTrace(const core::TraceRecord& record) override {
+		lk_trace_callback callback = nullptr;
+		void* user_data = nullptr;
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			if (callback_ == nullptr) {
+				return;
+			}
+			++callbacks_in_progress_;
+			callback = callback_;
+			user_data = user_data_;
+		}
+
+		const lk_trace_record_t converted{sizeof(lk_trace_record_t),
+		                                  FromCoreTracePhase(record.phase),
+		                                  FromCoreTraceCategory(record.category),
+		                                  record.name.c_str(),
+		                                  record.timestamp_us,
+		                                  record.thread_id,
+		                                  record.correlation_id};
+		try {
+			callback(user_data, &converted);
+		} catch (...) {
+			// Exceptions must never escape a C ABI callback boundary.
+		}
+
+		{
+			std::lock_guard<std::mutex> guard(mutex_);
+			--callbacks_in_progress_;
+		}
+		callbacks_finished_.notify_all();
+	}
+
+	void Disable() {
+		std::unique_lock<std::mutex> lock(mutex_);
+		callback_ = nullptr;
+		user_data_ = nullptr;
+		callbacks_finished_.wait(lock, [this] { return callbacks_in_progress_ == 0; });
+	}
+
+private:
+	std::mutex mutex_;
+	std::condition_variable callbacks_finished_;
+	lk_trace_callback callback_ = nullptr;
+	void* user_data_ = nullptr;
+	size_t callbacks_in_progress_ = 0;
+};
+
 std::mutex c_log_sink_mutex;
 std::shared_ptr<CLogSink> c_log_sink;
+std::mutex c_trace_sink_mutex;
+std::shared_ptr<CTraceSink> c_trace_sink;
 
 void ClearError() { last_error = {}; }
 
@@ -2703,6 +2795,93 @@ lk_status_t lk_log_set_callback(lk_log_callback callback, void* user_data) {
 			previous->Disable();
 		}
 		c_log_sink = std::move(replacement);
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_trace_options_init(lk_trace_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->category_mask = LK_TRACE_CATEGORY_ALL;
+	}
+}
+
+lk_status_t lk_trace_set_options(const lk_trace_options_t* options) {
+	return Guard([&] {
+		if (options == nullptr || options->struct_size < sizeof(options->struct_size)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "valid trace options are required");
+		}
+		auto converted = core::GetTraceOptions();
+		if (LKC_HAS_FIELD(options, lk_trace_options_t, enabled)) {
+			converted.enabled = options->enabled != 0;
+		}
+		if (LKC_HAS_FIELD(options, lk_trace_options_t, category_mask)) {
+			if ((options->category_mask & ~static_cast<uint64_t>(LK_TRACE_CATEGORY_ALL)) != 0) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid trace category mask");
+			}
+			converted.category_mask = options->category_mask;
+		}
+		core::SetTraceOptions(converted);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_trace_get_options(lk_trace_options_t* options) {
+	return Guard([&] {
+		const auto current = core::GetTraceOptions();
+		const lk_trace_options_t result{sizeof(lk_trace_options_t), current.enabled ? 1 : 0,
+		                                current.category_mask};
+		return CopyOutputStruct(result, options, "trace options output is invalid");
+	});
+}
+
+lk_status_t lk_trace_set_callback(lk_trace_callback callback, void* user_data) {
+	return Guard([&] {
+		std::shared_ptr<CTraceSink> replacement;
+		if (callback != nullptr) {
+			replacement = std::make_shared<CTraceSink>(callback, user_data);
+		}
+
+		std::lock_guard<std::mutex> guard(c_trace_sink_mutex);
+		auto previous = std::move(c_trace_sink);
+		core::SetTraceSink(replacement);
+		if (previous) {
+			previous->Disable();
+		}
+		c_trace_sink = std::move(replacement);
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_trace_start_json_file(const char* path) {
+	return Guard([&] {
+		if (path == nullptr || *path == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "trace JSON path is required");
+		}
+		auto replacement = core::CreateJsonTraceSink(path);
+		if (!replacement) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to open trace JSON file");
+		}
+
+		std::lock_guard<std::mutex> guard(c_trace_sink_mutex);
+		auto previous = std::move(c_trace_sink);
+		core::SetTraceSink(std::move(replacement));
+		if (previous) {
+			previous->Disable();
+		}
+		return LK_STATUS_OK;
+	});
+}
+
+lk_status_t lk_trace_stop(void) {
+	return Guard([&] {
+		std::lock_guard<std::mutex> guard(c_trace_sink_mutex);
+		auto previous = std::move(c_trace_sink);
+		core::SetTraceSink(nullptr);
+		if (previous) {
+			previous->Disable();
+		}
 		return LK_STATUS_OK;
 	});
 }

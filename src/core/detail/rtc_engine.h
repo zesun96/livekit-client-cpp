@@ -330,6 +330,7 @@ private:
 	std::atomic<bool> force_full_reconnect_{false};
 	std::atomic<livekit::DisconnectReason> recovery_failure_reason_{
 	    livekit::DisconnectReason::UNKNOWN_REASON};
+	std::atomic<std::uint64_t> recovery_trace_id_{0};
 	std::mutex recovery_thread_mutex_;
 	std::thread recovery_thread_;
 	std::mutex rtc_connected_mutex_;

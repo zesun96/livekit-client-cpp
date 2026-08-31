@@ -26,6 +26,7 @@
 #include "room_event_interface.h"
 #include "room_interface.h"
 #include "token_source.h"
+#include "tracing.h"
 
 #include <string>
 namespace livekit {

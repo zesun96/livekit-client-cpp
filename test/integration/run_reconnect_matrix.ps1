@@ -188,6 +188,56 @@ function Assert-LogsContainNoSensitiveData([string]$Directory) {
   return $capturedSources
 }
 
+function Assert-RecoveryTrace([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "Recovery trace was not created: $Path"
+  }
+  $raw = Get-Content -LiteralPath $Path -Raw
+  try {
+    $document = $raw | ConvertFrom-Json
+  } catch {
+    throw "Recovery trace is not valid JSON: $($_.Exception.Message)"
+  }
+  $begins = @($document.traceEvents | Where-Object {
+      $_.name -eq "connection.recovery" -and $_.ph -eq "b"
+    })
+  $ends = @($document.traceEvents | Where-Object {
+      $_.name -eq "connection.recovery" -and $_.ph -eq "e"
+    })
+  $matchingCorrelation = $false
+  foreach ($begin in $begins) {
+    if ($null -ne ($ends | Where-Object { $_.id -eq $begin.id } | Select-Object -First 1)) {
+      $matchingCorrelation = $true
+      break
+    }
+  }
+  if (-not $matchingCorrelation -or
+      $raw -notmatch '"name":"connection\.recovery\.reconnected"' -or
+      $raw -notmatch '"displayTimeUnit":"ms"') {
+    throw "Recovery trace is missing its correlated reconnect event sequence"
+  }
+
+  $sensitivePatterns = @(
+    'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+    '(?i)access[_-]?token\s*[:=]\s*\S+',
+    '(?m)^v=0\s*$',
+    '(?i)(?:^|\s)(?:a=)?candidate:',
+    '(?i)turns?:\S*@\S+'
+  )
+  if (-not [string]::IsNullOrEmpty($ApiKey)) {
+    $sensitivePatterns += [regex]::Escape($ApiKey)
+  }
+  if (-not [string]::IsNullOrEmpty($ApiSecret)) {
+    $sensitivePatterns += [regex]::Escape($ApiSecret)
+  }
+  foreach ($pattern in $sensitivePatterns) {
+    if ($raw -match $pattern) {
+      throw "Sensitive-data audit failed for the recovery trace"
+    }
+  }
+  Write-HarnessResult "PASS Perfetto recovery trace and sensitive-data audit"
+}
+
 $processEnvironment = [Environment]::GetEnvironmentVariables("Process")
 $canonicalPath = $processEnvironment.GetEnumerator() |
   Where-Object { $_.Key -ceq "Path" } |
@@ -771,6 +821,7 @@ $originalEnvironment = @{
   LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY = $env:LIVEKIT_OFFICIAL_CPP_PEER_IDENTITY
   LIVEKIT_SERVER_RESTART_READY_FILE = $env:LIVEKIT_SERVER_RESTART_READY_FILE
   LIVEKIT_CAPI_SERVER_RESTART_READY_FILE = $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE
+  LIVEKIT_TRACE_JSON = $env:LIVEKIT_TRACE_JSON
   LIVEKIT_TOKEN_REFRESH_READY_FILE = $env:LIVEKIT_TOKEN_REFRESH_READY_FILE
   LIVEKIT_NETWORK_FAULT_PROFILE = $env:LIVEKIT_NETWORK_FAULT_PROFILE
   LIVEKIT_NETWORK_FAULT_READY_FILE = $env:LIVEKIT_NETWORK_FAULT_READY_FILE
@@ -833,6 +884,7 @@ try {
   $env:LIVEKIT_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "restart.ready"
   $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE = Join-Path $tempRoot "capi-restart.ready"
   $env:LIVEKIT_TOKEN_REFRESH_READY_FILE = Join-Path $tempRoot "refresh.ready"
+  [Environment]::SetEnvironmentVariable("LIVEKIT_TRACE_JSON", $null, "Process")
 
   $server = Start-TestServer
   if ($Scenario -in @("All", "Participants")) {
@@ -858,12 +910,19 @@ try {
   if ($Scenario -in @("All", "Restart", "CAPI")) {
     for ($iteration = 1; $iteration -le $Iterations; ++$iteration) {
       Write-Host "C API server restart iteration $iteration/$Iterations"
-      Invoke-CoordinatedTest "CApiRecoversAfterExplicitServerRestart" `
-        $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE {
-          Stop-OwnedProcess $server
-          Start-Sleep -Seconds 2
-          $script:server = Start-TestServer
-        }
+      $tracePath = Join-Path $tempRoot "capi-recovery-$iteration.json"
+      $env:LIVEKIT_TRACE_JSON = $tracePath
+      try {
+        Invoke-CoordinatedTest "CApiRecoversAfterExplicitServerRestart" `
+          $env:LIVEKIT_CAPI_SERVER_RESTART_READY_FILE {
+            Stop-OwnedProcess $server
+            Start-Sleep -Seconds 2
+            $script:server = Start-TestServer
+          }
+        Assert-RecoveryTrace $tracePath
+      } finally {
+        [Environment]::SetEnvironmentVariable("LIVEKIT_TRACE_JSON", $null, "Process")
+      }
     }
   }
 

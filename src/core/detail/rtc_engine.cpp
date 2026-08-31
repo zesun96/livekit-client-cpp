@@ -21,6 +21,7 @@
 #include "internals.h"
 #include "rtc_session.h"
 #include "signal_client.h"
+#include "tracing.h"
 
 #include "rtc_base/crypto_random.h"
 
@@ -246,6 +247,7 @@ RtcEngine::~RtcEngine() {
 
 livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
                                          EngineOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Transport, "transport.connect");
 	Disconnect();
 	{
 		std::lock_guard<std::mutex> guard(access_token_mutex_);
@@ -277,6 +279,7 @@ livekit::JoinResponse RtcEngine::Connect(std::string url, std::string token,
 
 livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const std::string& token,
                                                   const EngineOptions& options) {
+	LKC_TRACE_SPAN(TraceCategory::Transport, "transport.create");
 	auto created = SignalClient::Create(url, token, options.signal_options);
 	if (!created) {
 		return {};
@@ -332,6 +335,7 @@ livekit::JoinResponse RtcEngine::ConnectTransport(const std::string& url, const 
 
 bool RtcEngine::ResumeTransport(const std::string& url, const std::string& token,
                                 const EngineOptions& options, livekit::DisconnectReason reason) {
+	LKC_TRACE_SPAN(TraceCategory::Transport, "transport.resume");
 	SignalOptions signal_options = options.signal_options;
 	int ping_timeout = 0;
 	int ping_interval = 0;
@@ -577,12 +581,19 @@ void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_
 	bool expected = false;
 	if (!recovery_in_progress_.compare_exchange_strong(expected, true)) {
 		if (force_full_reconnect) {
+			LKC_TRACE_INSTANT(TraceCategory::Transport, "connection.recovery.escalated");
 			rtc_connected_cv_.notify_all();
 			if (auto* listener = room_listener_.load()) {
 				listener->ReconnectingEvent(true);
 			}
 		}
 		return;
+	}
+	if (detail::IsTraceEnabled(TraceCategory::Transport)) {
+		const auto trace_id = detail::NextTraceCorrelationId();
+		recovery_trace_id_.store(trace_id);
+		detail::EmitTrace(TraceCategory::Transport, TracePhase::AsyncBegin, "connection.recovery",
+		                  trace_id);
 	}
 	LKC_LOG_INFO << "connection recovery started: reason=" << ReconnectReasonName(reason)
 	             << ", force_full_reconnect=" << force_full_reconnect;
@@ -612,6 +623,13 @@ void RtcEngine::StartRecovery(livekit::DisconnectReason reason, bool force_full_
 }
 
 void RtcEngine::RunRecovery() {
+	auto close_recovery_trace = [this] {
+		const auto trace_id = recovery_trace_id_.exchange(0);
+		if (trace_id != 0) {
+			detail::EmitTrace(TraceCategory::Transport, TracePhase::AsyncEnd, "connection.recovery",
+			                  trace_id);
+		}
+	};
 	std::string url;
 	EngineOptions options;
 	{
@@ -634,12 +652,14 @@ void RtcEngine::RunRecovery() {
 			recovered = ResumeTransport(url, token, options, recovery_failure_reason_.load());
 		}
 		if (recovered && !force_full_reconnect_) {
+			LKC_TRACE_INSTANT(TraceCategory::Transport, "connection.recovery.resumed");
 			LKC_LOG_INFO << "connection recovery completed with signal resume";
 			if (auto* listener = room_listener_.load()) {
 				listener->ResumedEvent();
 			}
 			recovering_connection_ = false;
 			recovery_in_progress_ = false;
+			close_recovery_trace();
 			return;
 		}
 	}
@@ -653,6 +673,7 @@ void RtcEngine::RunRecovery() {
 	recovered = false;
 
 	for (uint32_t attempt = 0; attempt < attempts && !recovery_stop_; ++attempt) {
+		LKC_TRACE_INSTANT(TraceCategory::Transport, "connection.recovery.full_attempt");
 		ReconnectContext context;
 		context.retry_count = attempt;
 		context.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -736,6 +757,7 @@ void RtcEngine::RunRecovery() {
 	}
 
 	if (recovered) {
+		LKC_TRACE_INSTANT(TraceCategory::Transport, "connection.recovery.reconnected");
 		LKC_LOG_INFO << "connection recovery completed with full reconnect in "
 		             << std::chrono::duration_cast<std::chrono::milliseconds>(
 		                    std::chrono::steady_clock::now() - recovery_started)
@@ -745,6 +767,7 @@ void RtcEngine::RunRecovery() {
 			listener->ReconnectedEvent(std::move(recovered_response));
 		}
 	} else if (!recovery_stop_) {
+		LKC_TRACE_INSTANT(TraceCategory::Transport, "connection.recovery.failed");
 		LKC_LOG_ERROR << "connection recovery exhausted after "
 		              << std::chrono::duration_cast<std::chrono::milliseconds>(
 		                     std::chrono::steady_clock::now() - recovery_started)
@@ -760,6 +783,7 @@ void RtcEngine::RunRecovery() {
 	force_full_reconnect_ = false;
 	recovering_connection_ = false;
 	recovery_in_progress_ = false;
+	close_recovery_trace();
 }
 
 void RtcEngine::SetRoomObserver(RtcEngineListener* listener) { room_listener_.store(listener); }
@@ -1410,6 +1434,7 @@ bool RtcEngine::UnregisterRpcMethod(const std::string& method) {
 }
 
 RpcResult RtcEngine::PerformRpc(const PerformRpcParams& params) {
+	LKC_TRACE_SPAN(TraceCategory::Rpc, "rpc.perform");
 	if (params.destination_identity.empty()) {
 		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::RecipientNotFound));
 	}

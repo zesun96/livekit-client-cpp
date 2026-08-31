@@ -17,6 +17,7 @@
 
 #include "livekit/core/livekit_client.h"
 #include "detail/logging.h"
+#include "detail/tracing.h"
 #include "livekit/core/version.h"
 
 #include <rtc_base/crypto_random.h>
@@ -33,6 +34,7 @@ namespace livekit {
 namespace core {
 
 bool Init() {
+	LKC_TRACE_SPAN(TraceCategory::Lifecycle, "runtime.init");
 	std::lock_guard<std::mutex> guard(initialization_mutex);
 	if (initialization_count != 0) {
 		++initialization_count;
@@ -63,6 +65,7 @@ bool Init() {
 }
 
 bool Destroy() {
+	LKC_TRACE_SPAN(TraceCategory::Lifecycle, "runtime.shutdown");
 	std::lock_guard<std::mutex> guard(initialization_mutex);
 	if (initialization_count == 0) {
 		return true;

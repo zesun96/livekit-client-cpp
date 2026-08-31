@@ -70,6 +70,42 @@ public:
 	~CLogCallbackGuard() { lk_log_set_callback(nullptr, nullptr); }
 };
 
+struct CapturedTrace {
+	size_t struct_size;
+	lk_trace_phase_t phase;
+	lk_trace_category_t category;
+	std::string name;
+	uint64_t timestamp_us;
+	uint64_t thread_id;
+	uint64_t correlation_id;
+};
+
+struct TraceCapture {
+	std::mutex mutex;
+	std::vector<CapturedTrace> records;
+};
+
+void CaptureTrace(void* user_data, const lk_trace_record_t* record) {
+	auto* capture = static_cast<TraceCapture*>(user_data);
+	if (capture == nullptr || record == nullptr) {
+		return;
+	}
+	std::lock_guard<std::mutex> guard(capture->mutex);
+	capture->records.push_back({record->struct_size, record->phase, record->category,
+	                            record->name == nullptr ? "" : record->name, record->timestamp_us,
+	                            record->thread_id, record->correlation_id});
+}
+
+class CTraceCallbackGuard {
+public:
+	~CTraceCallbackGuard() {
+		lk_trace_stop();
+		lk_trace_options_t options;
+		lk_trace_options_init(&options);
+		lk_trace_set_options(&options);
+	}
+};
+
 struct AsyncRpcCompletion {
 	std::mutex mutex;
 	std::condition_variable condition;
@@ -428,6 +464,11 @@ TEST(CApiTest, ConfiguresAndReceivesProcessWideLogs) {
 	EXPECT_EQ(defaults.livekit_level, LK_LOG_LEVEL_INFO);
 	EXPECT_EQ(defaults.webrtc_level, LK_LOG_LEVEL_WARNING);
 	EXPECT_EQ(defaults.websocket_level, LK_LOG_LEVEL_WARNING);
+	lk_trace_options_t trace_options;
+	lk_trace_options_init(&trace_options);
+	EXPECT_EQ(trace_options.struct_size, sizeof(trace_options));
+	EXPECT_EQ(trace_options.enabled, 0);
+	EXPECT_EQ(trace_options.category_mask, static_cast<uint64_t>(LK_TRACE_CATEGORY_ALL));
 	EXPECT_EQ(lk_log_get_options(nullptr), LK_STATUS_INVALID_ARGUMENT);
 
 	lk_log_options_t invalid = defaults;
@@ -486,6 +527,56 @@ TEST(CApiTest, ConfiguresAndReceivesProcessWideLogs) {
 
 	lk_log_options_init(&defaults);
 	EXPECT_EQ(lk_log_set_options(&defaults), LK_STATUS_OK) << lk_last_error();
+}
+
+TEST(CApiTest, ConfiguresAndReceivesProcessWideTraces) {
+	CTraceCallbackGuard restore;
+	lk_trace_options_t defaults;
+	lk_trace_options_init(&defaults);
+	EXPECT_EQ(lk_trace_get_options(nullptr), LK_STATUS_INVALID_ARGUMENT);
+	lk_trace_options_t invalid = defaults;
+	invalid.struct_size = 0;
+	EXPECT_EQ(lk_trace_set_options(&invalid), LK_STATUS_INVALID_ARGUMENT);
+	invalid = defaults;
+	invalid.category_mask = 1ULL << 63;
+	EXPECT_EQ(lk_trace_set_options(&invalid), LK_STATUS_INVALID_ARGUMENT);
+
+	TraceCapture capture;
+	ASSERT_EQ(lk_trace_set_callback(CaptureTrace, &capture), LK_STATUS_OK) << lk_last_error();
+	lk_trace_options_t configured;
+	lk_trace_options_init(&configured);
+	configured.enabled = 1;
+	configured.category_mask = LK_TRACE_CATEGORY_LIFECYCLE;
+	ASSERT_EQ(lk_trace_set_options(&configured), LK_STATUS_OK) << lk_last_error();
+	lk_trace_options_t readback;
+	lk_trace_options_init(&readback);
+	ASSERT_EQ(lk_trace_get_options(&readback), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(readback.enabled, 1);
+	EXPECT_EQ(readback.category_mask, static_cast<uint64_t>(LK_TRACE_CATEGORY_LIFECYCLE));
+
+	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
+	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK) << lk_last_error();
+	{
+		std::lock_guard<std::mutex> guard(capture.mutex);
+		ASSERT_GE(capture.records.size(), 4u);
+		EXPECT_TRUE(
+		    std::all_of(capture.records.begin(), capture.records.end(), [](const auto& trace) {
+			    return trace.struct_size == sizeof(lk_trace_record_t) &&
+			           trace.category == LK_TRACE_CATEGORY_LIFECYCLE && trace.thread_id != 0;
+		    }));
+		EXPECT_TRUE(
+		    std::any_of(capture.records.begin(), capture.records.end(), [](const auto& trace) {
+			    return trace.phase == LK_TRACE_PHASE_DURATION_BEGIN && trace.name == "runtime.init";
+		    }));
+		EXPECT_TRUE(
+		    std::any_of(capture.records.begin(), capture.records.end(), [](const auto& trace) {
+			    return trace.phase == LK_TRACE_PHASE_DURATION_END &&
+			           trace.name == "runtime.shutdown";
+		    }));
+	}
+
+	EXPECT_EQ(lk_trace_start_json_file(nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_trace_stop(), LK_STATUS_OK);
 }
 
 TEST(CApiTest, OwnsMediaDeviceSnapshotAndValidatesIndexes) {

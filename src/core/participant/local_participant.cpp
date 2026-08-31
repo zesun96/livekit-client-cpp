@@ -23,6 +23,7 @@
 #include "../detail/data_track_proto.h"
 #include "../detail/frame_metadata.h"
 #include "../detail/logging.h"
+#include "../detail/tracing.h"
 #include "../detail/video_encoding.h"
 #include "../e2ee/e2ee_manager_internal.h"
 #include "../track/audio_source.h"
@@ -573,6 +574,7 @@ LocalTrackInterface* LocalParticipant::CreateLocalVideoTrack(std::string label,
 }
 
 bool LocalParticipant::PublishTrack(LocalTrackInterface* track, TrackPublishOptions option) {
+	LKC_TRACE_SPAN(TraceCategory::Track, "track.publish");
 	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
 		return false;
@@ -895,6 +897,7 @@ bool LocalParticipant::UpdateVideoDegradationPreference(LocalTrackInterface* tra
 }
 
 bool LocalParticipant::UnpublishTrack(LocalTrackInterface* track, bool stop_on_unpublish) {
+	LKC_TRACE_SPAN(TraceCategory::Track, "track.unpublish");
 	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (engine_ == nullptr || track == nullptr) {
 		return false;
@@ -1548,6 +1551,7 @@ std::optional<ChatMessage> LocalParticipant::EditChatMessage(std::string message
 }
 
 RpcResult LocalParticipant::PerformRpc(const PerformRpcParams& params) {
+	LKC_TRACE_SPAN(TraceCategory::Rpc, "participant.rpc.perform");
 	if (engine_ == nullptr) {
 		return RpcResult::Failure(RpcError::BuiltIn(RpcErrorCode::SendFailed));
 	}
@@ -1592,6 +1596,7 @@ bool LocalParticipant::ResendTrackSubscriptionPermissions() {
 }
 
 bool LocalParticipant::SendText(const std::string& text, TextSendOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Data, "data_stream.send_text");
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize ||
 	    (options.compress && text.size() > kMaximumCompressedDataStreamSize)) {
@@ -1617,6 +1622,7 @@ bool LocalParticipant::SendText(const std::string& text, TextSendOptions options
 }
 
 bool LocalParticipant::SendBytes(const std::vector<uint8_t>& data, ByteSendOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Data, "data_stream.send_bytes");
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize ||
 	    (options.compress && data.size() > kMaximumCompressedDataStreamSize)) {
@@ -1636,6 +1642,7 @@ bool LocalParticipant::SendBytes(const std::vector<uint8_t>& data, ByteSendOptio
 }
 
 bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Data, "data_stream.send_file");
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize) {
 		return false;
@@ -1712,6 +1719,7 @@ bool LocalParticipant::SendFile(const std::string& path, FileSendOptions options
 }
 
 std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTextOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Data, "data_stream.open_text");
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize ||
 	    (options.update && options.stream_id.empty()) ||
@@ -1756,6 +1764,7 @@ std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTe
 
 std::unique_ptr<ByteStreamWriterInterface>
 LocalParticipant::StreamBytes(StreamBytesOptions options) {
+	LKC_TRACE_SPAN(TraceCategory::Data, "data_stream.open_bytes");
 	if (engine_ == nullptr || options.chunk_size == 0 ||
 	    options.chunk_size > kMaximumDataStreamChunkSize ||
 	    (options.compress && options.total_size &&

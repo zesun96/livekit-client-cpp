@@ -125,6 +125,48 @@ typedef struct lk_log_options {
  */
 typedef void (*lk_log_callback)(void* user_data, const lk_log_record_t* record);
 
+typedef enum lk_trace_category {
+	LK_TRACE_CATEGORY_LIFECYCLE = 1ULL << 0,
+	LK_TRACE_CATEGORY_SIGNALING = 1ULL << 1,
+	LK_TRACE_CATEGORY_TRANSPORT = 1ULL << 2,
+	LK_TRACE_CATEGORY_TRACK = 1ULL << 3,
+	LK_TRACE_CATEGORY_DATA = 1ULL << 4,
+	LK_TRACE_CATEGORY_RPC = 1ULL << 5,
+	LK_TRACE_CATEGORY_E2EE = 1ULL << 6,
+	LK_TRACE_CATEGORY_ALL = (1ULL << 7) - 1
+} lk_trace_category_t;
+
+typedef enum lk_trace_phase {
+	LK_TRACE_PHASE_INSTANT = 0,
+	LK_TRACE_PHASE_DURATION_BEGIN = 1,
+	LK_TRACE_PHASE_DURATION_END = 2,
+	LK_TRACE_PHASE_ASYNC_BEGIN = 3,
+	LK_TRACE_PHASE_ASYNC_END = 4
+} lk_trace_phase_t;
+
+/* The name string is borrowed and remains valid only for the duration of the callback. */
+typedef struct lk_trace_record {
+	size_t struct_size;
+	lk_trace_phase_t phase;
+	lk_trace_category_t category;
+	const char* name;
+	uint64_t timestamp_us;
+	uint64_t thread_id;
+	uint64_t correlation_id;
+} lk_trace_record_t;
+
+typedef struct lk_trace_options {
+	size_t struct_size;
+	int enabled;
+	uint64_t category_mask;
+} lk_trace_options_t;
+
+/*
+ * Invoked synchronously from SDK threads. The callback must be thread-safe and return quickly.
+ * Do not call a tracing configuration function from this callback.
+ */
+typedef void (*lk_trace_callback)(void* user_data, const lk_trace_record_t* record);
+
 typedef enum lk_room_state {
 	LK_ROOM_STATE_CONNECTING = 0,
 	LK_ROOM_STATE_CONNECTED = 1,
@@ -1406,6 +1448,14 @@ LKC_API lk_status_t lk_log_get_options(lk_log_options_t* options);
  * in progress before returning, after which the previous user_data may be released.
  */
 LKC_API lk_status_t lk_log_set_callback(lk_log_callback callback, void* user_data);
+LKC_API void lk_trace_options_init(lk_trace_options_t* options);
+LKC_API lk_status_t lk_trace_set_options(const lk_trace_options_t* options);
+LKC_API lk_status_t lk_trace_get_options(lk_trace_options_t* options);
+LKC_API lk_status_t lk_trace_set_callback(lk_trace_callback callback, void* user_data);
+/* Replaces the current trace sink with a Perfetto/Chrome Trace compatible JSON file sink. */
+LKC_API lk_status_t lk_trace_start_json_file(const char* path);
+/* Flushes and removes the current callback or JSON trace sink. */
+LKC_API lk_status_t lk_trace_stop(void);
 
 /*
  * Creates a read-only snapshot of active host media devices. The list owns its strings and must
