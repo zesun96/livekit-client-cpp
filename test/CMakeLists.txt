@@ -1,5 +1,9 @@
 include(${PROJECT_SOURCE_DIR}/cmake/Testing.cmake)
 
+if(LKC_ENABLE_VLD)
+  add_subdirectory(vld)
+endif()
+
 add_subdirectory(unit)
 
 if(BUILD_FUNCTIONAL_TESTS)

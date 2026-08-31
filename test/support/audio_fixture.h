@@ -12,8 +12,7 @@
 namespace livekit::test_support {
 
 inline std::uint32_t ReadLittleEndian32(const std::array<std::uint8_t, 4>& bytes) {
-	return static_cast<std::uint32_t>(bytes[0]) |
-	       (static_cast<std::uint32_t>(bytes[1]) << 8) |
+	return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8) |
 	       (static_cast<std::uint32_t>(bytes[2]) << 16) |
 	       (static_cast<std::uint32_t>(bytes[3]) << 24);
 }
@@ -48,7 +47,7 @@ inline std::vector<std::int16_t> LoadPcm16Mono48Khz(const std::filesystem::path&
 					       (static_cast<std::uint16_t>(format[offset + 1]) << 8);
 				};
 				const std::array<std::uint8_t, 4> rate_bytes{format[4], format[5], format[6],
-				                                                     format[7]};
+				                                             format[7]};
 				valid_format = read16(0) == 1 && read16(2) == 1 &&
 				               ReadLittleEndian32(rate_bytes) == 48000 && read16(14) == 16;
 			}

@@ -113,6 +113,8 @@ libwebsockets' mbedTLS symbols from WebRTC's BoringSSL symbols.
 | `BUILD_LEGACY_TEST_TOOLS` | `OFF` | Build non-deterministic legacy WebRTC tools |
 | `LKC_BUILD_DOCUMENTATION` | `OFF` | Build and install the Doxygen public API reference |
 | `LKC_DOCUMENTATION_ONLY` | `OFF` | Configure only documentation, without runtime dependencies |
+| `LKC_ENABLE_VLD` | `OFF` | Instrument MSVC Debug tests with Visual Leak Detector |
+| `LKC_VLD_ROOT` | empty | Existing Visual Leak Detector installation root |
 | `USE_SYSTEM_MEDIA_CAPTURE` | `OFF` | Find an installed media-capture package |
 | `USE_SYSTEM_JSON` | `OFF` | Find an installed nlohmann/json package |
 | `USE_SYSTEM_PLOG` | `OFF` | Find an installed plog package |
@@ -128,3 +130,6 @@ package command and [Integration testing](integration.md) for the latest recorde
 The Doxygen reference has a documentation-only configuration mode, so generating API documentation
 does not require libwebrtc, vcpkg, or media-capture. See
 [Public API reference](API_REFERENCE.md) for build, output, and installation commands.
+
+Formatting, Clang-Tidy, and Visual Leak Detector commands are documented in
+[Engineering quality gates](QUALITY_GATES.md).

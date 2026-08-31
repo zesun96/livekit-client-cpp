@@ -1,5 +1,5 @@
-#include "webrtc_audio_processor.h"
 #include "../support/audio_fixture.h"
+#include "webrtc_audio_processor.h"
 
 #include <gtest/gtest.h>
 
@@ -21,15 +21,14 @@ double Rms(std::span<const std::int16_t> samples) {
 }
 
 std::vector<std::int16_t> LoadSpeechFixture() {
-	const auto path = std::filesystem::path(LIVEKIT_TEST_RESOURCE_DIR) / "audio" /
-	                  "change-sophie.wav";
+	const auto path =
+	    std::filesystem::path(LIVEKIT_TEST_RESOURCE_DIR) / "audio" / "change-sophie.wav";
 	return test_support::LoadPcm16Mono48Khz(path);
 }
 
 double BestDelayedProjectionGain(std::span<const std::int16_t> output,
-	                              std::span<const std::int16_t> signal,
-	                              std::size_t frame_samples,
-	                              std::size_t maximum_delay_frames) {
+                                 std::span<const std::int16_t> signal, std::size_t frame_samples,
+                                 std::size_t maximum_delay_frames) {
 	double best_gain = 0.0;
 	for (std::size_t delay_frames = 0; delay_frames <= maximum_delay_frames; ++delay_frames) {
 		const auto delay = delay_frames * frame_samples;
@@ -187,10 +186,10 @@ TEST(WebRtcAudioProcessorTest, PreservesNearEndSignalDuringDoubleTalk) {
 			measured_render.insert(measured_render.end(), render.begin(), render.end());
 		}
 	}
-	const double near_end_gain = BestDelayedProjectionGain(
-	    measured_output, measured_near_end, capture.size(), 20);
-	const double residual_echo_gain = std::abs(BestDelayedProjectionGain(
-	    measured_output, measured_render, capture.size(), 20));
+	const double near_end_gain =
+	    BestDelayedProjectionGain(measured_output, measured_near_end, capture.size(), 20);
+	const double residual_echo_gain =
+	    std::abs(BestDelayedProjectionGain(measured_output, measured_render, capture.size(), 20));
 	EXPECT_GT(std::abs(near_end_gain), 0.60) << "near_end_gain=" << near_end_gain;
 	EXPECT_LT(residual_echo_gain, 0.25) << "residual_echo_gain=" << residual_echo_gain;
 }
