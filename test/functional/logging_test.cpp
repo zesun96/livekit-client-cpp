@@ -116,8 +116,7 @@ TEST(LoggingTest, RedactsCredentialsAndConnectionDescriptions) {
 	                "Cand[:123:1:udp:192.0.2.2:5001:host:secret-ufrag:secret-password]");
 	detail::EmitLog(LogLevel::Warning, LogSource::WebRTC,
 	                "Conn[id:host:udp:192.0.2.3:5002->secret-connection]");
-	detail::EmitLog(LogLevel::Error, LogSource::WebRTC,
-	                "Port[id:host:udp:192.0.2.4:5003]");
+	detail::EmitLog(LogLevel::Error, LogSource::WebRTC, "Port[id:host:udp:192.0.2.4:5003]");
 	detail::EmitLog(LogLevel::Info, LogSource::WebRTC,
 	                "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:secret\r\n");
 	detail::EmitLog(LogLevel::Info, LogSource::WebSocket, "token eyJabc.def.ghi");

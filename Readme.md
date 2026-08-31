@@ -81,6 +81,7 @@ installation, runtime layout, and installed-package consumer checks.
 | --- | --- |
 | Dependencies and source builds | [Building from source](docs/BUILDING.md) |
 | Generated C and C++ API reference | [API reference build](docs/API_REFERENCE.md) |
+| Formatting, static analysis, and memory checks | [Engineering quality gates](docs/QUALITY_GATES.md) |
 | Capability details and API behavior | [SDK features](docs/FEATURES.md) |
 | Video frame metadata | [Frame metadata](docs/FRAME_METADATA.md) / [帧元数据](docs/FRAME_METADATA_zh.md) |
 | Integration matrix and recorded acceptance results | [Integration testing](docs/integration.md) |

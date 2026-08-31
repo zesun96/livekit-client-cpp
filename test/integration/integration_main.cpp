@@ -36,7 +36,7 @@ public:
 			if (records_.size() == kMaximumPendingRecords) {
 				records_.pop_front();
 				++dropped_records_;
-		}
+			}
 			records_.push_back(record);
 		}
 		condition_.notify_one();

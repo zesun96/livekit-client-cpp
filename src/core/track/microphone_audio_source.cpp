@@ -117,8 +117,7 @@ MicrophoneAudioProcessingStats MicrophoneAudioSource::ProcessingStats() const {
 	result.echo_cancellation_enabled = options.echo_cancellation;
 	result.echo_return_loss_available = aec.echo_return_loss_available;
 	result.echo_return_loss_db = aec.echo_return_loss_db;
-	result.echo_return_loss_enhancement_available =
-	    aec.echo_return_loss_enhancement_available;
+	result.echo_return_loss_enhancement_available = aec.echo_return_loss_enhancement_available;
 	result.echo_return_loss_enhancement_db = aec.echo_return_loss_enhancement_db;
 	result.residual_echo_likelihood_available = aec.residual_echo_likelihood_available;
 	result.residual_echo_likelihood = aec.residual_echo_likelihood;
