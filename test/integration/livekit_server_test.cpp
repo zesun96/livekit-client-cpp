@@ -293,6 +293,53 @@ void OnCApiReconnectData(void* user_data, lk_room_t*, const lk_data_received_t* 
 	static_cast<CApiReconnectEvents*>(user_data)->Data(event);
 }
 
+struct CApiReconnectPolicyState {
+	std::atomic<uint32_t> calls{0};
+	std::atomic<lk_reconnect_reason_t> reason{LK_RECONNECT_REASON_UNKNOWN};
+	std::atomic<bool> valid_context{true};
+};
+
+struct CApiLiteralTokenSourceState {
+	const char* server_url = nullptr;
+	const char* participant_token = nullptr;
+	std::atomic<uint32_t> calls{0};
+	std::atomic<uint32_t> forced_calls{0};
+};
+
+lk_status_t CApiLiteralTokenSource(void* user_data, const lk_token_source_fetch_options_t* options,
+                                   int force_refresh, lk_token_source_response_t* response) {
+	auto* state = static_cast<CApiLiteralTokenSourceState*>(user_data);
+	if (state == nullptr || options == nullptr || response == nullptr ||
+	    options->struct_size != sizeof(*options) || response->struct_size != sizeof(*response)) {
+		return LK_STATUS_INVALID_ARGUMENT;
+	}
+	state->calls.fetch_add(1);
+	if (force_refresh != 0) {
+		state->forced_calls.fetch_add(1);
+	}
+	response->server_url = state->server_url;
+	response->participant_token = state->participant_token;
+	return LK_STATUS_OK;
+}
+
+int OnCApiReconnectPolicy(void* user_data, const lk_reconnect_context_t* context,
+                          uint32_t* retry_delay_ms) {
+	auto* state = static_cast<CApiReconnectPolicyState*>(user_data);
+	if (state == nullptr || context == nullptr || retry_delay_ms == nullptr ||
+	    context->struct_size != sizeof(*context) || context->server_url == nullptr ||
+	    *context->server_url == '\0') {
+		if (state != nullptr) {
+			state->valid_context.store(false);
+		}
+		return 0;
+	}
+	state->calls.fetch_add(1);
+	state->reason.store(context->reason);
+	const auto retry = static_cast<uint64_t>(context->retry_count);
+	*retry_delay_ms = static_cast<uint32_t>(std::min<uint64_t>(retry * retry * 300, 7000));
+	return 1;
+}
+
 class CApiParticipantEvents {
 public:
 	void Connected(const lk_participant_info_t* participant) {
@@ -1608,6 +1655,9 @@ TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
 
 	CApiReconnectEvents sender_events;
 	CApiReconnectEvents receiver_events;
+	CApiReconnectPolicyState sender_policy;
+	CApiReconnectPolicyState receiver_policy;
+	CApiLiteralTokenSourceState sender_token_source{url, sender_token};
 	auto configure_callbacks = [](lk_room_t* room, CApiReconnectEvents* events, bool receive_data) {
 		lk_room_callbacks_t callbacks;
 		lk_room_callbacks_init(&callbacks);
@@ -1623,9 +1673,28 @@ TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
 	    << lk_last_error();
 	ASSERT_EQ(configure_callbacks(receiver.get(), &receiver_events, true), LK_STATUS_OK)
 	    << lk_last_error();
-	ASSERT_EQ(lk_room_connect(receiver.get(), url, receiver_token), LK_STATUS_OK)
+	lk_room_connect_options_t receiver_options;
+	lk_room_connect_options_init(&receiver_options);
+	receiver_options.adaptive_stream = 1;
+	receiver_options.dynacast = 1;
+	receiver_options.join_retries = 6;
+	receiver_options.reconnect_timeout_ms = 10000;
+	receiver_options.reconnect_policy = OnCApiReconnectPolicy;
+	receiver_options.reconnect_policy_user_data = &receiver_policy;
+	lk_room_connect_options_t sender_options = receiver_options;
+	sender_options.reconnect_policy_user_data = &sender_policy;
+	ASSERT_EQ(lk_room_connect_with_options(receiver.get(), url, receiver_token, &receiver_options),
+	          LK_STATUS_OK)
 	    << lk_last_error();
-	ASSERT_EQ(lk_room_connect(sender.get(), url, sender_token), LK_STATUS_OK) << lk_last_error();
+	lk_token_source_fetch_options_t sender_token_options;
+	lk_token_source_fetch_options_init(&sender_token_options);
+	sender_token_options.room_name = "c-api-reconnect";
+	sender_token_options.participant_identity = "c-api-reconnect-sender";
+	ASSERT_EQ(lk_room_connect_with_token_source_and_options(sender.get(), CApiLiteralTokenSource,
+	                                                        &sender_token_source,
+	                                                        &sender_token_options, &sender_options),
+	          LK_STATUS_OK)
+	    << lk_last_error();
 	ASSERT_TRUE(WaitUntil(
 	    [&] {
 		    return sender_events.connected() == 1 && receiver_events.connected() == 1 &&
@@ -1658,6 +1727,16 @@ TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
 	    std::chrono::seconds(60)));
 	EXPECT_FALSE(sender_events.disconnected());
 	EXPECT_FALSE(receiver_events.disconnected());
+	EXPECT_TRUE(sender_policy.valid_context.load());
+	EXPECT_TRUE(receiver_policy.valid_context.load());
+	EXPECT_GE(sender_policy.calls.load(), 1u);
+	EXPECT_GE(receiver_policy.calls.load(), 1u);
+	EXPECT_GE(sender_token_source.calls.load(), 2u);
+	EXPECT_GE(sender_token_source.forced_calls.load(), 1u);
+	EXPECT_TRUE(sender_policy.reason.load() == LK_RECONNECT_REASON_UNKNOWN ||
+	            sender_policy.reason.load() == LK_RECONNECT_REASON_SIGNAL_DISCONNECTED);
+	EXPECT_TRUE(receiver_policy.reason.load() == LK_RECONNECT_REASON_UNKNOWN ||
+	            receiver_policy.reason.load() == LK_RECONNECT_REASON_SIGNAL_DISCONNECTED);
 	EXPECT_EQ(read_identity(sender.get()), sender_identity);
 	EXPECT_EQ(read_identity(receiver.get()), receiver_identity);
 
@@ -3406,10 +3485,43 @@ TEST(LiveKitServerTest, CApiReportsParticipantProfileChanges) {
 	    [&] { return events.attributes_changed(sender_identity.data(), {{"role", ""}}, 2); },
 	    std::chrono::seconds(10)));
 
+	auto local_snapshot_deleter = [](lk_local_participant_snapshot_t* snapshot) {
+		lk_local_participant_snapshot_destroy(snapshot);
+	};
+	lk_local_participant_snapshot_t* local_snapshot_handle = nullptr;
+	ASSERT_EQ(lk_room_create_local_participant_snapshot(sender.get(), &local_snapshot_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_local_participant_snapshot_t, decltype(local_snapshot_deleter)>
+	    local_snapshot(local_snapshot_handle, local_snapshot_deleter);
+	ASSERT_EQ(lk_local_participant_snapshot_attribute_count(local_snapshot.get()), 1u);
+	std::vector<char> snapshot_attribute_key(
+	    lk_local_participant_snapshot_attribute_key(local_snapshot.get(), 0, nullptr, 0));
+	std::vector<char> snapshot_attribute_value(
+	    lk_local_participant_snapshot_attribute_value(local_snapshot.get(), 0, nullptr, 0));
+	ASSERT_FALSE(snapshot_attribute_key.empty());
+	ASSERT_FALSE(snapshot_attribute_value.empty());
+	lk_local_participant_snapshot_attribute_key(
+	    local_snapshot.get(), 0, snapshot_attribute_key.data(), snapshot_attribute_key.size());
+	lk_local_participant_snapshot_attribute_value(
+	    local_snapshot.get(), 0, snapshot_attribute_value.data(), snapshot_attribute_value.size());
+	EXPECT_STREQ(snapshot_attribute_key.data(), "language");
+	EXPECT_STREQ(snapshot_attribute_value.data(), "zh-CN");
+	EXPECT_EQ(lk_local_participant_snapshot_name(local_snapshot.get(), nullptr, 0),
+	          std::strlen("c-api-sender") + 1);
+	EXPECT_EQ(lk_local_participant_snapshot_metadata(local_snapshot.get(), nullptr, 0),
+	          std::strlen("c-api-metadata") + 1);
+
 	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
 	sender.reset();
 	receiver.reset();
+	std::vector<char> snapshot_identity(
+	    lk_local_participant_snapshot_identity(local_snapshot.get(), nullptr, 0));
+	ASSERT_FALSE(snapshot_identity.empty());
+	lk_local_participant_snapshot_identity(local_snapshot.get(), snapshot_identity.data(),
+	                                       snapshot_identity.size());
+	EXPECT_STREQ(snapshot_identity.data(), sender_identity.data());
 	EXPECT_EQ(lk_shutdown(), LK_STATUS_OK);
 }
 
@@ -3430,6 +3542,9 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	};
 	auto byte_writer_deleter = [](lk_byte_stream_writer_t* writer) {
 		lk_byte_stream_writer_destroy(writer);
+	};
+	auto writer_snapshot_deleter = [](lk_data_stream_writer_info_snapshot_t* snapshot) {
+		lk_data_stream_writer_info_snapshot_destroy(snapshot);
 	};
 	lk_room_t* receiver_handle = nullptr;
 	lk_room_t* sender_handle = nullptr;
@@ -3522,6 +3637,8 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	stream_text_options.attached_stream_ids = stream_attachments;
 	stream_text_options.attached_stream_id_count = std::size(stream_attachments);
 	stream_text_options.stream_id = "ST_c_api_text_completion";
+	stream_text_options.has_total_size = 1;
+	stream_text_options.total_size = 15;
 	stream_text_options.on_complete = OnCApiDataStreamCompletion;
 	stream_text_options.completion_user_data = &events;
 	lk_text_stream_writer_t* text_writer_handle = nullptr;
@@ -3530,6 +3647,12 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	    << lk_last_error();
 	std::unique_ptr<lk_text_stream_writer_t, decltype(text_writer_deleter)> text_writer(
 	    text_writer_handle, text_writer_deleter);
+	lk_data_stream_writer_info_snapshot_t* text_snapshot_handle = nullptr;
+	ASSERT_EQ(lk_text_stream_writer_create_info_snapshot(text_writer.get(), &text_snapshot_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_data_stream_writer_info_snapshot_t, decltype(writer_snapshot_deleter)>
+	    text_snapshot(text_snapshot_handle, writer_snapshot_deleter);
 	ASSERT_EQ(lk_text_stream_writer_write(text_writer.get(), "stream metadata", 15), LK_STATUS_OK)
 	    << lk_last_error();
 	ASSERT_EQ(lk_text_stream_writer_close(text_writer.get()), LK_STATUS_OK) << lk_last_error();
@@ -3547,6 +3670,8 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	stream_byte_options.attributes = &stream_byte_attribute;
 	stream_byte_options.attribute_count = 1;
 	stream_byte_options.stream_id = "ST_c_api_byte_completion";
+	stream_byte_options.has_total_size = 1;
+	stream_byte_options.total_size = 4;
 	stream_byte_options.on_complete = OnCApiDataStreamCompletion;
 	stream_byte_options.completion_user_data = &events;
 	lk_byte_stream_writer_t* byte_writer_handle = nullptr;
@@ -3555,6 +3680,12 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	    << lk_last_error();
 	std::unique_ptr<lk_byte_stream_writer_t, decltype(byte_writer_deleter)> byte_writer(
 	    byte_writer_handle, byte_writer_deleter);
+	lk_data_stream_writer_info_snapshot_t* byte_snapshot_handle = nullptr;
+	ASSERT_EQ(lk_byte_stream_writer_create_info_snapshot(byte_writer.get(), &byte_snapshot_handle),
+	          LK_STATUS_OK)
+	    << lk_last_error();
+	std::unique_ptr<lk_data_stream_writer_info_snapshot_t, decltype(writer_snapshot_deleter)>
+	    byte_snapshot(byte_snapshot_handle, writer_snapshot_deleter);
 	const std::array<uint8_t, 4> stream_bytes{1, 3, 5, 7};
 	ASSERT_EQ(
 	    lk_byte_stream_writer_write(byte_writer.get(), stream_bytes.data(), stream_bytes.size()),
@@ -3571,6 +3702,97 @@ TEST(LiveKitServerTest, CApiPreservesDataStreamMetadata) {
 	          LK_STATUS_OK);
 	text_writer.reset();
 	byte_writer.reset();
+	auto read_snapshot_string = [](const lk_data_stream_writer_info_snapshot_t* snapshot,
+	                               auto getter) {
+		std::vector<char> value(getter(snapshot, nullptr, 0));
+		if (!value.empty()) {
+			getter(snapshot, value.data(), value.size());
+		}
+		return value.empty() ? std::string{} : std::string(value.data());
+	};
+	lk_data_stream_writer_info_t text_info;
+	lk_data_stream_writer_info_init(&text_info);
+	ASSERT_EQ(lk_data_stream_writer_info_snapshot_info(text_snapshot.get(), &text_info),
+	          LK_STATUS_OK);
+	EXPECT_EQ(text_info.kind, LK_DATA_STREAM_WRITER_KIND_TEXT);
+	EXPECT_TRUE(text_info.has_total_size);
+	EXPECT_EQ(text_info.total_size, 15u);
+	EXPECT_GT(text_info.timestamp, 0);
+	EXPECT_EQ(text_info.attribute_count, 2u);
+	EXPECT_EQ(text_info.attached_stream_id_count, 1u);
+	EXPECT_EQ(
+	    read_snapshot_string(text_snapshot.get(), lk_data_stream_writer_info_snapshot_stream_id),
+	    "ST_c_api_text_completion");
+	EXPECT_EQ(
+	    read_snapshot_string(text_snapshot.get(), lk_data_stream_writer_info_snapshot_mime_type),
+	    "text/plain");
+	EXPECT_EQ(read_snapshot_string(text_snapshot.get(), lk_data_stream_writer_info_snapshot_topic),
+	          "c-api-stream-text");
+	EXPECT_EQ(read_snapshot_string(text_snapshot.get(),
+	                               lk_data_stream_writer_info_snapshot_participant_identity),
+	          sender_identity);
+	EXPECT_EQ(read_snapshot_string(text_snapshot.get(),
+	                               lk_data_stream_writer_info_snapshot_reply_to_stream_id),
+	          "ST_stream_reply");
+	std::vector<char> attached_stream_id(
+	    lk_data_stream_writer_info_snapshot_attached_stream_id(text_snapshot.get(), 0, nullptr, 0));
+	ASSERT_FALSE(attached_stream_id.empty());
+	lk_data_stream_writer_info_snapshot_attached_stream_id(
+	    text_snapshot.get(), 0, attached_stream_id.data(), attached_stream_id.size());
+	EXPECT_STREQ(attached_stream_id.data(), "ST_stream_attachment");
+	std::vector<char> text_attribute_key(
+	    lk_data_stream_writer_info_snapshot_attribute_key(text_snapshot.get(), 0, nullptr, 0));
+	std::vector<char> text_attribute_value(
+	    lk_data_stream_writer_info_snapshot_attribute_value(text_snapshot.get(), 0, nullptr, 0));
+	ASSERT_FALSE(text_attribute_key.empty());
+	ASSERT_FALSE(text_attribute_value.empty());
+	lk_data_stream_writer_info_snapshot_attribute_key(
+	    text_snapshot.get(), 0, text_attribute_key.data(), text_attribute_key.size());
+	lk_data_stream_writer_info_snapshot_attribute_value(
+	    text_snapshot.get(), 0, text_attribute_value.data(), text_attribute_value.size());
+	EXPECT_STREQ(text_attribute_key.data(), "language");
+	EXPECT_STREQ(text_attribute_value.data(), "zh-CN");
+
+	lk_data_stream_writer_info_t byte_info;
+	lk_data_stream_writer_info_init(&byte_info);
+	ASSERT_EQ(lk_data_stream_writer_info_snapshot_info(byte_snapshot.get(), &byte_info),
+	          LK_STATUS_OK);
+	EXPECT_EQ(byte_info.kind, LK_DATA_STREAM_WRITER_KIND_BYTES);
+	EXPECT_TRUE(byte_info.has_total_size);
+	EXPECT_EQ(byte_info.total_size, 4u);
+	EXPECT_GT(byte_info.timestamp, 0);
+	EXPECT_EQ(byte_info.attribute_count, 1u);
+	EXPECT_EQ(byte_info.attached_stream_id_count, 0u);
+	EXPECT_EQ(
+	    read_snapshot_string(byte_snapshot.get(), lk_data_stream_writer_info_snapshot_stream_id),
+	    "ST_c_api_byte_completion");
+	EXPECT_EQ(
+	    read_snapshot_string(byte_snapshot.get(), lk_data_stream_writer_info_snapshot_mime_type),
+	    "application/x-livekit-stream");
+	EXPECT_EQ(read_snapshot_string(byte_snapshot.get(), lk_data_stream_writer_info_snapshot_topic),
+	          "c-api-stream-bytes");
+	EXPECT_EQ(read_snapshot_string(byte_snapshot.get(),
+	                               lk_data_stream_writer_info_snapshot_participant_identity),
+	          sender_identity);
+	EXPECT_EQ(read_snapshot_string(byte_snapshot.get(), lk_data_stream_writer_info_snapshot_name),
+	          "stream.bin");
+	std::vector<char> byte_attribute_key(
+	    lk_data_stream_writer_info_snapshot_attribute_key(byte_snapshot.get(), 0, nullptr, 0));
+	std::vector<char> byte_attribute_value(
+	    lk_data_stream_writer_info_snapshot_attribute_value(byte_snapshot.get(), 0, nullptr, 0));
+	ASSERT_FALSE(byte_attribute_key.empty());
+	ASSERT_FALSE(byte_attribute_value.empty());
+	lk_data_stream_writer_info_snapshot_attribute_key(
+	    byte_snapshot.get(), 0, byte_attribute_key.data(), byte_attribute_key.size());
+	lk_data_stream_writer_info_snapshot_attribute_value(
+	    byte_snapshot.get(), 0, byte_attribute_value.data(), byte_attribute_value.size());
+	EXPECT_STREQ(byte_attribute_key.data(), "purpose");
+	EXPECT_STREQ(byte_attribute_value.data(), "stream");
+	EXPECT_EQ(lk_data_stream_writer_info_snapshot_attribute_key(byte_snapshot.get(), 1, nullptr, 0),
+	          0u);
+	EXPECT_EQ(
+	    lk_data_stream_writer_info_snapshot_attached_stream_id(byte_snapshot.get(), 0, nullptr, 0),
+	    0u);
 	EXPECT_EQ(lk_room_disconnect(sender.get()), LK_STATUS_OK);
 	EXPECT_EQ(lk_room_disconnect(receiver.get()), LK_STATUS_OK);
 	sender.reset();
@@ -3718,6 +3940,119 @@ TEST(LiveKitServerTest, CApiEncryptsAudioAndDataAndControlsKeys) {
 		           events.receiver_cryptor_ok.load();
 	    },
 	    std::chrono::seconds(10)));
+
+	auto stats_deleter = [](lk_rtc_stats_snapshot_t* snapshot) {
+		lk_rtc_stats_snapshot_destroy(snapshot);
+	};
+	lk_rtc_stats_snapshot_t* remote_stats_handle = nullptr;
+	size_t remote_stats_index = 0;
+	lk_encryption_type_t publication_encryption = LK_ENCRYPTION_TYPE_NONE;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    (void)lk_audio_source_capture_frame(source.get(), samples.data(), 480);
+		    lk_remote_participant_list_t* participants = nullptr;
+		    if (lk_room_create_remote_participant_snapshot(receiver.get(), &participants) !=
+		        LK_STATUS_OK) {
+			    return false;
+		    }
+		    bool found = false;
+		    for (size_t participant_index = 0;
+		         participant_index < lk_remote_participant_list_count(participants) && !found;
+		         ++participant_index) {
+			    const lk_remote_participant_snapshot_t* participant = nullptr;
+			    if (lk_remote_participant_list_at(participants, participant_index, &participant) !=
+			        LK_STATUS_OK) {
+				    continue;
+			    }
+			    for (size_t publication_index = 0;
+			         publication_index <
+			             lk_remote_participant_snapshot_publication_count(participant) &&
+			         !found;
+			         ++publication_index) {
+				    const lk_remote_track_publication_snapshot_t* publication = nullptr;
+				    if (lk_remote_participant_snapshot_publication_at(
+				            participant, publication_index, &publication) != LK_STATUS_OK) {
+					    continue;
+				    }
+				    lk_remote_track_publication_snapshot_info_t publication_info;
+				    lk_remote_track_publication_snapshot_info_init(&publication_info);
+				    if (lk_remote_track_publication_snapshot_info(publication, &publication_info) !=
+				            LK_STATUS_OK ||
+				        publication_info.source != LK_TRACK_SOURCE_MICROPHONE ||
+				        !publication_info.has_subscribed_track) {
+					    continue;
+				    }
+				    publication_encryption = publication_info.encryption;
+				    const lk_remote_track_snapshot_t* remote_track = nullptr;
+				    if (lk_remote_track_publication_snapshot_track(publication, &remote_track) !=
+				        LK_STATUS_OK) {
+					    continue;
+				    }
+				    lk_rtc_stats_snapshot_t* candidate = nullptr;
+				    if (lk_remote_track_snapshot_create_rtc_stats_snapshot(
+				            remote_track, &candidate) != LK_STATUS_OK) {
+					    continue;
+				    }
+				    for (size_t stats_index = 0;
+				         stats_index < lk_rtc_stats_snapshot_count(candidate); ++stats_index) {
+					    lk_rtc_track_stats_t stats;
+					    lk_rtc_track_stats_init(&stats);
+					    if (lk_rtc_stats_snapshot_info(candidate, stats_index, &stats) ==
+					            LK_STATUS_OK &&
+					        stats.direction == LK_RTC_STATS_DIRECTION_RECEIVE && stats.bytes > 0 &&
+					        stats.packets > 0) {
+						    remote_stats_handle = candidate;
+						    remote_stats_index = stats_index;
+						    found = true;
+						    break;
+					    }
+				    }
+				    if (!found) {
+					    lk_rtc_stats_snapshot_destroy(candidate);
+				    }
+			    }
+		    }
+		    lk_remote_participant_list_destroy(participants);
+		    return found;
+	    },
+	    std::chrono::seconds(10)));
+	std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(stats_deleter)> remote_stats(
+	    remote_stats_handle, stats_deleter);
+	EXPECT_EQ(publication_encryption, LK_ENCRYPTION_TYPE_GCM);
+	ASSERT_GT(lk_rtc_stats_snapshot_count(remote_stats.get()), 0u);
+	const auto remote_kind_size =
+	    lk_rtc_stats_snapshot_kind(remote_stats.get(), remote_stats_index, nullptr, 0);
+	ASSERT_GT(remote_kind_size, 1u);
+	std::vector<char> remote_kind(remote_kind_size);
+	EXPECT_EQ(lk_rtc_stats_snapshot_kind(remote_stats.get(), remote_stats_index, remote_kind.data(),
+	                                     remote_kind.size()),
+	          remote_kind.size());
+	EXPECT_STREQ(remote_kind.data(), "audio");
+
+	lk_rtc_stats_snapshot_t* local_stats_handle = nullptr;
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    (void)lk_audio_source_capture_frame(source.get(), samples.data(), 480);
+		    lk_rtc_stats_snapshot_t* candidate = nullptr;
+		    if (lk_local_track_create_rtc_stats_snapshot(track.get(), &candidate) != LK_STATUS_OK) {
+			    return false;
+		    }
+		    for (size_t index = 0; index < lk_rtc_stats_snapshot_count(candidate); ++index) {
+			    lk_rtc_track_stats_t stats;
+			    lk_rtc_track_stats_init(&stats);
+			    if (lk_rtc_stats_snapshot_info(candidate, index, &stats) == LK_STATUS_OK &&
+			        stats.direction == LK_RTC_STATS_DIRECTION_SEND && stats.bytes > 0 &&
+			        stats.packets > 0) {
+				    local_stats_handle = candidate;
+				    return true;
+			    }
+		    }
+		    lk_rtc_stats_snapshot_destroy(candidate);
+		    return false;
+	    },
+	    std::chrono::seconds(10)));
+	std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(stats_deleter)> local_stats(
+	    local_stats_handle, stats_deleter);
 
 	lk_frame_cryptor_list_t* sender_cryptors_handle = nullptr;
 	lk_frame_cryptor_list_t* receiver_cryptors_handle = nullptr;

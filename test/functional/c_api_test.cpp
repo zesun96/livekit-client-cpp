@@ -35,6 +35,11 @@ lk_status_t EmptyTokenSource(void* user_data, const lk_token_source_fetch_option
 	return LK_STATUS_OK;
 }
 
+lk_status_t ThrowingTokenSource(void*, const lk_token_source_fetch_options_t*, int,
+                                lk_token_source_response_t*) {
+	throw 1;
+}
+
 struct CapturedLog {
 	size_t struct_size;
 	lk_log_level_t level;
@@ -153,6 +158,30 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	EXPECT_EQ(e2ee.failure_tolerance, -1);
 	EXPECT_EQ(e2ee.key_ring_size, 16u);
 	EXPECT_EQ(e2ee.key_derivation, LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256);
+
+	lk_ice_server_t ice_server;
+	lk_ice_server_init(&ice_server);
+	EXPECT_EQ(ice_server.struct_size, sizeof(ice_server));
+	EXPECT_EQ(ice_server.urls, nullptr);
+	EXPECT_EQ(ice_server.url_count, 0u);
+	EXPECT_EQ(ice_server.username, nullptr);
+	EXPECT_EQ(ice_server.password, nullptr);
+
+	lk_room_connect_options_t connect;
+	lk_room_connect_options_init(&connect);
+	EXPECT_EQ(connect.struct_size, sizeof(connect));
+	EXPECT_EQ(connect.auto_subscribe, 1);
+	EXPECT_EQ(connect.adaptive_stream, 0);
+	EXPECT_EQ(connect.dynacast, 0);
+	EXPECT_EQ(connect.join_retries, 3u);
+	EXPECT_EQ(connect.reconnect_timeout_ms, 15000u);
+	EXPECT_EQ(connect.ice_servers, nullptr);
+	EXPECT_EQ(connect.ice_server_count, 0u);
+	EXPECT_EQ(connect.continual_gathering_policy, LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY);
+	EXPECT_EQ(connect.ice_transport_type, LK_ICE_TRANSPORT_TYPE_ALL);
+	EXPECT_EQ(connect.reconnect_policy, nullptr);
+	EXPECT_EQ(connect.reconnect_policy_user_data, nullptr);
+	EXPECT_EQ(connect.e2ee_options, nullptr);
 
 	lk_frame_cryptor_info_t cryptor;
 	lk_frame_cryptor_info_init(&cryptor);
@@ -313,12 +342,30 @@ TEST(CApiTest, ExposesVersionAndOptionDefaults) {
 	lk_remote_participant_snapshot_info_t participant_snapshot_info;
 	lk_remote_participant_snapshot_info_init(&participant_snapshot_info);
 	EXPECT_EQ(participant_snapshot_info.struct_size, sizeof(participant_snapshot_info));
+	lk_local_participant_snapshot_info_t local_participant_snapshot_info;
+	lk_local_participant_snapshot_info_init(&local_participant_snapshot_info);
+	EXPECT_EQ(local_participant_snapshot_info.struct_size, sizeof(local_participant_snapshot_info));
+	lk_data_stream_writer_info_t writer_info;
+	lk_data_stream_writer_info_init(&writer_info);
+	EXPECT_EQ(writer_info.struct_size, sizeof(writer_info));
+	EXPECT_EQ(writer_info.kind, LK_DATA_STREAM_WRITER_KIND_TEXT);
 	lk_remote_track_publication_snapshot_info_t publication_snapshot_info;
 	lk_remote_track_publication_snapshot_info_init(&publication_snapshot_info);
 	EXPECT_EQ(publication_snapshot_info.struct_size, sizeof(publication_snapshot_info));
+	EXPECT_EQ(publication_snapshot_info.encryption, LK_ENCRYPTION_TYPE_NONE);
 	lk_remote_track_snapshot_info_t track_snapshot_info;
 	lk_remote_track_snapshot_info_init(&track_snapshot_info);
 	EXPECT_EQ(track_snapshot_info.struct_size, sizeof(track_snapshot_info));
+	lk_rtc_track_stats_t rtc_stats;
+	lk_rtc_track_stats_init(&rtc_stats);
+	EXPECT_EQ(rtc_stats.struct_size, sizeof(rtc_stats));
+	EXPECT_EQ(rtc_stats.direction, LK_RTC_STATS_DIRECTION_UNKNOWN);
+	EXPECT_EQ(rtc_stats.bytes, 0u);
+	EXPECT_EQ(rtc_stats.packets, 0u);
+	EXPECT_EQ(rtc_stats.has_bitrate_bps, 0);
+	EXPECT_EQ(rtc_stats.has_round_trip_time_seconds, 0);
+	EXPECT_EQ(rtc_stats.has_jitter_seconds, 0);
+	EXPECT_EQ(rtc_stats.has_audio_level, 0);
 }
 
 TEST(CApiTest, ReportsStructuredThreadLocalErrors) {
@@ -582,7 +629,12 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_NE(std::strlen(lk_last_error()), 0u);
 	EXPECT_EQ(lk_room_connect(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_connect_with_options(nullptr, nullptr, nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_connect_e2ee(nullptr, nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(
+	    lk_room_connect_with_token_source_and_options(nullptr, nullptr, nullptr, nullptr, nullptr),
+	    LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_capture_frame(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_capture_i420(nullptr, nullptr, 0, 0, 0, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
@@ -622,6 +674,27 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_create_remote_participant_snapshot(nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_room_create_local_participant_snapshot(nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_local_participant_snapshot_t* local_snapshot =
+	    reinterpret_cast<lk_local_participant_snapshot_t*>(1);
+	EXPECT_EQ(lk_room_create_local_participant_snapshot(nullptr, &local_snapshot),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(local_snapshot, nullptr);
+	EXPECT_EQ(lk_local_participant_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_local_participant_snapshot_identity(nullptr, nullptr, 0), 0u);
+	lk_data_stream_writer_info_snapshot_t* writer_snapshot =
+	    reinterpret_cast<lk_data_stream_writer_info_snapshot_t*>(1);
+	EXPECT_EQ(lk_text_stream_writer_create_info_snapshot(nullptr, &writer_snapshot),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(writer_snapshot, nullptr);
+	writer_snapshot = reinterpret_cast<lk_data_stream_writer_info_snapshot_t*>(1);
+	EXPECT_EQ(lk_byte_stream_writer_create_info_snapshot(nullptr, &writer_snapshot),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(writer_snapshot, nullptr);
+	EXPECT_EQ(lk_data_stream_writer_info_snapshot_info(nullptr, nullptr),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_data_stream_writer_info_snapshot_stream_id(nullptr, nullptr, 0), 0u);
 	EXPECT_EQ(lk_room_set_audio_output_device(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_room_audio_output_device(nullptr, nullptr, 0), 0u);
 	EXPECT_EQ(lk_room_set_speaker_volume(nullptr, 0.5F), LK_STATUS_INVALID_ARGUMENT);
@@ -667,6 +740,19 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_remote_track_publication_snapshot_info(nullptr, nullptr),
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_remote_track_snapshot_info(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	lk_rtc_stats_snapshot_t* rtc_snapshot = reinterpret_cast<lk_rtc_stats_snapshot_t*>(1);
+	EXPECT_EQ(lk_local_track_create_rtc_stats_snapshot(nullptr, &rtc_snapshot),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(rtc_snapshot, nullptr);
+	rtc_snapshot = reinterpret_cast<lk_rtc_stats_snapshot_t*>(1);
+	EXPECT_EQ(lk_remote_track_snapshot_create_rtc_stats_snapshot(nullptr, &rtc_snapshot),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(rtc_snapshot, nullptr);
+	EXPECT_EQ(lk_rtc_stats_snapshot_info(nullptr, 0, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_rtc_stats_snapshot_id(nullptr, 0, nullptr, 0), 0u);
+	EXPECT_EQ(lk_rtc_stats_snapshot_kind(nullptr, 0, nullptr, 0), 0u);
+	EXPECT_EQ(lk_rtc_stats_snapshot_count(nullptr), 0u);
+	lk_rtc_stats_snapshot_destroy(nullptr);
 }
 
 TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
@@ -679,12 +765,76 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_room_disconnect_reason(room), LK_DISCONNECT_REASON_UNKNOWN);
 	EXPECT_FALSE(lk_room_is_connected(room));
 	EXPECT_EQ(lk_room_sid(room, nullptr, 0), 1u);
+	lk_local_participant_snapshot_t* local_snapshot = nullptr;
+	ASSERT_EQ(lk_room_create_local_participant_snapshot(room, &local_snapshot), LK_STATUS_OK)
+	    << lk_last_error();
+	ASSERT_NE(local_snapshot, nullptr);
+	EXPECT_EQ(lk_local_participant_snapshot_sid(local_snapshot, nullptr, 0), 1u);
+	EXPECT_EQ(lk_local_participant_snapshot_identity(local_snapshot, nullptr, 0), 1u);
+	EXPECT_EQ(lk_local_participant_snapshot_name(local_snapshot, nullptr, 0), 1u);
+	EXPECT_EQ(lk_local_participant_snapshot_metadata(local_snapshot, nullptr, 0), 1u);
+	EXPECT_EQ(lk_local_participant_snapshot_attribute_count(local_snapshot), 0u);
+	EXPECT_EQ(lk_local_participant_snapshot_attribute_key(local_snapshot, 0, nullptr, 0), 0u);
+	lk_local_participant_snapshot_info_t local_snapshot_info;
+	lk_local_participant_snapshot_info_init(&local_snapshot_info);
+	ASSERT_EQ(lk_local_participant_snapshot_info(local_snapshot, &local_snapshot_info),
+	          LK_STATUS_OK);
+	EXPECT_EQ(local_snapshot_info.connection_quality, LK_CONNECTION_QUALITY_UNKNOWN);
+	EXPECT_FALSE(local_snapshot_info.is_speaking);
+	lk_participant_permissions_t local_permissions{};
+	ASSERT_EQ(lk_local_participant_snapshot_permissions(local_snapshot, &local_permissions),
+	          LK_STATUS_OK);
+	EXPECT_FALSE(local_permissions.can_publish);
+	EXPECT_EQ(local_permissions.can_publish_source_count, 0u);
+	lk_local_participant_snapshot_destroy(local_snapshot);
 	EXPECT_EQ(lk_room_set_audio_output_device(room, "missing"), LK_STATUS_OPERATION_FAILED);
 	lk_e2ee_options_t invalid_e2ee;
 	lk_e2ee_options_init(&invalid_e2ee);
 	invalid_e2ee.key_ring_size = 0;
 	EXPECT_EQ(lk_room_connect_e2ee(room, "http://127.0.0.1/rtc", "token", &invalid_e2ee),
 	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_t connect_options;
+	lk_room_connect_options_init(&connect_options);
+	connect_options.struct_size = 0;
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_init(&connect_options);
+	connect_options.continual_gathering_policy = static_cast<lk_continual_gathering_policy_t>(99);
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_init(&connect_options);
+	connect_options.ice_transport_type = static_cast<lk_ice_transport_type_t>(99);
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_init(&connect_options);
+	connect_options.ice_server_count = 1;
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_ice_server_t invalid_ice_server;
+	lk_ice_server_init(&invalid_ice_server);
+	connect_options.ice_servers = &invalid_ice_server;
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	const char* empty_ice_url = "";
+	invalid_ice_server.urls = &empty_ice_url;
+	invalid_ice_server.url_count = 1;
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_init(&connect_options);
+	connect_options.e2ee_options = &invalid_e2ee;
+	EXPECT_EQ(lk_room_connect_with_options(room, "http://127.0.0.1/rtc", "token", &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	lk_room_connect_options_init(&connect_options);
+	connect_options.ice_transport_type = static_cast<lk_ice_transport_type_t>(99);
+	int invalid_token_source_calls = 0;
+	EXPECT_EQ(lk_room_connect_with_token_source_and_options(
+	              room, EmptyTokenSource, &invalid_token_source_calls, nullptr, &connect_options),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(invalid_token_source_calls, 0);
+	lk_room_connect_options_init(&connect_options);
+	EXPECT_EQ(lk_room_connect_with_token_source_and_options(room, ThrowingTokenSource, nullptr,
+	                                                        nullptr, &connect_options),
+	          LK_STATUS_OPERATION_FAILED);
 	lk_frame_cryptor_list_t* unconfigured_cryptors = nullptr;
 	EXPECT_EQ(lk_frame_cryptor_list_create(room, &unconfigured_cryptors), LK_STATUS_INVALID_STATE);
 	EXPECT_EQ(unconfigured_cryptors, nullptr);

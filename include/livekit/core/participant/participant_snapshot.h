@@ -20,7 +20,9 @@
 #ifndef _LKC_CORE_PARTICIPANT_PARTICIPANT_SNAPSHOT_H_
 #define _LKC_CORE_PARTICIPANT_PARTICIPANT_SNAPSHOT_H_
 
+#include "livekit/core/option/e2ee_option.h"
 #include "livekit/core/participant/participant_interface.h"
+#include "livekit/core/track/rtc_stats.h"
 
 #include <map>
 #include <optional>
@@ -38,6 +40,7 @@ struct RemoteTrackSnapshot {
 	TrackStreamState stream_state = TrackStreamState::Unknown;
 	TrackDimensions dimensions;
 	bool enabled = false;
+	RTCStatsSnapshot rtc_stats;
 };
 
 struct RemoteTrackPublicationSnapshot {
@@ -53,6 +56,7 @@ struct RemoteTrackPublicationSnapshot {
 	TrackSubscriptionStatus subscription_status = TrackSubscriptionStatus::Unsubscribed;
 	std::optional<SubscriptionError> subscription_error;
 	std::optional<RemoteTrackSnapshot> subscribed_track;
+	EncryptionType encryption = EncryptionType::None;
 };
 
 struct RemoteParticipantSnapshot {
@@ -66,6 +70,18 @@ struct RemoteParticipantSnapshot {
 	bool speaking = false;
 	ParticipantPermissions permissions;
 	std::vector<RemoteTrackPublicationSnapshot> publications;
+};
+
+struct LocalParticipantSnapshot {
+	std::string sid;
+	std::string identity;
+	std::string name;
+	std::string metadata;
+	std::map<std::string, std::string> attributes;
+	float audio_level = 0.0f;
+	ConnectionQuality connection_quality = ConnectionQuality::Unknown;
+	bool speaking = false;
+	ParticipantPermissions permissions;
 };
 
 } // namespace core

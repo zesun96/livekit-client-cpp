@@ -156,8 +156,10 @@ TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
 	info.mutable_permission()->set_can_subscribe(true);
 	info.mutable_permission()->set_can_publish(true);
 	info.mutable_permission()->add_can_publish_sources(livekit::TrackSource::CAMERA);
-	*info.add_tracks() = MakeTrack("TR_snapshot", "camera", livekit::TrackType::VIDEO,
-	                               livekit::TrackSource::CAMERA, false);
+	auto snapshot_track = MakeTrack("TR_snapshot", "camera", livekit::TrackType::VIDEO,
+	                                livekit::TrackSource::CAMERA, false);
+	snapshot_track.set_encryption(livekit::Encryption_Type_GCM);
+	*info.add_tracks() = std::move(snapshot_track);
 	room.ParticipantUpdateEvent({info});
 
 	livekit::SpeakerInfo speaker;
@@ -195,6 +197,7 @@ TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
 	EXPECT_EQ(publication.dimensions.width, 1280u);
 	EXPECT_EQ(publication.subscription_status, TrackSubscriptionStatus::Desired);
 	EXPECT_FALSE(publication.subscribed_track.has_value());
+	EXPECT_EQ(publication.encryption, EncryptionType::Gcm);
 
 	livekit::ParticipantInfo disconnected = info;
 	disconnected.set_state(livekit::ParticipantInfo::DISCONNECTED);
@@ -202,6 +205,50 @@ TEST(ParticipantStateTest, CreatesOwnedRemoteParticipantSnapshots) {
 	EXPECT_TRUE(room.GetRemoteParticipantSnapshots().empty());
 	EXPECT_EQ(snapshots.front().identity, "snapshot-identity");
 	EXPECT_EQ(snapshots.front().publications.front().sid, "TR_snapshot");
+}
+
+TEST(ParticipantStateTest, CreatesOwnedLocalParticipantSnapshot) {
+	Room room;
+	auto* participant = dynamic_cast<LocalParticipant*>(room.GetLocalParticipant());
+	ASSERT_NE(participant, nullptr);
+	livekit::ParticipantInfo info;
+	info.set_sid("PA_local_snapshot");
+	info.set_identity("local-snapshot-identity");
+	info.set_name("Local Snapshot User");
+	info.set_metadata("local-snapshot-metadata");
+	(*info.mutable_attributes())["role"] = "publisher";
+	info.mutable_permission()->set_can_publish(true);
+	info.mutable_permission()->set_can_publish_data(true);
+	info.mutable_permission()->add_can_publish_sources(livekit::TrackSource::MICROPHONE);
+	participant->UpdateFromInfo(info);
+
+	livekit::SpeakerInfo speaker;
+	speaker.set_sid("PA_local_snapshot");
+	speaker.set_level(0.375f);
+	speaker.set_active(true);
+	room.SpeakersChangedEvent({speaker});
+	livekit::ConnectionQualityInfo quality;
+	quality.set_participant_sid("PA_local_snapshot");
+	quality.set_quality(livekit::ConnectionQuality::GOOD);
+	room.ConnectionQualityEvent({quality});
+
+	const auto snapshot = room.GetLocalParticipantSnapshot();
+	EXPECT_EQ(snapshot.sid, "PA_local_snapshot");
+	EXPECT_EQ(snapshot.identity, "local-snapshot-identity");
+	EXPECT_EQ(snapshot.name, "Local Snapshot User");
+	EXPECT_EQ(snapshot.metadata, "local-snapshot-metadata");
+	EXPECT_EQ(snapshot.attributes.at("role"), "publisher");
+	EXPECT_FLOAT_EQ(snapshot.audio_level, 0.375f);
+	EXPECT_TRUE(snapshot.speaking);
+	EXPECT_EQ(snapshot.connection_quality, ConnectionQuality::Good);
+	EXPECT_TRUE(snapshot.permissions.can_publish);
+	EXPECT_TRUE(snapshot.permissions.can_publish_data);
+	ASSERT_EQ(snapshot.permissions.can_publish_sources.size(), 1u);
+	EXPECT_EQ(snapshot.permissions.can_publish_sources.front(), TrackSource::Microphone);
+
+	info.set_identity("updated-identity");
+	participant->UpdateFromInfo(info);
+	EXPECT_EQ(snapshot.identity, "local-snapshot-identity");
 }
 
 class DataTrackEvents final : public RoomEventInterface {
@@ -434,8 +481,7 @@ TEST(RoomStateTest, DefersSidChangeWhenRoomMoveDoesNotContainDestinationSid) {
 	destination.set_name("new-room");
 	room.RoomUpdateEvent(destination);
 	ASSERT_EQ(events.sid_changes.size(), 2u);
-	EXPECT_EQ(events.sid_changes.back(),
-	          std::make_pair(std::string(), std::string("RM_new")));
+	EXPECT_EQ(events.sid_changes.back(), std::make_pair(std::string(), std::string("RM_new")));
 	room.RemoveEventListener();
 }
 

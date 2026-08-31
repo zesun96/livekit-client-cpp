@@ -354,6 +354,31 @@ static int read_string(size_t (*getter)(const lk_room_t*, char*, size_t), const 
 	return 1;
 }
 
+static void print_local_participant_snapshot(const lk_room_t* room) {
+	lk_local_participant_snapshot_t* snapshot = NULL;
+	lk_local_participant_snapshot_info_t info;
+	lk_participant_permissions_t permissions;
+	if (lk_room_create_local_participant_snapshot(room, &snapshot) != LK_STATUS_OK) {
+		fprintf(stderr, "Local participant snapshot failed: %s\n", lk_last_error());
+		return;
+	}
+	lk_local_participant_snapshot_info_init(&info);
+	if (lk_local_participant_snapshot_info(snapshot, &info) == LK_STATUS_OK &&
+	    lk_local_participant_snapshot_permissions(snapshot, &permissions) == LK_STATUS_OK) {
+		const size_t identity_size = lk_local_participant_snapshot_identity(snapshot, NULL, 0);
+		char* identity = identity_size != 0 ? (char*)malloc(identity_size) : NULL;
+		if (identity != NULL) {
+			lk_local_participant_snapshot_identity(snapshot, identity, identity_size);
+		}
+		printf("Local participant snapshot: %s, speaking=%s, can-publish=%s, attributes=%zu\n",
+		       identity != NULL ? identity : "<unknown>", info.is_speaking ? "yes" : "no",
+		       permissions.can_publish ? "yes" : "no",
+		       lk_local_participant_snapshot_attribute_count(snapshot));
+		free(identity);
+	}
+	lk_local_participant_snapshot_destroy(snapshot);
+}
+
 static void print_remote_participant_snapshot(const lk_room_t* room) {
 	lk_remote_participant_list_t* snapshot = NULL;
 	if (lk_room_create_remote_participant_snapshot(room, &snapshot) != LK_STATUS_OK) {
@@ -388,8 +413,31 @@ static void print_remote_participant_snapshot(const lk_room_t* room) {
 			}
 			lk_remote_track_publication_snapshot_info_init(&info);
 			if (lk_remote_track_publication_snapshot_info(publication, &info) == LK_STATUS_OK) {
-				printf("    kind=%d source=%d subscribed=%s\n", (int)info.kind, (int)info.source,
-				       info.has_subscribed_track ? "yes" : "no");
+				printf("    kind=%d source=%d subscribed=%s encryption=%d\n", (int)info.kind,
+				       (int)info.source, info.has_subscribed_track ? "yes" : "no",
+				       (int)info.encryption);
+				if (info.has_subscribed_track) {
+					const lk_remote_track_snapshot_t* track = NULL;
+					lk_rtc_stats_snapshot_t* stats = NULL;
+					if (lk_remote_track_publication_snapshot_track(publication, &track) ==
+					        LK_STATUS_OK &&
+					    lk_remote_track_snapshot_create_rtc_stats_snapshot(track, &stats) ==
+					        LK_STATUS_OK) {
+						for (size_t stats_index = 0;
+						     stats_index < lk_rtc_stats_snapshot_count(stats); ++stats_index) {
+							lk_rtc_track_stats_t stream;
+							lk_rtc_track_stats_init(&stream);
+							if (lk_rtc_stats_snapshot_info(stats, stats_index, &stream) ==
+							    LK_STATUS_OK) {
+								printf("      RTC direction=%d bytes=%llu packets=%llu lost=%lld\n",
+								       (int)stream.direction, (unsigned long long)stream.bytes,
+								       (unsigned long long)stream.packets,
+								       (long long)stream.packets_lost);
+							}
+						}
+					}
+					lk_rtc_stats_snapshot_destroy(stats);
+				}
 			}
 		}
 	}
@@ -533,16 +581,17 @@ int main(int argc, char** argv) {
 	}
 
 	const char* e2ee_key = getenv("LIVEKIT_E2EE_KEY");
-	lk_status_t connect_status;
+	lk_room_connect_options_t connect_options;
+	lk_room_connect_options_init(&connect_options);
+	lk_e2ee_options_t e2ee;
 	if (e2ee_key != NULL && e2ee_key[0] != '\0') {
-		lk_e2ee_options_t e2ee;
 		lk_e2ee_options_init(&e2ee);
 		e2ee.shared_key = (const uint8_t*)e2ee_key;
 		e2ee.shared_key_size = strlen(e2ee_key);
-		connect_status = lk_room_connect_e2ee(room, url, token, &e2ee);
-	} else {
-		connect_status = lk_room_connect(room, url, token);
+		connect_options.e2ee_options = &e2ee;
 	}
+	const lk_status_t connect_status =
+	    lk_room_connect_with_options(room, url, token, &connect_options);
 	if (connect_status != LK_STATUS_OK) {
 		print_last_error("Connection failed");
 		lk_room_destroy(room);
@@ -565,6 +614,7 @@ int main(int argc, char** argv) {
 		printf("Connected as %s\n", identity);
 		free(identity);
 	}
+	print_local_participant_snapshot(room);
 	print_remote_participant_snapshot(room);
 	print_remote_data_track_snapshot(room);
 	{
@@ -601,13 +651,26 @@ int main(int argc, char** argv) {
 		options.on_complete = on_stream_complete;
 		options.has_total_size = 1;
 		options.total_size = strlen(first) + strlen(second);
-		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK ||
-		    lk_text_stream_writer_write(writer, first, strlen(first)) != LK_STATUS_OK ||
-		    lk_text_stream_writer_write(writer, second, strlen(second)) != LK_STATUS_OK ||
-		    lk_text_stream_writer_close(writer) != LK_STATUS_OK) {
+		lk_data_stream_writer_info_snapshot_t* writer_info = NULL;
+		if (lk_room_stream_text(room, &options, &writer) != LK_STATUS_OK) {
 			fprintf(stderr, "Incremental text stream failed: %s\n", lk_last_error());
+		} else {
+			if (lk_text_stream_writer_create_info_snapshot(writer, &writer_info) == LK_STATUS_OK) {
+				lk_data_stream_writer_info_t info;
+				lk_data_stream_writer_info_init(&info);
+				if (lk_data_stream_writer_info_snapshot_info(writer_info, &info) == LK_STATUS_OK) {
+					printf("Text writer snapshot: total-size=%llu, attributes=%zu\n",
+					       (unsigned long long)info.total_size, info.attribute_count);
+				}
+			}
+			if (lk_text_stream_writer_write(writer, first, strlen(first)) != LK_STATUS_OK ||
+			    lk_text_stream_writer_write(writer, second, strlen(second)) != LK_STATUS_OK ||
+			    lk_text_stream_writer_close(writer) != LK_STATUS_OK) {
+				fprintf(stderr, "Incremental text stream failed: %s\n", lk_last_error());
+			}
 		}
 		lk_text_stream_writer_destroy(writer);
+		lk_data_stream_writer_info_snapshot_destroy(writer_info);
 	}
 
 	if (argc >= 4) {

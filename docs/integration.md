@@ -2,7 +2,7 @@
 
 This document is the entry point for real-server, recovery, interoperability, hardware-media, and
 long-running acceptance tests. It also records the credential-free results completed for the
-Windows H264 release baseline through 2026-08-30.
+Windows H264 release baseline through 2026-08-31.
 
 The detailed scenario definitions and acceptance gates remain in
 [Reliability and weak-network testing](RELIABILITY_TESTING.md). E2EE protocol and interoperability
@@ -27,6 +27,9 @@ release-candidate gates on its target hardware and network.
 | --- | --- |
 | Participant lifecycle | Four concurrent clients, join/leave convergence, duplicate-identity replacement, and same-identity rejoin passed |
 | Recovery | Signal resume, ICE restart, forced full reconnect, token refresh, and server restart passed for C++ and C rooms |
+| C room connection options | Versioned subscription, adaptive stream, dynacast, join/reconnect, RTC/ICE, E2EE, dynamic token, and reconnect-policy controls passed unit, DLL export, installed-consumer, and real-server restart gates |
+| C publication encryption and RTC stats | Owned local/remote normalized snapshots, GCM publication metadata, and real RTP send/receive counters passed pure C, deterministic, and local E2EE server gates |
+| C participant and DataStream snapshots | Owned local Participant and text/byte writer-info snapshots remained readable after Room/writer destruction and passed deterministic, pure C, installed-DLL, and local-server gates |
 | Room migration | LiveKit Cloud move notification, server token refresh, destination-room TokenSource fetch, full reconnect, new room SID, and post-reconnect data publish passed |
 | Media and data recovery | Three H264 media-matrix iterations (12 real-server subtests), plus DataStreams, DataTrack state, and RPC recovery passed |
 | E2EE | Encrypted audio/video/data, key-slot switching, ratcheting, reconnect, and missing/wrong-key recovery passed |
@@ -93,6 +96,37 @@ and prints the version but does not terminate cleanly. The same behavior reprodu
 0.3.0 archive and is the known static-CRT cross-DLL C++ ABI boundary, not a 0.4.0 source regression;
 the C ABI remains the supported stable DLL boundary. A future Windows packaging pass must move the
 C++ DLL configuration to a shared, matching MSVC runtime before advertising Debug C++ ABI support.
+
+The later versioned C room-options batch passed all 196 configured Windows CTest entries (32
+credential-gated integration entries skipped in the ordinary run), plus the local C API server
+matrix. The restart gate used `lk_room_connect_with_options()` for one room and
+`lk_room_connect_with_token_source_and_options()` for the other, verified forced credential refresh
+and the custom reconnect-policy callback, then confirmed post-restart reliable data. Release and
+Debug DLLs each matched all 287 public C declarations. Fresh installed-package Release/Debug pure C
+consumers and the Release C++ consumer built and ran; the Debug C++ consumer again reproduced the
+known teardown caveat above after printing the correct version.
+
+The following C track-observability batch added publication encryption and independently owned,
+normalized RTC statistics snapshots without changing the existing raw JSON getter. Its local C
+E2EE gate published synthetic audio through the bundled server, observed a GCM remote publication,
+and verified nonzero outbound and inbound RTP byte/packet counters. The retained stats handle was
+read after destroying the participant snapshot that produced it, confirming the documented
+ownership boundary. The targeted C gate passed in two consecutive harness invocations. The other,
+pre-existing C++ E2EE matrix case timed out waiting for both high-level room states in those runs
+even though transport logs reached connected; that separate gate remains a release-sign-off item.
+All 196 configured CTest entries passed (32 opt-in integration entries skipped), and Release/Debug
+DLLs each matched all 299 public C declarations. Fresh installed-package pure C consumers linked
+and ran against both configurations, each reporting SDK 0.4.0.
+
+The following C object-parity batch added an owned local Participant snapshot and a unified owned
+text/byte DataStream writer-info snapshot. The local Participant value retains identity, profile,
+attributes, permissions, speaking/audio-level state, and connection quality after its Room is
+destroyed. Writer snapshots retain common and kind-specific metadata after close and writer
+destruction; outgoing writer info now also reports the sending participant identity. All 197
+configured CTest entries passed (32 opt-in entries skipped). The local `CAPI` matrix passed its four
+real-server cases plus unified-log and sensitive-data audits. Release and Debug DLLs each matched
+all 325 public C declarations, and freshly installed pure C consumers built and ran against both
+configurations, reporting SDK 0.4.0.
 
 ## Multi-format video-frame acceptance
 

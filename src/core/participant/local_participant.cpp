@@ -1729,6 +1729,7 @@ std::unique_ptr<TextStreamWriterInterface> LocalParticipant::StreamText(StreamTe
 	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
 	info.mime_type = "text/plain";
 	info.topic = options.topic;
+	info.participant_identity = Identity();
 	info.attributes = options.attributes;
 	info.total_size = options.total_size;
 	info.timestamp = CurrentTimestampMilliseconds();
@@ -1771,6 +1772,7 @@ LocalParticipant::StreamBytes(StreamBytesOptions options) {
 	info.stream_id = options.stream_id.empty() ? webrtc::CreateRandomUuid() : options.stream_id;
 	info.mime_type = options.mime_type;
 	info.topic = options.topic;
+	info.participant_identity = Identity();
 	info.attributes = options.attributes;
 	info.total_size = options.total_size;
 	info.timestamp = CurrentTimestampMilliseconds();

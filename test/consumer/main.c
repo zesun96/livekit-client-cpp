@@ -62,6 +62,39 @@ int main(void) {
 		fprintf(stderr, "Disconnected room did not expose an empty participant identity\n");
 		return 1;
 	}
+	lk_local_participant_snapshot_t* local_snapshot = NULL;
+	if (lk_room_create_local_participant_snapshot(room, &local_snapshot) != LK_STATUS_OK ||
+	    local_snapshot == NULL ||
+	    lk_local_participant_snapshot_identity(local_snapshot, NULL, 0) != 1) {
+		free(version);
+		lk_local_participant_snapshot_destroy(local_snapshot);
+		lk_room_destroy(room);
+		lk_shutdown();
+		fprintf(stderr, "Disconnected local participant snapshot was unavailable\n");
+		return 1;
+	}
+	lk_local_participant_snapshot_info_t local_snapshot_info;
+	lk_local_participant_snapshot_info_init(&local_snapshot_info);
+	if (lk_local_participant_snapshot_info(local_snapshot, &local_snapshot_info) != LK_STATUS_OK ||
+	    local_snapshot_info.struct_size != sizeof(local_snapshot_info)) {
+		free(version);
+		lk_local_participant_snapshot_destroy(local_snapshot);
+		lk_room_destroy(room);
+		lk_shutdown();
+		fprintf(stderr, "Local participant snapshot info was unavailable\n");
+		return 1;
+	}
+	lk_local_participant_snapshot_destroy(local_snapshot);
+	lk_data_stream_writer_info_t writer_info;
+	lk_data_stream_writer_info_init(&writer_info);
+	if (writer_info.struct_size != sizeof(writer_info) ||
+	    writer_info.kind != LK_DATA_STREAM_WRITER_KIND_TEXT) {
+		free(version);
+		lk_room_destroy(room);
+		lk_shutdown();
+		fprintf(stderr, "DataStream writer info defaults were not initialized\n");
+		return 1;
+	}
 	lk_media_stream_options_t media_stream_options;
 	lk_media_stream_options_init(&media_stream_options);
 	if (media_stream_options.struct_size != sizeof(media_stream_options) ||
@@ -70,6 +103,30 @@ int main(void) {
 		lk_room_destroy(room);
 		lk_shutdown();
 		fprintf(stderr, "Media stream options did not expose the expected defaults\n");
+		return 1;
+	}
+	lk_rtc_track_stats_t rtc_stats;
+	lk_rtc_track_stats_init(&rtc_stats);
+	if (rtc_stats.struct_size != sizeof(rtc_stats) ||
+	    rtc_stats.direction != LK_RTC_STATS_DIRECTION_UNKNOWN) {
+		free(version);
+		lk_room_destroy(room);
+		lk_shutdown();
+		fprintf(stderr, "RTC stats defaults were not initialized\n");
+		return 1;
+	}
+	lk_room_connect_options_t connect_options;
+	lk_room_connect_options_init(&connect_options);
+	if (connect_options.struct_size != sizeof(connect_options) ||
+	    connect_options.auto_subscribe != 1 || connect_options.join_retries != 3 ||
+	    connect_options.reconnect_timeout_ms != 15000 ||
+	    connect_options.continual_gathering_policy !=
+	        LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY ||
+	    connect_options.ice_transport_type != LK_ICE_TRANSPORT_TYPE_ALL) {
+		free(version);
+		lk_room_destroy(room);
+		lk_shutdown();
+		fprintf(stderr, "Room connect options did not expose the expected defaults\n");
 		return 1;
 	}
 	lk_audio_stream_t* audio_stream = NULL;

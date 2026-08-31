@@ -67,6 +67,7 @@ public:
 	virtual LocalParticipantInterface* GetLocalParticipant() = 0;
 	virtual std::vector<RemoteParticipantInterface*> GetRemoteParticipants() = 0;
 	// Returns immutable values that remain valid independently of subsequent room updates.
+	LocalParticipantSnapshot GetLocalParticipantSnapshot() const;
 	std::vector<RemoteParticipantSnapshot> GetRemoteParticipantSnapshots() const;
 	std::vector<RemoteDataTrackSnapshot> GetRemoteDataTrackSnapshots() const;
 	// Returns shared ownership of a live remote DataTrack so callers can safely update its

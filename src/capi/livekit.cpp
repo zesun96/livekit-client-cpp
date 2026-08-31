@@ -156,6 +156,14 @@ struct lk_byte_stream_writer {
 	std::shared_ptr<CDataStreamCompletionState> completion;
 };
 
+struct lk_data_stream_writer_info_snapshot {
+	lk_data_stream_writer_kind_t kind = LK_DATA_STREAM_WRITER_KIND_TEXT;
+	core::DataStreamInfo info;
+	std::string name;
+	std::string reply_to_stream_id;
+	std::vector<std::string> attached_stream_ids;
+};
+
 struct lk_remote_track_snapshot {
 	explicit lk_remote_track_snapshot(core::RemoteTrackSnapshot source)
 	    : value(std::move(source)) {}
@@ -202,8 +210,24 @@ struct lk_remote_participant_snapshot {
 	std::vector<lk_remote_track_publication_snapshot_t> publications;
 };
 
+struct lk_local_participant_snapshot {
+	explicit lk_local_participant_snapshot(core::LocalParticipantSnapshot source)
+	    : value(std::move(source)) {
+		publish_sources.reserve(value.permissions.can_publish_sources.size());
+		for (const auto source : value.permissions.can_publish_sources) {
+			publish_sources.push_back(SnapshotTrackSource(source));
+		}
+	}
+	core::LocalParticipantSnapshot value;
+	std::vector<lk_track_source_t> publish_sources;
+};
+
 struct lk_remote_participant_list {
 	std::vector<lk_remote_participant_snapshot_t> participants;
+};
+
+struct lk_rtc_stats_snapshot {
+	std::vector<core::RTCTrackStats> streams;
 };
 
 struct lk_media_device_list {
@@ -1010,6 +1034,154 @@ lk_status_t ToCoreE2eeOptions(const lk_e2ee_options_t* options, core::E2eeOption
 	return LK_STATUS_OK;
 }
 
+lk_reconnect_reason_t FromCoreReconnectReason(core::ReconnectReason reason) {
+	switch (reason) {
+	case core::ReconnectReason::SignalDisconnected:
+		return LK_RECONNECT_REASON_SIGNAL_DISCONNECTED;
+	case core::ReconnectReason::MediaFailure:
+		return LK_RECONNECT_REASON_MEDIA_FAILURE;
+	default:
+		return LK_RECONNECT_REASON_UNKNOWN;
+	}
+}
+
+class CReconnectPolicy final : public core::ReconnectPolicy {
+public:
+	CReconnectPolicy(lk_reconnect_policy_callback callback, void* user_data)
+	    : callback_(callback), user_data_(user_data) {}
+
+	std::optional<std::chrono::milliseconds>
+	NextRetryDelay(const core::ReconnectContext& context) override {
+		const auto elapsed = std::max<int64_t>(0, context.elapsed.count());
+		const lk_reconnect_context_t c_context{
+		    sizeof(lk_reconnect_context_t), context.retry_count, static_cast<uint64_t>(elapsed),
+		    FromCoreReconnectReason(context.reason), context.server_url.c_str()};
+		uint32_t retry_delay_ms = 0;
+		try {
+			if (callback_(user_data_, &c_context, &retry_delay_ms) == 0) {
+				return std::nullopt;
+			}
+		} catch (...) {
+			// Exceptions must never escape a C ABI callback boundary.
+			return std::nullopt;
+		}
+		return std::chrono::milliseconds(retry_delay_ms);
+	}
+
+private:
+	lk_reconnect_policy_callback callback_ = nullptr;
+	void* user_data_ = nullptr;
+};
+
+lk_status_t ToCoreRoomConnectOptions(const lk_room_connect_options_t* options,
+                                     core::RoomConnectOptions& result) {
+	result = core::default_room_connect_options();
+	if (options == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid room connect options struct size");
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, auto_subscribe)) {
+		result.auto_subscribe = options->auto_subscribe != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, adaptive_stream)) {
+		result.adaptive_stream = options->adaptive_stream != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, dynacast)) {
+		result.dynacast = options->dynacast != 0;
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, join_retries)) {
+		result.join_retries = options->join_retries;
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, reconnect_timeout_ms)) {
+		result.reconnect_timeout = std::chrono::milliseconds(options->reconnect_timeout_ms);
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, ice_server_count)) {
+		if (options->ice_server_count != 0 && options->ice_servers == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "ICE server array is null");
+		}
+		result.rtc_config.ice_servers.clear();
+		result.rtc_config.ice_servers.reserve(options->ice_server_count);
+		for (size_t index = 0; index < options->ice_server_count; ++index) {
+			const auto& server = options->ice_servers[index];
+			if (server.struct_size < sizeof(server.struct_size)) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid ICE server struct size");
+			}
+			if (!LKC_HAS_FIELD(&server, lk_ice_server_t, url_count) || server.url_count == 0 ||
+			    server.urls == nullptr) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT,
+				               "each ICE server requires at least one URL");
+			}
+			core::IceServer core_server;
+			core_server.urls.reserve(server.url_count);
+			for (size_t url_index = 0; url_index < server.url_count; ++url_index) {
+				if (server.urls[url_index] == nullptr || *server.urls[url_index] == '\0') {
+					return Failure(LK_STATUS_INVALID_ARGUMENT, "ICE server URL is empty");
+				}
+				core_server.urls.emplace_back(server.urls[url_index]);
+			}
+			if (LKC_HAS_FIELD(&server, lk_ice_server_t, username) && server.username != nullptr) {
+				core_server.username = server.username;
+			}
+			if (LKC_HAS_FIELD(&server, lk_ice_server_t, password) && server.password != nullptr) {
+				core_server.password = server.password;
+			}
+			result.rtc_config.ice_servers.push_back(std::move(core_server));
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, continual_gathering_policy)) {
+		switch (options->continual_gathering_policy) {
+		case LK_CONTINUAL_GATHERING_POLICY_GATHER_ONCE:
+			result.rtc_config.continual_gathering_policy =
+			    core::ContinualGatheringPolicy::GatherOnce;
+			break;
+		case LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY:
+			result.rtc_config.continual_gathering_policy =
+			    core::ContinualGatheringPolicy::GatherContinually;
+			break;
+		default:
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid continual ICE gathering policy");
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, ice_transport_type)) {
+		switch (options->ice_transport_type) {
+		case LK_ICE_TRANSPORT_TYPE_NONE:
+			result.rtc_config.ice_transport_type = core::IceTransportsType::None;
+			break;
+		case LK_ICE_TRANSPORT_TYPE_RELAY:
+			result.rtc_config.ice_transport_type = core::IceTransportsType::Relay;
+			break;
+		case LK_ICE_TRANSPORT_TYPE_NO_HOST:
+			result.rtc_config.ice_transport_type = core::IceTransportsType::NoHost;
+			break;
+		case LK_ICE_TRANSPORT_TYPE_ALL:
+			result.rtc_config.ice_transport_type = core::IceTransportsType::All;
+			break;
+		default:
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid ICE transport type");
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, reconnect_policy) &&
+	    options->reconnect_policy != nullptr) {
+		result.reconnect_policy = std::make_shared<CReconnectPolicy>(
+		    options->reconnect_policy,
+		    LKC_HAS_FIELD(options, lk_room_connect_options_t, reconnect_policy_user_data)
+		        ? options->reconnect_policy_user_data
+		        : nullptr);
+	}
+	if (LKC_HAS_FIELD(options, lk_room_connect_options_t, e2ee_options) &&
+	    options->e2ee_options != nullptr) {
+		core::E2eeOptions e2ee;
+		const auto status = ToCoreE2eeOptions(options->e2ee_options, e2ee);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+		result.e2ee = std::move(e2ee);
+	}
+	return LK_STATUS_OK;
+}
+
 lk_status_t ToCoreTrackPublishOptions(const lk_track_publish_options_t* options,
                                       core::TrackPublishOptions& result) {
 	if (options == nullptr) {
@@ -1110,6 +1282,30 @@ lk_track_kind_t ToCTrackKind(core::TrackKind kind) {
 		return LK_TRACK_KIND_VIDEO;
 	default:
 		return LK_TRACK_KIND_UNKNOWN;
+	}
+}
+
+lk_encryption_type_t ToCEncryptionType(core::EncryptionType encryption) {
+	switch (encryption) {
+	case core::EncryptionType::Gcm:
+		return LK_ENCRYPTION_TYPE_GCM;
+	case core::EncryptionType::Custom:
+		return LK_ENCRYPTION_TYPE_CUSTOM;
+	case core::EncryptionType::None:
+	default:
+		return LK_ENCRYPTION_TYPE_NONE;
+	}
+}
+
+lk_rtc_stats_direction_t ToCRTCStatsDirection(core::RTCStatsDirection direction) {
+	switch (direction) {
+	case core::RTCStatsDirection::Send:
+		return LK_RTC_STATS_DIRECTION_SEND;
+	case core::RTCStatsDirection::Receive:
+		return LK_RTC_STATS_DIRECTION_RECEIVE;
+	case core::RTCStatsDirection::Unknown:
+	default:
+		return LK_RTC_STATS_DIRECTION_UNKNOWN;
 	}
 }
 
@@ -2288,6 +2484,104 @@ lk_status_t ToCorePerformRpcParams(const lk_rpc_perform_options_t* options,
 	return LK_STATUS_OK;
 }
 
+lk_status_t ToCoreTokenSourceFetchOptions(const lk_token_source_fetch_options_t* options,
+                                          core::TokenSourceFetchOptions& result) {
+	if (options == nullptr) {
+		return LK_STATUS_OK;
+	}
+	if (options->struct_size < sizeof(options->struct_size)) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid token source options size");
+	}
+	auto copy = [](const char* value) { return value == nullptr ? std::string{} : value; };
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, room_name)) {
+		result.room_name = copy(options->room_name);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_name)) {
+		result.participant_name = copy(options->participant_name);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_identity)) {
+		result.participant_identity = copy(options->participant_identity);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_metadata)) {
+		result.participant_metadata = copy(options->participant_metadata);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_attribute_count)) {
+		if (options->participant_attribute_count != 0 &&
+		    (!LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_attributes) ||
+		     options->participant_attributes == nullptr)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "token source attributes are null");
+		}
+		for (size_t index = 0; index < options->participant_attribute_count; ++index) {
+			const auto& attribute = options->participant_attributes[index];
+			if (attribute.key == nullptr) {
+				return Failure(LK_STATUS_INVALID_ARGUMENT, "token source attribute key is null");
+			}
+			result.participant_attributes[attribute.key] = copy(attribute.value);
+		}
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_name)) {
+		result.agent_name = copy(options->agent_name);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_metadata)) {
+		result.agent_metadata = copy(options->agent_metadata);
+	}
+	if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, deployment)) {
+		result.deployment = copy(options->deployment);
+	}
+	return LK_STATUS_OK;
+}
+
+lk_status_t ConnectWithTokenSource(lk_room_t* room, lk_token_source_callback callback,
+                                   void* user_data,
+                                   const lk_token_source_fetch_options_t* token_source_options,
+                                   core::RoomConnectOptions connect_options) {
+	if (room == nullptr || callback == nullptr) {
+		return Failure(LK_STATUS_INVALID_ARGUMENT, "room and token source callback are required");
+	}
+	core::TokenSourceFetchOptions source_options;
+	const auto source_options_status =
+	    ToCoreTokenSourceFetchOptions(token_source_options, source_options);
+	if (source_options_status != LK_STATUS_OK) {
+		return source_options_status;
+	}
+	auto source = core::CreateCallbackTokenSource(
+	    [callback, user_data](const core::TokenSourceFetchOptions& requested, bool force) {
+		    const auto attributes = AttributeViews(requested.participant_attributes);
+		    const lk_token_source_fetch_options_t request{sizeof(lk_token_source_fetch_options_t),
+		                                                  requested.room_name.c_str(),
+		                                                  requested.participant_name.c_str(),
+		                                                  requested.participant_identity.c_str(),
+		                                                  requested.participant_metadata.c_str(),
+		                                                  attributes.data(),
+		                                                  attributes.size(),
+		                                                  requested.agent_name.c_str(),
+		                                                  requested.agent_metadata.c_str(),
+		                                                  requested.deployment.c_str()};
+		    lk_token_source_response_t response{};
+		    lk_token_source_response_init(&response);
+		    lk_status_t status = LK_STATUS_EXCEPTION;
+		    try {
+			    status = callback(user_data, &request, force ? 1 : 0, &response);
+		    } catch (...) {
+			    return core::TokenSourceResult{{}, "C token source callback threw an exception"};
+		    }
+		    if (status != LK_STATUS_OK) {
+			    return core::TokenSourceResult{
+			        {}, "C token source callback failed with status " + std::to_string(status)};
+		    }
+		    return core::TokenSourceResult{
+		        {response.server_url == nullptr ? "" : response.server_url,
+		         response.participant_token == nullptr ? "" : response.participant_token},
+		        {}};
+	    });
+	if (!room->room->Connect(std::move(source), std::move(source_options),
+	                         std::move(connect_options))) {
+		return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room with token source");
+	}
+	room->state->connected.store(true);
+	return LK_STATUS_OK;
+}
+
 } // namespace
 
 extern "C" {
@@ -2566,6 +2860,25 @@ void lk_e2ee_options_init(lk_e2ee_options_t* options) {
 	}
 }
 
+void lk_ice_server_init(lk_ice_server_t* server) {
+	if (server != nullptr) {
+		*server = {};
+		server->struct_size = sizeof(*server);
+	}
+}
+
+void lk_room_connect_options_init(lk_room_connect_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->auto_subscribe = 1;
+		options->join_retries = 3;
+		options->reconnect_timeout_ms = 15000;
+		options->continual_gathering_policy = LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY;
+		options->ice_transport_type = LK_ICE_TRANSPORT_TYPE_ALL;
+	}
+}
+
 void lk_frame_cryptor_info_init(lk_frame_cryptor_info_t* info) {
 	if (info != nullptr) {
 		*info = {};
@@ -2812,6 +3125,20 @@ void lk_remote_participant_snapshot_info_init(lk_remote_participant_snapshot_inf
 	}
 }
 
+void lk_local_participant_snapshot_info_init(lk_local_participant_snapshot_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_data_stream_writer_info_init(lk_data_stream_writer_info_t* info) {
+	if (info != nullptr) {
+		*info = {};
+		info->struct_size = sizeof(*info);
+	}
+}
+
 void lk_remote_track_publication_snapshot_info_init(
     lk_remote_track_publication_snapshot_info_t* info) {
 	if (info != nullptr) {
@@ -2824,6 +3151,13 @@ void lk_remote_track_snapshot_info_init(lk_remote_track_snapshot_info_t* info) {
 	if (info != nullptr) {
 		*info = {};
 		info->struct_size = sizeof(*info);
+	}
+}
+
+void lk_rtc_track_stats_init(lk_rtc_track_stats_t* stats) {
+	if (stats != nullptr) {
+		*stats = {};
+		stats->struct_size = sizeof(*stats);
 	}
 }
 
@@ -2920,6 +3254,26 @@ lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token)
 	});
 }
 
+lk_status_t lk_room_connect_with_options(lk_room_t* room, const char* url, const char* token,
+                                         const lk_room_connect_options_t* options) {
+	return Guard([&] {
+		if (room == nullptr || url == nullptr || token == nullptr || *url == '\0' ||
+		    *token == '\0') {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, URL, and token are required");
+		}
+		core::RoomConnectOptions connect_options;
+		const auto status = ToCoreRoomConnectOptions(options, connect_options);
+		if (status != LK_STATUS_OK) {
+			return status;
+		}
+		if (!room->room->Connect(url, token, std::move(connect_options))) {
+			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room with options");
+		}
+		room->state->connected.store(true);
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_room_connect_with_token_source(lk_room_t* room, lk_token_source_callback callback,
                                               void* user_data,
                                               const lk_token_source_fetch_options_t* options,
@@ -2929,8 +3283,7 @@ lk_status_t lk_room_connect_with_token_source(lk_room_t* room, lk_token_source_c
 			return Failure(LK_STATUS_INVALID_ARGUMENT,
 			               "room and token source callback are required");
 		}
-		core::TokenSourceFetchOptions source_options;
-		core::RoomConnectOptions connect_options;
+		auto connect_options = core::default_room_connect_options();
 		if (e2ee_options != nullptr) {
 			core::E2eeOptions e2ee;
 			const auto status = ToCoreE2eeOptions(e2ee_options, e2ee);
@@ -2939,82 +3292,27 @@ lk_status_t lk_room_connect_with_token_source(lk_room_t* room, lk_token_source_c
 			}
 			connect_options.e2ee = std::move(e2ee);
 		}
-		if (options != nullptr) {
-			if (options->struct_size < sizeof(options->struct_size)) {
-				return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid token source options size");
-			}
-			auto copy = [](const char* value) { return value == nullptr ? std::string{} : value; };
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, room_name)) {
-				source_options.room_name = copy(options->room_name);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_name)) {
-				source_options.participant_name = copy(options->participant_name);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_identity)) {
-				source_options.participant_identity = copy(options->participant_identity);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, participant_metadata)) {
-				source_options.participant_metadata = copy(options->participant_metadata);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t,
-			                  participant_attribute_count)) {
-				if (options->participant_attribute_count != 0 &&
-				    (!LKC_HAS_FIELD(options, lk_token_source_fetch_options_t,
-				                    participant_attributes) ||
-				     options->participant_attributes == nullptr)) {
-					return Failure(LK_STATUS_INVALID_ARGUMENT, "token source attributes are null");
-				}
-				for (size_t index = 0; index < options->participant_attribute_count; ++index) {
-					const auto& attribute = options->participant_attributes[index];
-					if (attribute.key == nullptr) {
-						return Failure(LK_STATUS_INVALID_ARGUMENT,
-						               "token source attribute key is null");
-					}
-					source_options.participant_attributes[attribute.key] = copy(attribute.value);
-				}
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_name)) {
-				source_options.agent_name = copy(options->agent_name);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, agent_metadata)) {
-				source_options.agent_metadata = copy(options->agent_metadata);
-			}
-			if (LKC_HAS_FIELD(options, lk_token_source_fetch_options_t, deployment)) {
-				source_options.deployment = copy(options->deployment);
-			}
+		return ConnectWithTokenSource(room, callback, user_data, options,
+		                              std::move(connect_options));
+	});
+}
+
+lk_status_t lk_room_connect_with_token_source_and_options(
+    lk_room_t* room, lk_token_source_callback callback, void* user_data,
+    const lk_token_source_fetch_options_t* token_source_options,
+    const lk_room_connect_options_t* connect_options) {
+	return Guard([&] {
+		if (room == nullptr || callback == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "room and token source callback are required");
 		}
-		auto source = core::CreateCallbackTokenSource(
-		    [callback, user_data](const core::TokenSourceFetchOptions& requested, bool force) {
-			    const auto attributes = AttributeViews(requested.participant_attributes);
-			    const lk_token_source_fetch_options_t request{
-			        sizeof(lk_token_source_fetch_options_t),
-			        requested.room_name.c_str(),
-			        requested.participant_name.c_str(),
-			        requested.participant_identity.c_str(),
-			        requested.participant_metadata.c_str(),
-			        attributes.data(),
-			        attributes.size(),
-			        requested.agent_name.c_str(),
-			        requested.agent_metadata.c_str(),
-			        requested.deployment.c_str()};
-			    lk_token_source_response_t response{};
-			    lk_token_source_response_init(&response);
-			    const auto status = callback(user_data, &request, force ? 1 : 0, &response);
-			    if (status != LK_STATUS_OK) {
-				    return core::TokenSourceResult{
-				        {}, "C token source callback failed with status " + std::to_string(status)};
-			    }
-			    return core::TokenSourceResult{
-			        {response.server_url == nullptr ? "" : response.server_url,
-			         response.participant_token == nullptr ? "" : response.participant_token},
-			        {}};
-		    });
-		if (!room->room->Connect(std::move(source), std::move(source_options),
-		                         std::move(connect_options))) {
-			return Failure(LK_STATUS_OPERATION_FAILED, "failed to connect room with token source");
+		core::RoomConnectOptions core_connect_options;
+		const auto status = ToCoreRoomConnectOptions(connect_options, core_connect_options);
+		if (status != LK_STATUS_OK) {
+			return status;
 		}
-		room->state->connected.store(true);
-		return LK_STATUS_OK;
+		return ConnectWithTokenSource(room, callback, user_data, token_source_options,
+		                              std::move(core_connect_options));
 	});
 }
 
@@ -3465,6 +3763,129 @@ size_t lk_frame_cryptor_list_participant_identity(const lk_frame_cryptor_list_t*
 	});
 }
 
+lk_status_t lk_room_create_local_participant_snapshot(const lk_room_t* room,
+                                                      lk_local_participant_snapshot_t** snapshot) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "local participant snapshot output is required");
+		}
+		*snapshot = nullptr;
+		if (room == nullptr || room->room == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room is required");
+		}
+		auto result = std::make_unique<lk_local_participant_snapshot_t>(
+		    room->room->GetLocalParticipantSnapshot());
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_local_participant_snapshot_destroy(lk_local_participant_snapshot_t* snapshot) {
+	delete snapshot;
+}
+
+lk_status_t lk_local_participant_snapshot_info(const lk_local_participant_snapshot_t* participant,
+                                               lk_local_participant_snapshot_info_t* info) {
+	return Guard([&] {
+		if (participant == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "local participant snapshot is null");
+		}
+		const lk_local_participant_snapshot_info_t value{
+		    sizeof(value), participant->value.audio_level,
+		    ToCConnectionQuality(participant->value.connection_quality),
+		    participant->value.speaking ? 1 : 0};
+		return CopyOutputStruct(value, info, "invalid local participant snapshot info output");
+	});
+}
+
+lk_status_t
+lk_local_participant_snapshot_permissions(const lk_local_participant_snapshot_t* participant,
+                                          lk_participant_permissions_t* permissions) {
+	return Guard([&] {
+		if (participant == nullptr || permissions == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT,
+			               "local participant snapshot and permissions output are required");
+		}
+		const auto& source = participant->value.permissions;
+		*permissions = {source.can_subscribe ? 1 : 0,
+		                source.can_publish ? 1 : 0,
+		                source.can_publish_data ? 1 : 0,
+		                participant->publish_sources.data(),
+		                participant->publish_sources.size(),
+		                source.hidden ? 1 : 0,
+		                source.recorder ? 1 : 0,
+		                source.can_update_metadata ? 1 : 0,
+		                source.agent ? 1 : 0,
+		                source.can_subscribe_metrics ? 1 : 0,
+		                source.can_manage_agent_session ? 1 : 0};
+		return LK_STATUS_OK;
+	});
+}
+
+size_t lk_local_participant_snapshot_sid(const lk_local_participant_snapshot_t* participant,
+                                         char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.sid, buffer, buffer_size)
+		                              : InvalidSizeResult("local participant snapshot is null");
+	});
+}
+
+size_t lk_local_participant_snapshot_identity(const lk_local_participant_snapshot_t* participant,
+                                              char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.identity, buffer, buffer_size)
+		                              : InvalidSizeResult("local participant snapshot is null");
+	});
+}
+
+size_t lk_local_participant_snapshot_name(const lk_local_participant_snapshot_t* participant,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.name, buffer, buffer_size)
+		                              : InvalidSizeResult("local participant snapshot is null");
+	});
+}
+
+size_t lk_local_participant_snapshot_metadata(const lk_local_participant_snapshot_t* participant,
+                                              char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return participant != nullptr ? CopyString(participant->value.metadata, buffer, buffer_size)
+		                              : InvalidSizeResult("local participant snapshot is null");
+	});
+}
+
+size_t
+lk_local_participant_snapshot_attribute_count(const lk_local_participant_snapshot_t* participant) {
+	return participant != nullptr ? participant->value.attributes.size() : 0;
+}
+
+size_t
+lk_local_participant_snapshot_attribute_key(const lk_local_participant_snapshot_t* participant,
+                                            size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("local participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->first, buffer, buffer_size);
+	});
+}
+
+size_t
+lk_local_participant_snapshot_attribute_value(const lk_local_participant_snapshot_t* participant,
+                                              size_t index, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		if (participant == nullptr || index >= participant->value.attributes.size()) {
+			return InvalidSizeResult("local participant attribute index is out of range");
+		}
+		auto attribute = participant->value.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->second, buffer, buffer_size);
+	});
+}
+
 lk_status_t lk_room_create_remote_participant_snapshot(const lk_room_t* room,
                                                        lk_remote_participant_list_t** snapshot) {
 	return Guard([&] {
@@ -3653,7 +4074,8 @@ lk_remote_track_publication_snapshot_info(const lk_remote_track_publication_snap
 		    source.subscription_error.has_value() ? 1 : 0,
 		    ToCSubscriptionError(
 		        source.subscription_error.value_or(core::SubscriptionError::Unknown)),
-		    publication->track != nullptr ? 1 : 0};
+		    publication->track != nullptr ? 1 : 0,
+		    ToCEncryptionType(source.encryption)};
 		return CopyOutputStruct(value, info, "invalid publication snapshot info output");
 	});
 }
@@ -3730,6 +4152,115 @@ size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, ch
 		return track != nullptr ? CopyString(track->value.name, buffer, buffer_size)
 		                        : InvalidSizeResult("remote track snapshot is null");
 	});
+}
+
+lk_status_t
+lk_remote_track_snapshot_create_rtc_stats_snapshot(const lk_remote_track_snapshot_t* track,
+                                                   lk_rtc_stats_snapshot_t** snapshot) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "RTC stats snapshot output is null");
+		}
+		*snapshot = nullptr;
+		if (track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "remote track snapshot is null");
+		}
+		auto result = std::make_unique<lk_rtc_stats_snapshot_t>();
+		result->streams = track->value.rtc_stats.streams;
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_rtc_stats_snapshot_destroy(lk_rtc_stats_snapshot_t* snapshot) { delete snapshot; }
+
+size_t lk_rtc_stats_snapshot_count(const lk_rtc_stats_snapshot_t* snapshot) {
+	return snapshot != nullptr ? snapshot->streams.size() : 0;
+}
+
+lk_status_t lk_rtc_stats_snapshot_info(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                       lk_rtc_track_stats_t* stats) {
+	return Guard([&] {
+		if (snapshot == nullptr || index >= snapshot->streams.size()) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "RTC stats snapshot index is out of range");
+		}
+		const auto& source = snapshot->streams[index];
+		lk_rtc_track_stats_t value{};
+		value.struct_size = sizeof(value);
+		value.direction = ToCRTCStatsDirection(source.direction);
+		value.timestamp_ms = source.timestamp_ms;
+		value.bytes = source.bytes;
+		value.packets = source.packets;
+		value.packets_lost = source.packets_lost;
+		value.has_bitrate_bps = source.bitrate_bps.has_value() ? 1 : 0;
+		value.bitrate_bps = source.bitrate_bps.value_or(0.0);
+		value.has_round_trip_time_seconds = source.round_trip_time_seconds.has_value() ? 1 : 0;
+		value.round_trip_time_seconds = source.round_trip_time_seconds.value_or(0.0);
+		value.has_jitter_seconds = source.jitter_seconds.has_value() ? 1 : 0;
+		value.jitter_seconds = source.jitter_seconds.value_or(0.0);
+		value.has_audio_level = source.audio_level.has_value() ? 1 : 0;
+		value.audio_level = source.audio_level.value_or(0.0);
+		value.concealed_samples = source.concealed_samples;
+		value.frame_width = source.frame_width;
+		value.frame_height = source.frame_height;
+		value.frames_per_second = source.frames_per_second;
+		value.frames = source.frames;
+		value.frames_dropped = source.frames_dropped;
+		value.fir_count = source.fir_count;
+		value.pli_count = source.pli_count;
+		value.nack_count = source.nack_count;
+		value.qp_sum = source.qp_sum;
+		return CopyOutputStruct(value, stats, "initialized RTC track stats output is required");
+	});
+}
+
+namespace {
+
+size_t CopyRTCStatsString(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                          const std::string core::RTCTrackStats::*field, char* buffer,
+                          size_t buffer_size) {
+	return SizeGuard([&] {
+		if (snapshot == nullptr || index >= snapshot->streams.size()) {
+			return InvalidSizeResult("RTC stats snapshot index is out of range");
+		}
+		return CopyString(snapshot->streams[index].*field, buffer, buffer_size);
+	});
+}
+
+} // namespace
+
+size_t lk_rtc_stats_snapshot_id(const lk_rtc_stats_snapshot_t* snapshot, size_t index, char* buffer,
+                                size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::id, buffer, buffer_size);
+}
+
+size_t lk_rtc_stats_snapshot_kind(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                  char* buffer, size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::kind, buffer, buffer_size);
+}
+
+size_t lk_rtc_stats_snapshot_rid(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                 char* buffer, size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::rid, buffer, buffer_size);
+}
+
+size_t lk_rtc_stats_snapshot_codec_mime_type(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                             char* buffer, size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::codec_mime_type, buffer,
+	                          buffer_size);
+}
+
+size_t lk_rtc_stats_snapshot_codec_implementation(const lk_rtc_stats_snapshot_t* snapshot,
+                                                  size_t index, char* buffer, size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::codec_implementation, buffer,
+	                          buffer_size);
+}
+
+size_t lk_rtc_stats_snapshot_quality_limitation_reason(const lk_rtc_stats_snapshot_t* snapshot,
+                                                       size_t index, char* buffer,
+                                                       size_t buffer_size) {
+	return CopyRTCStatsString(snapshot, index, &core::RTCTrackStats::quality_limitation_reason,
+	                          buffer, buffer_size);
 }
 
 size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size) {
@@ -4800,6 +5331,23 @@ size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer, siz
 		return track != nullptr && track->track != nullptr
 		           ? CopyString(track->track->GetRTCStats(), buffer, buffer_size)
 		           : InvalidSizeResult("local track is required");
+	});
+}
+
+lk_status_t lk_local_track_create_rtc_stats_snapshot(const lk_local_track_t* track,
+                                                     lk_rtc_stats_snapshot_t** snapshot) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "RTC stats snapshot output is null");
+		}
+		*snapshot = nullptr;
+		if (track == nullptr || track->track == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "local track is required");
+		}
+		auto result = std::make_unique<lk_rtc_stats_snapshot_t>();
+		result->streams = track->track->GetRTCStatsSnapshot().streams;
+		*snapshot = result.release();
+		return LK_STATUS_OK;
 	});
 }
 
@@ -6145,6 +6693,34 @@ void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer) {
 	}
 }
 
+lk_status_t
+lk_text_stream_writer_create_info_snapshot(const lk_text_stream_writer_t* writer,
+                                           lk_data_stream_writer_info_snapshot_t** snapshot) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer info snapshot output is required");
+		}
+		*snapshot = nullptr;
+		if (writer == nullptr || writer->writer == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "text stream writer is required");
+		}
+		const auto source = writer->writer->Info();
+		auto result = std::make_unique<lk_data_stream_writer_info_snapshot_t>();
+		result->kind = LK_DATA_STREAM_WRITER_KIND_TEXT;
+		result->info.stream_id = source.stream_id;
+		result->info.mime_type = source.mime_type;
+		result->info.topic = source.topic;
+		result->info.participant_identity = source.participant_identity;
+		result->info.attributes = source.attributes;
+		result->info.total_size = source.total_size;
+		result->info.timestamp = source.timestamp;
+		result->reply_to_stream_id = source.reply_to_stream_id;
+		result->attached_stream_ids = source.attached_stream_ids;
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_t* options,
                                  lk_byte_stream_writer_t** writer) {
 	return Guard([&] {
@@ -6325,6 +6901,145 @@ void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer) {
 	} catch (...) {
 		SetStatusError(LK_STATUS_EXCEPTION, "exception while destroying byte stream writer");
 	}
+}
+
+lk_status_t
+lk_byte_stream_writer_create_info_snapshot(const lk_byte_stream_writer_t* writer,
+                                           lk_data_stream_writer_info_snapshot_t** snapshot) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer info snapshot output is required");
+		}
+		*snapshot = nullptr;
+		if (writer == nullptr || writer->writer == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "byte stream writer is required");
+		}
+		const auto source = writer->writer->Info();
+		auto result = std::make_unique<lk_data_stream_writer_info_snapshot_t>();
+		result->kind = LK_DATA_STREAM_WRITER_KIND_BYTES;
+		result->info.stream_id = source.stream_id;
+		result->info.mime_type = source.mime_type;
+		result->info.topic = source.topic;
+		result->info.participant_identity = source.participant_identity;
+		result->info.attributes = source.attributes;
+		result->info.total_size = source.total_size;
+		result->info.timestamp = source.timestamp;
+		result->name = source.name;
+		*snapshot = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_data_stream_writer_info_snapshot_destroy(lk_data_stream_writer_info_snapshot_t* snapshot) {
+	delete snapshot;
+}
+
+lk_status_t
+lk_data_stream_writer_info_snapshot_info(const lk_data_stream_writer_info_snapshot_t* snapshot,
+                                         lk_data_stream_writer_info_t* info) {
+	return Guard([&] {
+		if (snapshot == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "writer info snapshot is null");
+		}
+		const lk_data_stream_writer_info_t value{sizeof(value),
+		                                         snapshot->kind,
+		                                         snapshot->info.total_size.has_value() ? 1 : 0,
+		                                         snapshot->info.total_size.value_or(0),
+		                                         snapshot->info.timestamp,
+		                                         snapshot->info.attributes.size(),
+		                                         snapshot->attached_stream_ids.size()};
+		return CopyOutputStruct(value, info, "invalid writer info snapshot output");
+	});
+}
+
+size_t
+lk_data_stream_writer_info_snapshot_stream_id(const lk_data_stream_writer_info_snapshot_t* snapshot,
+                                              char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr ? CopyString(snapshot->info.stream_id, buffer, buffer_size)
+		                           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t
+lk_data_stream_writer_info_snapshot_mime_type(const lk_data_stream_writer_info_snapshot_t* snapshot,
+                                              char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr ? CopyString(snapshot->info.mime_type, buffer, buffer_size)
+		                           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t
+lk_data_stream_writer_info_snapshot_topic(const lk_data_stream_writer_info_snapshot_t* snapshot,
+                                          char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr ? CopyString(snapshot->info.topic, buffer, buffer_size)
+		                           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t lk_data_stream_writer_info_snapshot_participant_identity(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr
+		           ? CopyString(snapshot->info.participant_identity, buffer, buffer_size)
+		           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t
+lk_data_stream_writer_info_snapshot_name(const lk_data_stream_writer_info_snapshot_t* snapshot,
+                                         char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr ? CopyString(snapshot->name, buffer, buffer_size)
+		                           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t lk_data_stream_writer_info_snapshot_reply_to_stream_id(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size) {
+	return SizeGuard([&] {
+		return snapshot != nullptr ? CopyString(snapshot->reply_to_stream_id, buffer, buffer_size)
+		                           : InvalidSizeResult("writer info snapshot is null");
+	});
+}
+
+size_t lk_data_stream_writer_info_snapshot_attribute_key(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size) {
+	return SizeGuard([&] {
+		if (snapshot == nullptr || index >= snapshot->info.attributes.size()) {
+			return InvalidSizeResult("writer attribute index is out of range");
+		}
+		auto attribute = snapshot->info.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->first, buffer, buffer_size);
+	});
+}
+
+size_t lk_data_stream_writer_info_snapshot_attribute_value(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size) {
+	return SizeGuard([&] {
+		if (snapshot == nullptr || index >= snapshot->info.attributes.size()) {
+			return InvalidSizeResult("writer attribute index is out of range");
+		}
+		auto attribute = snapshot->info.attributes.begin();
+		std::advance(attribute, static_cast<std::ptrdiff_t>(index));
+		return CopyString(attribute->second, buffer, buffer_size);
+	});
+}
+
+size_t lk_data_stream_writer_info_snapshot_attached_stream_id(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size) {
+	return SizeGuard([&] {
+		if (snapshot == nullptr || index >= snapshot->attached_stream_ids.size()) {
+			return InvalidSizeResult("attached stream ID index is out of range");
+		}
+		return CopyString(snapshot->attached_stream_ids[index], buffer, buffer_size);
+	});
 }
 
 lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* topic,
