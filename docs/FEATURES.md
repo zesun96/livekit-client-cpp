@@ -15,6 +15,14 @@ attempt. `RoomConnectOptions::reconnect_policy` runs before each full-reconnect 
 a delay or `std::nullopt` to stop recovery. `join_retries` remains the full-reconnect attempt limit.
 The default policy retries immediately and then uses quadratic backoff capped at seven seconds.
 
+The C ABI exposes the same connection controls through the versioned
+`lk_room_connect_options_t` and `lk_room_connect_with_options()`. This includes automatic
+subscription, adaptive stream, dynacast, join attempts, per-attempt reconnect timeout, custom ICE
+servers, continual gathering, ICE transport filtering, optional E2EE, and a C reconnect-policy
+callback. `lk_room_connect_with_token_source_and_options()` combines these controls with dynamic
+credentials. ICE strings and E2EE options are copied during the call; reconnect callback
+`user_data` must remain valid until disconnect or room destruction.
+
 ### Dynamic credentials and room migration
 
 The existing `Connect(url, token)` overload remains supported. Applications that obtain short-lived
@@ -147,11 +155,16 @@ for C++ and C examples, limits, and compatibility behavior.
 ## RTC statistics
 
 Published local tracks and subscribed remote tracks expose selector-scoped libwebrtc
-`RTCStatsReport` JSON through `TrackInterface::GetRTCStats()`. The C API exposes local-track JSON
-through `lk_local_track_rtc_stats()`.
+`RTCStatsReport` JSON through `TrackInterface::GetRTCStats()`. The C API preserves the existing
+local-track JSON getter and also exposes normalized, caller-owned `lk_rtc_stats_snapshot_t` values
+for local tracks and subscribed tracks in a remote-participant snapshot. The owned value remains
+valid after its source track, participant list, or room is destroyed. Per-stream strings use the
+standard two-stage getters, while optional numeric metrics use explicit `has_*` flags.
 
 C++ applications can use `GetRTCStatsSnapshot()` for normalized RTP stream counters or schedule
 `RTCStatsMonitor` samples for bitrate, RTT, loss, jitter, audio, video, and codec metrics.
+Remote publication snapshots also expose the server-declared `EncryptionType`; the versioned C
+publication info reports the equivalent `lk_encryption_type_t` value.
 
 ## Data, streams, and RPC
 
@@ -161,6 +174,11 @@ segments, metrics batches, chunked file transfer, and incremental text/byte stre
 DataStreams can opt into LiveKit-compatible raw-deflate compression. Compression is disabled by
 default. Receivers enforce 64 MiB compressed-input and decompressed-output limits before data is
 dispatched to applications.
+
+The C ABI can copy a text or byte writer's complete metadata into an owned
+`lk_data_stream_writer_info_snapshot_t`. The snapshot preserves the stream ID, MIME type, topic,
+participant identity, total size, timestamp, attributes, and the kind-specific name, reply-to, and
+attached stream IDs after the writer is closed or destroyed.
 
 DataTrack schema definitions are stored once by the publisher and referenced by ID. Remote
 participants query definitions by publisher identity; successful lookups remain cached through
@@ -186,9 +204,11 @@ boundary. Caller-owned handles have explicit destroy functions. Strings and byte
 two-phase size/query operations. Synchronous failures provide a thread-local structured domain,
 code, and diagnostic message.
 
-Remote participant snapshots own their immutable publication and subscribed-track views.
-Incremental writers produce one completed, cancelled, or failed callback. Borrowed RPC results can
-be cloned when they must outlive a callback.
+Local participant snapshots own identity, profile, attributes, permissions, speaking state, audio
+level, and connection quality independently of the room. Remote participant snapshots own their
+immutable publication and subscribed-track views. DataStream writer info snapshots likewise own
+their metadata independently of the writer. Incremental writers produce one completed, cancelled,
+or failed callback. Borrowed RPC results can be cloned when they must outlive a callback.
 
 ## Logging
 

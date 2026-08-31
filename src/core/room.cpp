@@ -462,6 +462,23 @@ std::vector<RemoteParticipantInterface*> Room::GetRemoteParticipants() {
 	return participants;
 }
 
+LocalParticipantSnapshot Room::GetLocalParticipantSnapshot() const {
+	LocalParticipantSnapshot snapshot;
+	if (local_participant_ == nullptr) {
+		return snapshot;
+	}
+	snapshot.sid = local_participant_->Sid();
+	snapshot.identity = local_participant_->Identity();
+	snapshot.name = local_participant_->Name();
+	snapshot.metadata = local_participant_->Metadata();
+	snapshot.attributes = local_participant_->Attributes();
+	snapshot.audio_level = local_participant_->AudioLevel();
+	snapshot.connection_quality = local_participant_->GetConnectionQuality();
+	snapshot.speaking = local_participant_->IsSpeaking();
+	snapshot.permissions = local_participant_->Permissions();
+	return snapshot;
+}
+
 std::vector<RemoteParticipantSnapshot> Room::GetRemoteParticipantSnapshots() const {
 	std::vector<std::shared_ptr<RemoteParticipant>> participants;
 	std::map<std::string, std::shared_ptr<RemoteTrack>> tracks;
@@ -503,6 +520,7 @@ std::vector<RemoteParticipantSnapshot> Room::GetRemoteParticipantSnapshots() con
 			publication_snapshot.subscription_allowed = publication->IsSubscriptionAllowed();
 			publication_snapshot.subscription_status = publication->SubscriptionStatus();
 			publication_snapshot.subscription_error = publication->LastSubscriptionError();
+			publication_snapshot.encryption = publication->Encryption();
 			const auto subscribed_track = tracks.find(publication_snapshot.sid);
 			if (subscribed_track != tracks.end()) {
 				auto* track = subscribed_track->second.get();
@@ -514,6 +532,7 @@ std::vector<RemoteParticipantSnapshot> Room::GetRemoteParticipantSnapshots() con
 				track_snapshot.stream_state = track->StreamState();
 				track_snapshot.dimensions = track->Dimensions();
 				track_snapshot.enabled = track->IsEnabled();
+				track_snapshot.rtc_stats = track->GetRTCStatsSnapshot();
 				if (track_snapshot.name.empty()) {
 					track_snapshot.name = publication_snapshot.name;
 				}
@@ -855,6 +874,11 @@ std::vector<RemoteParticipantSnapshot> RoomInterface::GetRemoteParticipantSnapsh
 	auto* room = dynamic_cast<const Room*>(this);
 	return room != nullptr ? room->GetRemoteParticipantSnapshots()
 	                       : std::vector<RemoteParticipantSnapshot>{};
+}
+
+LocalParticipantSnapshot RoomInterface::GetLocalParticipantSnapshot() const {
+	auto* room = dynamic_cast<const Room*>(this);
+	return room != nullptr ? room->GetLocalParticipantSnapshot() : LocalParticipantSnapshot{};
 }
 
 std::vector<RemoteDataTrackSnapshot> RoomInterface::GetRemoteDataTrackSnapshots() const {

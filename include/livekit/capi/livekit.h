@@ -43,10 +43,13 @@ typedef struct lk_local_track lk_local_track_t;
 typedef struct lk_rpc_result lk_rpc_result_t;
 typedef struct lk_text_stream_writer lk_text_stream_writer_t;
 typedef struct lk_byte_stream_writer lk_byte_stream_writer_t;
+typedef struct lk_data_stream_writer_info_snapshot lk_data_stream_writer_info_snapshot_t;
 typedef struct lk_remote_participant_list lk_remote_participant_list_t;
+typedef struct lk_local_participant_snapshot lk_local_participant_snapshot_t;
 typedef struct lk_remote_participant_snapshot lk_remote_participant_snapshot_t;
 typedef struct lk_remote_track_publication_snapshot lk_remote_track_publication_snapshot_t;
 typedef struct lk_remote_track_snapshot lk_remote_track_snapshot_t;
+typedef struct lk_rtc_stats_snapshot lk_rtc_stats_snapshot_t;
 typedef struct lk_media_device_list lk_media_device_list_t;
 typedef struct lk_screen_source_list lk_screen_source_list_t;
 typedef struct lk_frame_cryptor_list lk_frame_cryptor_list_t;
@@ -151,6 +154,24 @@ typedef enum lk_disconnect_reason {
 	LK_DISCONNECT_REASON_AGENT_ERROR = 16
 } lk_disconnect_reason_t;
 
+typedef enum lk_continual_gathering_policy {
+	LK_CONTINUAL_GATHERING_POLICY_GATHER_ONCE = 0,
+	LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY = 1
+} lk_continual_gathering_policy_t;
+
+typedef enum lk_ice_transport_type {
+	LK_ICE_TRANSPORT_TYPE_NONE = 0,
+	LK_ICE_TRANSPORT_TYPE_RELAY = 1,
+	LK_ICE_TRANSPORT_TYPE_NO_HOST = 2,
+	LK_ICE_TRANSPORT_TYPE_ALL = 3
+} lk_ice_transport_type_t;
+
+typedef enum lk_reconnect_reason {
+	LK_RECONNECT_REASON_UNKNOWN = 0,
+	LK_RECONNECT_REASON_SIGNAL_DISCONNECTED = 1,
+	LK_RECONNECT_REASON_MEDIA_FAILURE = 2
+} lk_reconnect_reason_t;
+
 typedef enum lk_track_kind {
 	LK_TRACK_KIND_UNKNOWN = 0,
 	LK_TRACK_KIND_AUDIO = 1,
@@ -209,6 +230,18 @@ typedef enum lk_track_subscription_status {
 	LK_TRACK_SUBSCRIPTION_STATUS_DESIRED = 1,
 	LK_TRACK_SUBSCRIPTION_STATUS_SUBSCRIBED = 2
 } lk_track_subscription_status_t;
+
+typedef enum lk_encryption_type {
+	LK_ENCRYPTION_TYPE_NONE = 0,
+	LK_ENCRYPTION_TYPE_GCM = 1,
+	LK_ENCRYPTION_TYPE_CUSTOM = 2
+} lk_encryption_type_t;
+
+typedef enum lk_rtc_stats_direction {
+	LK_RTC_STATS_DIRECTION_UNKNOWN = 0,
+	LK_RTC_STATS_DIRECTION_SEND = 1,
+	LK_RTC_STATS_DIRECTION_RECEIVE = 2
+} lk_rtc_stats_direction_t;
 
 typedef enum lk_video_quality {
 	LK_VIDEO_QUALITY_LOW = 0,
@@ -297,6 +330,11 @@ typedef enum lk_data_stream_completion_status {
 	LK_DATA_STREAM_COMPLETION_CANCELLED = 1,
 	LK_DATA_STREAM_COMPLETION_FAILED = 2
 } lk_data_stream_completion_status_t;
+
+typedef enum lk_data_stream_writer_kind {
+	LK_DATA_STREAM_WRITER_KIND_TEXT = 0,
+	LK_DATA_STREAM_WRITER_KIND_BYTES = 1
+} lk_data_stream_writer_kind_t;
 
 typedef enum lk_data_track_frame_encoding {
 	LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED = 0,
@@ -425,6 +463,23 @@ typedef struct lk_remote_participant_snapshot_info {
 	int is_speaking;
 } lk_remote_participant_snapshot_info_t;
 
+typedef struct lk_local_participant_snapshot_info {
+	size_t struct_size;
+	float audio_level;
+	lk_connection_quality_t connection_quality;
+	int is_speaking;
+} lk_local_participant_snapshot_info_t;
+
+typedef struct lk_data_stream_writer_info {
+	size_t struct_size;
+	lk_data_stream_writer_kind_t kind;
+	int has_total_size;
+	uint64_t total_size;
+	int64_t timestamp;
+	size_t attribute_count;
+	size_t attached_stream_id_count;
+} lk_data_stream_writer_info_t;
+
 typedef struct lk_remote_track_publication_snapshot_info {
 	size_t struct_size;
 	lk_track_kind_t kind;
@@ -438,6 +493,7 @@ typedef struct lk_remote_track_publication_snapshot_info {
 	int has_subscription_error;
 	lk_subscription_error_t subscription_error;
 	int has_subscribed_track;
+	lk_encryption_type_t encryption;
 } lk_remote_track_publication_snapshot_info_t;
 
 typedef struct lk_remote_track_snapshot_info {
@@ -449,6 +505,34 @@ typedef struct lk_remote_track_snapshot_info {
 	uint32_t height;
 	int enabled;
 } lk_remote_track_snapshot_info_t;
+
+/* A normalized RTP stream value. Optional metrics use an adjacent has_* flag. */
+typedef struct lk_rtc_track_stats {
+	size_t struct_size;
+	lk_rtc_stats_direction_t direction;
+	double timestamp_ms;
+	uint64_t bytes;
+	uint64_t packets;
+	int64_t packets_lost;
+	int has_bitrate_bps;
+	double bitrate_bps;
+	int has_round_trip_time_seconds;
+	double round_trip_time_seconds;
+	int has_jitter_seconds;
+	double jitter_seconds;
+	int has_audio_level;
+	double audio_level;
+	uint64_t concealed_samples;
+	uint32_t frame_width;
+	uint32_t frame_height;
+	double frames_per_second;
+	uint64_t frames;
+	uint64_t frames_dropped;
+	uint64_t fir_count;
+	uint64_t pli_count;
+	uint64_t nack_count;
+	uint64_t qp_sum;
+} lk_rtc_track_stats_t;
 
 typedef struct lk_subscribed_quality {
 	lk_video_quality_t quality;
@@ -1005,6 +1089,55 @@ typedef struct lk_e2ee_options {
 	lk_e2ee_key_derivation_t key_derivation;
 } lk_e2ee_options_t;
 
+/* URL strings and credentials are borrowed for the duration of the connect call. */
+typedef struct lk_ice_server {
+	size_t struct_size;
+	const char* const* urls;
+	size_t url_count;
+	const char* username;
+	const char* password;
+} lk_ice_server_t;
+
+/* All strings are borrowed and remain valid only for the duration of the policy callback. */
+typedef struct lk_reconnect_context {
+	size_t struct_size;
+	uint32_t retry_count;
+	uint64_t elapsed_ms;
+	lk_reconnect_reason_t reason;
+	const char* server_url;
+} lk_reconnect_context_t;
+
+/*
+ * Return nonzero to retry after writing retry_delay_ms, or zero to stop recovery. The callback
+ * runs on the SDK recovery thread and must return quickly. user_data must remain valid until the
+ * room is disconnected or destroyed.
+ */
+typedef int (*lk_reconnect_policy_callback)(void* user_data, const lk_reconnect_context_t* context,
+                                            uint32_t* retry_delay_ms);
+
+/*
+ * Versioned room connection options. ICE and E2EE pointer fields are borrowed only for the
+ * connect call and copied by the SDK. reconnect_policy_user_data follows the callback lifetime
+ * documented above.
+ */
+typedef struct lk_room_connect_options {
+	size_t struct_size;
+	int auto_subscribe;
+	int adaptive_stream;
+	int dynacast;
+	/* Values below one are clamped to one connection attempt. */
+	uint32_t join_retries;
+	/* Values below one are clamped to a one-millisecond per-attempt timeout. */
+	uint32_t reconnect_timeout_ms;
+	const lk_ice_server_t* ice_servers;
+	size_t ice_server_count;
+	lk_continual_gathering_policy_t continual_gathering_policy;
+	lk_ice_transport_type_t ice_transport_type;
+	lk_reconnect_policy_callback reconnect_policy;
+	void* reconnect_policy_user_data;
+	const lk_e2ee_options_t* e2ee_options;
+} lk_room_connect_options_t;
+
 typedef struct lk_audio_source_options {
 	size_t struct_size;
 	uint32_t sample_rate;
@@ -1304,6 +1437,8 @@ LKC_API void lk_token_source_fetch_options_init(lk_token_source_fetch_options_t*
 LKC_API void lk_token_source_response_init(lk_token_source_response_t* response);
 LKC_API void lk_room_snapshot_init(lk_room_snapshot_t* snapshot);
 LKC_API void lk_e2ee_options_init(lk_e2ee_options_t* options);
+LKC_API void lk_ice_server_init(lk_ice_server_t* server);
+LKC_API void lk_room_connect_options_init(lk_room_connect_options_t* options);
 LKC_API void lk_frame_cryptor_info_init(lk_frame_cryptor_info_t* info);
 LKC_API void lk_audio_playback_stats_init(lk_audio_playback_stats_t* stats);
 LKC_API void lk_audio_source_options_init(lk_audio_source_options_t* options);
@@ -1333,17 +1468,27 @@ LKC_API void lk_rpc_perform_options_init(lk_rpc_perform_options_t* options);
 LKC_API void lk_participant_track_permission_init(lk_participant_track_permission_t* permission);
 LKC_API void lk_remote_track_settings_init(lk_remote_track_settings_t* settings);
 LKC_API void lk_remote_participant_snapshot_info_init(lk_remote_participant_snapshot_info_t* info);
+LKC_API void lk_local_participant_snapshot_info_init(lk_local_participant_snapshot_info_t* info);
+LKC_API void lk_data_stream_writer_info_init(lk_data_stream_writer_info_t* info);
 LKC_API void
 lk_remote_track_publication_snapshot_info_init(lk_remote_track_publication_snapshot_info_t* info);
 LKC_API void lk_remote_track_snapshot_info_init(lk_remote_track_snapshot_info_t* info);
+LKC_API void lk_rtc_track_stats_init(lk_rtc_track_stats_t* stats);
 
 LKC_API lk_status_t lk_room_create(lk_room_t** room);
 LKC_API void lk_room_destroy(lk_room_t* room);
 LKC_API lk_status_t lk_room_set_callbacks(lk_room_t* room, const lk_room_callbacks_t* callbacks);
 LKC_API lk_status_t lk_room_connect(lk_room_t* room, const char* url, const char* token);
+LKC_API lk_status_t lk_room_connect_with_options(lk_room_t* room, const char* url,
+                                                 const char* token,
+                                                 const lk_room_connect_options_t* options);
 LKC_API lk_status_t lk_room_connect_with_token_source(
     lk_room_t* room, lk_token_source_callback callback, void* user_data,
     const lk_token_source_fetch_options_t* options, const lk_e2ee_options_t* e2ee_options);
+LKC_API lk_status_t lk_room_connect_with_token_source_and_options(
+    lk_room_t* room, lk_token_source_callback callback, void* user_data,
+    const lk_token_source_fetch_options_t* token_source_options,
+    const lk_room_connect_options_t* connect_options);
 LKC_API lk_status_t lk_room_connect_e2ee(lk_room_t* room, const char* url, const char* token,
                                          const lk_e2ee_options_t* options);
 LKC_API lk_status_t lk_room_disconnect(lk_room_t* room);
@@ -1414,6 +1559,34 @@ LKC_API size_t lk_frame_cryptor_list_participant_identity(const lk_frame_cryptor
                                                           size_t buffer_size);
 
 /*
+ * Creates an immutable local-participant value that remains valid after room updates or destroy.
+ * Permission source arrays are borrowed from the snapshot until it is destroyed.
+ */
+LKC_API lk_status_t lk_room_create_local_participant_snapshot(
+    const lk_room_t* room, lk_local_participant_snapshot_t** snapshot);
+LKC_API void lk_local_participant_snapshot_destroy(lk_local_participant_snapshot_t* snapshot);
+LKC_API lk_status_t lk_local_participant_snapshot_info(
+    const lk_local_participant_snapshot_t* participant, lk_local_participant_snapshot_info_t* info);
+LKC_API lk_status_t lk_local_participant_snapshot_permissions(
+    const lk_local_participant_snapshot_t* participant, lk_participant_permissions_t* permissions);
+LKC_API size_t lk_local_participant_snapshot_sid(const lk_local_participant_snapshot_t* participant,
+                                                 char* buffer, size_t buffer_size);
+LKC_API size_t lk_local_participant_snapshot_identity(
+    const lk_local_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t lk_local_participant_snapshot_name(
+    const lk_local_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t lk_local_participant_snapshot_metadata(
+    const lk_local_participant_snapshot_t* participant, char* buffer, size_t buffer_size);
+LKC_API size_t
+lk_local_participant_snapshot_attribute_count(const lk_local_participant_snapshot_t* participant);
+LKC_API size_t
+lk_local_participant_snapshot_attribute_key(const lk_local_participant_snapshot_t* participant,
+                                            size_t index, char* buffer, size_t buffer_size);
+LKC_API size_t
+lk_local_participant_snapshot_attribute_value(const lk_local_participant_snapshot_t* participant,
+                                              size_t index, char* buffer, size_t buffer_size);
+
+/*
  * The list owns every participant, publication, and subscribed-track handle returned from it.
  * Child handles and permission source arrays remain valid until the list is destroyed. They are
  * immutable and do not reflect later room updates. Strings use the standard two-stage getters.
@@ -1469,6 +1642,32 @@ LKC_API size_t lk_remote_track_snapshot_sid(const lk_remote_track_snapshot_t* tr
                                             size_t buffer_size);
 LKC_API size_t lk_remote_track_snapshot_name(const lk_remote_track_snapshot_t* track, char* buffer,
                                              size_t buffer_size);
+
+/*
+ * RTC statistics snapshots are immutable caller-owned values. They remain valid after the source
+ * track, participant snapshot, or room is destroyed. An unavailable report creates an empty
+ * snapshot rather than failing.
+ */
+LKC_API lk_status_t lk_remote_track_snapshot_create_rtc_stats_snapshot(
+    const lk_remote_track_snapshot_t* track, lk_rtc_stats_snapshot_t** snapshot);
+LKC_API void lk_rtc_stats_snapshot_destroy(lk_rtc_stats_snapshot_t* snapshot);
+LKC_API size_t lk_rtc_stats_snapshot_count(const lk_rtc_stats_snapshot_t* snapshot);
+LKC_API lk_status_t lk_rtc_stats_snapshot_info(const lk_rtc_stats_snapshot_t* snapshot,
+                                               size_t index, lk_rtc_track_stats_t* stats);
+LKC_API size_t lk_rtc_stats_snapshot_id(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                        char* buffer, size_t buffer_size);
+LKC_API size_t lk_rtc_stats_snapshot_kind(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                          char* buffer, size_t buffer_size);
+LKC_API size_t lk_rtc_stats_snapshot_rid(const lk_rtc_stats_snapshot_t* snapshot, size_t index,
+                                         char* buffer, size_t buffer_size);
+LKC_API size_t lk_rtc_stats_snapshot_codec_mime_type(const lk_rtc_stats_snapshot_t* snapshot,
+                                                     size_t index, char* buffer,
+                                                     size_t buffer_size);
+LKC_API size_t lk_rtc_stats_snapshot_codec_implementation(const lk_rtc_stats_snapshot_t* snapshot,
+                                                          size_t index, char* buffer,
+                                                          size_t buffer_size);
+LKC_API size_t lk_rtc_stats_snapshot_quality_limitation_reason(
+    const lk_rtc_stats_snapshot_t* snapshot, size_t index, char* buffer, size_t buffer_size);
 
 LKC_API size_t lk_local_participant_sid(const lk_room_t* room, char* buffer, size_t buffer_size);
 LKC_API size_t lk_local_participant_identity(const lk_room_t* room, char* buffer,
@@ -1563,6 +1762,8 @@ LKC_API lk_status_t lk_local_video_track_update_degradation_preference(
     lk_local_track_t* track, lk_video_degradation_preference_t preference);
 LKC_API size_t lk_local_track_rtc_stats(const lk_local_track_t* track, char* buffer,
                                         size_t buffer_size);
+LKC_API lk_status_t lk_local_track_create_rtc_stats_snapshot(const lk_local_track_t* track,
+                                                             lk_rtc_stats_snapshot_t** snapshot);
 LKC_API lk_status_t lk_local_track_destroy(lk_local_track_t* track);
 
 LKC_API lk_status_t lk_room_set_remote_track_subscribed(lk_room_t* room,
@@ -1724,6 +1925,8 @@ LKC_API size_t lk_text_stream_writer_id(const lk_text_stream_writer_t* writer, c
                                         size_t buffer_size);
 LKC_API int lk_text_stream_writer_is_closed(const lk_text_stream_writer_t* writer);
 LKC_API void lk_text_stream_writer_destroy(lk_text_stream_writer_t* writer);
+LKC_API lk_status_t lk_text_stream_writer_create_info_snapshot(
+    const lk_text_stream_writer_t* writer, lk_data_stream_writer_info_snapshot_t** snapshot);
 LKC_API lk_status_t lk_room_stream_bytes(lk_room_t* room, const lk_stream_bytes_options_t* options,
                                          lk_byte_stream_writer_t** writer);
 LKC_API lk_status_t lk_byte_stream_writer_write(lk_byte_stream_writer_t* writer,
@@ -1735,6 +1938,34 @@ LKC_API size_t lk_byte_stream_writer_id(const lk_byte_stream_writer_t* writer, c
                                         size_t buffer_size);
 LKC_API int lk_byte_stream_writer_is_closed(const lk_byte_stream_writer_t* writer);
 LKC_API void lk_byte_stream_writer_destroy(lk_byte_stream_writer_t* writer);
+LKC_API lk_status_t lk_byte_stream_writer_create_info_snapshot(
+    const lk_byte_stream_writer_t* writer, lk_data_stream_writer_info_snapshot_t** snapshot);
+/* Writer info snapshots own every string and remain valid after their writer is destroyed. */
+LKC_API void
+lk_data_stream_writer_info_snapshot_destroy(lk_data_stream_writer_info_snapshot_t* snapshot);
+LKC_API lk_status_t lk_data_stream_writer_info_snapshot_info(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, lk_data_stream_writer_info_t* info);
+LKC_API size_t lk_data_stream_writer_info_snapshot_stream_id(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_mime_type(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_topic(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_participant_identity(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_name(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_reply_to_stream_id(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, char* buffer, size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_attribute_key(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_attribute_value(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size);
+LKC_API size_t lk_data_stream_writer_info_snapshot_attached_stream_id(
+    const lk_data_stream_writer_info_snapshot_t* snapshot, size_t index, char* buffer,
+    size_t buffer_size);
 LKC_API lk_status_t lk_room_register_text_stream_handler(lk_room_t* room, const char* topic,
                                                          lk_text_stream_handler handler,
                                                          void* user_data);
