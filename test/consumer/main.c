@@ -107,6 +107,22 @@ int main(void) {
 		free(version);
 		return fail("Failed to initialize LiveKit");
 	}
+	lk_audio_source_options_t audio_source_options;
+	lk_audio_source_options_init(&audio_source_options);
+	lk_audio_source_t* audio_source = NULL;
+	int16_t audio_frame[480] = {0};
+	uint32_t queued_duration_ms = 0;
+	if (lk_audio_source_create(&audio_source_options, &audio_source) != LK_STATUS_OK ||
+	    lk_audio_source_capture_frame(audio_source, audio_frame, 480) != LK_STATUS_OK ||
+	    lk_audio_source_queued_duration_ms(audio_source, &queued_duration_ms) != LK_STATUS_OK ||
+	    lk_audio_source_clear_queue(audio_source) != LK_STATUS_OK ||
+	    lk_audio_source_wait_for_playout(audio_source, 0) != LK_STATUS_OK ||
+	    lk_audio_source_destroy(audio_source) != LK_STATUS_OK) {
+		free(version);
+		lk_audio_source_destroy(audio_source);
+		lk_shutdown();
+		return fail("External audio queue controls failed");
+	}
 	lk_room_t* room = NULL;
 	if (lk_room_create(&room) != LK_STATUS_OK) {
 		fprintf(stderr, "Failed to create a room: %s\n", lk_last_error());

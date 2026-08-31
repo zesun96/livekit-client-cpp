@@ -27,6 +27,7 @@
 #include "api/task_queue/task_queue_base.h"
 #include "api/task_queue/task_queue_factory.h"
 #include "pc/local_audio_source.h"
+#include "rtc_base/event.h"
 #include "rtc_base/task_utils/repeating_task.h"
 
 #include <cstddef>
@@ -59,7 +60,9 @@ public:
 		bool capture_frame(void* audio_data, uint32_t sample_rate, uint32_t number_of_channels,
 		                   size_t number_of_frames);
 
-		void clear_buffer();
+		void clear_buffer() noexcept;
+		std::chrono::milliseconds queued_duration() const noexcept;
+		bool wait_for_playout(std::chrono::milliseconds timeout) noexcept;
 
 	private:
 		mutable webrtc::Mutex mutex_;
@@ -68,6 +71,7 @@ public:
 
 		std::vector<webrtc::AudioTrackSinkInterface*> sinks_ RTC_GUARDED_BY(mutex_);
 		std::vector<int16_t> buffer_ RTC_GUARDED_BY(mutex_);
+		webrtc::Event queue_empty_{true, true};
 
 		int missed_frames_ RTC_GUARDED_BY(mutex_) = 0;
 		std::vector<int16_t> silence_buffer_;
@@ -89,6 +93,9 @@ public:
 
 	void SetAudioOptions(const AudioSourceOptions& options) const;
 	void ClearBuffer() const;
+	std::chrono::milliseconds QueuedDuration() const noexcept;
+	bool ClearQueue() const noexcept;
+	bool WaitForPlayout(std::chrono::milliseconds timeout) const noexcept;
 
 	webrtc::scoped_refptr<InternalSource> Get() const;
 

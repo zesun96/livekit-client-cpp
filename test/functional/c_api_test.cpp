@@ -734,6 +734,37 @@ TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
 	          LK_STATUS_INVALID_ARGUMENT);
 }
 
+TEST(CApiTest, ControlsExternalAudioSourceQueue) {
+	lk_audio_source_options_t options;
+	lk_audio_source_options_init(&options);
+	lk_audio_source_t* source = nullptr;
+	ASSERT_EQ(lk_audio_source_create(&options, &source), LK_STATUS_OK);
+	ASSERT_NE(source, nullptr);
+
+	std::vector<int16_t> two_hundred_ms(9600, 100);
+	ASSERT_EQ(lk_audio_source_capture_frame(source, two_hundred_ms.data(), 9600), LK_STATUS_OK);
+	uint32_t duration_ms = 0;
+	EXPECT_EQ(lk_audio_source_queued_duration_ms(source, &duration_ms), LK_STATUS_OK);
+	EXPECT_GT(duration_ms, 0U);
+	EXPECT_LE(duration_ms, 200U);
+	EXPECT_EQ(lk_audio_source_wait_for_playout(source, 0), LK_STATUS_OPERATION_FAILED);
+	EXPECT_EQ(lk_audio_source_clear_queue(source), LK_STATUS_OK);
+	EXPECT_EQ(lk_audio_source_queued_duration_ms(source, &duration_ms), LK_STATUS_OK);
+	EXPECT_EQ(duration_ms, 0U);
+	EXPECT_EQ(lk_audio_source_wait_for_playout(source, 0), LK_STATUS_OK);
+
+	std::vector<int16_t> twenty_ms(960, 100);
+	ASSERT_EQ(lk_audio_source_capture_frame(source, twenty_ms.data(), 960), LK_STATUS_OK);
+	EXPECT_EQ(lk_audio_source_wait_for_playout(source, 500), LK_STATUS_OK);
+	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
+
+	EXPECT_EQ(lk_audio_source_queued_duration_ms(nullptr, &duration_ms),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_queued_duration_ms(nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_clear_queue(nullptr), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_audio_source_wait_for_playout(nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
+}
+
 TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_room_create(nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_NE(std::strlen(lk_last_error()), 0u);

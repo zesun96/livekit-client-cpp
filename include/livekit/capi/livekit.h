@@ -1744,6 +1744,14 @@ LKC_API lk_status_t lk_audio_source_destroy(lk_audio_source_t* source);
  */
 LKC_API lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16_t* data,
                                                   uint32_t samples_per_channel);
+/** Writes the current queued PCM duration to duration_ms. */
+LKC_API lk_status_t lk_audio_source_queued_duration_ms(const lk_audio_source_t* source,
+                                                       uint32_t* duration_ms);
+/** Drops all PCM currently waiting in the source queue. */
+LKC_API lk_status_t lk_audio_source_clear_queue(lk_audio_source_t* source);
+/** Waits for the PCM queue to become empty. A zero timeout performs a non-blocking check. */
+LKC_API lk_status_t lk_audio_source_wait_for_playout(lk_audio_source_t* source,
+                                                     uint32_t timeout_ms);
 LKC_API lk_status_t lk_audio_source_microphone_start(lk_audio_source_t* source);
 LKC_API lk_status_t lk_audio_source_microphone_stop(lk_audio_source_t* source);
 LKC_API int lk_audio_source_microphone_is_capturing(const lk_audio_source_t* source);

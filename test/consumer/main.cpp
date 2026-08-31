@@ -3,6 +3,12 @@
 #include <iostream>
 
 int main() {
+	const auto queued_duration = &livekit::core::AudioSourceInterface::QueuedDuration;
+	const auto clear_queue = &livekit::core::AudioSourceInterface::ClearQueue;
+	const auto wait_for_playout = &livekit::core::AudioSourceInterface::WaitForPlayout;
+	(void)queued_duration;
+	(void)clear_queue;
+	(void)wait_for_playout;
 	livekit::core::DataTrackSchema schema;
 	schema.id = {"consumer.schema.v1",
 	             {livekit::core::DataTrackSchemaEncodingKind::JsonSchema, {}}};

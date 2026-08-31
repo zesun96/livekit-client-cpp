@@ -55,6 +55,19 @@ void AudioSource::SetAudioOptions(const AudioSourceOptions& options) const {
 
 void AudioSource::ClearBuffer() const { source_->clear_buffer(); }
 
+std::chrono::milliseconds AudioSource::QueuedDuration() const noexcept {
+	return source_->queued_duration();
+}
+
+bool AudioSource::ClearQueue() const noexcept {
+	source_->clear_buffer();
+	return true;
+}
+
+bool AudioSource::WaitForPlayout(std::chrono::milliseconds timeout) const noexcept {
+	return source_->wait_for_playout(timeout);
+}
+
 AudioSource* AudioSource::Create(AudioSourceOptions options, uint32_t sample_rate,
                                  uint32_t num_channels, uint32_t queue_size_ms) {
 	if (sample_rate == 0 || sample_rate > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
@@ -120,6 +133,9 @@ AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options,
 				                 samples_per_channel_10_ms);
 
 			    buffer_.erase(buffer_.begin(), buffer_.begin() + samples_10_ms);
+			    if (buffer_.empty()) {
+				    queue_empty_.Set();
+			    }
 		    } else {
 			    missed_frames_++;
 			    if (missed_frames_ >= silence_frames_threshold) {
@@ -146,7 +162,9 @@ bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate
 	if (sample_rate != sample_rate_ || number_of_channels != num_channels_) {
 		return false;
 	}
-	if (!queue_size_samples_ && number_of_frames != sample_rate_ / 100) {
+	const std::size_t samples_per_channel_10_ms = sample_rate_ / 100;
+	if (number_of_frames % samples_per_channel_10_ms != 0 ||
+	    (!queue_size_samples_ && number_of_frames != samples_per_channel_10_ms)) {
 		return false;
 	}
 	webrtc::MutexLock lock(&mutex_);
@@ -163,6 +181,7 @@ bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate
 
 		int16_t* pcm_data = static_cast<int16_t*>(data);
 		buffer_.insert(buffer_.end(), pcm_data, pcm_data + total_samples);
+		queue_empty_.Reset();
 		missed_frames_ = 0;
 	} else {
 		// capture directly when the queue buffer is 0 (frame size must be 10ms)
@@ -174,9 +193,26 @@ bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate
 	return true;
 }
 
-void AudioSource::InternalSource::clear_buffer() {
+void AudioSource::InternalSource::clear_buffer() noexcept {
 	webrtc::MutexLock lock(&mutex_);
 	buffer_.clear();
+	queue_empty_.Set();
+}
+
+std::chrono::milliseconds AudioSource::InternalSource::queued_duration() const noexcept {
+	webrtc::MutexLock lock(&mutex_);
+	const std::size_t queued_frames = buffer_.size() / num_channels_;
+	const std::size_t whole_seconds = queued_frames / sample_rate_;
+	const std::size_t remaining_frames = queued_frames % sample_rate_;
+	const auto duration_ms = whole_seconds * 1000 + remaining_frames * 1000 / sample_rate_;
+	return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(duration_ms));
+}
+
+bool AudioSource::InternalSource::wait_for_playout(std::chrono::milliseconds timeout) noexcept {
+	if (timeout.count() < 0) {
+		return false;
+	}
+	return queue_empty_.Wait(webrtc::TimeDelta::Millis(timeout.count()));
 }
 
 webrtc::MediaSourceInterface::SourceState AudioSource::InternalSource::state() const {
@@ -206,6 +242,23 @@ void AudioSource::InternalSource::RemoveSink(webrtc::AudioTrackSinkInterface* si
 }
 
 webrtc::scoped_refptr<AudioSource::InternalSource> AudioSource::Get() const { return source_; }
+
+std::chrono::milliseconds
+GetAudioSourceQueuedDuration(const AudioSourceInterface* source) noexcept {
+	const auto* concrete = dynamic_cast<const AudioSource*>(source);
+	return concrete != nullptr ? concrete->QueuedDuration() : std::chrono::milliseconds::zero();
+}
+
+bool ClearAudioSourceQueue(AudioSourceInterface* source) noexcept {
+	auto* concrete = dynamic_cast<AudioSource*>(source);
+	return concrete != nullptr && concrete->ClearQueue();
+}
+
+bool WaitForAudioSourcePlayout(AudioSourceInterface* source,
+                               std::chrono::milliseconds timeout) noexcept {
+	auto* concrete = dynamic_cast<AudioSource*>(source);
+	return concrete != nullptr && concrete->WaitForPlayout(timeout);
+}
 
 } // namespace core
 } // namespace livekit

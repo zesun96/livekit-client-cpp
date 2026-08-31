@@ -23,7 +23,7 @@ param(
   [ValidateSet(
     "All", "Participants", "Restart", "TokenRefresh", "Media", "E2EE", "DataTrack", "CAPI",
     "OfficialCpp", "WeakNetwork", "DataRecovery", "CodecMatrix", "Soak", "AudioQuality",
-    "FrameMetadata"
+    "FrameMetadata", "AudioQueue"
   )]
   [string]$Scenario = "All",
   [ValidateRange(1, 100)]
@@ -948,6 +948,10 @@ try {
       Invoke-SimpleTest "PublishesBackupCodecWhenRequestedByServer"
       Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
     }
+  }
+
+  if ($Scenario -eq "AudioQueue") {
+    Invoke-SimpleTest "PublishesAndReceivesAudioAndVideo"
   }
 
   if ($Scenario -eq "FrameMetadata") {
