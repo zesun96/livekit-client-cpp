@@ -111,6 +111,8 @@ libwebsockets' mbedTLS symbols from WebRTC's BoringSSL symbols.
 | `BUILD_FUNCTIONAL_TESTS` | `ON` | Build local SDK behavior tests |
 | `BUILD_INTEGRATION_TESTS` | `OFF` | Build opt-in real-server tests |
 | `BUILD_LEGACY_TEST_TOOLS` | `OFF` | Build non-deterministic legacy WebRTC tools |
+| `LKC_BUILD_DOCUMENTATION` | `OFF` | Build and install the Doxygen public API reference |
+| `LKC_DOCUMENTATION_ONLY` | `OFF` | Configure only documentation, without runtime dependencies |
 | `USE_SYSTEM_MEDIA_CAPTURE` | `OFF` | Find an installed media-capture package |
 | `USE_SYSTEM_JSON` | `OFF` | Find an installed nlohmann/json package |
 | `USE_SYSTEM_PLOG` | `OFF` | Find an installed plog package |
@@ -120,3 +122,9 @@ libwebsockets' mbedTLS symbols from WebRTC's BoringSSL symbols.
 `test/consumer` can build against either the source tree or an installed SDK. It compiles one C++
 and one pure C executable. See [Windows SDK packaging](WINDOWS_SDK_PACKAGING.md) for the installed
 package command and [Integration testing](integration.md) for the latest recorded package result.
+
+## API documentation
+
+The Doxygen reference has a documentation-only configuration mode, so generating API documentation
+does not require libwebrtc, vcpkg, or media-capture. See
+[Public API reference](API_REFERENCE.md) for build, output, and installation commands.

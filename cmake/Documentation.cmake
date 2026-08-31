@@ -1,0 +1,47 @@
+find_package(Doxygen 1.9.8 REQUIRED)
+
+set(LKC_DOXYGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/api" CACHE PATH
+    "Directory for generated API documentation")
+
+file(GLOB_RECURSE LKC_PUBLIC_HEADERS CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/include/livekit/*.h"
+  "${PROJECT_SOURCE_DIR}/include/livekit/*.hpp"
+)
+file(GLOB_RECURSE LKC_DOCUMENTATION_PAGES CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/docs/*.md"
+)
+list(FILTER LKC_DOCUMENTATION_PAGES EXCLUDE REGEX "[/\\\\]ROADMAP\\.md$")
+
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}" LKC_DOXYGEN_SOURCE_DIR)
+file(TO_CMAKE_PATH "${LKC_DOXYGEN_OUTPUT_DIR}" LKC_DOXYGEN_OUTPUT_DIR_CONFIG)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/docs/Doxyfile.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile"
+  @ONLY
+)
+
+set(LKC_DOXYGEN_INDEX "${LKC_DOXYGEN_OUTPUT_DIR}/html/index.html")
+set(LKC_DOXYGEN_STAMP "${CMAKE_CURRENT_BINARY_DIR}/livekit-docs.stamp")
+add_custom_command(
+  OUTPUT "${LKC_DOXYGEN_STAMP}"
+  BYPRODUCTS "${LKC_DOXYGEN_INDEX}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${LKC_DOXYGEN_OUTPUT_DIR}"
+  COMMAND "${DOXYGEN_EXECUTABLE}" "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile"
+  COMMAND "${CMAKE_COMMAND}" -E touch "${LKC_DOXYGEN_STAMP}"
+  DEPENDS
+    "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile"
+    "${PROJECT_SOURCE_DIR}/Readme.md"
+    ${LKC_PUBLIC_HEADERS}
+    ${LKC_DOCUMENTATION_PAGES}
+  COMMENT "Generating LiveKit Client C++ public API reference"
+  VERBATIM
+)
+
+add_custom_target(livekit_docs ALL DEPENDS "${LKC_DOXYGEN_STAMP}")
+
+install(
+  DIRECTORY "${LKC_DOXYGEN_OUTPUT_DIR}/html/"
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/livekit-client-cpp/api"
+  COMPONENT Documentation
+  OPTIONAL
+)
