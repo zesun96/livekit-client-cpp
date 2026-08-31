@@ -29,6 +29,10 @@
 #include "pc/local_audio_source.h"
 #include "rtc_base/task_utils/repeating_task.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
 namespace livekit {
 namespace core {
 
@@ -36,8 +40,9 @@ class AudioSource : public AudioSourceInterface {
 public:
 	class InternalSource : public webrtc::LocalAudioSource {
 	public:
-		InternalSource(const webrtc::AudioOptions& options, int sample_rate, int num_channels,
-		               int buffer_size_ms, webrtc::TaskQueueFactory* task_queue_factory);
+		InternalSource(const webrtc::AudioOptions& options, uint32_t sample_rate,
+		               uint32_t num_channels, uint32_t buffer_size_ms,
+		               webrtc::TaskQueueFactory* task_queue_factory);
 
 		~InternalSource() override;
 
@@ -65,12 +70,11 @@ public:
 		std::vector<int16_t> buffer_ RTC_GUARDED_BY(mutex_);
 
 		int missed_frames_ RTC_GUARDED_BY(mutex_) = 0;
-		int16_t* silence_buffer_ = nullptr;
+		std::vector<int16_t> silence_buffer_;
 
-		int sample_rate_;
-		int num_channels_;
-		int queue_size_samples_;
-		int notify_threshold_samples_;
+		uint32_t sample_rate_;
+		uint32_t num_channels_;
+		std::size_t queue_size_samples_ = 0;
 
 		webrtc::AudioOptions options_{};
 	};
@@ -96,7 +100,6 @@ private:
 	AudioSourceOptions options_;
 	uint32_t sample_rate_;
 	uint32_t num_channels_;
-	uint32_t queue_size_samples_;
 	webrtc::scoped_refptr<InternalSource> source_;
 };
 

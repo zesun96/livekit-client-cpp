@@ -74,6 +74,11 @@ class AudioSourceInterface {
 public:
 	virtual ~AudioSourceInterface() = default;
 
+	/**
+	 * Captures signed 16-bit interleaved PCM. The sample rate and channel count must match the
+	 * source configuration. A source with no queue accepts exactly one 10 ms frame per call;
+	 * a queued source returns false when the complete frame does not fit.
+	 */
 	virtual bool CaptureFrame(void* audio_data, uint32_t sample_rate, uint32_t num_channels,
 	                          uint32_t samples_per_channel) = 0;
 };
@@ -113,6 +118,11 @@ public:
 	}
 };
 
+/**
+ * Creates an application-provided PCM source. The sample rate must contain an integral number of
+ * samples per 10 ms, the channel count must be positive, and the queue size must be a multiple of
+ * 10 ms. A zero queue size selects direct 10 ms frame delivery.
+ */
 AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sample_rate,
                                         uint32_t num_channels, uint32_t queue_size_ms);
 

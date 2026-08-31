@@ -117,6 +117,11 @@ SDK validates and converts them to WebRTC I420 before publication. Existing `Vid
 size-versioned `lk_video_frame_input_t` and `lk_video_source_capture_frame` path. I420A alpha is
 validated but discarded by the current WebRTC encoder path.
 
+External PCM sources enforce their configured sample rate and channel count. Their queue holds
+exactly `queue_size_ms` of interleaved samples and rejects a complete frame when it cannot fit;
+C++ callers may select a zero-length queue for direct delivery of exactly one 10 ms frame per call.
+All non-zero queue sizes use 10 ms increments. The C API keeps a non-zero queue requirement.
+
 Remote audio and video tracks also expose bounded pull readers through `AudioStream` and
 `VideoStream`. Readers support blocking, timed, and non-blocking reads, drop the oldest unread frame
 when their configured capacity is full, report the drop count, and wake blocked consumers when the
