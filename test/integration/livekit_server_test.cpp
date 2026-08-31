@@ -96,6 +96,44 @@ public:
 	~CApiLogCallbackGuard() { lk_log_set_callback(nullptr, nullptr); }
 };
 
+class CApiTraceFileGuard {
+public:
+	explicit CApiTraceFileGuard(const char* path) {
+		if (path == nullptr || *path == '\0') {
+			return;
+		}
+		configured_ = true;
+		lk_trace_options_t options;
+		lk_trace_options_init(&options);
+		options.enabled = 1;
+		options.category_mask = LK_TRACE_CATEGORY_ALL;
+		status_ = lk_trace_set_options(&options);
+		if (status_ == LK_STATUS_OK) {
+			status_ = lk_trace_start_json_file(path);
+			active_ = status_ == LK_STATUS_OK;
+		}
+	}
+
+	~CApiTraceFileGuard() {
+		if (!configured_) {
+			return;
+		}
+		if (active_) {
+			lk_trace_stop();
+		}
+		lk_trace_options_t options;
+		lk_trace_options_init(&options);
+		lk_trace_set_options(&options);
+	}
+
+	lk_status_t status() const { return status_; }
+
+private:
+	bool configured_ = false;
+	bool active_ = false;
+	lk_status_t status_ = LK_STATUS_OK;
+};
+
 bool WaitUntil(const std::function<bool()>& predicate,
                std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -1643,6 +1681,8 @@ TEST(LiveKitServerTest, CApiRecoversAfterExplicitServerRestart) {
 	    std::getenv("LIVEKIT_CAPI_SERVER_RESTART_READY_FILE") == nullptr) {
 		GTEST_SKIP() << "Use run_reconnect_matrix.ps1 to run the C API server-restart test";
 	}
+	CApiTraceFileGuard trace_file(std::getenv("LIVEKIT_TRACE_JSON"));
+	ASSERT_EQ(trace_file.status(), LK_STATUS_OK) << lk_last_error();
 
 	ASSERT_EQ(lk_init(), LK_STATUS_OK) << lk_last_error();
 	auto room_deleter = [](lk_room_t* room) { lk_room_destroy(room); };

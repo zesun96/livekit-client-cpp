@@ -77,6 +77,7 @@ static void shutdown_livekit(void) {
 	if (lk_shutdown() != LK_STATUS_OK) {
 		fprintf(stderr, "LiveKit shutdown failed: %s\n", lk_last_error());
 	}
+	lk_trace_stop();
 	lk_log_set_callback(NULL, NULL);
 }
 
@@ -513,9 +514,24 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "LiveKit logging setup failed: %s\n", lk_last_error());
 		return 1;
 	}
+	const char* trace_path = getenv("LIVEKIT_TRACE_FILE");
+	if (trace_path != NULL && trace_path[0] != '\0') {
+		lk_trace_options_t trace_options;
+		lk_trace_options_init(&trace_options);
+		trace_options.enabled = 1;
+		trace_options.category_mask = LK_TRACE_CATEGORY_ALL;
+		if (lk_trace_set_options(&trace_options) != LK_STATUS_OK ||
+		    lk_trace_start_json_file(trace_path) != LK_STATUS_OK) {
+			fprintf(stderr, "LiveKit tracing setup failed: %s\n", lk_last_error());
+			lk_log_set_callback(NULL, NULL);
+			return 1;
+		}
+		printf("Writing Perfetto/Chrome Trace JSON to %s\n", trace_path);
+	}
 
 	if (lk_init() != LK_STATUS_OK) {
 		fprintf(stderr, "LiveKit initialization failed: %s\n", lk_last_error());
+		lk_trace_stop();
 		lk_log_set_callback(NULL, NULL);
 		return 1;
 	}

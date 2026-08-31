@@ -20,6 +20,7 @@
 #include "detail/converted_proto.h"
 #include "detail/frame_metadata.h"
 #include "detail/rtc_engine.h"
+#include "detail/tracing.h"
 #include "e2ee/e2ee_manager_internal.h"
 #include "track/audio_track.h"
 #include "track/remote_audio_track.h"
@@ -232,6 +233,7 @@ bool Room::Connect(std::string url, std::string token, RoomConnectOptions opts) 
 
 bool Room::Connect(std::shared_ptr<TokenSourceInterface> source,
                    TokenSourceFetchOptions source_options, RoomConnectOptions opts) {
+	LKC_TRACE_SPAN(TraceCategory::Signaling, "room.token_source.fetch");
 	if (!source) {
 		return false;
 	}
@@ -247,6 +249,7 @@ bool Room::Connect(std::shared_ptr<TokenSourceInterface> source,
 bool Room::ConnectInternal(std::string url, std::string token, RoomConnectOptions opts,
                            std::shared_ptr<TokenSourceInterface> source,
                            TokenSourceFetchOptions source_options) {
+	LKC_TRACE_SPAN(TraceCategory::Lifecycle, "room.connect");
 	auto expected = state_.load();
 	if (expected != RoomState::Disconnected && expected != RoomState::Failed) {
 		return false;
@@ -382,6 +385,7 @@ bool Room::IsRecording() {
 }
 
 bool Room::Disconnect() {
+	LKC_TRACE_SPAN(TraceCategory::Lifecycle, "room.disconnect");
 	auto state = state_.load();
 	if (state == RoomState::Disconnecting || state == RoomState::Disconnected) {
 		return false;
@@ -427,6 +431,7 @@ LocalParticipantInterface* Room::GetLocalParticipant() { return this->local_part
 E2EEManager* Room::GetE2EEManager() { return e2ee_manager_.get(); }
 
 void Room::ConfigureE2ee(const std::optional<E2eeOptions>& options) {
+	LKC_TRACE_SPAN(TraceCategory::E2ee, "room.e2ee.configure");
 	std::unique_ptr<E2EEManager> replacement;
 	EncryptionType encryption_type = EncryptionType::None;
 	if (options && options->encryption_type != EncryptionType::None) {
@@ -964,6 +969,7 @@ bool RoomInterface::UpdateRemoteTrackSettings(std::string participant_sid, std::
 }
 
 void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
+	LKC_TRACE_INSTANT(TraceCategory::Lifecycle, "room.connected");
 	SetState(RoomState::Connected);
 	local_participant_->ResendTrackSubscriptionPermissions();
 	if (auto* listener = event_listener_.load()) {
@@ -972,6 +978,8 @@ void Room::ConnectedEvent(livekit::JoinResponse join_resp) {
 }
 
 void Room::ReconnectingEvent(bool full_reconnect) {
+	LKC_TRACE_INSTANT(TraceCategory::Lifecycle,
+	                  full_reconnect ? "room.reconnecting.full" : "room.reconnecting.resume");
 	if (full_reconnect && !full_reconnect_prepared_.exchange(true)) {
 		if (e2ee_manager_) {
 			E2EEManagerNativeAccess::DetachAll(*e2ee_manager_);
@@ -1005,6 +1013,7 @@ void Room::SignalResumedEvent() {
 }
 
 void Room::ResumedEvent() {
+	LKC_TRACE_INSTANT(TraceCategory::Lifecycle, "room.resumed");
 	local_participant_->ResendTrackSubscriptionPermissions();
 	ResendRemoteTrackPreferences();
 	ResendRemoteDataTrackSubscriptions();
@@ -1017,6 +1026,7 @@ void Room::ResumedEvent() {
 }
 
 void Room::ReconnectedEvent(livekit::JoinResponse join_resp) {
+	LKC_TRACE_INSTANT(TraceCategory::Lifecycle, "room.reconnected");
 	if (state_.load() != RoomState::Reconnecting || !join_resp.has_room()) {
 		return;
 	}

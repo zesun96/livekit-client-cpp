@@ -20,6 +20,7 @@
 #include "livekit_rtc.pb.h"
 #include "logging.h"
 #include "signal_url.h"
+#include "tracing.h"
 #include "utils.h"
 #include "websocket_uri.h"
 
@@ -121,6 +122,7 @@ void SignalClient::RemoveObserver() {
 }
 
 livekit::JoinResponse SignalClient::Connect() {
+	LKC_TRACE_SPAN(livekit::core::TraceCategory::Signaling, "signal.connect");
 	{
 		std::lock_guard<std::mutex> guard(lock_);
 		if (join_response_resolved_) {
@@ -143,6 +145,7 @@ livekit::JoinResponse SignalClient::Connect() {
 }
 
 bool SignalClient::Resume() {
+	LKC_TRACE_SPAN(livekit::core::TraceCategory::Signaling, "signal.resume");
 	{
 		std::lock_guard<std::mutex> guard(lock_);
 		if (resume_resolved_) {
@@ -174,6 +177,7 @@ livekit::ReconnectResponse SignalClient::ReconnectResponseSnapshot() const {
 }
 
 void SignalClient::Close(bool update_state) {
+	LKC_TRACE_SPAN(livekit::core::TraceCategory::Signaling, "signal.close");
 	if (update_state) {
 		state_ = SignalConnectionState::DISCONNECTING;
 	}

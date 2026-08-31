@@ -2,13 +2,79 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int fail(const char* message) {
 	fprintf(stderr, "%s: %s\n", message, lk_last_error());
 	return 1;
 }
 
+static int verify_json_tracing(void) {
+	static const char trace_path[] = "livekit-c-consumer-trace.json";
+	remove(trace_path);
+	lk_trace_options_t options;
+	lk_trace_options_init(&options);
+	if (options.struct_size != sizeof(options) || options.enabled != 0 ||
+	    options.category_mask != LK_TRACE_CATEGORY_ALL) {
+		fprintf(stderr, "Unexpected tracing option defaults\n");
+		return 0;
+	}
+	options.enabled = 1;
+	options.category_mask = LK_TRACE_CATEGORY_LIFECYCLE;
+	if (lk_trace_set_options(&options) != LK_STATUS_OK ||
+	    lk_trace_start_json_file(trace_path) != LK_STATUS_OK || lk_init() != LK_STATUS_OK ||
+	    lk_shutdown() != LK_STATUS_OK || lk_trace_stop() != LK_STATUS_OK) {
+		fprintf(stderr, "C trace JSON smoke failed: %s\n", lk_last_error());
+		lk_trace_stop();
+		remove(trace_path);
+		return 0;
+	}
+	options.enabled = 0;
+	lk_trace_set_options(&options);
+
+	FILE* file = fopen(trace_path, "rb");
+	if (file == NULL || fseek(file, 0, SEEK_END) != 0) {
+		if (file != NULL) {
+			fclose(file);
+		}
+		remove(trace_path);
+		fprintf(stderr, "C trace JSON file was not created\n");
+		return 0;
+	}
+	const long size = ftell(file);
+	if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+		fclose(file);
+		remove(trace_path);
+		fprintf(stderr, "C trace JSON file could not be read\n");
+		return 0;
+	}
+	char* contents = (char*)malloc((size_t)size + 1);
+	if (contents == NULL || fread(contents, 1, (size_t)size, file) != (size_t)size) {
+		free(contents);
+		fclose(file);
+		remove(trace_path);
+		fprintf(stderr, "C trace JSON file could not be loaded\n");
+		return 0;
+	}
+	contents[size] = '\0';
+	fclose(file);
+	const int valid = strstr(contents, "\"traceEvents\"") != NULL &&
+	                  strstr(contents, "\"name\":\"runtime.init\"") != NULL &&
+	                  strstr(contents, "\"ph\":\"B\"") != NULL &&
+	                  strstr(contents, "\"ph\":\"E\"") != NULL &&
+	                  strstr(contents, "\"displayTimeUnit\":\"ms\"") != NULL;
+	free(contents);
+	remove(trace_path);
+	if (!valid) {
+		fprintf(stderr, "C trace output was not Perfetto/Chrome Trace compatible\n");
+	}
+	return valid;
+}
+
 int main(void) {
+	if (!verify_json_tracing()) {
+		return 1;
+	}
 	const size_t version_size = lk_version(NULL, 0);
 	if (version_size <= 1) {
 		return fail("LiveKit SDK returned an empty version");

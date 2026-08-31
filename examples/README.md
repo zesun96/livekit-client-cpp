@@ -47,6 +47,12 @@ operational logs while keeping WebRTC at warning level. Set `LIVEKIT_LOG_LEVEL` 
 `debug`, `info`, `warning`, `error`, or `off` before starting an example. Debug mode enables
 WebRTC informational diagnostics; trace mode also enables its verbose diagnostics.
 
+Set `LIVEKIT_TRACE_FILE` to write a Perfetto/Chrome Trace compatible JSON file from any C++ example
+or from `c_sample`. The file includes fixed-name SDK lifecycle, signaling, transport, recovery,
+track, data, RPC, and E2EE timing events, but not tokens, SDP, ICE candidates, payloads, keys, or
+media. The sink is finalized when the example exits normally; see
+[Runtime tracing](../docs/TRACING.md) for custom C++ sinks and C callbacks.
+
 Generate tokens with different participant identities but the same room name when running a
 publisher and receiver together. Never put API secrets or generated tokens in source files or
 repository configuration.

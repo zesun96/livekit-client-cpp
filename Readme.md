@@ -29,6 +29,8 @@ A C++20 client SDK for [LiveKit](https://livekit.io/), with a native C++ API and
 - RTC statistics, bounded DataChannel backpressure, simulcast/dynacast, SVC, and backup codecs.
 - A stable C ABI based on opaque handles, explicit ownership, callbacks, and structured errors.
 - Application-owned logging sinks with independent LiveKit, WebRTC, and WebSocket levels.
+- Optional Perfetto/Chrome Trace compatible lifecycle, signaling, transport, track, data, RPC, and
+  E2EE tracing through C++ and C APIs.
 
 See [SDK features](docs/FEATURES.md) for capability boundaries and advanced behavior.
 

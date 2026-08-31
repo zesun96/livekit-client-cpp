@@ -216,3 +216,12 @@ The SDK defines its own logging interface rather than exposing plog as a public 
 Applications install a sink and select levels independently for LiveKit, WebRTC, and WebSocket
 sources. Callbacks should return quickly and must not re-enter blocking SDK operations. Examples
 use plog to demonstrate formatted console/file output.
+
+## Runtime tracing
+
+Optional process-wide tracing records fixed-name lifecycle, signaling, transport, recovery, track,
+data, RPC, and E2EE events. Applications can install a C++ sink or C callback, filter categories,
+or write Chrome Trace Event JSON for direct inspection in Perfetto. Recovery uses correlated async
+events so work spanning SDK threads remains visible. Tracing is disabled by default, does not add a
+runtime dependency, and never records credentials, SDP, ICE candidates, application payloads,
+encryption keys, or media. See [Runtime tracing](TRACING.md) for setup and lifetime rules.
