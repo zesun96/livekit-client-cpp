@@ -5,7 +5,11 @@
 cmake_minimum_required (VERSION 3.15)
 
 set(LKC_VERSION 0.4.0)
-project ("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES C CXX)
+if(LKC_DOCUMENTATION_ONLY)
+  project("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES NONE)
+else()
+  project("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES C CXX)
+endif()
 
 set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
 
@@ -14,7 +18,11 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-include(GNUInstallDirs)
+if(LKC_DOCUMENTATION_ONLY)
+  set(CMAKE_INSTALL_DATADIR "share" CACHE PATH "Read-only architecture-independent data")
+else()
+  include(GNUInstallDirs)
+endif()
 
 # C++ standard requirements.
 set(CMAKE_CXX_STANDARD 20)
@@ -34,6 +42,8 @@ option(BUILD_TEST "Build tests" ON)
 option(BUILD_FUNCTIONAL_TESTS "Build local functional tests" ON)
 option(BUILD_INTEGRATION_TESTS "Build tests that connect to a LiveKit server" OFF)
 option(BUILD_LEGACY_TEST_TOOLS "Build legacy manual WebRTC test programs" OFF)
+option(LKC_BUILD_DOCUMENTATION "Build the public API reference with Doxygen" OFF)
+option(LKC_DOCUMENTATION_ONLY "Configure only the public API reference" OFF)
 option(LIBWEBRTC_USE_H264 "Enable H264 adapters from an H264-enabled libwebrtc package" ON)
 if(WIN32)
   set(LKC_BUILD_SHARED_DEFAULT ON)
@@ -43,6 +53,16 @@ endif()
 option(BUILD_SHARED_LIBS "Build livekitclient as a shared library" ${LKC_BUILD_SHARED_DEFAULT})
 set(OFFICIAL_LIVEKIT_CPP_ROOT "" CACHE PATH
     "Optional extracted official LiveKit C++ SDK root for interoperability tests")
+
+if(LKC_DOCUMENTATION_ONLY)
+  set(LKC_BUILD_DOCUMENTATION ON)
+endif()
+if(LKC_BUILD_DOCUMENTATION)
+  include(cmake/Documentation.cmake)
+endif()
+if(LKC_DOCUMENTATION_ONLY)
+  return()
+endif()
 
 include(FetchContent)
 include(cmake/Dependencies.cmake)

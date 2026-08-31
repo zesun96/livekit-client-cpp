@@ -80,6 +80,7 @@ installation, runtime layout, and installed-package consumer checks.
 | Topic | Document |
 | --- | --- |
 | Dependencies and source builds | [Building from source](docs/BUILDING.md) |
+| Generated C and C++ API reference | [API reference build](docs/API_REFERENCE.md) |
 | Capability details and API behavior | [SDK features](docs/FEATURES.md) |
 | Video frame metadata | [Frame metadata](docs/FRAME_METADATA.md) / [帧元数据](docs/FRAME_METADATA_zh.md) |
 | Integration matrix and recorded acceptance results | [Integration testing](docs/integration.md) |
@@ -128,6 +129,9 @@ Git submodules are not required. See [Building from source](docs/BUILDING.md) fo
 constraints.
 
 ## Continuous integration
+
+The independent documentation workflow can be started manually to validate the public API
+reference and publish the generated HTML as a short-lived workflow artifact.
 
 Automatic Windows CI runs are currently paused. `.github/workflows/windows.yml` and
 `.github/workflows/windows-integration.yml` can be started manually with `workflow_dispatch` when
