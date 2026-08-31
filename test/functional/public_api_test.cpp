@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -219,6 +220,38 @@ TEST(MediaSourceTest, AcceptsConsecutiveAudioFrames) {
 	EXPECT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
 	EXPECT_TRUE(source->CaptureFrame(samples.data(), 48000, 1, 480));
 	source.reset();
+	EXPECT_TRUE(Destroy());
+}
+
+TEST(MediaSourceTest, EnforcesAudioSourceConfigurationAndQueueBounds) {
+	ASSERT_TRUE(Init());
+	EXPECT_THROW(CreateAudioSourceUnique({}, 0, 1, 200), std::invalid_argument);
+	EXPECT_THROW(CreateAudioSourceUnique({}, 48000, 0, 200), std::invalid_argument);
+	EXPECT_THROW(CreateAudioSourceUnique({}, 48000, 1, 15), std::invalid_argument);
+
+	std::vector<int16_t> ten_ms(480, 100);
+	std::vector<int16_t> twenty_ms(960, 100);
+	std::vector<int16_t> thirty_ms(1440, 100);
+	std::vector<int16_t> stereo_ten_ms(960, 100);
+
+	auto bounded = CreateAudioSourceUnique({}, 48000, 1, 20);
+	ASSERT_NE(bounded, nullptr);
+	EXPECT_TRUE(bounded->CaptureFrame(twenty_ms.data(), 48000, 1, 960));
+
+	auto oversized = CreateAudioSourceUnique({}, 48000, 1, 20);
+	ASSERT_NE(oversized, nullptr);
+	EXPECT_FALSE(oversized->CaptureFrame(thirty_ms.data(), 48000, 1, 1440));
+	EXPECT_FALSE(oversized->CaptureFrame(ten_ms.data(), 44100, 1, 441));
+	EXPECT_FALSE(oversized->CaptureFrame(stereo_ten_ms.data(), 48000, 2, 480));
+
+	auto direct = CreateAudioSourceUnique({}, 48000, 1, 0);
+	ASSERT_NE(direct, nullptr);
+	EXPECT_TRUE(direct->CaptureFrame(ten_ms.data(), 48000, 1, 480));
+	EXPECT_FALSE(direct->CaptureFrame(ten_ms.data(), 48000, 1, 479));
+
+	direct.reset();
+	oversized.reset();
+	bounded.reset();
 	EXPECT_TRUE(Destroy());
 }
 

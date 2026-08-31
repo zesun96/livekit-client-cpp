@@ -41,9 +41,7 @@ AudioSource::AudioSource(AudioSourceOptions options, uint32_t sample_rate, uint3
     : options_(options), sample_rate_(sample_rate), num_channels_(num_channels),
       source_(webrtc::make_ref_counted<InternalSource>(to_webrtc_audio_options(options),
                                                        sample_rate, num_channels, queue_size_ms,
-                                                       task_queue_factory)) {
-	queue_size_samples_ = (queue_size_ms * sample_rate / 1000) * num_channels;
-}
+                                                       task_queue_factory)) {}
 
 bool AudioSource::CaptureFrame(void* audio_data, uint32_t sample_rate, uint32_t num_channels,
                                uint32_t samples_per_channel) {
@@ -59,8 +57,16 @@ void AudioSource::ClearBuffer() const { source_->clear_buffer(); }
 
 AudioSource* AudioSource::Create(AudioSourceOptions options, uint32_t sample_rate,
                                  uint32_t num_channels, uint32_t queue_size_ms) {
-
-	if (queue_size_ms % 10 != 0) {
+	if (sample_rate == 0 || sample_rate > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
+	    sample_rate % 100 != 0) {
+		throw std::invalid_argument("sample_rate must represent an integral 10 ms frame");
+	}
+	if (num_channels == 0 ||
+	    num_channels > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+		throw std::invalid_argument("num_channels must be positive");
+	}
+	if (queue_size_ms > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
+	    queue_size_ms % 10 != 0) {
 		throw std::invalid_argument("queue_size_ms must be a multiple of 10");
 	}
 	return new AudioSource(options, sample_rate, num_channels, queue_size_ms,
@@ -72,9 +78,9 @@ AudioSourceInterface* CreateAudioSource(AudioSourceOptions options, uint32_t sam
 	return AudioSource::Create(options, sample_rate, num_channels, queue_size_ms);
 }
 
-AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options, int sample_rate,
-                                            int num_channels,
-                                            int queue_size_ms, // must be a multiple of 10ms
+AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options,
+                                            uint32_t sample_rate, uint32_t num_channels,
+                                            uint32_t queue_size_ms, // must be a multiple of 10ms
                                             webrtc::TaskQueueFactory* task_queue_factory)
     : sample_rate_(sample_rate), num_channels_(num_channels) {
 	if (!queue_size_ms)
@@ -85,34 +91,42 @@ AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options,
 	const int silence_frames_threshold = 10;
 	missed_frames_ = silence_frames_threshold;
 
-	int samples10ms = sample_rate / 100 * num_channels;
+	const std::size_t samples_per_channel_10_ms = sample_rate / 100;
+	if (samples_per_channel_10_ms > std::numeric_limits<std::size_t>::max() / num_channels) {
+		throw std::invalid_argument("audio frame dimensions are too large");
+	}
+	const std::size_t samples_10_ms = samples_per_channel_10_ms * num_channels;
+	const std::size_t queue_frames = queue_size_ms / 10;
+	if (queue_frames > std::numeric_limits<std::size_t>::max() / samples_10_ms) {
+		throw std::invalid_argument("audio queue is too large");
+	}
 
-	silence_buffer_ = new int16_t[samples10ms]();
-	queue_size_samples_ = queue_size_ms / 10 * samples10ms;
-	notify_threshold_samples_ = queue_size_samples_; // TODO: this is currently
-	                                                 // using x2 the queue size
-	buffer_.reserve(queue_size_samples_ + notify_threshold_samples_);
+	silence_buffer_.resize(samples_10_ms);
+	queue_size_samples_ = queue_frames * samples_10_ms;
+	buffer_.reserve(queue_size_samples_);
 
 	audio_queue_ = std::move(task_queue_factory->CreateTaskQueue(
 	    "AudioSourceCapture", webrtc::TaskQueueFactory::Priority::NORMAL));
 
 	audio_task_ = webrtc::RepeatingTaskHandle::Start(
 	    audio_queue_.get(),
-	    [this, samples10ms]() {
+	    [this, samples_10_ms, samples_per_channel_10_ms]() {
 		    webrtc::MutexLock lock(&mutex_);
 
-		    if (buffer_.size() >= samples10ms) {
+		    if (buffer_.size() >= samples_10_ms) {
 			    for (auto sink : sinks_)
-				    sink->OnData(buffer_.data(), sizeof(int16_t) * 8, sample_rate_, num_channels_,
-				                 samples10ms / num_channels_);
+				    sink->OnData(buffer_.data(), sizeof(int16_t) * 8,
+				                 static_cast<int>(sample_rate_), num_channels_,
+				                 samples_per_channel_10_ms);
 
-			    buffer_.erase(buffer_.begin(), buffer_.begin() + samples10ms);
+			    buffer_.erase(buffer_.begin(), buffer_.begin() + samples_10_ms);
 		    } else {
 			    missed_frames_++;
 			    if (missed_frames_ >= silence_frames_threshold) {
 				    for (auto sink : sinks_)
-					    sink->OnData(silence_buffer_, sizeof(int16_t) * 8, sample_rate_,
-					                 num_channels_, samples10ms / num_channels_);
+					    sink->OnData(silence_buffer_.data(), sizeof(int16_t) * 8,
+					                 static_cast<int>(sample_rate_), num_channels_,
+					                 samples_per_channel_10_ms);
 			    }
 		    }
 
@@ -121,15 +135,18 @@ AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options,
 	    webrtc::TaskQueueBase::DelayPrecision::kHigh);
 }
 
-AudioSource::InternalSource::~InternalSource() {
-	audio_task_.Stop();
-	delete[] silence_buffer_;
-}
+AudioSource::InternalSource::~InternalSource() { audio_task_.Stop(); }
 
 bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate,
                                                 uint32_t number_of_channels,
                                                 size_t number_of_frames) {
 	if (data == nullptr || sample_rate == 0 || number_of_channels == 0 || number_of_frames == 0) {
+		return false;
+	}
+	if (sample_rate != sample_rate_ || number_of_channels != num_channels_) {
+		return false;
+	}
+	if (!queue_size_samples_ && number_of_frames != sample_rate_ / 100) {
 		return false;
 	}
 	webrtc::MutexLock lock(&mutex_);
@@ -139,8 +156,8 @@ bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate
 	const std::size_t total_samples = number_of_frames * number_of_channels;
 
 	if (queue_size_samples_) {
-		const std::size_t capacity = queue_size_samples_ + notify_threshold_samples_;
-		if (buffer_.size() > capacity || total_samples > capacity - buffer_.size()) {
+		if (buffer_.size() > queue_size_samples_ ||
+		    total_samples > queue_size_samples_ - buffer_.size()) {
 			return false;
 		}
 

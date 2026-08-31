@@ -18,6 +18,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -4550,7 +4551,11 @@ lk_status_t lk_audio_source_create(const lk_audio_source_options_t* options,
 				values.noise_suppression = options->noise_suppression;
 			}
 		}
-		if (values.sample_rate == 0 || values.num_channels == 0 || values.queue_size_ms == 0) {
+		const auto max_core_dimension = static_cast<uint32_t>(std::numeric_limits<int>::max());
+		if (values.sample_rate == 0 || values.sample_rate > max_core_dimension ||
+		    values.sample_rate % 100 != 0 || values.num_channels == 0 ||
+		    values.num_channels > max_core_dimension || values.queue_size_ms == 0 ||
+		    values.queue_size_ms > max_core_dimension || values.queue_size_ms % 10 != 0) {
 			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid audio source dimensions");
 		}
 		core::AudioSourceOptions core_options;

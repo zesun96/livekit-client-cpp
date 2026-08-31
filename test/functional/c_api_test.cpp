@@ -705,6 +705,24 @@ TEST(CApiTest, RejectsMicrophoneOperationsForExternalAudioSource) {
 	          LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_audio_source_destroy(source), LK_STATUS_OK);
 
+	lk_audio_source_options_t external_options;
+	lk_audio_source_options_init(&external_options);
+	external_options.sample_rate = 22050;
+	EXPECT_EQ(lk_audio_source_create(&external_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(source, nullptr);
+	external_options.sample_rate = 48000;
+	external_options.queue_size_ms = 15;
+	EXPECT_EQ(lk_audio_source_create(&external_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(source, nullptr);
+	external_options.queue_size_ms = 200;
+	external_options.num_channels = 0x80000000U;
+	EXPECT_EQ(lk_audio_source_create(&external_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(source, nullptr);
+	external_options.num_channels = 1;
+	external_options.queue_size_ms = 3000000000U;
+	EXPECT_EQ(lk_audio_source_create(&external_options, &source), LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(source, nullptr);
+
 	lk_microphone_capture_options_t options;
 	lk_microphone_capture_options_init(&options);
 	options.queue_size_ms = 1;

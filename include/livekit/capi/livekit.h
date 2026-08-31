@@ -1182,8 +1182,10 @@ typedef struct lk_room_connect_options {
 
 typedef struct lk_audio_source_options {
 	size_t struct_size;
+	/* Must contain an integral number of samples per 10 ms. */
 	uint32_t sample_rate;
 	uint32_t num_channels;
+	/* Must be a non-zero multiple of 10 ms. */
 	uint32_t queue_size_ms;
 	int echo_cancellation;
 	int auto_gain_control;
@@ -1738,6 +1740,8 @@ LKC_API lk_status_t lk_audio_source_create_microphone(
 LKC_API lk_status_t lk_audio_source_create_system_audio(
     const lk_system_audio_capture_options_t* options, lk_audio_source_t** source);
 LKC_API lk_status_t lk_audio_source_destroy(lk_audio_source_t* source);
+/** Captures signed 16-bit interleaved PCM using the source's configured sample rate and channels.
+ */
 LKC_API lk_status_t lk_audio_source_capture_frame(lk_audio_source_t* source, const int16_t* data,
                                                   uint32_t samples_per_channel);
 LKC_API lk_status_t lk_audio_source_microphone_start(lk_audio_source_t* source);
