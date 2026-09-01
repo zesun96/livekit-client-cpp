@@ -21,10 +21,12 @@ but it does not turn the native C++ surface into a stable ABI.
 
 A true MSVC Debug DLL cannot link the Release `webrtc.lib`: Release and Debug use different CRT
 libraries and iterator-debug levels. For a DLL-oriented build, build both H264-enabled dynamic-CRT
-packages from the local `webrtc-build` checkout:
+packages from the `build` branch of
+[`zesun96/webrtc-build`](https://github.com/zesun96/webrtc-build):
 
 ```powershell
-Push-Location ..\webrtc-build\build
+git clone --branch build https://github.com/zesun96/webrtc-build.git
+Push-Location webrtc-build\build
 .\build_windows.cmd release x64 h264 dynamic # /MD
 .\build_windows.cmd debug x64 h264 dynamic   # /MDd
 Pop-Location
@@ -72,8 +74,14 @@ cmake -S . -B out/build/sdk-dll-debug @common `
 ```
 
 The packaging script builds, installs, validates, and combines both configurations into
-`livekit-client-cpp-<version>-Windows-x64-dll-md.zip`, then prints its SHA256 digest. Static-CRT
-build trees retain the existing filename without the `-md` suffix.
+`livekit-client-cpp-<version>-windows-x64-v143-md-dll.zip`, then prints its SHA256 digest. The
+filename is part of the compatibility contract: platform, architecture, MSVC toolset, CRT, and
+library type are all explicit. An explicitly requested static-CRT build uses `mt` instead of `md`.
+
+The installed `LiveKitClientConfig.cmake` exposes `LiveKitClient_ARCH`,
+`LiveKitClient_MSVC_TOOLSET`, `LiveKitClient_MSVC_RUNTIME`, and
+`LiveKitClient_CPP_ABI_COMPATIBLE`. It rejects a non-x64 target and warns when a native C++
+consumer selects a different toolset or CRT. Those warnings do not reject stable C ABI consumers.
 
 ## Installed layout
 
@@ -122,6 +130,7 @@ Static consumers build the SDK from source and provide the configuration-matchin
 ```powershell
 cmake -S . -B out/build/sdk-static <common dependency options> `
   -DBUILD_SHARED_LIBS=OFF `
+  -DLKC_MSVC_RUNTIME=static `
   -DLIBWEBRTC_ROOT=E:/path/to/configuration-matching/webrtc
 cmake --build out/build/sdk-static --config Release --parallel
 ```

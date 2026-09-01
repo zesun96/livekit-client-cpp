@@ -15,8 +15,8 @@ The supported Windows build uses:
 - a Release or Debug libwebrtc package containing `include/` and `lib/`; and
 - the `media-capture` source tree, normally checked out next to this repository.
 
-`LKC_MSVC_RUNTIME` selects `static` (the compatibility default: `/MT` and `/MTd`) or `dynamic`
-(`/MD` and `/MDd`). The SDK, libwebrtc, media-capture, vcpkg dependencies, and consumer must agree.
+`LKC_MSVC_RUNTIME` selects `dynamic` (the default: `/MD` and `/MDd`) or `static` (`/MT` and
+`/MTd`). The SDK, libwebrtc, media-capture, vcpkg dependencies, and native C++ consumer must agree.
 Use the included `x64-windows-static-md` overlay triplet when libraries should remain static while
 using the dynamic CRT.
 
@@ -42,15 +42,27 @@ runtime validation.
 
 ## Complete Windows build
 
-The following example uses local Release dependencies and builds examples, unit tests, and
+Build the matching monolithic libwebrtc package with the `build` branch of
+[`zesun96/webrtc-build`](https://github.com/zesun96/webrtc-build):
+
+```powershell
+git clone --branch build https://github.com/zesun96/webrtc-build.git
+Push-Location webrtc-build\build
+.\build_windows.cmd release x64 h264 dynamic # /MD
+.\build_windows.cmd debug x64 h264 dynamic   # /MDd
+Pop-Location
+```
+
+The following example uses local `/MD` Release dependencies and builds examples, unit tests, and
 functional tests:
 
 ```powershell
 cmake -S . -B out/build/vs2022-x64-release `
   -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-  -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release/webrtc `
+  -DVCPKG_OVERLAY_TRIPLETS="$PWD/cmake/triplets" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+  -DLIBWEBRTC_ROOT=E:/workspace/cpp/lk-sdk/webrtc-build/build/_package/windows_x86_64/release-md/webrtc `
   -DLIBWEBRTC_USE_H264=ON `
   -DMEDIA_CAPTURE_ROOT=E:/workspace/cpp/lk-sdk/media-capture `
   -DMEDIA_CAPTURE_MINIAUDIO_ROOT=E:/workspace/cpp/lk-sdk/others/miniaudio `
@@ -94,6 +106,7 @@ A static source build remains available:
 ```powershell
 cmake -S . -B out/build/sdk-static <common-dependency-options> `
   -DBUILD_SHARED_LIBS=OFF `
+  -DLKC_MSVC_RUNTIME=static `
   -DLIBWEBRTC_ROOT=C:/path/to/configuration-matching/webrtc
 cmake --build out/build/sdk-static --config Release --parallel
 ```
@@ -107,7 +120,7 @@ libwebsockets' mbedTLS symbols from WebRTC's BoringSSL symbols.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `BUILD_SHARED_LIBS` | `ON` on Windows | Build `livekitclient` as a DLL |
-| `LKC_MSVC_RUNTIME` | `static` | Select `static` (`/MT[d]`) or `dynamic` (`/MD[d]`) MSVC CRT |
+| `LKC_MSVC_RUNTIME` | `dynamic` | Select `dynamic` (`/MD[d]`) or `static` (`/MT[d]`) MSVC CRT |
 | `LIBWEBRTC_USE_H264` | `ON` | Register H264 support expected in libwebrtc |
 | `BUILD_EXAMPLES` | `ON` | Build executable examples |
 | `BUILD_TEST` | `ON` | Build unit tests |

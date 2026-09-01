@@ -44,15 +44,29 @@ See [SDK features](docs/FEATURES.md) for capability boundaries and advanced beha
 
 ## Quick start
 
-The project currently targets Visual Studio 2022 on Windows. A source build needs CMake, vcpkg, a
-configuration-matching libwebrtc package, and the sibling `media-capture` source tree.
+The project currently targets Visual Studio 2022 (`v143`) on Windows. A source build needs CMake,
+vcpkg, a configuration-matching libwebrtc package, and the sibling `media-capture` source tree.
+Build the required `/MD` Release and `/MDd` Debug libwebrtc packages with
+[`zesun96/webrtc-build`](https://github.com/zesun96/webrtc-build):
+
+```powershell
+git clone --branch build https://github.com/zesun96/webrtc-build.git
+Push-Location webrtc-build\build
+.\build_windows.cmd release x64 h264 dynamic
+.\build_windows.cmd debug x64 h264 dynamic
+Pop-Location
+```
+
+The commands keep libwebrtc monolithic while selecting the dynamic MSVC runtime; they do not use
+WebRTC component mode.
 
 ```powershell
 cmake -S . -B out/build/vs2022-x64-release `
   -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-  -DLIBWEBRTC_ROOT=C:/path/to/release/webrtc `
+  -DVCPKG_OVERLAY_TRIPLETS="$PWD/cmake/triplets" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+  -DLIBWEBRTC_ROOT=C:/path/to/webrtc-build/build/_package/windows_x86_64/release-md/webrtc `
   -DMEDIA_CAPTURE_ROOT=C:/path/to/media-capture `
   -DBUILD_EXAMPLES=ON -DBUILD_TEST=ON -DBUILD_FUNCTIONAL_TESTS=ON
 
@@ -63,18 +77,18 @@ ctest --test-dir out/build/vs2022-x64-release -C Release --output-on-failure
 H264 is enabled by default, so the selected libwebrtc package must include H264 support. Pass
 `-DLIBWEBRTC_USE_H264=OFF` only when intentionally using a package built without H264.
 
-Set `-DLKC_MSVC_RUNTIME=dynamic` and use the `x64-windows-static-md` overlay triplet plus a matching
-`/MD` or `/MDd` libwebrtc package when integrating with DLL-oriented Windows dependencies. The
-default remains `static` for compatibility with existing `/MT` and `/MTd` builds.
+`LKC_MSVC_RUNTIME=dynamic` is the default. Use the `x64-windows-static-md` overlay triplet plus a
+matching `/MD` or `/MDd` libwebrtc package. Set `-DLKC_MSVC_RUNTIME=static` explicitly only for a
+fully matched `/MT` or `/MTd` source build.
 
 For dependency choices, source builds, runtime requirements, and a complete local command,
 see [Building from source](docs/BUILDING.md).
 
 ## Consuming the Windows DLL package
 
-The Windows SDK ZIP contains Release and Debug DLLs, matching import libraries, the Debug PDB,
-headers, runtime dependencies, and an imported CMake target. Prebuilt-DLL applications should use
-the stable C ABI:
+The default Windows SDK is identified as `windows-x64-v143-md-dll`. Its ZIP contains Release and
+Debug DLLs, matching import libraries, the Debug PDB, headers, runtime dependencies, and an
+imported CMake target. Prebuilt-DLL applications should use the stable C ABI:
 
 ```c
 #include <livekit/capi/livekit.h>

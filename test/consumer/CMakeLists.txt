@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 cmake_policy(SET CMP0091 NEW)
-set(LKC_MSVC_RUNTIME "static" CACHE STRING
+set(LKC_MSVC_RUNTIME "dynamic" CACHE STRING
     "MSVC runtime linkage: static (/MT, /MTd) or dynamic (/MD, /MDd)")
 set_property(CACHE LKC_MSVC_RUNTIME PROPERTY STRINGS static dynamic)
 if(LKC_MSVC_RUNTIME STREQUAL "static")
