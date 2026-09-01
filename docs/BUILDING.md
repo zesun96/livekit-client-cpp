@@ -11,12 +11,14 @@ The supported Windows build uses:
 - Visual Studio 2022 with the x64 C++ toolchain;
 - CMake 3.20 or newer;
 - C++20;
-- vcpkg with the `x64-windows-static` triplet;
+- vcpkg with a runtime-compatible static-library triplet;
 - a Release or Debug libwebrtc package containing `include/` and `lib/`; and
 - the `media-capture` source tree, normally checked out next to this repository.
 
-The SDK and packaged libwebrtc use the static MSVC runtime. CMake configures
-`MultiThreaded$<$<CONFIG:Debug>:Debug>` so Release uses `/MT` and Debug uses `/MTd`.
+`LKC_MSVC_RUNTIME` selects `static` (the compatibility default: `/MT` and `/MTd`) or `dynamic`
+(`/MD` and `/MDd`). The SDK, libwebrtc, media-capture, vcpkg dependencies, and consumer must agree.
+Use the included `x64-windows-static-md` overlay triplet when libraries should remain static while
+using the dynamic CRT.
 
 ## Dependencies
 
@@ -105,6 +107,7 @@ libwebsockets' mbedTLS symbols from WebRTC's BoringSSL symbols.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `BUILD_SHARED_LIBS` | `ON` on Windows | Build `livekitclient` as a DLL |
+| `LKC_MSVC_RUNTIME` | `static` | Select `static` (`/MT[d]`) or `dynamic` (`/MD[d]`) MSVC CRT |
 | `LIBWEBRTC_USE_H264` | `ON` | Register H264 support expected in libwebrtc |
 | `BUILD_EXAMPLES` | `ON` | Build executable examples |
 | `BUILD_TEST` | `ON` | Build unit tests |

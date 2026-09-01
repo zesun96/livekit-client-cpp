@@ -5,6 +5,18 @@
 cmake_minimum_required (VERSION 3.15)
 
 set(LKC_VERSION 0.5.0)
+cmake_policy(SET CMP0091 NEW)
+set(LKC_MSVC_RUNTIME "static" CACHE STRING
+  "MSVC runtime linkage: static (/MT, /MTd) or dynamic (/MD, /MDd)")
+set_property(CACHE LKC_MSVC_RUNTIME PROPERTY STRINGS static dynamic)
+if(LKC_MSVC_RUNTIME STREQUAL "static")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+elseif(LKC_MSVC_RUNTIME STREQUAL "dynamic")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+else()
+  message(FATAL_ERROR "LKC_MSVC_RUNTIME must be static or dynamic")
+endif()
+
 if(LKC_DOCUMENTATION_ONLY)
   project("livekit-client-cpp-sdk" VERSION ${LKC_VERSION} LANGUAGES NONE)
 else()
@@ -12,11 +24,6 @@ else()
 endif()
 
 set(PROJECT_DESCRIPTION "C/C++ livekit sdk")
-
-if(MSVC)
-  cmake_policy(SET CMP0091 NEW)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
 
 if(LKC_DOCUMENTATION_ONLY)
   set(CMAKE_INSTALL_DATADIR "share" CACHE PATH "Read-only architecture-independent data")

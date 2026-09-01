@@ -4,6 +4,7 @@ include(CMakeFindDependencyMacro)
 
 set(LiveKitClient_VERSION "@PROJECT_VERSION@")
 set(LiveKitClient_SHARED @BUILD_SHARED_LIBS@)
+set(LiveKitClient_MSVC_RUNTIME "@LKC_MSVC_RUNTIME@")
 
 if(NOT @BUILD_SHARED_LIBS@)
   find_dependency(Protobuf CONFIG)
