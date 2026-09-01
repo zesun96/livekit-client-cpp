@@ -132,6 +132,15 @@ continue to receive the same frames. C applications can create equivalent reader
 identity and track SID, consume owned frame handles, and destroy each handle after reading its
 borrowed frame view.
 
+Native C++ applications can record an individual subscribed remote track with
+`StartTrackRecording()`. Remote audio is written as decoded PCM16 WAV. Remote H264/H265 video is
+written without transcoding as an Annex-B elementary stream; VP8, VP9, and AV1 are written as IVF.
+The recorder owns a bounded reader and file-writer thread, starts video at a key frame, reports queue
+drops and terminal errors, and finalizes container headers in `Stop()` or destruction. The same
+encoded receive path is available through `CreateEncodedVideoStream()`. This feature is local
+per-track capture, not server Egress, composite recording, or MP4 muxing. See
+[Remote track recording](RECORDING.md) for formats and limitations.
+
 Native microphone capture uses libwebrtc Audio Processing Module support for AEC, AGC, and noise
 suppression. These features are application switches with stable SDK defaults; applications do not
 normally tune low-level WebRTC parameters. Processing statistics and errors are available through

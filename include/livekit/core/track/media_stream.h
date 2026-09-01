@@ -9,6 +9,7 @@
 #define _LKC_CORE_TRACK_MEDIA_STREAM_H_
 
 #include "audio_frame.h"
+#include "encoded_video_frame.h"
 #include "video_frame.h"
 
 #include <chrono>
@@ -66,6 +67,31 @@ private:
 	std::shared_ptr<Impl> impl_;
 
 	friend class MediaStreamTestAccess;
+	friend class RemoteVideoTrack;
+};
+
+class EncodedVideoStream {
+public:
+	~EncodedVideoStream();
+	EncodedVideoStream(const EncodedVideoStream&) = delete;
+	EncodedVideoStream& operator=(const EncodedVideoStream&) = delete;
+
+	bool Read(EncodedVideoFrame& frame);
+	bool ReadFor(EncodedVideoFrame& frame, std::chrono::milliseconds timeout);
+	bool TryRead(EncodedVideoFrame& frame);
+	void Close();
+	bool IsClosed() const;
+	std::size_t DroppedFrames() const;
+
+private:
+	class Impl;
+	explicit EncodedVideoStream(std::size_t capacity);
+	void Push(EncodedVideoFrame frame);
+	void SetAttachment(std::shared_ptr<void> attachment);
+	std::shared_ptr<Impl> impl_;
+
+	friend class MediaStreamTestAccess;
+	friend class EncodedVideoSubscription;
 	friend class RemoteVideoTrack;
 };
 

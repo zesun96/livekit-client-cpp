@@ -47,6 +47,8 @@ public:
 	                 std::shared_ptr<detail::FrameMetadataStore> metadata_store = {});
 	~RemoteVideoTrack() override;
 	std::shared_ptr<VideoStream> CreateVideoStream(MediaStreamOptions options = {}) override;
+	std::shared_ptr<EncodedVideoStream>
+	CreateEncodedVideoStream(MediaStreamOptions options = {}) override;
 	std::shared_ptr<detail::FrameMetadataStore> GetFrameMetadataStore() const;
 
 private:
@@ -57,6 +59,7 @@ private:
 	std::shared_ptr<detail::FrameMetadataStore> metadata_store_;
 	std::mutex streams_mutex_;
 	std::vector<std::weak_ptr<VideoStream>> streams_;
+	std::vector<std::weak_ptr<EncodedVideoStream>> encoded_streams_;
 };
 
 } // namespace core
