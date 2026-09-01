@@ -62,13 +62,24 @@ if (-not $architecture) {
 if ((Get-CacheValue -CachePath $debugCache -Name "CMAKE_GENERATOR_PLATFORM") -ne $architecture) {
   throw "Release and Debug build directories use different architectures"
 }
+$runtime = Get-CacheValue -CachePath $releaseCache -Name "LKC_MSVC_RUNTIME"
+if ((Get-CacheValue -CachePath $debugCache -Name "LKC_MSVC_RUNTIME") -ne $runtime) {
+  throw "Release and Debug build directories use different MSVC runtimes"
+}
+if ($runtime -eq "static") {
+  $runtimeSuffix = ""
+} elseif ($runtime -eq "dynamic") {
+  $runtimeSuffix = "-md"
+} else {
+  throw "Unsupported LKC_MSVC_RUNTIME value: $runtime"
+}
 
 if ($OutputDirectory) {
   $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 } else {
   $output = Join-Path (Split-Path -Parent $releaseBuild) "packages"
 }
-$packageName = "livekit-client-cpp-$version-Windows-$architecture-dll"
+$packageName = "livekit-client-cpp-$version-Windows-$architecture-dll$runtimeSuffix"
 $stagingRoot = Join-Path $output "_staging"
 $packageRoot = Join-Path $stagingRoot $packageName
 $archive = Join-Path $output "$packageName.zip"

@@ -15,10 +15,10 @@ A C++20 client SDK for [LiveKit](https://livekit.io/), with a native C++ API and
 > [!IMPORTANT]
 > **Windows DLL ABI:** The stable binary boundary of the prebuilt Windows DLL package is the C API
 > in `livekit/capi/livekit.h`. The native C++ API exposes STL and compiler-specific types and is not
-> a supported stable DLL ABI with the current static MSVC runtimes (`/MT` and `/MTd`). Use the C ABI
-> when consuming the prebuilt DLLs. Applications that require the native C++ API should build the
-> SDK from source and link it statically with an exactly matching MSVC toolset, runtime, build
-> configuration, and dependency set.
+> a stable DLL ABI, even when the SDK and application both use the dynamic MSVC runtime (`/MD` or
+> `/MDd`). Use the C ABI for independently built applications. Native C++ DLL consumers must use an
+> exactly matching MSVC toolset, runtime, build configuration, iterator-debug level, and dependency
+> set; building the SDK and application together from source remains the safest C++ option.
 
 ## Highlights
 
@@ -63,7 +63,11 @@ ctest --test-dir out/build/vs2022-x64-release -C Release --output-on-failure
 H264 is enabled by default, so the selected libwebrtc package must include H264 support. Pass
 `-DLIBWEBRTC_USE_H264=OFF` only when intentionally using a package built without H264.
 
-For dependency choices, source builds, static runtime requirements, and a complete local command,
+Set `-DLKC_MSVC_RUNTIME=dynamic` and use the `x64-windows-static-md` overlay triplet plus a matching
+`/MD` or `/MDd` libwebrtc package when integrating with DLL-oriented Windows dependencies. The
+default remains `static` for compatibility with existing `/MT` and `/MTd` builds.
+
+For dependency choices, source builds, runtime requirements, and a complete local command,
 see [Building from source](docs/BUILDING.md).
 
 ## Consuming the Windows DLL package

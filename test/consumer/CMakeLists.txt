@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 
+cmake_policy(SET CMP0091 NEW)
+set(LKC_MSVC_RUNTIME "static" CACHE STRING
+    "MSVC runtime linkage: static (/MT, /MTd) or dynamic (/MD, /MDd)")
+set_property(CACHE LKC_MSVC_RUNTIME PROPERTY STRINGS static dynamic)
+if(LKC_MSVC_RUNTIME STREQUAL "static")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+elseif(LKC_MSVC_RUNTIME STREQUAL "dynamic")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+else()
+  message(FATAL_ERROR "LKC_MSVC_RUNTIME must be static or dynamic")
+endif()
+
 set(LIVEKIT_CLIENT_CPP_SOURCE_DIR "" CACHE PATH
     "Optional path to the livekit-client-cpp source tree")
 if(LIVEKIT_CLIENT_CPP_SOURCE_DIR)
@@ -9,10 +21,6 @@ else()
   set(VCPKG_MANIFEST_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE PATH
       "Directory containing the vcpkg manifest" FORCE)
 endif()
-if(MSVC OR CMAKE_GENERATOR MATCHES "Visual Studio")
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
-
 project(livekit-consumer-smoke LANGUAGES C CXX)
 
 if(LIVEKIT_CLIENT_CPP_SOURCE_DIR)
