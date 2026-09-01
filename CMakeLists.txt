@@ -4,7 +4,7 @@
 # ----------------------------------------------------------------------------
 cmake_minimum_required (VERSION 3.15)
 
-set(LKC_VERSION 0.5.0)
+set(LKC_VERSION 0.6.0)
 cmake_policy(SET CMP0091 NEW)
 set(LKC_MSVC_RUNTIME "dynamic" CACHE STRING
   "MSVC runtime linkage: static (/MT, /MTd) or dynamic (/MD, /MDd)")
