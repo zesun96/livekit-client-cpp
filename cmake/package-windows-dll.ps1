@@ -55,23 +55,30 @@ $version = Get-CacheValue -CachePath $releaseCache -Name "CMAKE_PROJECT_VERSION"
 if ((Get-CacheValue -CachePath $debugCache -Name "CMAKE_PROJECT_VERSION") -ne $version) {
   throw "Release and Debug build directories use different SDK versions"
 }
-$architecture = Get-CacheValue -CachePath $releaseCache -Name "CMAKE_GENERATOR_PLATFORM"
-if (-not $architecture) {
-  $architecture = "x64"
-}
-if ((Get-CacheValue -CachePath $debugCache -Name "CMAKE_GENERATOR_PLATFORM") -ne $architecture) {
+$architecture = Get-CacheValue -CachePath $releaseCache -Name "LKC_PACKAGE_ARCH"
+if ((Get-CacheValue -CachePath $debugCache -Name "LKC_PACKAGE_ARCH") -ne $architecture) {
   throw "Release and Debug build directories use different architectures"
+}
+if ($architecture -ne "x64") {
+  throw "The published Windows DLL package currently supports x64 only, not $architecture"
 }
 $runtime = Get-CacheValue -CachePath $releaseCache -Name "LKC_MSVC_RUNTIME"
 if ((Get-CacheValue -CachePath $debugCache -Name "LKC_MSVC_RUNTIME") -ne $runtime) {
   throw "Release and Debug build directories use different MSVC runtimes"
 }
 if ($runtime -eq "static") {
-  $runtimeSuffix = ""
+  $runtimeName = "mt"
 } elseif ($runtime -eq "dynamic") {
-  $runtimeSuffix = "-md"
+  $runtimeName = "md"
 } else {
   throw "Unsupported LKC_MSVC_RUNTIME value: $runtime"
+}
+$toolset = Get-CacheValue -CachePath $releaseCache -Name "LKC_MSVC_TOOLSET"
+if ((Get-CacheValue -CachePath $debugCache -Name "LKC_MSVC_TOOLSET") -ne $toolset) {
+  throw "Release and Debug build directories use different MSVC toolsets"
+}
+if (-not $toolset) {
+  throw "The MSVC toolset identity is missing from the build directories"
 }
 
 if ($OutputDirectory) {
@@ -79,7 +86,7 @@ if ($OutputDirectory) {
 } else {
   $output = Join-Path (Split-Path -Parent $releaseBuild) "packages"
 }
-$packageName = "livekit-client-cpp-$version-Windows-$architecture-dll$runtimeSuffix"
+$packageName = "livekit-client-cpp-$version-windows-$($architecture.ToLowerInvariant())-$toolset-$runtimeName-dll"
 $stagingRoot = Join-Path $output "_staging"
 $packageRoot = Join-Path $stagingRoot $packageName
 $archive = Join-Path $output "$packageName.zip"

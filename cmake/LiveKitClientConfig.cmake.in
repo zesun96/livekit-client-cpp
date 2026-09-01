@@ -5,6 +5,54 @@ include(CMakeFindDependencyMacro)
 set(LiveKitClient_VERSION "@PROJECT_VERSION@")
 set(LiveKitClient_SHARED @BUILD_SHARED_LIBS@)
 set(LiveKitClient_MSVC_RUNTIME "@LKC_MSVC_RUNTIME@")
+set(LiveKitClient_ARCH "@LKC_PACKAGE_ARCH@")
+set(LiveKitClient_MSVC_TOOLSET "@LKC_MSVC_TOOLSET@")
+
+set(LiveKitClient_CPP_ABI_COMPATIBLE TRUE)
+if(WIN32 AND LiveKitClient_SHARED)
+  if(NOT MSVC)
+    set(LiveKitClient_CPP_ABI_COMPATIBLE FALSE)
+    message(WARNING
+      "This LiveKit Client package was built for MSVC. The stable C ABI may still be usable, "
+      "but the native C++ ABI is unsupported with ${CMAKE_CXX_COMPILER_ID}.")
+  endif()
+
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR
+      "This LiveKit Client package targets @LKC_PACKAGE_ARCH@, but the consumer is not 64-bit.")
+  endif()
+  if(CMAKE_GENERATOR_PLATFORM AND
+      NOT CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+    message(FATAL_ERROR
+      "This LiveKit Client package targets @LKC_PACKAGE_ARCH@, but the generator platform is "
+      "${CMAKE_GENERATOR_PLATFORM}.")
+  endif()
+
+  if(MSVC_TOOLSET_VERSION AND
+      NOT "v${MSVC_TOOLSET_VERSION}" STREQUAL "${LiveKitClient_MSVC_TOOLSET}")
+    set(LiveKitClient_CPP_ABI_COMPATIBLE FALSE)
+    message(WARNING
+      "This LiveKit Client package was built with ${LiveKitClient_MSVC_TOOLSET}, but the "
+      "consumer uses v${MSVC_TOOLSET_VERSION}. Use the stable C ABI or a matching package.")
+  endif()
+
+  if(DEFINED CMAKE_MSVC_RUNTIME_LIBRARY AND
+      NOT CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "")
+    if(LiveKitClient_MSVC_RUNTIME STREQUAL "dynamic" AND
+        NOT CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL")
+      set(LiveKitClient_CPP_ABI_COMPATIBLE FALSE)
+      message(WARNING
+        "This LiveKit Client package uses /MD or /MDd, but the consumer selected a static MSVC "
+        "runtime. Use the stable C ABI or build with /MD or /MDd for native C++ API use.")
+    elseif(LiveKitClient_MSVC_RUNTIME STREQUAL "static" AND
+        CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL")
+      set(LiveKitClient_CPP_ABI_COMPATIBLE FALSE)
+      message(WARNING
+        "This LiveKit Client package uses /MT or /MTd, but the consumer selected the dynamic "
+        "MSVC runtime. Use the stable C ABI or select a runtime-matching package.")
+    endif()
+  endif()
+endif()
 
 if(NOT @BUILD_SHARED_LIBS@)
   find_dependency(Protobuf CONFIG)
