@@ -60,7 +60,7 @@ and cleanup behavior. The three-iteration media-recovery run captured `livekit`,
 ## Hardware audio-quality result
 
 The final physical test used an independent USB microphone as input and the USB speaker
-`扬声器 (5- USBAudio2.0)` as output. The connected `Realtek(R) Audio` endpoint was headphones and
+the `5- USBAudio2.0` USB speaker endpoint as output. The connected `Realtek(R) Audio` endpoint was
 was not used for the acoustic path. The user also confirmed that microphone sound was physically
 audible from the USB speaker during the end-to-end check.
 

@@ -31,7 +31,7 @@ INPUT                  = "@LKC_DOXYGEN_SOURCE_DIR@/include/livekit" \
                          "@LKC_DOXYGEN_SOURCE_DIR@/Readme.md"
 FILE_PATTERNS          = *.h *.hpp *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */detail/* */ROADMAP.md
+EXCLUDE_PATTERNS       = */detail/*
 
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
