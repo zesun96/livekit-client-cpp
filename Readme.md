@@ -116,16 +116,18 @@ installation, runtime layout, and installed-package consumer checks.
 
 | Topic | Document |
 | --- | --- |
+| Documentation index | [Documentation index](docs/README.md) |
+| Current implementation route | [Implementation roadmap](docs/ROADMAP.md) |
 | Dependencies and source builds | [Building from source](docs/BUILDING.md) |
 | Generated C and C++ API reference | [API reference build](docs/API_REFERENCE.md) |
 | Formatting, static analysis, and memory checks | [Engineering quality gates](docs/QUALITY_GATES.md) |
 | Capability details and API behavior | [SDK features](docs/FEATURES.md) |
-| Video frame metadata | [Frame metadata](docs/FRAME_METADATA.md) / [帧元数据](docs/FRAME_METADATA_zh.md) |
+| Video frame metadata | [Frame metadata](docs/FRAME_METADATA.md) / [Chinese](docs/FRAME_METADATA_zh.md) |
 | Integration matrix and recorded acceptance results | [Integration testing](docs/integration.md) |
 | Reliability, soak, and weak-network procedures | [Reliability testing](docs/RELIABILITY_TESTING.md) |
 | Windows DLL packaging and deployment | [Windows SDK packaging](docs/WINDOWS_SDK_PACKAGING.md) |
 | Media devices, playback, and audio processing | [Media device design](docs/design/media-device-design.md) |
-| E2EE design and interoperability | [E2EE](docs/E2EE.md) / [E2EE 中文](docs/E2EE_zh.md) |
+| E2EE design and interoperability | [E2EE](docs/E2EE.md) / [Chinese](docs/E2EE_zh.md) |
 | Executable examples | [Examples guide](https://github.com/zesun96/livekit-client-cpp/tree/main/examples) |
 
 ## Tests
