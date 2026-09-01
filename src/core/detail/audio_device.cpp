@@ -19,6 +19,7 @@
 
 #include "../../capture/audio_capture_adapter.h"
 #include "../../capture/audio_gain.h"
+#include "repeating_task_utils.h"
 
 #include <algorithm>
 #include <cstring>
@@ -135,7 +136,7 @@ int32_t AudioDevice::Terminate() {
 		playing_ = false;
 		playout_initialized_ = false;
 	}
-	audio_task_.Stop();
+	detail::StopRepeatingTaskOnQueue(audio_queue_.get(), audio_task_);
 	if (playback_) {
 		playback_->Stop();
 	}

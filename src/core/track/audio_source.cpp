@@ -18,6 +18,7 @@
 #include "audio_source.h"
 
 #include "../detail/global_task_queue.h"
+#include "../detail/repeating_task_utils.h"
 
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
@@ -151,7 +152,11 @@ AudioSource::InternalSource::InternalSource(const webrtc::AudioOptions& options,
 	    webrtc::TaskQueueBase::DelayPrecision::kHigh);
 }
 
-AudioSource::InternalSource::~InternalSource() { audio_task_.Stop(); }
+AudioSource::InternalSource::~InternalSource() {
+	// RepeatingTaskHandle is sequence-bound after its first invocation. Stop it on the audio
+	// queue and wait before destroying the queue or any state captured by the repeating task.
+	detail::StopRepeatingTaskOnQueue(audio_queue_.get(), audio_task_);
+}
 
 bool AudioSource::InternalSource::capture_frame(void* data, uint32_t sample_rate,
                                                 uint32_t number_of_channels,
