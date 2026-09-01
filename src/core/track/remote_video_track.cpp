@@ -18,13 +18,85 @@
 #include "remote_video_track.h"
 
 #include "../detail/frame_metadata.h"
+#include "api/media_stream_interface.h"
 #include "api/video/i420_buffer.h"
+#include "api/video/recordable_encoded_frame.h"
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace livekit {
 namespace core {
+namespace {
+
+EncodedVideoCodec ConvertCodec(webrtc::VideoCodecType codec) {
+	switch (codec) {
+	case webrtc::VideoCodecType::kVideoCodecVP8:
+		return EncodedVideoCodec::VP8;
+	case webrtc::VideoCodecType::kVideoCodecVP9:
+		return EncodedVideoCodec::VP9;
+	case webrtc::VideoCodecType::kVideoCodecH264:
+		return EncodedVideoCodec::H264;
+	case webrtc::VideoCodecType::kVideoCodecH265:
+		return EncodedVideoCodec::H265;
+	case webrtc::VideoCodecType::kVideoCodecAV1:
+		return EncodedVideoCodec::AV1;
+	default:
+		return EncodedVideoCodec::Unknown;
+	}
+}
+} // namespace
+
+class EncodedVideoSubscription final
+    : public webrtc::VideoSinkInterface<webrtc::RecordableEncodedFrame> {
+public:
+	EncodedVideoSubscription(webrtc::scoped_refptr<webrtc::VideoTrackInterface> track,
+	                         std::weak_ptr<EncodedVideoStream> stream)
+	    : track_(std::move(track)), stream_(std::move(stream)) {}
+
+	~EncodedVideoSubscription() override {
+		if (attached_ && source_) {
+			source_->RemoveEncodedSink(this);
+		}
+	}
+
+	bool Attach() {
+		source_ = track_ ? track_->GetSource() : nullptr;
+		if (source_ == nullptr || !source_->SupportsEncodedOutput()) {
+			return false;
+		}
+		source_->AddEncodedSink(this);
+		attached_ = true;
+		return true;
+	}
+
+	void OnFrame(const webrtc::RecordableEncodedFrame& rtc_frame) override {
+		auto stream = stream_.lock();
+		if (!stream) {
+			return;
+		}
+		auto buffer = rtc_frame.encoded_buffer();
+		if (!buffer || buffer->size() == 0) {
+			return;
+		}
+		EncodedVideoFrame frame;
+		frame.data.assign(buffer->data(), buffer->data() + buffer->size());
+		frame.codec = ConvertCodec(rtc_frame.codec());
+		frame.key_frame = rtc_frame.is_key_frame();
+		const auto resolution = rtc_frame.resolution();
+		frame.width = resolution.width;
+		frame.height = resolution.height;
+		frame.timestamp_us = rtc_frame.render_time().ms() * 1000;
+		stream->Push(std::move(frame));
+	}
+
+private:
+	webrtc::scoped_refptr<webrtc::VideoTrackInterface> track_;
+	webrtc::VideoTrackSourceInterface* source_ = nullptr;
+	std::weak_ptr<EncodedVideoStream> stream_;
+	bool attached_ = false;
+};
 
 RemoteVideoTrack::RemoteVideoTrack(std::string sid, std::string name,
                                    std::unique_ptr<VideoTrack> video_track, FrameCallback callback,
@@ -49,6 +121,33 @@ std::shared_ptr<VideoStream> RemoteVideoTrack::CreateVideoStream(MediaStreamOpti
 	                              [](const auto& weak) { return weak.expired(); }),
 	               streams_.end());
 	streams_.push_back(stream);
+	return stream;
+}
+
+std::shared_ptr<EncodedVideoStream>
+RemoteVideoTrack::CreateEncodedVideoStream(MediaStreamOptions options) {
+	if (options.capacity == 0) {
+		return nullptr;
+	}
+	auto* video_track = static_cast<VideoTrack*>(media_track());
+	auto rtc_media_track = video_track->rtc_track();
+	auto rtc_video_track = webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
+	    static_cast<webrtc::VideoTrackInterface*>(rtc_media_track.get()));
+	auto stream = std::shared_ptr<EncodedVideoStream>(new EncodedVideoStream(options.capacity));
+	auto subscription =
+	    std::make_shared<EncodedVideoSubscription>(std::move(rtc_video_track), stream);
+	if (!subscription->Attach()) {
+		stream->Close();
+		return nullptr;
+	}
+	stream->SetAttachment(std::move(subscription));
+	{
+		std::lock_guard<std::mutex> guard(streams_mutex_);
+		encoded_streams_.erase(std::remove_if(encoded_streams_.begin(), encoded_streams_.end(),
+		                                      [](const auto& weak) { return weak.expired(); }),
+		                       encoded_streams_.end());
+		encoded_streams_.push_back(stream);
+	}
 	return stream;
 }
 
@@ -110,6 +209,7 @@ void RemoteVideoTrack::OnFrame(const webrtc::VideoFrame& rtc_frame) {
 
 void RemoteVideoTrack::CloseStreams() {
 	std::vector<std::shared_ptr<VideoStream>> streams;
+	std::vector<std::shared_ptr<EncodedVideoStream>> encoded_streams;
 	{
 		std::lock_guard<std::mutex> guard(streams_mutex_);
 		for (const auto& weak : streams_) {
@@ -118,8 +218,17 @@ void RemoteVideoTrack::CloseStreams() {
 			}
 		}
 		streams_.clear();
+		for (const auto& weak : encoded_streams_) {
+			if (auto stream = weak.lock()) {
+				encoded_streams.push_back(std::move(stream));
+			}
+		}
+		encoded_streams_.clear();
 	}
 	for (const auto& stream : streams) {
+		stream->Close();
+	}
+	for (const auto& stream : encoded_streams) {
 		stream->Close();
 	}
 }

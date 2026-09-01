@@ -103,6 +103,29 @@ public:
 	using FrameQueue::FrameQueue;
 };
 
+class EncodedVideoStream::Impl : public FrameQueue<EncodedVideoFrame> {
+public:
+	using FrameQueue::FrameQueue;
+
+	void SetAttachment(std::shared_ptr<void> attachment) {
+		std::lock_guard<std::mutex> guard(attachment_mutex_);
+		attachment_ = std::move(attachment);
+	}
+
+	void Detach() {
+		std::shared_ptr<void> attachment;
+		{
+			std::lock_guard<std::mutex> guard(attachment_mutex_);
+			attachment = std::move(attachment_);
+		}
+		attachment.reset();
+	}
+
+private:
+	std::mutex attachment_mutex_;
+	std::shared_ptr<void> attachment_;
+};
+
 AudioStream::AudioStream(std::size_t capacity) : impl_(std::make_shared<Impl>(capacity)) {}
 
 AudioStream::~AudioStream() { Close(); }
@@ -156,6 +179,46 @@ std::size_t VideoStream::DroppedFrames() const { return impl_ ? impl_->DroppedFr
 void VideoStream::Push(VideoFrame frame) {
 	if (impl_) {
 		impl_->Push(std::move(frame));
+	}
+}
+
+EncodedVideoStream::EncodedVideoStream(std::size_t capacity)
+    : impl_(std::make_shared<Impl>(capacity)) {}
+
+EncodedVideoStream::~EncodedVideoStream() { Close(); }
+
+bool EncodedVideoStream::Read(EncodedVideoFrame& frame) {
+	return impl_ && impl_->Read(frame, std::nullopt);
+}
+
+bool EncodedVideoStream::ReadFor(EncodedVideoFrame& frame, std::chrono::milliseconds timeout) {
+	return impl_ && timeout >= std::chrono::milliseconds::zero() && impl_->Read(frame, timeout);
+}
+
+bool EncodedVideoStream::TryRead(EncodedVideoFrame& frame) {
+	return impl_ && impl_->TryRead(frame);
+}
+
+void EncodedVideoStream::Close() {
+	if (impl_) {
+		impl_->Detach();
+		impl_->Close();
+	}
+}
+
+bool EncodedVideoStream::IsClosed() const { return !impl_ || impl_->IsClosed(); }
+
+std::size_t EncodedVideoStream::DroppedFrames() const { return impl_ ? impl_->DroppedFrames() : 0; }
+
+void EncodedVideoStream::Push(EncodedVideoFrame frame) {
+	if (impl_) {
+		impl_->Push(std::move(frame));
+	}
+}
+
+void EncodedVideoStream::SetAttachment(std::shared_ptr<void> attachment) {
+	if (impl_) {
+		impl_->SetAttachment(std::move(attachment));
 	}
 }
 

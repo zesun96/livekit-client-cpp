@@ -23,6 +23,7 @@
 #include "e2ee/e2ee_manager.h"
 #include "logging.h"
 #include "media_device.h"
+#include "recording/track_recorder.h"
 #include "room_event_interface.h"
 #include "room_interface.h"
 #include "token_source.h"

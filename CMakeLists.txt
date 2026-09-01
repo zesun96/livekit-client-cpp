@@ -198,6 +198,9 @@ set(
   src/core/e2ee/frame_crypto_transformer.cpp
   src/core/e2ee/key_provider.cpp
 
+  src/core/recording/file_writer.cpp
+  src/core/recording/track_recorder.cpp
+
   src/capture/audio_capture_adapter.cpp
   src/capture/audio_gain.cpp
   src/capture/camera_capture_adapter.cpp

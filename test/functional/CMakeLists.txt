@@ -38,6 +38,16 @@ gtest_discover_tests(
   PROPERTIES LABELS "functional" TIMEOUT 30
 )
 
+add_executable(livekit_track_recorder_tests track_recorder_test.cpp)
+target_compile_features(livekit_track_recorder_tests PRIVATE cxx_std_20)
+target_link_libraries(livekit_track_recorder_tests PRIVATE livekitclient GTest::gtest_main)
+gtest_discover_tests(
+  livekit_track_recorder_tests
+  TEST_PREFIX "functional."
+  PROPERTIES LABELS "functional;recording" TIMEOUT 30
+  DISCOVERY_MODE PRE_TEST
+)
+
 add_executable(livekit_c_api_smoke_tests ../consumer/main.c)
 set_target_properties(livekit_c_api_smoke_tests PROPERTIES LINKER_LANGUAGE CXX)
 target_compile_features(livekit_c_api_smoke_tests PRIVATE c_std_11)

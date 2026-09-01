@@ -18,6 +18,7 @@ without a language suffix are written in English; Chinese translations use the `
 | --- | --- |
 | API reference generation | [API_REFERENCE.md](API_REFERENCE.md) |
 | Media devices, playback, and audio processing | [design/media-device-design.md](design/media-device-design.md) |
+| Remote track recording | [RECORDING.md](RECORDING.md) |
 | End-to-end encryption | [E2EE.md](E2EE.md) / [Chinese](E2EE_zh.md) |
 | Video frame metadata | [FRAME_METADATA.md](FRAME_METADATA.md) / [Chinese](FRAME_METADATA_zh.md) |
 | Runtime tracing | [TRACING.md](TRACING.md) |

@@ -39,6 +39,14 @@ public:
 		(void)options;
 		return nullptr;
 	}
+	// Returns encoded frames for remote video tracks. H264/H265 frames are Annex-B and
+	// VP8/VP9/AV1 frames contain one complete encoded frame. The stream requests a key frame when
+	// attached. Returns null for audio tracks, unsupported sources, or a zero capacity.
+	virtual std::shared_ptr<EncodedVideoStream>
+	CreateEncodedVideoStream(MediaStreamOptions options = {}) {
+		(void)options;
+		return nullptr;
+	}
 };
 
 } // namespace core

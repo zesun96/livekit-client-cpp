@@ -3,6 +3,15 @@
 #include <iostream>
 
 int main() {
+	livekit::core::TrackRecorderOptions recorder_options;
+	recorder_options.output_path = "consumer-recording";
+	livekit::core::TrackRecorderStats recorder_stats;
+	livekit::core::EncodedVideoFrame encoded_frame;
+	if (recorder_options.output_path.empty() ||
+	    recorder_stats.state != livekit::core::TrackRecorderState::Stopped ||
+	    encoded_frame.codec != livekit::core::EncodedVideoCodec::Unknown) {
+		return 1;
+	}
 	const auto queued_duration = &livekit::core::AudioSourceInterface::QueuedDuration;
 	const auto clear_queue = &livekit::core::AudioSourceInterface::ClearQueue;
 	const auto wait_for_playout = &livekit::core::AudioSourceInterface::WaitForPlayout;
