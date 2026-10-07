@@ -163,6 +163,15 @@ program verifies pure C compilation,
 linkage, version reporting, structured errors, runtime initialization, and shutdown against both a
 source build and an installed package.
 
+## Language bindings
+
+| Language | Available API | Guide |
+| --- | --- | --- |
+| Lua | Room lifecycle, connection and participant events, data messages, and synchronous or coroutine-based connection and data operations | [Lua binding](pkg/lua/README.md) |
+
+See the [binding API support matrix](pkg/README.md) for feature coverage and the status of other
+language bindings.
+
 ## Dependencies
 
 The main dependencies are LiveKit Protocol, libwebrtc, media-capture, libwebsockets, protobuf,
