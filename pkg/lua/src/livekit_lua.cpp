@@ -7,8 +7,10 @@ extern "C" {
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <memory>
@@ -41,7 +43,20 @@ struct Event {
 	std::vector<std::string> speakers;
 };
 
-enum class AsyncOperation { Connect, Disconnect, PublishData, Rpc, Chat, Text, Bytes, File };
+enum class AsyncOperation {
+	Connect,
+	Disconnect,
+	PublishData,
+	Rpc,
+	Chat,
+	Text,
+	Bytes,
+	File,
+	PublishAudioTrack,
+	PublishVideoTrack,
+	UnpublishLocalTrack,
+	SetRemoteTrackSubscribed
+};
 
 struct ConnectConfig {
 	lk_room_connect_options_t options{};
@@ -79,6 +94,13 @@ struct AsyncTask {
 	std::string name;
 	std::string chat_id;
 	int64_t chat_timestamp = 0;
+	uint64_t media_id = 0;
+	uint32_t media_sample_rate = 48000;
+	uint32_t media_channels = 1;
+	uint32_t media_queue_ms = 200;
+	uint32_t media_width = 0;
+	uint32_t media_height = 0;
+	bool media_screen = false;
 	ConnectConfig connect;
 	bool reliable = true;
 	bool done = false;
@@ -111,6 +133,19 @@ struct RpcHandlerContext {
 	std::string method;
 };
 
+struct LocalMediaTrack {
+	lk_local_track_t* track = nullptr;
+	lk_audio_source_t* audio = nullptr;
+	lk_video_source_t* video = nullptr;
+	uint32_t sample_rate = 0;
+	uint32_t channels = 0;
+};
+
+struct RemoteMediaStream {
+	lk_audio_stream_t* audio = nullptr;
+	lk_video_stream_t* video = nullptr;
+};
+
 struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
@@ -120,6 +155,9 @@ struct Room {
 	std::deque<std::shared_ptr<RpcRequest>> rpc_pending;
 	std::map<std::string, int> rpc_handlers;
 	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
+	std::map<uint64_t, LocalMediaTrack> local_tracks;
+	std::map<uint64_t, RemoteMediaStream> remote_streams;
+	uint64_t next_media_id = 1;
 	size_t dropped = 0;
 	std::thread worker;
 	std::deque<std::shared_ptr<AsyncTask>> pending;
@@ -129,6 +167,16 @@ struct Room {
 	bool running = false;
 	bool stopping = false;
 };
+
+bool publish_audio_native(Room* room, const char* label, uint32_t sample_rate, uint32_t channels,
+                          uint32_t queue_ms, uint64_t& id, std::string& error);
+bool publish_video_native(Room* room, const char* label, const lk_video_frame_input_t& first_frame,
+                          bool screen, uint64_t& id, std::string& error);
+bool unpublish_local_native(Room* room, uint64_t id, std::string& error);
+const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
+                                lua_Integer width, lua_Integer height, const char* format,
+                                int64_t timestamp_us);
+int64_t current_timestamp_us();
 
 const char* safe(const char* value) { return value != nullptr ? value : ""; }
 
@@ -318,6 +366,38 @@ void worker_loop(Room* room) noexcept {
 				status = lk_room_send_file(room->native, task->first.c_str(), &options);
 				break;
 			}
+			case AsyncOperation::PublishAudioTrack:
+				status = publish_audio_native(room, task->second.c_str(), task->media_sample_rate,
+				                              task->media_channels, task->media_queue_ms,
+				                              task->media_id, error)
+				             ? LK_STATUS_OK
+				             : LK_STATUS_OPERATION_FAILED;
+				break;
+			case AsyncOperation::PublishVideoTrack: {
+				lk_video_frame_input_t frame;
+				const char* validation = prepare_video_frame(
+				    frame, task->first.data(), task->first.size(), task->media_width,
+				    task->media_height, task->topic.c_str(), current_timestamp_us());
+				if (validation != nullptr) {
+					status = LK_STATUS_INVALID_ARGUMENT;
+					error = validation;
+				} else {
+					status = publish_video_native(room, task->second.c_str(), frame,
+					                              task->media_screen, task->media_id, error)
+					             ? LK_STATUS_OK
+					             : LK_STATUS_OPERATION_FAILED;
+				}
+				break;
+			}
+			case AsyncOperation::UnpublishLocalTrack:
+				status = unpublish_local_native(room, task->media_id, error)
+				             ? LK_STATUS_OK
+				             : LK_STATUS_OPERATION_FAILED;
+				break;
+			case AsyncOperation::SetRemoteTrackSubscribed:
+				status = lk_room_set_remote_track_subscribed(room->native, task->first.c_str(),
+				                                             task->second.c_str(), task->reliable);
+				break;
 			}
 			if (status != LK_STATUS_OK && error.empty())
 				error = safe(lk_last_error());
@@ -597,8 +677,10 @@ void track_event(void* user_data, const lk_track_publication_info_t* track,
 			event.numbers.emplace_back("source", track->source);
 			event.booleans.emplace_back("is_muted", track->is_muted != 0);
 		}
-		if (participant != nullptr)
+		if (participant != nullptr) {
 			event.strings.emplace_back("participant_identity", safe(participant->identity));
+			event.strings.emplace_back("participant_sid", safe(participant->sid));
+		}
 		enqueue(static_cast<Room*>(user_data), std::move(event));
 	} catch (...) {
 	}
@@ -677,6 +759,35 @@ void on_local_track_unpublished(void* u, lk_room_t*, const lk_track_publication_
 	track_event(u, t, p, "local_track_unpublished");
 }
 
+bool destroy_local_media(LocalMediaTrack& media) noexcept {
+	if (media.track != nullptr) {
+		if (lk_local_track_destroy(media.track) != LK_STATUS_OK)
+			return false;
+		media.track = nullptr;
+	}
+	if (media.audio != nullptr) {
+		if (lk_audio_source_destroy(media.audio) != LK_STATUS_OK)
+			return false;
+		media.audio = nullptr;
+	}
+	if (media.video != nullptr) {
+		if (lk_video_source_destroy(media.video) != LK_STATUS_OK)
+			return false;
+		media.video = nullptr;
+	}
+	return true;
+}
+void destroy_remote_stream(RemoteMediaStream& stream) noexcept {
+	if (stream.audio != nullptr) {
+		lk_audio_stream_destroy(stream.audio);
+		stream.audio = nullptr;
+	}
+	if (stream.video != nullptr) {
+		lk_video_stream_destroy(stream.video);
+		stream.video = nullptr;
+	}
+}
+
 int close_room(lua_State* L) {
 	Room* room = check_room(L, 1);
 	if (room->native != nullptr) {
@@ -694,6 +805,16 @@ int close_room(lua_State* L) {
 		}
 		if (room->worker.joinable())
 			room->worker.join();
+		for (auto& [id, stream] : room->remote_streams)
+			destroy_remote_stream(stream);
+		room->remote_streams.clear();
+		if (lk_room_is_connected(room->native)) {
+			for (auto& [id, media] : room->local_tracks)
+				lk_local_track_unpublish(media.track, 1);
+		}
+		for (auto& [id, media] : room->local_tracks)
+			destroy_local_media(media);
+		room->local_tracks.clear();
 		lk_room_destroy(room->native);
 		room->native = nullptr;
 	}
@@ -1291,7 +1412,10 @@ int async_result(lua_State* L) {
 			lua_newtable(L);
 			string_field(L, "id", task->chat_id);
 			number_field(L, "timestamp", static_cast<lua_Number>(task->chat_timestamp));
-		} else
+		} else if (task->operation == AsyncOperation::PublishAudioTrack ||
+		           task->operation == AsyncOperation::PublishVideoTrack)
+			lua_pushnumber(L, static_cast<lua_Number>(task->media_id));
+		else
 			lua_pushboolean(L, 1);
 		return 2;
 	}
@@ -1747,6 +1871,550 @@ int audio_playback_stats(lua_State* L) {
 	return 1;
 }
 
+uint64_t media_id(lua_State* L, int index) {
+	const lua_Number value = luaL_checknumber(L, index);
+	luaL_argcheck(L, value >= 1 && value < 9007199254740992.0 && value == std::floor(value), index,
+	              "invalid media ID");
+	return static_cast<uint64_t>(value);
+}
+int media_error(lua_State* L, const char* message) {
+	lua_pushnil(L);
+	lua_pushstring(L, message);
+	return 2;
+}
+int push_rtc_stats(lua_State* L, const lk_rtc_stats_snapshot_t* snapshot) {
+	lua_newtable(L);
+	const size_t count = lk_rtc_stats_snapshot_count(snapshot);
+	for (size_t i = 0; i < count; ++i) {
+		lk_rtc_track_stats_t stats;
+		lk_rtc_track_stats_init(&stats);
+		const auto status = lk_rtc_stats_snapshot_info(snapshot, i, &stats);
+		if (status != LK_STATUS_OK)
+			return status_result(L, status);
+		lua_newtable(L);
+		string_field(L, "id", owned_string(lk_rtc_stats_snapshot_id, snapshot, i));
+		string_field(L, "kind", owned_string(lk_rtc_stats_snapshot_kind, snapshot, i));
+		string_field(L, "rid", owned_string(lk_rtc_stats_snapshot_rid, snapshot, i));
+		string_field(L, "codec_mime_type",
+		             owned_string(lk_rtc_stats_snapshot_codec_mime_type, snapshot, i));
+		string_field(L, "codec_implementation",
+		             owned_string(lk_rtc_stats_snapshot_codec_implementation, snapshot, i));
+		string_field(L, "quality_limitation_reason",
+		             owned_string(lk_rtc_stats_snapshot_quality_limitation_reason, snapshot, i));
+		integer_field(L, "direction", stats.direction);
+		number_field(L, "timestamp_ms", stats.timestamp_ms);
+		number_field(L, "bytes", static_cast<lua_Number>(stats.bytes));
+		number_field(L, "packets", static_cast<lua_Number>(stats.packets));
+		number_field(L, "packets_lost", static_cast<lua_Number>(stats.packets_lost));
+		if (stats.has_bitrate_bps)
+			number_field(L, "bitrate_bps", stats.bitrate_bps);
+		if (stats.has_round_trip_time_seconds)
+			number_field(L, "round_trip_time_seconds", stats.round_trip_time_seconds);
+		if (stats.has_jitter_seconds)
+			number_field(L, "jitter_seconds", stats.jitter_seconds);
+		if (stats.has_audio_level)
+			number_field(L, "audio_level", stats.audio_level);
+		number_field(L, "concealed_samples", static_cast<lua_Number>(stats.concealed_samples));
+		integer_field(L, "frame_width", stats.frame_width);
+		integer_field(L, "frame_height", stats.frame_height);
+		number_field(L, "frames_per_second", stats.frames_per_second);
+		number_field(L, "frames", static_cast<lua_Number>(stats.frames));
+		number_field(L, "frames_dropped", static_cast<lua_Number>(stats.frames_dropped));
+		number_field(L, "fir_count", static_cast<lua_Number>(stats.fir_count));
+		number_field(L, "pli_count", static_cast<lua_Number>(stats.pli_count));
+		number_field(L, "nack_count", static_cast<lua_Number>(stats.nack_count));
+		number_field(L, "qp_sum", static_cast<lua_Number>(stats.qp_sum));
+		lua_rawseti(L, -2, static_cast<int>(i + 1));
+	}
+	return 1;
+}
+int local_track_rtc_stats(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end())
+		return media_error(L, "local track is unavailable");
+	lk_rtc_stats_snapshot_t* raw = nullptr;
+	const auto status = lk_local_track_create_rtc_stats_snapshot(found->second.track, &raw);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(&lk_rtc_stats_snapshot_destroy)> snapshot(
+	    raw, lk_rtc_stats_snapshot_destroy);
+	return push_rtc_stats(L, raw);
+}
+int remote_track_rtc_stats(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* track_sid = luaL_checkstring(L, 3);
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	lk_remote_participant_list_t* raw_list = nullptr;
+	const auto status = lk_room_create_remote_participant_snapshot(room->native, &raw_list);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	std::unique_ptr<lk_remote_participant_list_t, decltype(&lk_remote_participant_list_destroy)>
+	    participants(raw_list, lk_remote_participant_list_destroy);
+	for (size_t i = 0; i < lk_remote_participant_list_count(raw_list); ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		if (lk_remote_participant_list_at(raw_list, i, &participant) != LK_STATUS_OK)
+			return media_error(L, "failed to read remote participant snapshot");
+		if (owned_string(lk_remote_participant_snapshot_identity, participant) != identity)
+			continue;
+		for (size_t j = 0; j < lk_remote_participant_snapshot_publication_count(participant); ++j) {
+			const lk_remote_track_publication_snapshot_t* publication = nullptr;
+			if (lk_remote_participant_snapshot_publication_at(participant, j, &publication) !=
+			    LK_STATUS_OK)
+				return media_error(L, "failed to read remote track publication");
+			if (owned_string(lk_remote_track_publication_snapshot_sid, publication) != track_sid)
+				continue;
+			const lk_remote_track_snapshot_t* track = nullptr;
+			if (lk_remote_track_publication_snapshot_track(publication, &track) != LK_STATUS_OK ||
+			    track == nullptr)
+				return media_error(L, "remote track is not subscribed");
+			lk_rtc_stats_snapshot_t* raw_stats = nullptr;
+			const auto stats_status =
+			    lk_remote_track_snapshot_create_rtc_stats_snapshot(track, &raw_stats);
+			if (stats_status != LK_STATUS_OK)
+				return status_result(L, stats_status);
+			std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(&lk_rtc_stats_snapshot_destroy)>
+			    stats(raw_stats, lk_rtc_stats_snapshot_destroy);
+			return push_rtc_stats(L, raw_stats);
+		}
+		break;
+	}
+	return media_error(L, "remote track is unavailable");
+}
+bool publish_audio_native(Room* room, const char* label, uint32_t sample_rate, uint32_t channels,
+                          uint32_t queue_ms, uint64_t& id, std::string& error) {
+	if (room->native == nullptr || !lk_room_is_connected(room->native)) {
+		error = "room is not connected";
+		return false;
+	}
+	lk_audio_source_options_t source_options;
+	lk_audio_source_options_init(&source_options);
+	source_options.sample_rate = sample_rate;
+	source_options.num_channels = channels;
+	source_options.queue_size_ms = queue_ms;
+	LocalMediaTrack media;
+	media.sample_rate = source_options.sample_rate;
+	media.channels = source_options.num_channels;
+	auto status = lk_audio_source_create(&source_options, &media.audio);
+	if (status == LK_STATUS_OK)
+		status = lk_room_create_audio_track(room->native, label, media.audio, &media.track);
+	if (status == LK_STATUS_OK) {
+		lk_track_publish_options_t options;
+		lk_track_publish_options_init(&options);
+		options.source = LK_TRACK_SOURCE_MICROPHONE;
+		status = lk_local_track_publish(room->native, media.track, &options);
+	}
+	if (status != LK_STATUS_OK) {
+		error = safe(lk_last_error());
+		destroy_local_media(media);
+		return false;
+	}
+	try {
+		std::lock_guard<std::mutex> lock(room->mutex);
+		id = room->next_media_id++;
+		room->local_tracks.emplace(id, media);
+		return true;
+	} catch (...) {
+		lk_local_track_unpublish(media.track, 1);
+		destroy_local_media(media);
+		error = "failed to store local audio track";
+		return false;
+	}
+}
+int publish_audio_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* label = luaL_checkstring(L, 2);
+	const lua_Integer sample_rate = luaL_optinteger(L, 3, 48000);
+	const lua_Integer channels = luaL_optinteger(L, 4, 1);
+	const lua_Integer queue_ms = luaL_optinteger(L, 5, 200);
+	if (sample_rate <= 0 || sample_rate > INT32_MAX || sample_rate % 100 != 0 || channels <= 0 ||
+	    channels > 8 || queue_ms <= 0 || queue_ms > INT32_MAX || queue_ms % 10 != 0)
+		return media_error(L, "invalid audio source options");
+	if (async_busy(room))
+		return busy_result(L);
+	uint64_t id = 0;
+	std::string error;
+	if (!publish_audio_native(room, label, static_cast<uint32_t>(sample_rate),
+	                          static_cast<uint32_t>(channels), static_cast<uint32_t>(queue_ms), id,
+	                          error))
+		return media_error(L, error.c_str());
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
+                                lua_Integer width, lua_Integer height, const char* format,
+                                int64_t timestamp_us) {
+	if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
+		return "invalid video dimensions";
+	const size_t area = static_cast<size_t>(width) * static_cast<size_t>(height);
+	lk_video_buffer_type_t buffer_type;
+	if (std::strcmp(format, "RGBA") == 0) {
+		buffer_type = LK_VIDEO_BUFFER_RGBA;
+		if (bytes != area * 4)
+			return "RGBA frame size does not match dimensions";
+	} else if (std::strcmp(format, "I420") == 0) {
+		buffer_type = LK_VIDEO_BUFFER_I420;
+		if ((width % 2) != 0 || (height % 2) != 0 || bytes != area * 3 / 2)
+			return "I420 frame size does not match dimensions";
+	} else {
+		return "video format must be RGBA or I420";
+	}
+	lk_video_frame_input_init(&frame);
+	frame.data = reinterpret_cast<const uint8_t*>(pixels);
+	frame.data_size = bytes;
+	frame.width = static_cast<uint32_t>(width);
+	frame.height = static_cast<uint32_t>(height);
+	frame.format = buffer_type;
+	frame.timestamp_us = timestamp_us;
+	return nullptr;
+}
+int64_t current_timestamp_us() {
+	return std::chrono::duration_cast<std::chrono::microseconds>(
+	           std::chrono::steady_clock::now().time_since_epoch())
+	    .count();
+}
+bool publish_video_native(Room* room, const char* label, const lk_video_frame_input_t& first_frame,
+                          bool screen, uint64_t& id, std::string& error) {
+	if (room->native == nullptr || !lk_room_is_connected(room->native)) {
+		error = "room is not connected";
+		return false;
+	}
+	lk_video_source_options_t source_options;
+	lk_video_source_options_init(&source_options);
+	source_options.is_screencast = screen ? 1 : 0;
+	LocalMediaTrack media;
+	auto status = lk_video_source_create(&source_options, &media.video);
+	if (status == LK_STATUS_OK)
+		status = lk_video_source_capture_frame(media.video, &first_frame);
+	if (status == LK_STATUS_OK)
+		status = lk_room_create_video_track(room->native, label, media.video, &media.track);
+	if (status == LK_STATUS_OK) {
+		lk_track_publish_options_t options;
+		lk_track_publish_options_init(&options);
+		options.source = screen ? LK_TRACK_SOURCE_SCREEN_SHARE : LK_TRACK_SOURCE_CAMERA;
+		options.simulcast = 0;
+		status = lk_local_track_publish(room->native, media.track, &options);
+	}
+	if (status != LK_STATUS_OK) {
+		error = safe(lk_last_error());
+		destroy_local_media(media);
+		return false;
+	}
+	try {
+		std::lock_guard<std::mutex> lock(room->mutex);
+		id = room->next_media_id++;
+		room->local_tracks.emplace(id, media);
+		return true;
+	} catch (...) {
+		lk_local_track_unpublish(media.track, 1);
+		destroy_local_media(media);
+		error = "failed to store local video track";
+		return false;
+	}
+}
+int publish_video_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* label = luaL_checkstring(L, 2);
+	size_t bytes = 0;
+	const char* pixels = luaL_checklstring(L, 3, &bytes);
+	const lua_Integer width = luaL_checkinteger(L, 4);
+	const lua_Integer height = luaL_checkinteger(L, 5);
+	const char* format = luaL_optstring(L, 6, "RGBA");
+	const bool screen = lua_toboolean(L, 7) != 0;
+	lk_video_frame_input_t first_frame;
+	if (const char* error = prepare_video_frame(first_frame, pixels, bytes, width, height, format,
+	                                            current_timestamp_us()))
+		return media_error(L, error);
+	if (async_busy(room))
+		return busy_result(L);
+	uint64_t id = 0;
+	std::string error;
+	if (!publish_video_native(room, label, first_frame, screen, id, error))
+		return media_error(L, error.c_str());
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+int push_audio_frame(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	size_t bytes = 0;
+	const char* pcm = luaL_checklstring(L, 3, &bytes);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.audio == nullptr)
+		return media_error(L, "audio track is unavailable");
+	const auto& media = found->second;
+	const size_t samples_per_channel = media.sample_rate / 100;
+	if (samples_per_channel == 0 || bytes != samples_per_channel * media.channels * 2)
+		return media_error(L, "PCM frame must contain exactly 10 ms of interleaved 16-bit samples");
+	std::vector<int16_t> samples(bytes / sizeof(int16_t));
+	std::memcpy(samples.data(), pcm, bytes);
+	return status_result(L,
+	                     lk_audio_source_capture_frame(media.audio, samples.data(),
+	                                                   static_cast<uint32_t>(samples_per_channel)));
+}
+int push_video_frame(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	size_t bytes = 0;
+	const char* pixels = luaL_checklstring(L, 3, &bytes);
+	const lua_Integer width = luaL_checkinteger(L, 4);
+	const lua_Integer height = luaL_checkinteger(L, 5);
+	const char* format = luaL_optstring(L, 6, "RGBA");
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.video == nullptr)
+		return media_error(L, "video track is unavailable");
+	lk_video_frame_input_t frame;
+	const int64_t timestamp = static_cast<int64_t>(luaL_optnumber(L, 7, current_timestamp_us()));
+	if (const char* error =
+	        prepare_video_frame(frame, pixels, bytes, width, height, format, timestamp))
+		return media_error(L, error);
+	return status_result(L, lk_video_source_capture_frame(found->second.video, &frame));
+}
+int set_local_track_muted(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	luaL_checktype(L, 3, LUA_TBOOLEAN);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end())
+		return media_error(L, "local track is unavailable");
+	return status_result(L, lk_local_track_set_muted(found->second.track, lua_toboolean(L, 3)));
+}
+bool unpublish_local_native(Room* room, uint64_t id, std::string& error) {
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end()) {
+		error = "local track is unavailable";
+		return false;
+	}
+	if (room->native != nullptr && lk_room_is_connected(room->native)) {
+		const auto status = lk_local_track_unpublish(found->second.track, 1);
+		if (status != LK_STATUS_OK) {
+			error = safe(lk_last_error());
+			return false;
+		}
+	}
+	if (!destroy_local_media(found->second)) {
+		error = safe(lk_last_error());
+		return false;
+	}
+	room->local_tracks.erase(found);
+	return true;
+}
+int unpublish_local_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	std::string error;
+	if (!unpublish_local_native(room, id, error))
+		return media_error(L, error.c_str());
+	lua_pushboolean(L, 1);
+	return 1;
+}
+int start_publish_audio_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* label = luaL_checkstring(L, 2);
+	const lua_Integer sample_rate = luaL_optinteger(L, 3, 48000);
+	const lua_Integer channels = luaL_optinteger(L, 4, 1);
+	const lua_Integer queue_ms = luaL_optinteger(L, 5, 200);
+	if (sample_rate <= 0 || sample_rate > INT32_MAX || sample_rate % 100 != 0 || channels <= 0 ||
+	    channels > 8 || queue_ms <= 0 || queue_ms > INT32_MAX || queue_ms % 10 != 0)
+		return media_error(L, "invalid audio source options");
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::PublishAudioTrack;
+		task->second = label;
+		task->media_sample_rate = static_cast<uint32_t>(sample_rate);
+		task->media_channels = static_cast<uint32_t>(channels);
+		task->media_queue_ms = static_cast<uint32_t>(queue_ms);
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous media operation");
+	}
+}
+int start_publish_video_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* label = luaL_checkstring(L, 2);
+	size_t bytes = 0;
+	const char* pixels = luaL_checklstring(L, 3, &bytes);
+	const lua_Integer width = luaL_checkinteger(L, 4);
+	const lua_Integer height = luaL_checkinteger(L, 5);
+	const char* format = luaL_optstring(L, 6, "RGBA");
+	const bool screen = lua_toboolean(L, 7) != 0;
+	lk_video_frame_input_t check;
+	if (const char* error = prepare_video_frame(check, pixels, bytes, width, height, format,
+	                                            current_timestamp_us()))
+		return media_error(L, error);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::PublishVideoTrack;
+		task->first.assign(pixels, bytes);
+		task->second = label;
+		task->topic = format;
+		task->media_width = static_cast<uint32_t>(width);
+		task->media_height = static_cast<uint32_t>(height);
+		task->media_screen = screen;
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous media operation");
+	}
+}
+int start_unpublish_local_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::UnpublishLocalTrack;
+		task->media_id = id;
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous media operation");
+	}
+}
+int open_remote_stream(lua_State* L, bool audio) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* track_sid = luaL_checkstring(L, 3);
+	const lua_Integer capacity = luaL_optinteger(L, 4, 8);
+	if (capacity <= 0 || capacity > 1024)
+		return media_error(L, "stream capacity must be between 1 and 1024");
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	lk_media_stream_options_t options;
+	lk_media_stream_options_init(&options);
+	options.capacity = static_cast<size_t>(capacity);
+	RemoteMediaStream stream;
+	const auto status = audio ? lk_room_create_audio_stream(room->native, identity, track_sid,
+	                                                        &options, &stream.audio)
+	                          : lk_room_create_video_stream(room->native, identity, track_sid,
+	                                                        &options, &stream.video);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	try {
+		std::lock_guard<std::mutex> lock(room->mutex);
+		const uint64_t id = room->next_media_id++;
+		room->remote_streams.emplace(id, stream);
+		lua_pushnumber(L, static_cast<lua_Number>(id));
+		return 1;
+	} catch (...) {
+		destroy_remote_stream(stream);
+		return media_error(L, "failed to store remote stream");
+	}
+}
+int open_audio_stream(lua_State* L) { return open_remote_stream(L, true); }
+int open_video_stream(lua_State* L) { return open_remote_stream(L, false); }
+int close_remote_stream(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const auto found = room->remote_streams.find(id);
+	if (found == room->remote_streams.end())
+		return media_error(L, "remote stream is unavailable");
+	destroy_remote_stream(found->second);
+	room->remote_streams.erase(found);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+int remote_stream_is_closed(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const auto found = room->remote_streams.find(id);
+	if (found == room->remote_streams.end())
+		return media_error(L, "remote stream is unavailable");
+	lua_pushboolean(L, found->second.audio != nullptr
+	                       ? lk_audio_stream_is_closed(found->second.audio)
+	                       : lk_video_stream_is_closed(found->second.video));
+	return 1;
+}
+int remote_stream_dropped_frames(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const auto found = room->remote_streams.find(id);
+	if (found == room->remote_streams.end())
+		return media_error(L, "remote stream is unavailable");
+	const size_t dropped = found->second.audio != nullptr
+	                           ? lk_audio_stream_dropped_frames(found->second.audio)
+	                           : lk_video_stream_dropped_frames(found->second.video);
+	lua_pushnumber(L, static_cast<lua_Number>(dropped));
+	return 1;
+}
+int read_remote_frame(lua_State* L, bool audio) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const lua_Integer timeout = luaL_optinteger(L, 3, 0);
+	if (timeout < 0 || timeout > 60000)
+		return media_error(L, "read timeout must be between 0 and 60000 ms");
+	const auto found = room->remote_streams.find(id);
+	if (found == room->remote_streams.end() ||
+	    (audio ? found->second.audio == nullptr : found->second.video == nullptr))
+		return media_error(L, "remote stream is unavailable");
+	if (audio) {
+		lk_owned_audio_frame_t* raw = nullptr;
+		const auto status = timeout == 0
+		                        ? lk_audio_stream_try_read(found->second.audio, &raw)
+		                        : lk_audio_stream_read_for(found->second.audio,
+		                                                   static_cast<uint32_t>(timeout), &raw);
+		std::unique_ptr<lk_owned_audio_frame_t, decltype(&lk_owned_audio_frame_destroy)> frame(
+		    raw, lk_owned_audio_frame_destroy);
+		if (status == LK_MEDIA_STREAM_READ_EMPTY)
+			return media_error(L, "empty");
+		if (status == LK_MEDIA_STREAM_READ_CLOSED)
+			return media_error(L, "closed");
+		if (status != LK_MEDIA_STREAM_READ_FRAME)
+			return media_error(L, safe(lk_last_error()));
+		lk_audio_frame_t data{};
+		const auto frame_status = lk_owned_audio_frame_data(raw, &data);
+		if (frame_status != LK_STATUS_OK)
+			return status_result(L, frame_status);
+		lua_newtable(L);
+		lua_pushlstring(L, data.data != nullptr ? reinterpret_cast<const char*>(data.data) : "",
+		                data.sample_count * sizeof(int16_t));
+		lua_setfield(L, -2, "data");
+		integer_field(L, "sample_rate", data.sample_rate);
+		integer_field(L, "channels", data.num_channels);
+		integer_field(L, "samples_per_channel", data.samples_per_channel);
+		return 1;
+	}
+	lk_owned_video_frame_t* raw = nullptr;
+	const auto status =
+	    timeout == 0
+	        ? lk_video_stream_try_read(found->second.video, &raw)
+	        : lk_video_stream_read_for(found->second.video, static_cast<uint32_t>(timeout), &raw);
+	std::unique_ptr<lk_owned_video_frame_t, decltype(&lk_owned_video_frame_destroy)> frame(
+	    raw, lk_owned_video_frame_destroy);
+	if (status == LK_MEDIA_STREAM_READ_EMPTY)
+		return media_error(L, "empty");
+	if (status == LK_MEDIA_STREAM_READ_CLOSED)
+		return media_error(L, "closed");
+	if (status != LK_MEDIA_STREAM_READ_FRAME)
+		return media_error(L, safe(lk_last_error()));
+	lk_video_frame_t data{};
+	const auto frame_status = lk_owned_video_frame_data(raw, &data);
+	if (frame_status != LK_STATUS_OK)
+		return status_result(L, frame_status);
+	lua_newtable(L);
+	lua_pushlstring(L, data.data != nullptr ? reinterpret_cast<const char*>(data.data) : "",
+	                data.data_size);
+	lua_setfield(L, -2, "data");
+	integer_field(L, "width", data.width);
+	integer_field(L, "height", data.height);
+	number_field(L, "timestamp_us", static_cast<lua_Number>(data.timestamp_us));
+	lua_pushliteral(L, "I420");
+	lua_setfield(L, -2, "format");
+	return 1;
+}
+int read_audio_frame(lua_State* L) { return read_remote_frame(L, true); }
+int read_video_frame(lua_State* L) { return read_remote_frame(L, false); }
+
 int set_remote_track_subscribed(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* participant_sid = luaL_checkstring(L, 2);
@@ -1754,6 +2422,22 @@ int set_remote_track_subscribed(lua_State* L) {
 	luaL_checktype(L, 4, LUA_TBOOLEAN);
 	return status_result(L, lk_room_set_remote_track_subscribed(room->native, participant_sid,
 	                                                            track_sid, lua_toboolean(L, 4)));
+}
+int start_set_remote_track_subscribed(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* participant_sid = luaL_checkstring(L, 2);
+	const char* track_sid = luaL_checkstring(L, 3);
+	luaL_checktype(L, 4, LUA_TBOOLEAN);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::SetRemoteTrackSubscribed;
+		task->first = participant_sid;
+		task->second = track_sid;
+		task->reliable = lua_toboolean(L, 4) != 0;
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous media operation");
+	}
 }
 int update_remote_track_settings(lua_State* L) {
 	Room* room = check_room(L, 1);
@@ -2141,6 +2825,25 @@ const luaL_Reg room_methods[] = {
     {"_start_disconnect", start_disconnect},
     {"close", close_room},
     {"publish_data", publish_data},
+    {"publish_audio_track", publish_audio_track},
+    {"_start_publish_audio_track", start_publish_audio_track},
+    {"publish_video_track", publish_video_track},
+    {"_start_publish_video_track", start_publish_video_track},
+    {"push_audio_frame", push_audio_frame},
+    {"push_video_frame", push_video_frame},
+    {"set_local_track_muted", set_local_track_muted},
+    {"unpublish_local_track", unpublish_local_track},
+    {"_start_unpublish_local_track", start_unpublish_local_track},
+    {"open_audio_stream", open_audio_stream},
+    {"open_video_stream", open_video_stream},
+    {"read_audio_frame", read_audio_frame},
+    {"read_video_frame", read_video_frame},
+    {"close_remote_stream", close_remote_stream},
+    {"remote_stream_is_closed", remote_stream_is_closed},
+    {"remote_stream_dropped_frames", remote_stream_dropped_frames},
+    {"local_track_rtc_stats", local_track_rtc_stats},
+    {"remote_track_rtc_stats", remote_track_rtc_stats},
+    {"_start_set_remote_track_subscribed", start_set_remote_track_subscribed},
     {"_start_publish_data", start_publish_data},
     {"_async_result", async_result},
     {"state", state},

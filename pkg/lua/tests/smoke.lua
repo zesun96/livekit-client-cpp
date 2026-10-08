@@ -44,6 +44,21 @@ assert(room:set_track_subscription_permissions(true, {}))
 assert(type(room:speaker_volume()) == "number")
 assert(type(room:speaker_is_muted()) == "boolean")
 assert(type(room:audio_playback_stats()) == "table")
+local unpublished, unpublished_error = room:publish_audio_track("tone")
+assert(unpublished == nil and unpublished_error == "room is not connected")
+local missing_stats, missing_stats_error = room:local_track_rtc_stats(1)
+assert(missing_stats == nil and missing_stats_error == "local track is unavailable")
+local remote_stats, remote_stats_error = room:remote_track_rtc_stats("missing", "TR_missing")
+assert(remote_stats == nil and remote_stats_error == "remote track is unavailable")
+local async_unpublished, async_unpublished_error = assert(room:publish_audio_track_async("tone")):wait(50)
+assert(async_unpublished == nil and async_unpublished_error == "room is not connected")
+local async_subscription, async_subscription_error = assert(
+  room:set_remote_track_subscribed_async("PA_missing", "TR_missing", true)):wait(50)
+assert(async_subscription == nil and type(async_subscription_error) == "string")
+local bad_video, bad_video_error = room:publish_video_track("video", "bad", 2, 2)
+assert(bad_video == nil and type(bad_video_error) == "string")
+local unstreamed, unstreamed_error = room:open_audio_stream("missing", "TR_missing")
+assert(unstreamed == nil and type(unstreamed_error) == "string")
 local invalid_attributes, attribute_error = room:set_local_attributes({key = 1})
 assert(invalid_attributes == nil and type(attribute_error) == "string")
 assert(room:dropped_events() == 0)
@@ -115,6 +130,6 @@ assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
 
-for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller", "rpc_receiver"}) do
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media"}) do
   assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
 end

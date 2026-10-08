@@ -132,6 +132,39 @@ Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
 `e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
 message, participant, track, and encryption state events through `room:on`.
+
+## Media publishing and subscription
+
+`publish_audio_track(label, sample_rate, channels, queue_ms)` creates and publishes an external
+audio source. It returns a room-owned track ID. `push_audio_frame(track_id, pcm)` accepts exactly
+10 ms of interleaved signed 16-bit PCM as a binary Lua string. The defaults are 48 kHz, mono, and
+a 200 ms source queue. The sample rate must be divisible by 100, and the queue size must be a
+multiple of 10 ms. `publish_video_track(label, first_frame, width, height, format, screen)`
+creates and publishes an external video source; a first frame is required before publishing.
+`push_video_frame(track_id, pixels, width, height, format, timestamp_us)` submits later frames.
+`format` is `"RGBA"` (default) or `"I420"`; I420 frames require even dimensions. Use
+`set_local_track_muted(track_id, muted)` and `unpublish_local_track(track_id)` to control and
+release a publication. Publishing and unpublishing also have `*_async` variants that return
+coroutine futures; frame push remains a direct call on the Lua thread.
+
+For explicit remote subscription, connect with `{auto_subscribe = false}` and call
+`set_remote_track_subscribed(participant_sid, track_sid, true)` after `track_published`. The track
+event contains both `participant_sid` and `participant_identity`. Use
+`set_remote_track_subscribed_async(...)` for a coroutine future. After `track_subscribed`, use
+`open_audio_stream(participant_identity, track_sid, capacity)` or `open_video_stream(...)` to get a
+room-owned stream ID. `read_audio_frame(stream_id, timeout_ms)` returns a table with binary PCM,
+sample rate, channel count, and samples per channel. `read_video_frame(...)` returns decoded I420
+bytes, dimensions, and timestamp. The read methods return `nil, "empty"` when no frame is ready
+and `nil, "closed"` after the stream ends. A zero timeout (default) is nonblocking. Use
+`close_remote_stream(stream_id)` to release the reader; `remote_stream_is_closed` and
+`remote_stream_dropped_frames` report its state. All track and stream IDs expire when the room
+closes. Media sources and readers are released automatically on room close.
+
+`local_track_rtc_stats(track_id)` and `remote_track_rtc_stats(participant_identity, track_sid)`
+return arrays of RTC stream statistics. A report that is not ready returns an empty array.
+Optional measurements such as bitrate, jitter, round-trip time, and audio level are omitted when
+unavailable. Large counters are Lua numbers and may lose integer precision above 2^53.
+
 Additional room events include `room_sid_changed` (`previous_sid`, `sid`),
 `connection_quality_changed` (`identity`, `quality`), and `active_speakers_changed`
 (`identities`, an array of participant identities). Track mute changes arrive as `track_muted`
@@ -144,5 +177,5 @@ Subscription feedback arrives as `track_subscription_permission_changed` (`allow
 Runnable examples are in [examples](examples/README.md).
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
-exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Local media sources,
+exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Device capture,
 audio/video frame callbacks, and some advanced C API features are not yet wrapped.

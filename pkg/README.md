@@ -20,15 +20,16 @@ Swift, and Zig bindings have no implementation yet.
 | Local participant metadata and attributes | Yes | No | No | No |
 | Remote track subscription and settings | Yes | No | No | No |
 | Track subscription permissions and feedback events | Yes | No | No | No |
-| Audio and video tracks, sources, and frames | No | No | No | No |
+| External audio/video tracks, frame push, and remote frame streams | Yes | No | No | No |
+| Microphone, camera, and screen device capture | No | No | No | No |
 | Text and byte streams, chat, and file transfer | Partial | No | No | No |
 | RPC calls and method handlers | Yes | No | No | No |
 | E2EE | Partial | No | No | No |
 | Media devices and remote recording | Partial | No | No | No |
-| Logging, tracing, and RTC statistics | No | No | No | No |
+| Logging, tracing, and RTC statistics | Partial | No | No | No |
 
 Lua covers outgoing streams and incoming completed stream events, RPC, E2EE key control,
-device enumeration and speaker control, and recording status. Local media tracks and frames,
-RTC statistics, and other advanced C API features remain unsupported. Lua
+device enumeration and speaker control, recording status, and local/remote track RTC snapshots.
+Device capture, logging, tracing, and other advanced C API features remain unsupported. Lua
 asynchronous calls use a native worker thread and resume coroutines when the Lua thread calls
 `room:poll()` or `room:step()`.

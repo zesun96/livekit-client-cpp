@@ -132,6 +132,22 @@ function room_methods:publish_data_async(payload, reliable, topic)
   return future_for(self, self:_start_publish_data(payload, reliable, topic))
 end
 
+function room_methods:publish_audio_track_async(label, sample_rate, channels, queue_ms)
+  return future_for(self, self:_start_publish_audio_track(label, sample_rate, channels, queue_ms))
+end
+
+function room_methods:publish_video_track_async(label, first_frame, width, height, format, screen)
+  return future_for(self, self:_start_publish_video_track(label, first_frame, width, height, format, screen))
+end
+
+function room_methods:unpublish_local_track_async(track_id)
+  return future_for(self, self:_start_unpublish_local_track(track_id))
+end
+
+function room_methods:set_remote_track_subscribed_async(participant_sid, track_sid, subscribed)
+  return future_for(self, self:_start_set_remote_track_subscribed(participant_sid, track_sid, subscribed))
+end
+
 function room_methods:perform_rpc_async(destination, method, payload, timeout_ms)
   return future_for(self, self:_start_rpc(destination, method, payload, timeout_ms))
 end
