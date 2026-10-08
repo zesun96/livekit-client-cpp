@@ -37,6 +37,7 @@ struct Event {
 	std::vector<std::pair<std::string, lua_Number>> numbers;
 	std::vector<std::pair<std::string, bool>> booleans;
 	std::vector<std::pair<std::string, std::string>> attributes;
+	std::vector<std::string> speakers;
 };
 
 enum class AsyncOperation { Connect, Disconnect, PublishData, Rpc, Chat, Text, Bytes, File };
@@ -438,6 +439,35 @@ void on_recording_status(void* user_data, lk_room_t*, int recording) {
 	} catch (...) {
 	}
 }
+void on_room_sid_changed(void* user_data, lk_room_t*, const char* previous_sid, const char* sid) {
+	try {
+		Event event{"room_sid_changed"};
+		event.strings.emplace_back("previous_sid", safe(previous_sid));
+		event.sid = safe(sid);
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_connection_quality(void* user_data, lk_room_t*, lk_connection_quality_t quality,
+                           const lk_participant_info_t* participant) {
+	try {
+		Event event{"connection_quality_changed"};
+		event.identity = participant ? safe(participant->identity) : "";
+		event.numbers.emplace_back("quality", quality);
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_active_speakers(void* user_data, lk_room_t*, const lk_participant_info_t* participants,
+                        size_t count) {
+	try {
+		Event event{"active_speakers_changed"};
+		for (size_t i = 0; participants != nullptr && i < count; ++i)
+			event.speakers.emplace_back(safe(participants[i].identity));
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
 void on_encryption_state(void* user_data, lk_room_t*, const lk_encryption_state_t* state) {
 	try {
 		if (state == nullptr)
@@ -520,6 +550,14 @@ void on_track_unsubscribed(void* u, lk_room_t*, const lk_track_publication_info_
                            const lk_participant_info_t* p) {
 	track_event(u, t, p, "track_unsubscribed");
 }
+void on_track_muted(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                    const lk_participant_info_t* p) {
+	track_event(u, t, p, "track_muted");
+}
+void on_track_unmuted(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                      const lk_participant_info_t* p) {
+	track_event(u, t, p, "track_unmuted");
+}
 void on_local_track_published(void* u, lk_room_t*, const lk_track_publication_info_t* t,
                               const lk_participant_info_t* p) {
 	track_event(u, t, p, "local_track_published");
@@ -595,6 +633,9 @@ int new_room(lua_State* L) {
 	callbacks.on_byte_received = on_byte;
 	callbacks.on_room_metadata_changed = on_room_metadata;
 	callbacks.on_recording_status_changed = on_recording_status;
+	callbacks.on_room_sid_changed = on_room_sid_changed;
+	callbacks.on_connection_quality_changed = on_connection_quality;
+	callbacks.on_active_speakers_changed = on_active_speakers;
 	callbacks.on_encryption_state_changed = on_encryption_state;
 	callbacks.on_participant_metadata_changed = on_participant_metadata;
 	callbacks.on_participant_name_changed = on_participant_name;
@@ -603,6 +644,8 @@ int new_room(lua_State* L) {
 	callbacks.on_track_unpublished = on_track_unpublished;
 	callbacks.on_track_subscribed = on_track_subscribed;
 	callbacks.on_track_unsubscribed = on_track_unsubscribed;
+	callbacks.on_track_muted = on_track_muted;
+	callbacks.on_track_unmuted = on_track_unmuted;
 	callbacks.on_local_track_published = on_local_track_published;
 	callbacks.on_local_track_unpublished = on_local_track_unpublished;
 	status = lk_room_set_callbacks(room->native, &callbacks);
@@ -681,6 +724,14 @@ int poll(lua_State* L) {
 				for (const auto& [key, value] : event.attributes)
 					string_field(L, key.c_str(), value);
 				lua_setfield(L, -2, "changes");
+			}
+			if (event.type == "active_speakers_changed") {
+				lua_newtable(L);
+				for (size_t i = 0; i < event.speakers.size(); ++i) {
+					lua_pushlstring(L, event.speakers[i].data(), event.speakers[i].size());
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "identities");
 			}
 			if (lua_pcall(L, 1, 0, 0) != 0) {
 				lua_pushnil(L);

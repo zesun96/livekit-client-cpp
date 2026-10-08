@@ -122,6 +122,10 @@ Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
 `e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
 message, participant, track, and encryption state events through `room:on`.
+Additional room events include `room_sid_changed` (`previous_sid`, `sid`),
+`connection_quality_changed` (`identity`, `quality`), and `active_speakers_changed`
+(`identities`, an array of participant identities). Track mute changes arrive as `track_muted`
+and `track_unmuted` with track and participant fields.
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
 exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Local media sources,
