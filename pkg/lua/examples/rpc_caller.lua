@@ -1,4 +1,4 @@
--- Mirrors the caller half of examples/rpc. Start the C++ rpc receiver first.
+-- Mirrors the caller half of examples/rpc. Start rpc_receiver.lua first.
 local livekit = require("livekit-client")
 local url = arg[1] or os.getenv("LIVEKIT_URL")
 local token = arg[2] or os.getenv("LIVEKIT_TOKEN")

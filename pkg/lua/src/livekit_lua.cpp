@@ -5,6 +5,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -91,12 +92,34 @@ struct AsyncTask {
 	std::string rpc_error_data;
 };
 
+struct RpcRequest {
+	std::string method;
+	std::string request_id;
+	std::string caller_identity;
+	std::string payload;
+	uint32_t timeout_ms = 0;
+	std::string response_payload;
+	std::string error_message;
+	std::string error_data;
+	uint32_t error_code = 0;
+	std::atomic_bool done{false};
+};
+
+struct Room;
+struct RpcHandlerContext {
+	Room* room = nullptr;
+	std::string method;
+};
+
 struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
 	std::mutex mutex;
 	std::condition_variable wake;
 	std::deque<Event> events;
+	std::deque<std::shared_ptr<RpcRequest>> rpc_pending;
+	std::map<std::string, int> rpc_handlers;
+	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
 	size_t dropped = 0;
 	std::thread worker;
 	std::deque<std::shared_ptr<AsyncTask>> pending;
@@ -153,6 +176,52 @@ bool enqueue(Room* room, Event event) noexcept {
 		return true;
 	} catch (...) {
 		return false;
+	}
+}
+
+lk_rpc_handler_result_t on_rpc_invocation(void* user_data,
+                                          const lk_rpc_invocation_t* invocation) noexcept {
+	thread_local std::string response_payload;
+	thread_local std::string error_message;
+	thread_local std::string error_data;
+	try {
+		auto* context = static_cast<RpcHandlerContext*>(user_data);
+		if (context == nullptr || invocation == nullptr)
+			return {nullptr, LK_RPC_ERROR_APPLICATION_ERROR, "invalid Lua RPC invocation", nullptr};
+		Room* room = context->room;
+		auto request = std::make_shared<RpcRequest>();
+		request->method = context->method;
+		request->request_id = safe(invocation->request_id);
+		request->caller_identity = safe(invocation->caller_identity);
+		request->payload = safe(invocation->payload);
+		request->timeout_ms = invocation->response_timeout_ms;
+		{
+			std::unique_lock<std::mutex> lock(room->mutex);
+			if (room->stopping)
+				return {nullptr, LK_RPC_ERROR_RECIPIENT_DISCONNECTED, "room is closing", nullptr};
+			if (room->rpc_pending.size() >= kMaxQueuedEvents)
+				return {nullptr, LK_RPC_ERROR_APPLICATION_ERROR, "Lua RPC queue is full", nullptr};
+			room->rpc_pending.push_back(request);
+			room->wake.notify_all();
+			const auto timeout =
+			    std::chrono::milliseconds(request->timeout_ms == 0 ? 15000 : request->timeout_ms);
+			if (!room->wake.wait_for(lock, timeout,
+			                         [&] { return request->done || room->stopping; })) {
+				request->done = true;
+				return {nullptr, LK_RPC_ERROR_RESPONSE_TIMEOUT, "Lua RPC handler timed out",
+				        nullptr};
+			}
+			if (room->stopping)
+				return {nullptr, LK_RPC_ERROR_RECIPIENT_DISCONNECTED, "room is closing", nullptr};
+			response_payload = request->response_payload;
+			error_message = request->error_message;
+			error_data = request->error_data;
+			return {response_payload.c_str(), request->error_code,
+			        error_message.empty() ? nullptr : error_message.c_str(),
+			        error_data.empty() ? nullptr : error_data.c_str()};
+		}
+	} catch (...) {
+		return {nullptr, LK_RPC_ERROR_APPLICATION_ERROR, "Lua RPC handler failed", nullptr};
 	}
 }
 
@@ -620,6 +689,7 @@ int close_room(lua_State* L) {
 				++room->completed_tasks;
 			}
 			room->pending.clear();
+			room->rpc_pending.clear();
 			room->wake.notify_all();
 		}
 		if (room->worker.joinable())
@@ -631,6 +701,10 @@ int close_room(lua_State* L) {
 		luaL_unref(L, LUA_REGISTRYINDEX, room->callback_ref);
 		room->callback_ref = LUA_NOREF;
 	}
+	for (const auto& [method, ref] : room->rpc_handlers)
+		luaL_unref(L, LUA_REGISTRYINDEX, ref);
+	room->rpc_handlers.clear();
+	room->rpc_contexts.clear();
 	{
 		std::lock_guard<std::mutex> lock(room->mutex);
 		room->events.clear();
@@ -717,9 +791,130 @@ int on(lua_State* L) {
 	return 1;
 }
 
+int register_rpc_method(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* method = luaL_checkstring(L, 2);
+	luaL_checktype(L, 3, LUA_TFUNCTION);
+	if (room->native == nullptr) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "room is closed");
+		return 2;
+	}
+	if (room->rpc_handlers.count(method) != 0) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "RPC method is already registered");
+		return 2;
+	}
+	try {
+		auto context = std::make_unique<RpcHandlerContext>();
+		context->room = room;
+		context->method = method;
+		room->rpc_contexts.push_back(std::move(context));
+	} catch (...) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "failed to allocate RPC method");
+		return 2;
+	}
+	const auto status = lk_room_register_rpc_method(room->native, method, on_rpc_invocation,
+	                                                room->rpc_contexts.back().get());
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_pushvalue(L, 3);
+	const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	try {
+		room->rpc_handlers.emplace(method, ref);
+	} catch (...) {
+		luaL_unref(L, LUA_REGISTRYINDEX, ref);
+		lk_room_unregister_rpc_method(room->native, method);
+		lua_pushnil(L);
+		lua_pushliteral(L, "failed to store RPC method");
+		return 2;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+int unregister_rpc_method(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* method = luaL_checkstring(L, 2);
+	if (room->native == nullptr) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "room is closed");
+		return 2;
+	}
+	const auto status = lk_room_unregister_rpc_method(room->native, method);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	const auto found = room->rpc_handlers.find(method);
+	if (found != room->rpc_handlers.end()) {
+		luaL_unref(L, LUA_REGISTRYINDEX, found->second);
+		room->rpc_handlers.erase(found);
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 void field(lua_State* L, const char* key, const std::string& value) {
 	lua_pushlstring(L, value.data(), value.size());
 	lua_setfield(L, -2, key);
+}
+
+void dispatch_rpc(lua_State* L, Room* room, const std::shared_ptr<RpcRequest>& request) {
+	std::string payload;
+	std::string message;
+	std::string data;
+	uint32_t error_code = 0;
+	const auto handler = room->rpc_handlers.find(request->method);
+	if (handler == room->rpc_handlers.end()) {
+		error_code = LK_RPC_ERROR_UNSUPPORTED_METHOD;
+		message = "RPC method is not registered";
+	} else {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, handler->second);
+		lua_newtable(L);
+		field(L, "request_id", request->request_id);
+		field(L, "caller_identity", request->caller_identity);
+		field(L, "payload", request->payload);
+		lua_pushnumber(L, request->timeout_ms);
+		lua_setfield(L, -2, "response_timeout_ms");
+		if (lua_pcall(L, 1, 1, 0) != 0) {
+			error_code = LK_RPC_ERROR_APPLICATION_ERROR;
+			message = safe(lua_tostring(L, -1));
+		} else if (lua_isstring(L, -1)) {
+			payload = lua_tostring(L, -1);
+		} else if (lua_istable(L, -1)) {
+			lua_getfield(L, -1, "payload");
+			if (lua_isstring(L, -1))
+				payload = lua_tostring(L, -1);
+			lua_pop(L, 1);
+			lua_getfield(L, -1, "error_code");
+			if (lua_isnumber(L, -1)) {
+				const lua_Number value = lua_tonumber(L, -1);
+				if (value >= 0 && value <= UINT32_MAX)
+					error_code = static_cast<uint32_t>(value);
+			}
+			lua_pop(L, 1);
+			lua_getfield(L, -1, "error_message");
+			if (lua_isstring(L, -1))
+				message = lua_tostring(L, -1);
+			lua_pop(L, 1);
+			lua_getfield(L, -1, "error_data");
+			if (lua_isstring(L, -1))
+				data = lua_tostring(L, -1);
+			lua_pop(L, 1);
+		} else if (!lua_isnil(L, -1)) {
+			error_code = LK_RPC_ERROR_APPLICATION_ERROR;
+			message = "Lua RPC handler must return a string or result table";
+		}
+		lua_pop(L, 1);
+	}
+	std::lock_guard<std::mutex> lock(room->mutex);
+	if (!request->done) {
+		request->response_payload = std::move(payload);
+		request->error_message = std::move(message);
+		request->error_data = std::move(data);
+		request->error_code = error_code;
+		request->done = true;
+		room->wake.notify_all();
+	}
 }
 
 int poll(lua_State* L) {
@@ -730,13 +925,34 @@ int poll(lua_State* L) {
 	const int limit = static_cast<int>(requested > 1024 ? 1024 : requested);
 	int delivered = 0;
 	while (delivered < limit) {
+		std::shared_ptr<RpcRequest> request;
 		Event event;
 		{
 			std::lock_guard<std::mutex> lock(room->mutex);
-			if (room->events.empty())
+			if (!room->rpc_pending.empty()) {
+				request = std::move(room->rpc_pending.front());
+				room->rpc_pending.pop_front();
+			} else if (!room->events.empty()) {
+				event = std::move(room->events.front());
+				room->events.pop_front();
+			} else {
 				break;
-			event = std::move(room->events.front());
-			room->events.pop_front();
+			}
+		}
+		if (request) {
+			if (!request->done) {
+				try {
+					dispatch_rpc(L, room, request);
+				} catch (...) {
+					std::lock_guard<std::mutex> lock(room->mutex);
+					request->error_code = LK_RPC_ERROR_APPLICATION_ERROR;
+					request->error_message = "Lua RPC handler failed";
+					request->done = true;
+					room->wake.notify_all();
+				}
+				++delivered;
+			}
+			continue;
 		}
 		if (room->callback_ref != LUA_NOREF) {
 			lua_rawgeti(L, LUA_REGISTRYINDEX, room->callback_ref);
@@ -1093,7 +1309,8 @@ int wait_room(lua_State* L) {
 		timeout = 60000;
 	std::unique_lock<std::mutex> lock(room->mutex);
 	const bool ready = room->wake.wait_for(lock, std::chrono::milliseconds(timeout), [&] {
-		return !room->events.empty() || room->completed_tasks != 0 || room->stopping;
+		return !room->events.empty() || !room->rpc_pending.empty() || room->completed_tasks != 0 ||
+		       room->stopping;
 	});
 	lock.unlock();
 	lua_pushboolean(L, ready);
@@ -1914,6 +2131,8 @@ int version(lua_State* L) {
 
 const luaL_Reg room_methods[] = {
     {"on", on},
+    {"register_rpc_method", register_rpc_method},
+    {"unregister_rpc_method", unregister_rpc_method},
     {"poll", poll},
     {"wait", wait_room},
     {"connect", connect_room},

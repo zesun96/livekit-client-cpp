@@ -8,6 +8,15 @@ assert(type(room:state()) == "number")
 assert(type(room:sid()) == "string")
 assert(type(room:name()) == "string")
 assert(type(room:metadata()) == "string")
+assert(room:register_rpc_method("example.echo", function(request)
+  return "echo:" .. request.payload
+end))
+local duplicate_rpc, duplicate_error = room:register_rpc_method("example.echo", function() end)
+assert(duplicate_rpc == nil and type(duplicate_error) == "string")
+assert(room:unregister_rpc_method("example.echo"))
+assert(room:register_rpc_method("example.echo", function(request)
+  return "echo:" .. request.payload
+end))
 local local_participant = assert(room:local_participant())
 assert(type(local_participant.attributes) == "table")
 assert(type(room:remote_participants()) == "table")
@@ -106,6 +115,6 @@ assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
 
-for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller"}) do
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller", "rpc_receiver"}) do
   assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
 end

@@ -22,13 +22,13 @@ Swift, and Zig bindings have no implementation yet.
 | Track subscription permissions and feedback events | Yes | No | No | No |
 | Audio and video tracks, sources, and frames | No | No | No | No |
 | Text and byte streams, chat, and file transfer | Partial | No | No | No |
-| RPC | Partial | No | No | No |
+| RPC calls and method handlers | Yes | No | No | No |
 | E2EE | Partial | No | No | No |
 | Media devices and remote recording | Partial | No | No | No |
 | Logging, tracing, and RTC statistics | No | No | No | No |
 
-Lua covers outgoing streams and incoming completed stream events, outgoing RPC, E2EE key control,
-device enumeration and speaker control, and recording status. Inbound RPC handlers, local media
-tracks and frames, RTC statistics, and other advanced C API features remain unsupported. Lua
+Lua covers outgoing streams and incoming completed stream events, RPC, E2EE key control,
+device enumeration and speaker control, and recording status. Local media tracks and frames,
+RTC statistics, and other advanced C API features remain unsupported. Lua
 asynchronous calls use a native worker thread and resume coroutines when the Lua thread calls
 `room:poll()` or `room:step()`.

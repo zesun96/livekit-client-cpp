@@ -118,6 +118,13 @@ and an `allowed_track_sids` array. Pass an empty array to clear per-participant 
 payload, timeout_ms)` and its
 async variant return a table with `ok`, `payload`, `error_code`, `error_message`, and `error_data`.
 An RPC response error sets `ok = false`; C API call failures return `nil, message`.
+Use `register_rpc_method(method, handler)` to receive RPC calls and
+`unregister_rpc_method(method)` to remove a handler. The handler receives a table containing
+`request_id`, `caller_identity`, `payload`, and `response_timeout_ms`. It may return a response
+string or a table with `payload`, `error_code`, `error_message`, and `error_data`. A handler error
+becomes an application RPC error. Inbound handlers run on the Lua thread during `poll()` or
+`step()`, so the host must keep driving that loop while receiving calls. A handler must return
+promptly and cannot yield; avoid blocking room calls inside it.
 
 `e2ee_is_configured`, `e2ee_is_enabled`, `e2ee_set_enabled`, shared and participant key methods,
 `e2ee_data_key_index`, `e2ee_set_data_key_index`, and frame-cryptor methods expose E2EE control.
@@ -138,5 +145,4 @@ Runnable examples are in [examples](examples/README.md).
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
 exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Local media sources,
-audio/video frame callbacks, inbound RPC handlers, and some advanced C API features are not yet
-wrapped.
+audio/video frame callbacks, and some advanced C API features are not yet wrapped.
