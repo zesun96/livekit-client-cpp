@@ -132,6 +132,26 @@ function room_methods:publish_data_async(payload, reliable, topic)
   return future_for(self, self:_start_publish_data(payload, reliable, topic))
 end
 
+function room_methods:perform_rpc_async(destination, method, payload, timeout_ms)
+  return future_for(self, self:_start_rpc(destination, method, payload, timeout_ms))
+end
+
+function room_methods:send_chat_message_async(message)
+  return future_for(self, self:_start_chat(message))
+end
+
+function room_methods:send_text_async(value, topic)
+  return future_for(self, self:_start_text(value, topic))
+end
+
+function room_methods:send_bytes_async(data, topic, mime_type, name)
+  return future_for(self, self:_start_bytes(data, topic, mime_type, name))
+end
+
+function room_methods:send_file_async(path, topic, mime_type)
+  return future_for(self, self:_start_file(path, topic, mime_type))
+end
+
 function room_methods:poll(max_events)
   local count, err = native_poll(self, max_events)
   if not count then return nil, err end

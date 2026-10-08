@@ -1,9 +1,10 @@
 # livekit-client Lua binding
 
-This is a first Lua binding for the stable C ABI of `livekit-client-cpp`. It supports Lua 5.1+
-and currently exposes room connection, disconnect, connection state, participant arrival/departure,
-data messages, and cleanup. The Lua interpreter, Lua import library, and LiveKit DLL must all have
-the same architecture. On Windows use an x64 Lua build with the x64 LiveKit SDK.
+This Lua 5.1+ binding uses the stable C ABI of `livekit-client-cpp`. It exposes room lifecycle,
+participant snapshots and updates, data and stream messages, RPC calls, E2EE keys, and device and
+remote-track controls. The Lua interpreter and module must use the same Lua runtime DLL and
+architecture. The `Lua51vs_rel_pdb` executable is statically linked and cannot safely host this
+DLL-linked module; use a DLL-linked interpreter or the optional test runner below.
 
 ## Build on Windows
 
@@ -16,6 +17,11 @@ cmake -S pkg/lua -B out/build/lua -G "Visual Studio 17 2022" -A x64 `
   -DLiveKitClient_DIR=C:/path/to/livekit/lib/cmake/LiveKitClient
 cmake --build out/build/lua --config Release
 ```
+
+For the local `E:/workspace/Lua/Lua51vs_rel_pdb` build, set `LUA_LIBRARY` to
+`E:/workspace/Lua/Lua51vs_rel_pdb/lib/lua51.lib`. Add `-DLKC_LUA_BUILD_TEST_RUNNER=ON` to build
+`livekit_lua_test_runner.exe`, which links the same `lua51.dll` as the module. Run
+`livekit_lua_test_runner.exe pkg/lua/tests/smoke.lua` after setting `LUA_PATH` and `LUA_CPATH`.
 
 Place `livekit_client_native.dll`, `livekitclient.dll`, `websockets.dll`, and the matching Lua runtime DLL
 where the Windows loader can find them. Put `pkg/lua/lua` on `LUA_PATH`, and the directory containing
@@ -48,13 +54,18 @@ room:close()
 
 `room:connect(url, token, options)`, `room:disconnect()`, and
 `room:publish_data(payload, reliable, topic)` are blocking calls. `reliable` defaults to `true`.
-Connection options currently support `auto_subscribe`, `adaptive_stream`, and `dynacast`.
+Connection options support `auto_subscribe`, `adaptive_stream`, `dynacast`, and an `e2ee` table.
+The E2EE table accepts `enabled`, binary `shared_key`, `ratchet_salt`,
+`unencrypted_magic_bytes`, `ratchet_window_size`, `failure_tolerance`, `key_ring_size`, and
+`key_derivation` (`0` for PBKDF2 SHA-256, `1` for HKDF SHA-256).
 Fallible methods return `true` or `nil, message`. Data payloads are binary-safe Lua strings.
 
 ## Coroutine asynchronous calls
 
-The same three operations have `connect_async`, `disconnect_async`, and `publish_data_async`
-variants. Each returns a future or `nil, message`. Futures support `:result()` (nonblocking),
+Connect, disconnect, data publish, chat, text, bytes, file send, and outgoing RPC have
+`*_async` variants. Each returns a future or `nil, message`. The asynchronous chat call returns
+`{id, timestamp}` on success.
+Futures support `:result()` (nonblocking),
 `:wait()` (blocking), and `:await()` (yields the current Lua coroutine). Use `livekit.spawn` to
 register a coroutine, then call `room:step()` in the host event loop:
 
@@ -92,6 +103,27 @@ pending or running. `room:close()` waits for an operation already in progress, d
 operations, and is idempotent. The room is also closed by Lua garbage collection; explicitly close
 rooms before the Lua state exits.
 
+## Additional API
+
+`room:local_participant()` and `room:remote_participants()` return detached tables. Local
+participant name, metadata, and attributes can be changed through `set_local_name`,
+`set_local_metadata`, and `set_local_attributes`. Remote tracks can be controlled with
+`set_remote_track_subscribed(participant_sid, track_sid, subscribed)` and
+`update_remote_track_settings(participant_sid, track_sid, settings)`.
+
+`edit_chat_message` and `publish_dtmf` are synchronous. `perform_rpc(destination, method,
+payload, timeout_ms)` and its
+async variant return a table with `ok`, `payload`, `error_code`, `error_message`, and `error_data`.
+An RPC response error sets `ok = false`; C API call failures return `nil, message`.
+
+`e2ee_is_configured`, `e2ee_is_enabled`, `e2ee_set_enabled`, shared and participant key methods,
+`e2ee_data_key_index`, `e2ee_set_data_key_index`, and frame-cryptor methods expose E2EE control.
+Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
+`e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
+`list_media_devices()`, speaker controls, audio playback statistics, recording status, and
+message, participant, track, and encryption state events through `room:on`.
+
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
-exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Media tracks, streams,
-RPC, E2EE, and the remaining C API surface are not wrapped yet.
+exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Local media sources,
+audio/video frame callbacks, inbound RPC handlers, and some advanced C API features are not yet
+wrapped.
