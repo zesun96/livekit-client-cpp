@@ -558,6 +558,47 @@ void on_track_unmuted(void* u, lk_room_t*, const lk_track_publication_info_t* t,
                       const lk_participant_info_t* p) {
 	track_event(u, t, p, "track_unmuted");
 }
+void subscription_event(void* user_data, const lk_track_publication_info_t* track,
+                        const lk_participant_info_t* participant, const char* type,
+                        const char* field, int value) noexcept {
+	try {
+		Event event{type};
+		if (track != nullptr) {
+			event.sid = safe(track->sid);
+			event.name = safe(track->name);
+		}
+		if (participant != nullptr)
+			event.identity = safe(participant->identity);
+		event.numbers.emplace_back(field, value);
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_subscription_permission(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                                const lk_participant_info_t* p, int allowed) {
+	try {
+		Event event{"track_subscription_permission_changed"};
+		if (t != nullptr)
+			event.sid = safe(t->sid);
+		if (p != nullptr)
+			event.identity = safe(p->identity);
+		event.booleans.emplace_back("allowed", allowed != 0);
+		enqueue(static_cast<Room*>(u), std::move(event));
+	} catch (...) {
+	}
+}
+void on_subscription_failed(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                            const lk_participant_info_t* p, lk_subscription_error_t error) {
+	subscription_event(u, t, p, "track_subscription_failed", "error", error);
+}
+void on_stream_state(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                     const lk_participant_info_t* p, lk_track_stream_state_t state) {
+	subscription_event(u, t, p, "track_stream_state_changed", "state", state);
+}
+void on_subscription_status(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                            const lk_participant_info_t* p, lk_track_subscription_status_t status) {
+	subscription_event(u, t, p, "track_subscription_status_changed", "status", status);
+}
 void on_local_track_published(void* u, lk_room_t*, const lk_track_publication_info_t* t,
                               const lk_participant_info_t* p) {
 	track_event(u, t, p, "local_track_published");
@@ -646,6 +687,10 @@ int new_room(lua_State* L) {
 	callbacks.on_track_unsubscribed = on_track_unsubscribed;
 	callbacks.on_track_muted = on_track_muted;
 	callbacks.on_track_unmuted = on_track_unmuted;
+	callbacks.on_track_subscription_permission_changed = on_subscription_permission;
+	callbacks.on_track_subscription_failed = on_subscription_failed;
+	callbacks.on_track_stream_state_changed = on_stream_state;
+	callbacks.on_track_subscription_status_changed = on_subscription_status;
 	callbacks.on_local_track_published = on_local_track_published;
 	callbacks.on_local_track_unpublished = on_local_track_unpublished;
 	status = lk_room_set_callbacks(room->native, &callbacks);
@@ -1529,6 +1574,64 @@ int update_remote_track_settings(lua_State* L) {
 	                                                             track_sid, &settings));
 }
 
+size_t lua_array_length(lua_State* L, int index) {
+#if LUA_VERSION_NUM < 502
+	return lua_objlen(L, index);
+#else
+	return lua_rawlen(L, index);
+#endif
+}
+int set_track_subscription_permissions(lua_State* L) {
+	Room* room = check_room(L, 1);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	luaL_checktype(L, 3, LUA_TTABLE);
+	const size_t count = lua_array_length(L, 3);
+	std::vector<lk_participant_track_permission_t> permissions(count);
+	std::vector<std::vector<const char*>> track_sids(count);
+	for (size_t i = 0; i < count; ++i) {
+		lua_rawgeti(L, 3, static_cast<int>(i + 1));
+		luaL_checktype(L, -1, LUA_TTABLE);
+		const int item = lua_gettop(L);
+		auto& permission = permissions[i];
+		lk_participant_track_permission_init(&permission);
+		lua_getfield(L, item, "participant_sid");
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TSTRING);
+			permission.participant_sid = lua_tostring(L, -1);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, item, "participant_identity");
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TSTRING);
+			permission.participant_identity = lua_tostring(L, -1);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, item, "allow_all");
+		if (!lua_isnil(L, -1))
+			permission.allow_all = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, item, "allowed_track_sids");
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TTABLE);
+			const int tracks = lua_gettop(L);
+			const size_t track_count = lua_array_length(L, tracks);
+			track_sids[i].reserve(track_count);
+			for (size_t j = 0; j < track_count; ++j) {
+				lua_rawgeti(L, tracks, static_cast<int>(j + 1));
+				luaL_checktype(L, -1, LUA_TSTRING);
+				track_sids[i].push_back(lua_tostring(L, -1));
+				lua_pop(L, 1);
+			}
+			permission.allowed_track_sids = track_sids[i].data();
+			permission.allowed_track_sid_count = track_sids[i].size();
+		}
+		lua_pop(L, 2);
+	}
+	return status_result(L, lk_room_set_track_subscription_permissions(
+	                            room->native, lua_toboolean(L, 2),
+	                            permissions.empty() ? nullptr : permissions.data(), count));
+}
+
 lk_frame_cryptor_direction_t cryptor_direction(lua_State* L, int argument) {
 	const lua_Integer value = luaL_checkinteger(L, argument);
 	luaL_argcheck(L,
@@ -1865,6 +1968,7 @@ const luaL_Reg room_methods[] = {
     {"audio_playback_stats", audio_playback_stats},
     {"set_remote_track_subscribed", set_remote_track_subscribed},
     {"update_remote_track_settings", update_remote_track_settings},
+    {"set_track_subscription_permissions", set_track_subscription_permissions},
     {"send_chat_message", send_chat_message},
     {"_start_chat", start_chat},
     {"edit_chat_message", edit_chat_message},

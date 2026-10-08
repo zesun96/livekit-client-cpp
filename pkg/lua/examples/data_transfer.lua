@@ -1,0 +1,27 @@
+-- Mirrors the one-shot text, bytes, and file sends in examples/data_transfer.
+local livekit = require("livekit-client")
+local url = arg[1] or os.getenv("LIVEKIT_URL")
+local token = arg[2] or os.getenv("LIVEKIT_TOKEN")
+local path = arg[3] or os.getenv("LIVEKIT_FILE")
+assert(url and token, "usage: data_transfer.lua <url> <token> [file]")
+
+local room = assert(livekit.new_room())
+local ok, err = livekit.run(room, function()
+  local connected, connect_error = assert(room:connect_async(url, token)):await()
+  assert(connected, connect_error)
+  local sent, send_error = assert(room:send_text_async("hello from Lua", "text-transfer")):await()
+  assert(sent, send_error)
+  sent, send_error = assert(room:send_bytes_async("livekit\0lua", "byte-transfer")):await()
+  assert(sent, send_error)
+  if path then
+    sent, send_error = assert(room:send_file_async(path, "file-transfer")):await()
+    assert(sent, send_error)
+    print("Sent file " .. path)
+  end
+  sent, send_error = assert(room:publish_data_async("hello", true, "data-transfer")):await()
+  assert(sent, send_error)
+  print("Sent text, bytes, and data message")
+  return assert(room:disconnect_async()):await()
+end)
+assert(ok, err)
+assert(room:close())

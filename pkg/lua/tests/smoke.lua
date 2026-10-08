@@ -27,6 +27,11 @@ local subscribed, subscribe_error = room:set_remote_track_subscribed("missing", 
 assert(subscribed == nil and type(subscribe_error) == "string")
 local settings, settings_error = room:update_remote_track_settings("missing", "missing", {enabled = false})
 assert(settings == nil and type(settings_error) == "string")
+local permissions, permissions_error = room:set_track_subscription_permissions(false, {
+  {participant_identity = "allowed", allow_all = false, allowed_track_sids = {"TR_test"}}
+})
+assert(permissions, permissions_error)
+assert(room:set_track_subscription_permissions(true, {}))
 assert(type(room:speaker_volume()) == "number")
 assert(type(room:speaker_is_muted()) == "boolean")
 assert(type(room:audio_playback_stats()) == "table")
@@ -100,3 +105,7 @@ local ok, message = room:connect("ws://localhost:7880", "unused")
 assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
+
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller"}) do
+  assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
+end

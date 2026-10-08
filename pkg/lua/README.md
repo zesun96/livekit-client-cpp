@@ -110,6 +110,9 @@ participant name, metadata, and attributes can be changed through `set_local_nam
 `set_local_metadata`, and `set_local_attributes`. Remote tracks can be controlled with
 `set_remote_track_subscribed(participant_sid, track_sid, subscribed)` and
 `update_remote_track_settings(participant_sid, track_sid, settings)`.
+Use `set_track_subscription_permissions(all_allowed, permissions)` to restrict access to local
+tracks. Each permission table may specify `participant_identity` or `participant_sid`, `allow_all`,
+and an `allowed_track_sids` array. Pass an empty array to clear per-participant permissions.
 
 `edit_chat_message` and `publish_dtmf` are synchronous. `perform_rpc(destination, method,
 payload, timeout_ms)` and its
@@ -126,6 +129,12 @@ Additional room events include `room_sid_changed` (`previous_sid`, `sid`),
 `connection_quality_changed` (`identity`, `quality`), and `active_speakers_changed`
 (`identities`, an array of participant identities). Track mute changes arrive as `track_muted`
 and `track_unmuted` with track and participant fields.
+Subscription feedback arrives as `track_subscription_permission_changed` (`allowed`),
+`track_subscription_failed` (`error`), `track_stream_state_changed` (`state`), and
+`track_subscription_status_changed` (`status`); each includes the track `sid` and participant
+`identity` when available.
+
+Runnable examples are in [examples](examples/README.md).
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
 exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Local media sources,

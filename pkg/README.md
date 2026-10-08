@@ -19,6 +19,7 @@ Swift, and Zig bindings have no implementation yet.
 | Local participant and remote participant snapshots | Yes | No | No | No |
 | Local participant metadata and attributes | Yes | No | No | No |
 | Remote track subscription and settings | Yes | No | No | No |
+| Track subscription permissions and feedback events | Yes | No | No | No |
 | Audio and video tracks, sources, and frames | No | No | No | No |
 | Text and byte streams, chat, and file transfer | Partial | No | No | No |
 | RPC | Partial | No | No | No |
