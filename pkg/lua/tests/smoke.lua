@@ -3,6 +3,7 @@ assert(require("livekit") == livekit)
 assert(type(livekit.version()) == "string")
 assert(livekit.DATA_TRACK_FRAME_ENCODING.JSON == 7)
 assert(livekit.DATA_TRACK_SCHEMA_ENCODING.JSON_SCHEMA == 7)
+assert(livekit.ICE_TRANSPORT_TYPE.ALL == 3)
 local original_log = livekit.log_options()
 assert(type(original_log) == "table" and type(original_log.livekit_level) == "number")
 assert(livekit.set_log_options({livekit_level = livekit.LOG_DEBUG}))
@@ -167,6 +168,13 @@ local encrypted, encrypted_error = assert(room:connect_async("", "", {
   e2ee = {enabled = true, shared_key = "\0secret", ratchet_salt = "salt"}
 })):wait(50)
 assert(encrypted == nil and type(encrypted_error) == "string")
+local advanced, advanced_error = assert(room:connect_async("", "", {
+  join_retries = 2, reconnect_timeout_ms = 1000,
+  continual_gathering_policy = livekit.CONTINUAL_GATHERING_POLICY.GATHER_ONCE,
+  ice_transport_type = livekit.ICE_TRANSPORT_TYPE.ALL,
+  ice_servers = {{urls = {"stun:stun.example.invalid:3478"}}}
+})):wait(50)
+assert(advanced == nil and type(advanced_error) == "string")
 local run_result, run_error = livekit.run(room, function()
   return assert(room:publish_data_async("data")):await()
 end)

@@ -55,7 +55,10 @@ room:close()
 
 `room:connect(url, token, options)`, `room:disconnect()`, and
 `room:publish_data(payload, reliable, topic)` are blocking calls. `reliable` defaults to `true`.
-Connection options support `auto_subscribe`, `adaptive_stream`, `dynacast`, and an `e2ee` table.
+Connection options support `auto_subscribe`, `adaptive_stream`, `dynacast`, `join_retries`,
+`reconnect_timeout_ms`, `continual_gathering_policy`, `ice_transport_type`, `ice_servers`, and
+an `e2ee` table. ICE servers are arrays of `{urls = {"stun:..."}, username, password}`;
+`CONTINUAL_GATHERING_POLICY` and `ICE_TRANSPORT_TYPE` provide enum values.
 The E2EE table accepts `enabled`, binary `shared_key`, `ratchet_salt`,
 `unencrypted_magic_bytes`, `ratchet_window_size`, `failure_tolerance`, `key_ring_size`, and
 `key_derivation` (`0` for PBKDF2 SHA-256, `1` for HKDF SHA-256).

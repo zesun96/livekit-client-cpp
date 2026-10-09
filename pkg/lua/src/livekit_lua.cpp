@@ -129,28 +129,54 @@ struct StreamWriterConfig {
 };
 
 struct ConnectConfig {
+	struct IceServer {
+		std::vector<std::string> urls;
+		std::string username;
+		std::string password;
+	};
 	lk_room_connect_options_t options{};
 	lk_e2ee_options_t e2ee{};
 	bool has_e2ee = false;
 	std::string shared_key;
 	std::string ratchet_salt;
 	std::string unencrypted_magic_bytes;
+	std::vector<IceServer> ice_servers;
+	std::vector<std::vector<const char*>> ice_urls;
+	std::vector<lk_ice_server_t> native_ice_servers;
 
 	void prepare() {
-		if (!has_e2ee)
-			return;
-		e2ee.shared_key =
-		    shared_key.empty() ? nullptr : reinterpret_cast<const uint8_t*>(shared_key.data());
-		e2ee.shared_key_size = shared_key.size();
-		e2ee.ratchet_salt =
-		    ratchet_salt.empty() ? nullptr : reinterpret_cast<const uint8_t*>(ratchet_salt.data());
-		e2ee.ratchet_salt_size = ratchet_salt.size();
-		e2ee.unencrypted_magic_bytes =
-		    unencrypted_magic_bytes.empty()
-		        ? nullptr
-		        : reinterpret_cast<const uint8_t*>(unencrypted_magic_bytes.data());
-		e2ee.unencrypted_magic_bytes_size = unencrypted_magic_bytes.size();
-		options.e2ee_options = &e2ee;
+		if (has_e2ee) {
+			e2ee.shared_key =
+			    shared_key.empty() ? nullptr : reinterpret_cast<const uint8_t*>(shared_key.data());
+			e2ee.shared_key_size = shared_key.size();
+			e2ee.ratchet_salt = ratchet_salt.empty()
+			                        ? nullptr
+			                        : reinterpret_cast<const uint8_t*>(ratchet_salt.data());
+			e2ee.ratchet_salt_size = ratchet_salt.size();
+			e2ee.unencrypted_magic_bytes =
+			    unencrypted_magic_bytes.empty()
+			        ? nullptr
+			        : reinterpret_cast<const uint8_t*>(unencrypted_magic_bytes.data());
+			e2ee.unencrypted_magic_bytes_size = unencrypted_magic_bytes.size();
+			options.e2ee_options = &e2ee;
+		}
+		ice_urls.clear();
+		native_ice_servers.clear();
+		ice_urls.resize(ice_servers.size());
+		native_ice_servers.reserve(ice_servers.size());
+		for (size_t i = 0; i < ice_servers.size(); ++i) {
+			for (const auto& url : ice_servers[i].urls)
+				ice_urls[i].push_back(url.c_str());
+			lk_ice_server_t server{};
+			server.struct_size = sizeof(server);
+			server.urls = ice_urls[i].data();
+			server.url_count = ice_urls[i].size();
+			server.username = ice_servers[i].username.c_str();
+			server.password = ice_servers[i].password.c_str();
+			native_ice_servers.push_back(server);
+		}
+		options.ice_servers = native_ice_servers.data();
+		options.ice_server_count = native_ice_servers.size();
 	}
 };
 
@@ -1440,6 +1466,77 @@ void read_connect_options(lua_State* L, ConnectConfig& config) {
 		lua_getfield(L, 4, "dynacast");
 		if (!lua_isnil(L, -1))
 			config.options.dynacast = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		for (const auto* key : {"join_retries", "reconnect_timeout_ms"}) {
+			lua_getfield(L, 4, key);
+			if (!lua_isnil(L, -1)) {
+				const lua_Integer value = luaL_checkinteger(L, -1);
+				luaL_argcheck(L, value > 0 && value <= UINT32_MAX, 4,
+				              "connection retry or timeout is out of range");
+				if (std::strcmp(key, "join_retries") == 0)
+					config.options.join_retries = static_cast<uint32_t>(value);
+				else
+					config.options.reconnect_timeout_ms = static_cast<uint32_t>(value);
+			}
+			lua_pop(L, 1);
+		}
+		lua_getfield(L, 4, "continual_gathering_policy");
+		if (!lua_isnil(L, -1)) {
+			const lua_Integer value = luaL_checkinteger(L, -1);
+			luaL_argcheck(L,
+			              value >= LK_CONTINUAL_GATHERING_POLICY_GATHER_ONCE &&
+			                  value <= LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY,
+			              4, "invalid continual gathering policy");
+			config.options.continual_gathering_policy =
+			    static_cast<lk_continual_gathering_policy_t>(value);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, 4, "ice_transport_type");
+		if (!lua_isnil(L, -1)) {
+			const lua_Integer value = luaL_checkinteger(L, -1);
+			luaL_argcheck(L,
+			              value >= LK_ICE_TRANSPORT_TYPE_NONE && value <= LK_ICE_TRANSPORT_TYPE_ALL,
+			              4, "invalid ICE transport type");
+			config.options.ice_transport_type = static_cast<lk_ice_transport_type_t>(value);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, 4, "ice_servers");
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TTABLE);
+#if LUA_VERSION_NUM < 502
+			const size_t server_count = lua_objlen(L, -1);
+#else
+			const size_t server_count = lua_rawlen(L, -1);
+#endif
+			for (size_t i = 1; i <= server_count; ++i) {
+				lua_rawgeti(L, -1, static_cast<int>(i));
+				luaL_checktype(L, -1, LUA_TTABLE);
+				ConnectConfig::IceServer server;
+				lua_getfield(L, -1, "urls");
+				luaL_checktype(L, -1, LUA_TTABLE);
+#if LUA_VERSION_NUM < 502
+				const size_t url_count = lua_objlen(L, -1);
+#else
+				const size_t url_count = lua_rawlen(L, -1);
+#endif
+				for (size_t j = 1; j <= url_count; ++j) {
+					lua_rawgeti(L, -1, static_cast<int>(j));
+					server.urls.emplace_back(luaL_checkstring(L, -1));
+					lua_pop(L, 1);
+				}
+				lua_pop(L, 1);
+				lua_getfield(L, -1, "username");
+				if (!lua_isnil(L, -1))
+					server.username = luaL_checkstring(L, -1);
+				lua_pop(L, 1);
+				lua_getfield(L, -1, "password");
+				if (!lua_isnil(L, -1))
+					server.password = luaL_checkstring(L, -1);
+				lua_pop(L, 1);
+				config.ice_servers.push_back(std::move(server));
+				lua_pop(L, 1);
+			}
+		}
 		lua_pop(L, 1);
 		lua_getfield(L, 4, "e2ee");
 		if (!lua_isnil(L, -1)) {
@@ -4650,5 +4747,20 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 		lua_setfield(L, -2, encoding.first);
 	}
 	lua_setfield(L, -2, "DATA_TRACK_SCHEMA_ENCODING");
+	lua_newtable(L);
+	lua_pushinteger(L, LK_CONTINUAL_GATHERING_POLICY_GATHER_ONCE);
+	lua_setfield(L, -2, "GATHER_ONCE");
+	lua_pushinteger(L, LK_CONTINUAL_GATHERING_POLICY_GATHER_CONTINUALLY);
+	lua_setfield(L, -2, "GATHER_CONTINUALLY");
+	lua_setfield(L, -2, "CONTINUAL_GATHERING_POLICY");
+	lua_newtable(L);
+	for (const auto& transport : {std::pair{"NONE", LK_ICE_TRANSPORT_TYPE_NONE},
+	                              {"RELAY", LK_ICE_TRANSPORT_TYPE_RELAY},
+	                              {"NO_HOST", LK_ICE_TRANSPORT_TYPE_NO_HOST},
+	                              {"ALL", LK_ICE_TRANSPORT_TYPE_ALL}}) {
+		lua_pushinteger(L, transport.second);
+		lua_setfield(L, -2, transport.first);
+	}
+	lua_setfield(L, -2, "ICE_TRANSPORT_TYPE");
 	return 1;
 }
