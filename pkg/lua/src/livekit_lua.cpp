@@ -79,7 +79,35 @@ enum class AsyncOperation {
 	OpenStreamWriter,
 	WriteStreamWriter,
 	CloseStreamWriter,
-	CancelStreamWriter
+	CancelStreamWriter,
+	StoreDataTrackSchema,
+	GetDataTrackSchema,
+	PublishDataTrack,
+	SubscribeDataTrack
+};
+
+struct SchemaIdConfig {
+	std::string name;
+	std::string custom_encoding;
+	lk_data_track_schema_encoding_t encoding = LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED;
+
+	lk_data_track_schema_id_t value() const {
+		lk_data_track_schema_id_t result;
+		lk_data_track_schema_id_init(&result);
+		result.name = name.c_str();
+		result.encoding = encoding;
+		result.custom_encoding = custom_encoding.c_str();
+		return result;
+	}
+};
+
+struct DataTrackPublishConfig {
+	std::string name;
+	std::string custom_frame_encoding;
+	SchemaIdConfig schema;
+	bool has_frame_encoding = false;
+	lk_data_track_frame_encoding_t frame_encoding = LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED;
+	bool has_schema = false;
 };
 
 struct StreamWriterConfig {
@@ -146,6 +174,9 @@ struct AsyncTask {
 	CaptureConfig capture;
 	CaptureAction capture_action = CaptureAction::Start;
 	StreamWriterConfig stream_config;
+	SchemaIdConfig schema_id;
+	DataTrackPublishConfig data_track_publish;
+	lk_data_track_subscription_options_t data_track_subscription{};
 	ConnectConfig connect;
 	bool reliable = true;
 	bool done = false;
@@ -197,6 +228,11 @@ struct StreamWriter {
 	lk_byte_stream_writer_t* bytes = nullptr;
 };
 
+struct DataTrackHandles {
+	std::map<uint64_t, lk_local_data_track_t*> local;
+	std::map<uint64_t, lk_data_track_reader_t*> readers;
+};
+
 struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
@@ -209,6 +245,7 @@ struct Room {
 	std::map<uint64_t, LocalMediaTrack> local_tracks;
 	std::map<uint64_t, RemoteMediaStream> remote_streams;
 	std::map<uint64_t, StreamWriter> stream_writers;
+	DataTrackHandles data_tracks;
 	uint64_t next_media_id = 1;
 	size_t dropped = 0;
 	std::thread worker;
@@ -232,6 +269,11 @@ lk_status_t capture_control_native(Room* room, uint64_t id, CaptureAction action
 lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& config, uint64_t& id);
 lk_status_t stream_writer_operation_native(Room* room, AsyncOperation operation, uint64_t id,
                                            const std::string& data, std::string& error);
+lk_data_track_error_code_t
+publish_data_track_native(Room* room, const DataTrackPublishConfig& config, uint64_t& id);
+lk_data_track_error_code_t
+subscribe_data_track_native(Room* room, const char* identity, const char* sid,
+                            const lk_data_track_subscription_options_t& options, uint64_t& id);
 const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
                                 lua_Integer width, lua_Integer height, const char* format,
                                 int64_t timestamp_us);
@@ -347,6 +389,38 @@ lk_status_t stream_writer_operation_native(Room* room, AsyncOperation operation,
 	if (operation == AsyncOperation::CloseStreamWriter)
 		return lk_byte_stream_writer_close(writer.bytes);
 	return lk_byte_stream_writer_cancel(writer.bytes, data.c_str());
+}
+
+lk_data_track_error_code_t
+publish_data_track_native(Room* room, const DataTrackPublishConfig& config, uint64_t& id) {
+	lk_data_track_publish_options_t options;
+	lk_data_track_publish_options_init(&options);
+	options.name = config.name.c_str();
+	options.has_frame_encoding = config.has_frame_encoding;
+	options.frame_encoding = config.frame_encoding;
+	options.custom_frame_encoding = config.custom_frame_encoding.c_str();
+	options.has_schema = config.has_schema;
+	if (config.has_schema)
+		options.schema = config.schema.value();
+	lk_local_data_track_t* track = nullptr;
+	const auto code = lk_room_publish_data_track(room->native, &options, &track);
+	if (code == LK_DATA_TRACK_ERROR_NONE) {
+		id = room->next_media_id++;
+		room->data_tracks.local.emplace(id, track);
+	}
+	return code;
+}
+
+lk_data_track_error_code_t
+subscribe_data_track_native(Room* room, const char* identity, const char* sid,
+                            const lk_data_track_subscription_options_t& options, uint64_t& id) {
+	lk_data_track_reader_t* reader = nullptr;
+	const auto code = lk_room_subscribe_data_track(room->native, identity, sid, &options, &reader);
+	if (code == LK_DATA_TRACK_ERROR_NONE) {
+		id = room->next_media_id++;
+		room->data_tracks.readers.emplace(id, reader);
+	}
+	return code;
 }
 
 bool enqueue(Room* room, Event event) noexcept {
@@ -555,6 +629,58 @@ void worker_loop(Room* room) noexcept {
 				status = stream_writer_operation_native(room, task->operation, task->media_id,
 				                                        task->first, error);
 				break;
+			case AsyncOperation::StoreDataTrackSchema: {
+				const auto schema = task->schema_id.value();
+				const auto code = lk_room_store_data_track_schema(
+				    room->native, &schema, reinterpret_cast<const uint8_t*>(task->first.data()),
+				    task->first.size());
+				status =
+				    code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				break;
+			}
+			case AsyncOperation::GetDataTrackSchema: {
+				const auto schema = task->schema_id.value();
+				lk_data_track_schema_t* raw = nullptr;
+				const auto code =
+				    lk_room_get_data_track_schema(room->native, task->first.c_str(), &schema, &raw);
+				status =
+				    code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				std::unique_ptr<lk_data_track_schema_t, decltype(&lk_data_track_schema_destroy)>
+				    result(raw, lk_data_track_schema_destroy);
+				if (status == LK_STATUS_OK) {
+					auto copy_string = [raw](auto getter) {
+						const size_t size = getter(raw, nullptr, 0);
+						std::string value(size, '\0');
+						if (size != 0) {
+							getter(raw, value.data(), value.size());
+							value.resize(size - 1);
+						}
+						return value;
+					};
+					task->second = copy_string(lk_data_track_schema_name);
+					task->mime_type = copy_string(lk_data_track_schema_custom_encoding);
+					task->media_channels = lk_data_track_schema_encoding(raw);
+					const size_t size = lk_data_track_schema_definition(raw, nullptr, 0);
+					task->name.resize(size);
+					if (size != 0)
+						lk_data_track_schema_definition(
+						    raw, reinterpret_cast<uint8_t*>(task->name.data()), size);
+				}
+				break;
+			}
+			case AsyncOperation::PublishDataTrack: {
+				const auto code =
+				    publish_data_track_native(room, task->data_track_publish, task->media_id);
+				status = code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				break;
+			}
+			case AsyncOperation::SubscribeDataTrack: {
+				const auto code = subscribe_data_track_native(room, task->first.c_str(),
+				                                              task->second.c_str(),
+				                                              task->data_track_subscription, task->media_id);
+				status = code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				break;
+			}
 			}
 			if (status != LK_STATUS_OK && error.empty())
 				error = safe(lk_last_error());
@@ -972,6 +1098,15 @@ int close_room(lua_State* L) {
 				lk_byte_stream_writer_destroy(writer.bytes);
 		}
 		room->stream_writers.clear();
+		for (auto& [id, reader] : room->data_tracks.readers)
+			lk_data_track_reader_destroy(reader);
+		room->data_tracks.readers.clear();
+		for (auto& [id, track] : room->data_tracks.local) {
+			if (lk_local_data_track_is_published(track))
+				lk_local_data_track_unpublish(track);
+			lk_local_data_track_destroy(track);
+		}
+		room->data_tracks.local.clear();
 		if (lk_room_is_connected(room->native)) {
 			for (auto& [id, media] : room->local_tracks)
 				lk_local_track_unpublish(media.track, 1);
@@ -1572,14 +1707,22 @@ int async_result(lua_State* L) {
 		if (task->operation == AsyncOperation::Rpc)
 			push_rpc_result(L, task->rpc_ok, task->rpc_error_code, task->rpc_payload,
 			                task->rpc_error_message, task->rpc_error_data);
-		else if (task->operation == AsyncOperation::Chat) {
+		else if (task->operation == AsyncOperation::GetDataTrackSchema) {
+			lua_newtable(L);
+			string_field(L, "name", task->second);
+			integer_field(L, "encoding", task->media_channels);
+			string_field(L, "custom_encoding", task->mime_type);
+			string_field(L, "definition", task->name);
+		} else if (task->operation == AsyncOperation::Chat) {
 			lua_newtable(L);
 			string_field(L, "id", task->chat_id);
 			number_field(L, "timestamp", static_cast<lua_Number>(task->chat_timestamp));
 		} else if (task->operation == AsyncOperation::PublishAudioTrack ||
 		           task->operation == AsyncOperation::PublishVideoTrack ||
 		           task->operation == AsyncOperation::PublishCaptureTrack ||
-		           task->operation == AsyncOperation::OpenStreamWriter)
+		           task->operation == AsyncOperation::OpenStreamWriter ||
+		           task->operation == AsyncOperation::PublishDataTrack ||
+		           task->operation == AsyncOperation::SubscribeDataTrack)
 			lua_pushnumber(L, static_cast<lua_Number>(task->media_id));
 		else
 			lua_pushboolean(L, 1);
@@ -3586,6 +3729,404 @@ int stream_writer_info(lua_State* L) {
 	return 1;
 }
 
+int data_track_error(lua_State* L, lk_data_track_error_code_t code) {
+	if (code == LK_DATA_TRACK_ERROR_NONE) {
+		lua_pushboolean(L, 1);
+		return 1;
+	}
+	lua_pushnil(L);
+	lua_pushstring(L, safe(lk_last_error()));
+	lua_pushinteger(L, code);
+	return 3;
+}
+
+SchemaIdConfig read_schema_id(lua_State* L, int index) {
+	luaL_checktype(L, index, LUA_TTABLE);
+	SchemaIdConfig config;
+	lua_getfield(L, index, "name");
+	config.name = luaL_checkstring(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, index, "encoding");
+	if (!lua_isnil(L, -1))
+		config.encoding = static_cast<lk_data_track_schema_encoding_t>(luaL_checkinteger(L, -1));
+	lua_pop(L, 1);
+	lua_getfield(L, index, "custom_encoding");
+	if (!lua_isnil(L, -1))
+		config.custom_encoding = luaL_checkstring(L, -1);
+	lua_pop(L, 1);
+	return config;
+}
+
+int store_data_track_schema(lua_State* L) {
+	Room* room = check_room(L, 1);
+	auto config = read_schema_id(L, 2);
+	size_t size = 0;
+	const char* definition = luaL_checklstring(L, 3, &size);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto schema = config.value();
+	return data_track_error(
+	    L, lk_room_store_data_track_schema(room->native, &schema,
+	                                       reinterpret_cast<const uint8_t*>(definition), size));
+}
+
+int start_store_data_track_schema(lua_State* L) {
+	Room* room = check_room(L, 1);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::StoreDataTrackSchema;
+	task->schema_id = read_schema_id(L, 2);
+	size_t size = 0;
+	const char* definition = luaL_checklstring(L, 3, &size);
+	task->first.assign(definition, size);
+	return start_task(L, room, std::move(task));
+}
+
+int get_data_track_schema(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	auto config = read_schema_id(L, 3);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto schema_id = config.value();
+	lk_data_track_schema_t* raw = nullptr;
+	const auto code = lk_room_get_data_track_schema(room->native, identity, &schema_id, &raw);
+	if (code != LK_DATA_TRACK_ERROR_NONE)
+		return data_track_error(L, code);
+	std::unique_ptr<lk_data_track_schema_t, decltype(&lk_data_track_schema_destroy)> schema(
+	    raw, lk_data_track_schema_destroy);
+	lua_newtable(L);
+	string_field(L, "name", owned_string(lk_data_track_schema_name, raw));
+	integer_field(L, "encoding", lk_data_track_schema_encoding(raw));
+	string_field(L, "custom_encoding", owned_string(lk_data_track_schema_custom_encoding, raw));
+	const size_t size = lk_data_track_schema_definition(raw, nullptr, 0);
+	std::string definition(size, '\0');
+	if (size != 0)
+		lk_data_track_schema_definition(raw, reinterpret_cast<uint8_t*>(definition.data()), size);
+	string_field(L, "definition", definition);
+	return 1;
+}
+
+int start_get_data_track_schema(lua_State* L) {
+	Room* room = check_room(L, 1);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::GetDataTrackSchema;
+	task->first = luaL_checkstring(L, 2);
+	task->schema_id = read_schema_id(L, 3);
+	return start_task(L, room, std::move(task));
+}
+
+DataTrackPublishConfig read_data_track_publish_config(lua_State* L) {
+	DataTrackPublishConfig config;
+	config.name = luaL_checkstring(L, 2);
+	luaL_checktype(L, 3, LUA_TTABLE);
+	lua_getfield(L, 3, "frame_encoding");
+	if (!lua_isnil(L, -1)) {
+		config.has_frame_encoding = true;
+		config.frame_encoding =
+		    static_cast<lk_data_track_frame_encoding_t>(luaL_checkinteger(L, -1));
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 3, "custom_frame_encoding");
+	if (!lua_isnil(L, -1))
+		config.custom_frame_encoding = luaL_checkstring(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, 3, "schema");
+	if (!lua_isnil(L, -1)) {
+		config.schema = read_schema_id(L, lua_gettop(L));
+		config.has_schema = true;
+	}
+	lua_pop(L, 1);
+	return config;
+}
+
+int publish_data_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const auto config = read_data_track_publish_config(L);
+	if (async_busy(room))
+		return busy_result(L);
+	uint64_t id = 0;
+	const auto code = publish_data_track_native(room, config, id);
+	if (code != LK_DATA_TRACK_ERROR_NONE)
+		return data_track_error(L, code);
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+
+int start_publish_data_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::PublishDataTrack;
+	task->data_track_publish = read_data_track_publish_config(L);
+	return start_task(L, room, std::move(task));
+}
+
+int data_track_info(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.local.find(id);
+	if (found == room->data_tracks.local.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "local DataTrack is unavailable");
+		return 2;
+	}
+	lk_data_track_snapshot_info_t info;
+	lk_data_track_snapshot_info_init(&info);
+	const auto status = lk_local_data_track_info(found->second, &info);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_newtable(L);
+	string_field(L, "sid", owned_string(lk_local_data_track_sid, found->second));
+	string_field(L, "name", owned_string(lk_local_data_track_name, found->second));
+	string_field(L, "custom_frame_encoding",
+	             owned_string(lk_local_data_track_custom_frame_encoding, found->second));
+	string_field(L, "schema_name", owned_string(lk_local_data_track_schema_name, found->second));
+	string_field(L, "custom_schema_encoding",
+	             owned_string(lk_local_data_track_custom_schema_encoding, found->second));
+	boolean_field(L, "is_published", lk_local_data_track_is_published(found->second));
+	boolean_field(L, "uses_e2ee", info.uses_e2ee != 0);
+	integer_field(L, "publisher_handle", info.publisher_handle);
+	if (info.has_frame_encoding)
+		integer_field(L, "frame_encoding", info.frame_encoding);
+	if (info.has_schema)
+		integer_field(L, "schema_encoding", info.schema_encoding);
+	return 1;
+}
+
+int data_track_push(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	size_t size = 0;
+	const char* data = luaL_checklstring(L, 3, &size);
+	const bool has_timestamp = !lua_isnoneornil(L, 4);
+	uint64_t timestamp = 0;
+	if (has_timestamp) {
+		const lua_Number value = luaL_checknumber(L, 4);
+		luaL_argcheck(L,
+		              std::isfinite(value) && value >= 0 && std::floor(value) == value &&
+		                  value <= 9007199254740991.0,
+		              4, "user_timestamp must be a nonnegative exact integer");
+		timestamp = static_cast<uint64_t>(value);
+	}
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.local.find(id);
+	if (found == room->data_tracks.local.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "local DataTrack is unavailable");
+		return 2;
+	}
+	return data_track_error(L, lk_local_data_track_try_push(found->second,
+	                                                        reinterpret_cast<const uint8_t*>(data),
+	                                                        size, has_timestamp, timestamp));
+}
+
+int unpublish_data_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.local.find(id);
+	if (found == room->data_tracks.local.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "local DataTrack is unavailable");
+		return 2;
+	}
+	const auto code = lk_local_data_track_unpublish(found->second);
+	if (code != LK_DATA_TRACK_ERROR_NONE)
+		return data_track_error(L, code);
+	const auto destroy_code = lk_local_data_track_destroy(found->second);
+	if (destroy_code != LK_DATA_TRACK_ERROR_NONE)
+		return data_track_error(L, destroy_code);
+	room->data_tracks.local.erase(found);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+int remote_data_tracks(lua_State* L) {
+	Room* room = check_room(L, 1);
+	if (async_busy(room))
+		return busy_result(L);
+	lk_remote_data_track_list_t* raw = nullptr;
+	const auto status = lk_room_create_remote_data_track_snapshot(room->native, &raw);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	std::unique_ptr<lk_remote_data_track_list_t, decltype(&lk_remote_data_track_list_destroy)> list(
+	    raw, lk_remote_data_track_list_destroy);
+	lua_newtable(L);
+	for (size_t i = 0; i < lk_remote_data_track_list_count(raw); ++i) {
+		const lk_remote_data_track_snapshot_t* track = nullptr;
+		const auto item_status = lk_remote_data_track_list_at(raw, i, &track);
+		if (item_status != LK_STATUS_OK)
+			return status_result(L, item_status);
+		lk_data_track_snapshot_info_t info;
+		lk_data_track_snapshot_info_init(&info);
+		const auto info_status = lk_remote_data_track_snapshot_info(track, &info);
+		if (info_status != LK_STATUS_OK)
+			return status_result(L, info_status);
+		lua_newtable(L);
+		string_field(L, "participant_identity",
+		             owned_string(lk_remote_data_track_snapshot_publisher_identity, track));
+		string_field(L, "sid", owned_string(lk_remote_data_track_snapshot_sid, track));
+		string_field(L, "name", owned_string(lk_remote_data_track_snapshot_name, track));
+		string_field(L, "custom_frame_encoding",
+		             owned_string(lk_remote_data_track_snapshot_custom_frame_encoding, track));
+		string_field(L, "schema_name",
+		             owned_string(lk_remote_data_track_snapshot_schema_name, track));
+		string_field(L, "custom_schema_encoding",
+		             owned_string(lk_remote_data_track_snapshot_custom_schema_encoding, track));
+		integer_field(L, "publisher_handle", info.publisher_handle);
+		boolean_field(L, "uses_e2ee", info.uses_e2ee != 0);
+		boolean_field(L, "is_published", info.is_published != 0);
+		if (info.has_frame_encoding)
+			integer_field(L, "frame_encoding", info.frame_encoding);
+		if (info.has_schema)
+			integer_field(L, "schema_encoding", info.schema_encoding);
+		lua_rawseti(L, -2, static_cast<int>(i + 1));
+	}
+	return 1;
+}
+
+lk_data_track_subscription_options_t read_data_track_subscription_options(lua_State* L, int index) {
+	lk_data_track_subscription_options_t options;
+	lk_data_track_subscription_options_init(&options);
+	if (lua_isnoneornil(L, index))
+		return options;
+	luaL_checktype(L, index, LUA_TTABLE);
+	lua_getfield(L, index, "target_fps");
+	if (!lua_isnil(L, -1)) {
+		const lua_Integer fps = luaL_checkinteger(L, -1);
+		luaL_argcheck(L, fps > 0 && fps <= UINT32_MAX, index, "target_fps is out of range");
+		options.has_target_fps = 1;
+		options.target_fps = static_cast<uint32_t>(fps);
+	}
+	lua_pop(L, 1);
+	for (const auto* key : {"buffer_capacity", "max_partial_frames"}) {
+		lua_getfield(L, index, key);
+		if (!lua_isnil(L, -1)) {
+			const lua_Integer value = luaL_checkinteger(L, -1);
+			luaL_argcheck(L, value > 0, index, "subscription capacity must be positive");
+			if (std::strcmp(key, "buffer_capacity") == 0)
+				options.buffer_capacity = static_cast<size_t>(value);
+			else
+				options.max_partial_frames = static_cast<size_t>(value);
+		}
+		lua_pop(L, 1);
+	}
+	return options;
+}
+
+int subscribe_data_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* sid = luaL_checkstring(L, 3);
+	const auto options = read_data_track_subscription_options(L, 4);
+	if (async_busy(room))
+		return busy_result(L);
+	uint64_t id = 0;
+	const auto code = subscribe_data_track_native(room, identity, sid, options, id);
+	if (code != LK_DATA_TRACK_ERROR_NONE)
+		return data_track_error(L, code);
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+
+int start_subscribe_data_track(lua_State* L) {
+	Room* room = check_room(L, 1);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::SubscribeDataTrack;
+	task->first = luaL_checkstring(L, 2);
+	task->second = luaL_checkstring(L, 3);
+	task->data_track_subscription = read_data_track_subscription_options(L, 4);
+	return start_task(L, room, std::move(task));
+}
+
+int update_data_track_subscription(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* sid = luaL_checkstring(L, 3);
+	const auto options = read_data_track_subscription_options(L, 4);
+	if (async_busy(room))
+		return busy_result(L);
+	return data_track_error(
+	    L, lk_room_update_data_track_subscription_options(room->native, identity, sid, &options));
+}
+
+int read_data_track_frame(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	const lua_Integer timeout = luaL_optinteger(L, 3, 0);
+	luaL_argcheck(L, timeout >= 0 && timeout <= UINT32_MAX, 3, "timeout is out of range");
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.readers.find(id);
+	if (found == room->data_tracks.readers.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "DataTrack reader is unavailable");
+		return 2;
+	}
+	lk_data_track_frame_t* raw = nullptr;
+	const auto status =
+	    timeout == 0
+	        ? lk_data_track_reader_try_read(found->second, &raw)
+	        : lk_data_track_reader_read_for(found->second, static_cast<uint32_t>(timeout), &raw);
+	if (status != LK_DATA_TRACK_READ_FRAME) {
+		lua_pushnil(L);
+		lua_pushstring(L, status == LK_DATA_TRACK_READ_EMPTY    ? "empty"
+		                  : status == LK_DATA_TRACK_READ_CLOSED ? "closed"
+		                                                        : "invalid DataTrack reader");
+		return 2;
+	}
+	std::unique_ptr<lk_data_track_frame_t, decltype(&lk_data_track_frame_destroy)> frame(
+	    raw, lk_data_track_frame_destroy);
+	const size_t size = lk_data_track_frame_data(raw, nullptr, 0);
+	std::string data(size, '\0');
+	if (size != 0)
+		lk_data_track_frame_data(raw, reinterpret_cast<uint8_t*>(data.data()), size);
+	lua_newtable(L);
+	string_field(L, "data", data);
+	if (lk_data_track_frame_has_user_timestamp(raw))
+		number_field(L, "user_timestamp",
+		             static_cast<lua_Number>(lk_data_track_frame_user_timestamp(raw)));
+	return 1;
+}
+
+int close_data_track_reader(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.readers.find(id);
+	if (found == room->data_tracks.readers.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "DataTrack reader is unavailable");
+		return 2;
+	}
+	lk_data_track_reader_destroy(found->second);
+	room->data_tracks.readers.erase(found);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+int data_track_reader_stats(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->data_tracks.readers.find(id);
+	if (found == room->data_tracks.readers.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "DataTrack reader is unavailable");
+		return 2;
+	}
+	lua_newtable(L);
+	boolean_field(L, "is_closed", lk_data_track_reader_is_closed(found->second));
+	number_field(L, "dropped_frames",
+	             static_cast<lua_Number>(lk_data_track_reader_dropped_frames(found->second)));
+	return 1;
+}
+
 int send_text(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* text = luaL_checkstring(L, 2);
@@ -3976,6 +4517,22 @@ const luaL_Reg room_methods[] = {
     {"_start_stream_writer_cancel", start_stream_writer_cancel},
     {"stream_writer_release", stream_writer_release},
     {"stream_writer_info", stream_writer_info},
+    {"store_data_track_schema", store_data_track_schema},
+    {"_start_store_data_track_schema", start_store_data_track_schema},
+    {"get_data_track_schema", get_data_track_schema},
+    {"_start_get_data_track_schema", start_get_data_track_schema},
+    {"publish_data_track", publish_data_track},
+    {"_start_publish_data_track", start_publish_data_track},
+    {"data_track_info", data_track_info},
+    {"data_track_push", data_track_push},
+    {"unpublish_data_track", unpublish_data_track},
+    {"remote_data_tracks", remote_data_tracks},
+    {"subscribe_data_track", subscribe_data_track},
+    {"_start_subscribe_data_track", start_subscribe_data_track},
+    {"update_data_track_subscription", update_data_track_subscription},
+    {"read_data_track_frame", read_data_track_frame},
+    {"close_data_track_reader", close_data_track_reader},
+    {"data_track_reader_stats", data_track_reader_stats},
     {"send_text", send_text},
     {"_start_text", start_text},
     {"send_bytes", send_bytes},
@@ -4064,5 +4621,34 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 		lua_pushinteger(L, category.second);
 		lua_setfield(L, -2, category.first);
 	}
+	lua_newtable(L);
+	for (const auto& encoding : {std::pair{"UNSPECIFIED", LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED},
+	                             {"ROS1", LK_DATA_TRACK_FRAME_ENCODING_ROS1},
+	                             {"CDR", LK_DATA_TRACK_FRAME_ENCODING_CDR},
+	                             {"PROTOBUF", LK_DATA_TRACK_FRAME_ENCODING_PROTOBUF},
+	                             {"FLATBUFFER", LK_DATA_TRACK_FRAME_ENCODING_FLATBUFFER},
+	                             {"CBOR", LK_DATA_TRACK_FRAME_ENCODING_CBOR},
+	                             {"MSGPACK", LK_DATA_TRACK_FRAME_ENCODING_MSGPACK},
+	                             {"JSON", LK_DATA_TRACK_FRAME_ENCODING_JSON},
+	                             {"CUSTOM", LK_DATA_TRACK_FRAME_ENCODING_CUSTOM}}) {
+		lua_pushinteger(L, encoding.second);
+		lua_setfield(L, -2, encoding.first);
+	}
+	lua_setfield(L, -2, "DATA_TRACK_FRAME_ENCODING");
+	lua_newtable(L);
+	for (const auto& encoding :
+	     {std::pair{"UNSPECIFIED", LK_DATA_TRACK_SCHEMA_ENCODING_UNSPECIFIED},
+	      {"PROTOBUF", LK_DATA_TRACK_SCHEMA_ENCODING_PROTOBUF},
+	      {"FLATBUFFER", LK_DATA_TRACK_SCHEMA_ENCODING_FLATBUFFER},
+	      {"ROS1_MESSAGE", LK_DATA_TRACK_SCHEMA_ENCODING_ROS1_MESSAGE},
+	      {"ROS2_MESSAGE", LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_MESSAGE},
+	      {"ROS2_IDL", LK_DATA_TRACK_SCHEMA_ENCODING_ROS2_IDL},
+	      {"OMG_IDL", LK_DATA_TRACK_SCHEMA_ENCODING_OMG_IDL},
+	      {"JSON_SCHEMA", LK_DATA_TRACK_SCHEMA_ENCODING_JSON_SCHEMA},
+	      {"CUSTOM", LK_DATA_TRACK_SCHEMA_ENCODING_CUSTOM}}) {
+		lua_pushinteger(L, encoding.second);
+		lua_setfield(L, -2, encoding.first);
+	}
+	lua_setfield(L, -2, "DATA_TRACK_SCHEMA_ENCODING");
 	return 1;
 }

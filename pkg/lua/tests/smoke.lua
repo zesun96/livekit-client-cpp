@@ -1,6 +1,8 @@
 local livekit = require("livekit-client")
 assert(require("livekit") == livekit)
 assert(type(livekit.version()) == "string")
+assert(livekit.DATA_TRACK_FRAME_ENCODING.JSON == 7)
+assert(livekit.DATA_TRACK_SCHEMA_ENCODING.JSON_SCHEMA == 7)
 local original_log = livekit.log_options()
 assert(type(original_log) == "table" and type(original_log.livekit_level) == "number")
 assert(livekit.set_log_options({livekit_level = livekit.LOG_DEBUG}))
@@ -38,6 +40,11 @@ local missing_writer, missing_writer_error = room:stream_writer_info(99999)
 assert(missing_writer == nil and missing_writer_error == "stream writer is unavailable")
 local missing_write, missing_write_error = room:stream_writer_write(99999, "data")
 assert(missing_write == nil and missing_write_error == "stream writer is unavailable")
+local missing_data_track, missing_data_track_error = room:data_track_info(99999)
+assert(missing_data_track == nil and missing_data_track_error == "local DataTrack is unavailable")
+local missing_reader, missing_reader_error = room:read_data_track_frame(99999)
+assert(missing_reader == nil and missing_reader_error == "DataTrack reader is unavailable")
+assert(type(room:remote_data_tracks()) == "table")
 assert(type(room:state()) == "number")
 assert(type(room:sid()) == "string")
 assert(type(room:name()) == "string")
@@ -179,6 +186,6 @@ assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
 
-for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "stream_writer", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "stream_writer", "data_track_schema", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
   assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
 end

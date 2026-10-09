@@ -256,6 +256,22 @@ function room_methods:stream_writer_cancel_async(id, reason)
   return future_for(self, self:_start_stream_writer_cancel(id, reason))
 end
 
+function room_methods:store_data_track_schema_async(schema_id, definition)
+  return future_for(self, self:_start_store_data_track_schema(schema_id, definition))
+end
+
+function room_methods:get_data_track_schema_async(identity, schema_id)
+  return future_for(self, self:_start_get_data_track_schema(identity, schema_id))
+end
+
+function room_methods:publish_data_track_async(name, options)
+  return future_for(self, self:_start_publish_data_track(name, options or {}))
+end
+
+function room_methods:subscribe_data_track_async(identity, sid, options)
+  return future_for(self, self:_start_subscribe_data_track(identity, sid, options))
+end
+
 function room_methods:poll(max_events)
   local count, err = native_poll(self, max_events)
   if not count then return nil, err end

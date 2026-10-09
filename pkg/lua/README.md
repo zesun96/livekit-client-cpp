@@ -149,6 +149,24 @@ any remaining writers. Options accept `topic`, `stream_id`, `destination_identit
 `mime_type` and `name`. Stream data is delivered through `text_received` and `byte_received`
 events after completion. Lua strings preserve binary byte chunks.
 
+DataTrack uses binary-safe Lua strings for schema definitions and frames. Call
+`store_data_track_schema({name, encoding, custom_encoding}, definition)` before publishing a
+track that names that schema. `get_data_track_schema(participant_identity, schema_id)` retrieves
+its definition. These operations have `*_async` variants. `publish_data_track(name,
+{frame_encoding, custom_frame_encoding, schema})`
+returns a room-owned ID; `data_track_info(id)`, `data_track_push(id, bytes, user_timestamp)`, and
+`unpublish_data_track(id)` manage it. Publishing also has an `*_async` variant.
+`remote_data_tracks()` returns detached snapshots with
+participant identity and track SID. Subscribe with
+`subscribe_data_track(identity, sid, {target_fps, buffer_capacity, max_partial_frames})`, then
+call `read_data_track_frame(reader_id, timeout_ms)` to get `{data, user_timestamp}`. A zero
+timeout polls without waiting. Subscription also has an `*_async` variant.
+`data_track_reader_stats(id)` and `close_data_track_reader(id)`
+manage the reader. `update_data_track_subscription(identity, sid, options)` changes its options.
+Synchronous DataTrack failures return `nil, message, error_code`; async futures return
+`nil, message`. The server must enable
+`enable_participant_data_blob` for schema storage and lookup.
+
 `e2ee_is_configured`, `e2ee_is_enabled`, `e2ee_set_enabled`, shared and participant key methods,
 `e2ee_data_key_index`, `e2ee_set_data_key_index`, and frame-cryptor methods expose E2EE control.
 Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
