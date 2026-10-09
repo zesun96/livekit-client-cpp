@@ -797,6 +797,38 @@ void on_disconnected(void* user_data, lk_room_t*, lk_disconnect_reason_t reason)
 void on_state(void* user_data, lk_room_t*, lk_room_state_t state) {
 	room_event(user_data, "connection_state_changed", static_cast<int>(state));
 }
+void on_token_refreshed(void* user_data, lk_room_t*) { room_event(user_data, "token_refreshed"); }
+void on_room_eos(void* user_data, lk_room_t*) { room_event(user_data, "room_eos"); }
+void snapshot_event(void* user_data, const lk_room_snapshot_t* snapshot,
+                    const char* type) noexcept {
+	try {
+		Event event{type};
+		if (snapshot != nullptr) {
+			event.sid = safe(snapshot->sid);
+			event.name = safe(snapshot->name);
+			event.strings.emplace_back("metadata", safe(snapshot->metadata));
+			event.booleans.emplace_back("is_recording", snapshot->is_recording != 0);
+		}
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_room_updated(void* user_data, lk_room_t*, const lk_room_snapshot_t* snapshot) {
+	snapshot_event(user_data, snapshot, "room_updated");
+}
+void on_room_moved(void* user_data, lk_room_t*, const lk_room_snapshot_t* snapshot) {
+	snapshot_event(user_data, snapshot, "room_moved");
+}
+void on_participants_updated(void* user_data, lk_room_t*, const lk_participant_info_t* participants,
+                             size_t count) {
+	try {
+		Event event{"participants_updated"};
+		for (size_t i = 0; participants != nullptr && i < count; ++i)
+			event.speakers.emplace_back(safe(participants[i].identity));
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
 void participant_event(void* user_data, const lk_participant_info_t* participant,
                        const char* type) noexcept {
 	try {
@@ -828,6 +860,36 @@ void on_data(void* user_data, lk_room_t*, const lk_data_received_t* received) {
 		if (received->data != nullptr && received->data_size != 0)
 			event.data.assign(reinterpret_cast<const char*>(received->data), received->data_size);
 		event.reliable = received->reliable != 0;
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_sip_dtmf(void* user_data, lk_room_t*, const lk_sip_dtmf_t* received) {
+	try {
+		if (received == nullptr)
+			return;
+		Event event{"sip_dtmf_received"};
+		event.identity = safe(received->participant_identity);
+		event.strings.emplace_back("digit", safe(received->digit));
+		event.numbers.emplace_back("code", received->code);
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_data_channel_buffer_status(void* user_data, lk_room_t*,
+                                   const lk_data_channel_buffer_status_t* status) {
+	try {
+		if (status == nullptr)
+			return;
+		Event event{"data_channel_buffer_status_changed"};
+		event.booleans.emplace_back("reliable", status->reliable != 0);
+		event.booleans.emplace_back("backpressured", status->backpressured != 0);
+		event.numbers.emplace_back("buffered_amount",
+		                           static_cast<lua_Number>(status->buffered_amount));
+		event.numbers.emplace_back("high_water_mark",
+		                           static_cast<lua_Number>(status->high_water_mark));
+		event.numbers.emplace_back("low_water_mark",
+		                           static_cast<lua_Number>(status->low_water_mark));
 		enqueue(static_cast<Room*>(user_data), std::move(event));
 	} catch (...) {
 	}
@@ -1081,6 +1143,70 @@ void on_local_track_unpublished(void* u, lk_room_t*, const lk_track_publication_
                                 const lk_participant_info_t* p) {
 	track_event(u, t, p, "local_track_unpublished");
 }
+void data_track_event(void* user_data, const lk_data_track_info_t* track,
+                      const lk_participant_info_t* participant, const char* type) noexcept {
+	try {
+		if (track == nullptr)
+			return;
+		Event event{type};
+		event.identity = participant != nullptr ? safe(participant->identity) : "";
+		event.sid = safe(track->sid);
+		event.name = safe(track->name);
+		event.numbers.emplace_back("publisher_handle", track->publisher_handle);
+		event.booleans.emplace_back("uses_e2ee", track->uses_e2ee != 0);
+		if (track->has_frame_encoding)
+			event.numbers.emplace_back("frame_encoding", track->frame_encoding);
+		event.strings.emplace_back("custom_frame_encoding", safe(track->custom_frame_encoding));
+		if (track->has_schema) {
+			event.strings.emplace_back("schema_name", safe(track->schema_name));
+			event.numbers.emplace_back("schema_encoding", track->schema_encoding);
+			event.strings.emplace_back("custom_schema_encoding",
+			                           safe(track->custom_schema_encoding));
+		}
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_data_track_published(void* u, lk_room_t*, const lk_data_track_info_t* t,
+                             const lk_participant_info_t* p) {
+	data_track_event(u, t, p, "data_track_published");
+}
+void on_data_track_unpublished(void* u, lk_room_t*, const lk_data_track_info_t* t,
+                               const lk_participant_info_t* p) {
+	data_track_event(u, t, p, "data_track_unpublished");
+}
+void on_local_data_track_published(void* u, lk_room_t*, const lk_data_track_info_t* t,
+                                   const lk_participant_info_t* p) {
+	data_track_event(u, t, p, "local_data_track_published");
+}
+void on_local_data_track_unpublished(void* u, lk_room_t*, const lk_data_track_info_t* t,
+                                     const lk_participant_info_t* p) {
+	data_track_event(u, t, p, "local_data_track_unpublished");
+}
+void on_data_track_frame(void* user_data, lk_room_t*, const lk_data_track_info_t* track,
+                         const lk_participant_info_t* participant,
+                         const lk_data_track_frame_view_t* frame) {
+	try {
+		if (frame == nullptr)
+			return;
+		Event event{"data_track_frame"};
+		event.identity = participant != nullptr ? safe(participant->identity) : "";
+		if (track != nullptr) {
+			event.sid = safe(track->sid);
+			event.name = safe(track->name);
+		}
+		if (frame->data != nullptr && frame->data_size != 0)
+			event.strings.emplace_back(
+			    "data", std::string(reinterpret_cast<const char*>(frame->data), frame->data_size));
+		else
+			event.strings.emplace_back("data", "");
+		if (frame->has_user_timestamp)
+			event.numbers.emplace_back("user_timestamp",
+			                           static_cast<lua_Number>(frame->user_timestamp));
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
 
 bool destroy_local_media(LocalMediaTrack& media) noexcept {
 	if (media.track != nullptr) {
@@ -1199,9 +1325,16 @@ int new_room(lua_State* L) {
 	callbacks.on_reconnected = on_reconnected;
 	callbacks.on_disconnected_with_reason = on_disconnected;
 	callbacks.on_connection_state_changed = on_state;
+	callbacks.on_token_refreshed = on_token_refreshed;
+	callbacks.on_room_updated = on_room_updated;
+	callbacks.on_room_moved = on_room_moved;
+	callbacks.on_room_eos = on_room_eos;
+	callbacks.on_participants_updated = on_participants_updated;
 	callbacks.on_participant_connected = on_participant_connected;
 	callbacks.on_participant_disconnected = on_participant_disconnected;
 	callbacks.on_data_received = on_data;
+	callbacks.on_sip_dtmf_received = on_sip_dtmf;
+	callbacks.on_data_channel_buffer_status_changed = on_data_channel_buffer_status;
 	callbacks.on_chat_message_received = on_chat;
 	callbacks.on_text_received = on_text;
 	callbacks.on_file_received = on_file;
@@ -1227,6 +1360,11 @@ int new_room(lua_State* L) {
 	callbacks.on_track_subscription_status_changed = on_subscription_status;
 	callbacks.on_local_track_published = on_local_track_published;
 	callbacks.on_local_track_unpublished = on_local_track_unpublished;
+	callbacks.on_data_track_published = on_data_track_published;
+	callbacks.on_data_track_unpublished = on_data_track_unpublished;
+	callbacks.on_local_data_track_published = on_local_data_track_published;
+	callbacks.on_local_data_track_unpublished = on_local_data_track_unpublished;
+	callbacks.on_data_track_frame = on_data_track_frame;
 	status = lk_room_set_callbacks(room->native, &callbacks);
 	if (status != LK_STATUS_OK) {
 		status_result(L, status);
@@ -1446,7 +1584,8 @@ int poll(lua_State* L) {
 					string_field(L, key.c_str(), value);
 				lua_setfield(L, -2, "changes");
 			}
-			if (event.type == "active_speakers_changed") {
+			if (event.type == "active_speakers_changed" ||
+			    event.type == "participants_updated") {
 				lua_newtable(L);
 				for (size_t i = 0; i < event.speakers.size(); ++i) {
 					lua_pushlstring(L, event.speakers[i].data(), event.speakers[i].size());

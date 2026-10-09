@@ -243,6 +243,13 @@ Additional room events include `room_sid_changed` (`previous_sid`, `sid`),
 `connection_quality_changed` (`identity`, `quality`), and `active_speakers_changed`
 (`identities`, an array of participant identities). Track mute changes arrive as `track_muted`
 and `track_unmuted` with track and participant fields.
+`room_updated` and `room_moved` carry room SID, name, metadata, and recording state.
+`token_refreshed`, `room_eos`, and `participants_updated` (an `identities` array) report
+connection lifecycle updates. `sip_dtmf_received` carries `digit`, `code`, and `identity`;
+`data_channel_buffer_status_changed` carries buffered amount and water marks.
+DataTrack events are `data_track_published`, `data_track_unpublished`,
+`local_data_track_published`, `local_data_track_unpublished`, and `data_track_frame`.
+The frame event includes binary `data` and optional `user_timestamp`.
 Subscription feedback arrives as `track_subscription_permission_changed` (`allowed`),
 `track_subscription_failed` (`error`), `track_stream_state_changed` (`state`), and
 `track_subscription_status_changed` (`status`); each includes the track `sid` and participant

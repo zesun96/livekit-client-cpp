@@ -10,6 +10,15 @@ end
 
 local receiver = assert(livekit.new_room())
 local publisher = assert(livekit.new_room())
+local published_events, frame_events = 0, 0
+assert(receiver:on(function(event)
+  if event.type == "data_track_published" and event.name == "lua-telemetry" then
+    published_events = published_events + 1
+  elseif event.type == "data_track_frame" and event.name == "lua-telemetry" then
+    assert(event.data == '{"value":42}' and event.user_timestamp == 1234)
+    frame_events = frame_events + 1
+  end
+end))
 assert(receiver:connect(url, receiver_token))
 assert(publisher:connect(url, publisher_token))
 for _ = 1, 100 do
@@ -50,6 +59,12 @@ for _ = 1, 100 do
   assert(publisher:poll())
 end
 assert(frame and frame.data == '{"value":42}' and frame.user_timestamp == 1234)
+for _ = 1, 20 do
+  assert(receiver:poll())
+  if frame_events > 0 then break end
+  assert(receiver:step(25))
+end
+assert(published_events > 0 and frame_events > 0)
 assert(receiver:data_track_reader_stats(reader).dropped_frames == 0)
 assert(receiver:close_data_track_reader(reader))
 assert(publisher:unpublish_data_track(track))
