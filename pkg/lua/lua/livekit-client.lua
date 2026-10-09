@@ -140,6 +140,10 @@ function room_methods:publish_video_track_async(label, first_frame, width, heigh
   return future_for(self, self:_start_publish_video_track(label, first_frame, width, height, format, screen))
 end
 
+function room_methods:wait_audio_source_playout_async(track_id, timeout_ms)
+  return future_for(self, self:_start_wait_audio_source_playout(track_id, timeout_ms))
+end
+
 function room_methods:publish_capture_track_async(kind, label, options)
   return future_for(self, self:_start_publish_capture_track(kind, label, options))
 end

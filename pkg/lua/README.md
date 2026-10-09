@@ -191,6 +191,13 @@ creates and publishes an external video source; a first frame is required before
 release a publication. Publishing and unpublishing also have `*_async` variants that return
 coroutine futures; frame push remains a direct call on the Lua thread.
 
+Audio source queue controls are `audio_source_queued_duration_ms(track_id)`,
+`clear_audio_source_queue(track_id)`, and `wait_audio_source_playout(track_id, timeout_ms)`;
+the wait also has an `*_async` variant. Published video tracks support
+`update_video_encoding(track_id, {max_bitrate, max_framerate}, backup_codec)` and
+`update_video_degradation_preference(track_id, preference)`. Zero bitrate or frame rate restores
+the source-derived default. Use values from `VIDEO_DEGRADATION_PREFERENCE`.
+
 For explicit remote subscription, connect with `{auto_subscribe = false}` and call
 `set_remote_track_subscribed(participant_sid, track_sid, true)` after `track_published`. The track
 event contains both `participant_sid` and `participant_identity`. Use

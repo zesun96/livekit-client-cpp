@@ -83,7 +83,8 @@ enum class AsyncOperation {
 	StoreDataTrackSchema,
 	GetDataTrackSchema,
 	PublishDataTrack,
-	SubscribeDataTrack
+	SubscribeDataTrack,
+	WaitAudioSource
 };
 
 struct SchemaIdConfig {
@@ -697,14 +698,27 @@ void worker_loop(Room* room) noexcept {
 			case AsyncOperation::PublishDataTrack: {
 				const auto code =
 				    publish_data_track_native(room, task->data_track_publish, task->media_id);
-				status = code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				status =
+				    code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
 				break;
 			}
 			case AsyncOperation::SubscribeDataTrack: {
-				const auto code = subscribe_data_track_native(room, task->first.c_str(),
-				                                              task->second.c_str(),
-				                                              task->data_track_subscription, task->media_id);
-				status = code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				const auto code =
+				    subscribe_data_track_native(room, task->first.c_str(), task->second.c_str(),
+				                                task->data_track_subscription, task->media_id);
+				status =
+				    code == LK_DATA_TRACK_ERROR_NONE ? LK_STATUS_OK : LK_STATUS_OPERATION_FAILED;
+				break;
+			}
+			case AsyncOperation::WaitAudioSource: {
+				const auto found = room->local_tracks.find(task->media_id);
+				if (found == room->local_tracks.end() || found->second.audio == nullptr) {
+					status = LK_STATUS_INVALID_ARGUMENT;
+					error = "audio track is unavailable";
+				} else {
+					status =
+					    lk_audio_source_wait_for_playout(found->second.audio, task->timeout_ms);
+				}
 				break;
 			}
 			}
@@ -2832,6 +2846,105 @@ int push_video_frame(lua_State* L) {
 		return media_error(L, error);
 	return status_result(L, lk_video_source_capture_frame(found->second.video, &frame));
 }
+int audio_source_queued_duration_ms(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.audio == nullptr)
+		return media_error(L, "audio track is unavailable");
+	uint32_t duration = 0;
+	const auto status = lk_audio_source_queued_duration_ms(found->second.audio, &duration);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_pushinteger(L, duration);
+	return 1;
+}
+int clear_audio_source_queue(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.audio == nullptr)
+		return media_error(L, "audio track is unavailable");
+	return status_result(L, lk_audio_source_clear_queue(found->second.audio));
+}
+int wait_audio_source_playout(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const lua_Integer timeout = luaL_optinteger(L, 3, 0);
+	luaL_argcheck(L, timeout >= 0 && timeout <= UINT32_MAX, 3, "timeout is out of range");
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.audio == nullptr)
+		return media_error(L, "audio track is unavailable");
+	return status_result(
+	    L, lk_audio_source_wait_for_playout(found->second.audio, static_cast<uint32_t>(timeout)));
+}
+int start_wait_audio_source_playout(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const lua_Integer timeout = luaL_optinteger(L, 3, 0);
+	luaL_argcheck(L, timeout >= 0 && timeout <= UINT32_MAX, 3, "timeout is out of range");
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::WaitAudioSource;
+	task->media_id = id;
+	task->timeout_ms = static_cast<uint32_t>(timeout);
+	return start_task(L, room, std::move(task));
+}
+int update_video_encoding(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	luaL_checktype(L, 3, LUA_TTABLE);
+	const bool backup = lua_toboolean(L, 4);
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.video == nullptr)
+		return media_error(L, "video track is unavailable");
+	lk_video_encoding_t encoding;
+	lk_video_encoding_init(&encoding);
+	lua_getfield(L, 3, "max_bitrate");
+	if (!lua_isnil(L, -1)) {
+		const lua_Number value = luaL_checknumber(L, -1);
+		luaL_argcheck(L,
+		              std::isfinite(value) && value >= 0 && std::floor(value) == value &&
+		                  value <= 9007199254740991.0,
+		              3, "max_bitrate must be a nonnegative exact integer");
+		encoding.max_bitrate = static_cast<uint64_t>(value);
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 3, "max_framerate");
+	if (!lua_isnil(L, -1)) {
+		const lua_Number value = luaL_checknumber(L, -1);
+		luaL_argcheck(L, std::isfinite(value) && value >= 0 && value <= 1000, 3,
+		              "max_framerate is out of range");
+		encoding.max_framerate = static_cast<float>(value);
+	}
+	lua_pop(L, 1);
+	return status_result(
+	    L, lk_local_video_track_update_encoding(found->second.track, &encoding, backup));
+}
+int update_video_degradation_preference(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	const lua_Integer value = luaL_checkinteger(L, 3);
+	luaL_argcheck(L,
+	              value >= LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_FRAMERATE &&
+	                  value <= LK_VIDEO_DEGRADATION_PREFERENCE_DISABLED,
+	              3, "invalid degradation preference");
+	if (async_busy(room))
+		return busy_result(L);
+	const auto found = room->local_tracks.find(id);
+	if (found == room->local_tracks.end() || found->second.video == nullptr)
+		return media_error(L, "video track is unavailable");
+	return status_result(
+	    L, lk_local_video_track_update_degradation_preference(
+	           found->second.track, static_cast<lk_video_degradation_preference_t>(value)));
+}
 int set_local_track_muted(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const uint64_t id = media_id(L, 2);
@@ -4541,6 +4654,12 @@ const luaL_Reg room_methods[] = {
     {"microphone_processing_stats", microphone_processing_stats},
     {"push_audio_frame", push_audio_frame},
     {"push_video_frame", push_video_frame},
+    {"audio_source_queued_duration_ms", audio_source_queued_duration_ms},
+    {"clear_audio_source_queue", clear_audio_source_queue},
+    {"wait_audio_source_playout", wait_audio_source_playout},
+    {"_start_wait_audio_source_playout", start_wait_audio_source_playout},
+    {"update_video_encoding", update_video_encoding},
+    {"update_video_degradation_preference", update_video_degradation_preference},
     {"set_local_track_muted", set_local_track_muted},
     {"unpublish_local_track", unpublish_local_track},
     {"_start_unpublish_local_track", start_unpublish_local_track},
@@ -4762,5 +4881,15 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 		lua_setfield(L, -2, transport.first);
 	}
 	lua_setfield(L, -2, "ICE_TRANSPORT_TYPE");
+	lua_newtable(L);
+	for (const auto& preference :
+	     {std::pair{"MAINTAIN_FRAMERATE", LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_FRAMERATE},
+	      {"MAINTAIN_RESOLUTION", LK_VIDEO_DEGRADATION_PREFERENCE_MAINTAIN_RESOLUTION},
+	      {"BALANCED", LK_VIDEO_DEGRADATION_PREFERENCE_BALANCED},
+	      {"DISABLED", LK_VIDEO_DEGRADATION_PREFERENCE_DISABLED}}) {
+		lua_pushinteger(L, preference.second);
+		lua_setfield(L, -2, preference.first);
+	}
+	lua_setfield(L, -2, "VIDEO_DEGRADATION_PREFERENCE");
 	return 1;
 }

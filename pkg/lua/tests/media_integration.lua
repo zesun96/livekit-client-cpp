@@ -40,6 +40,10 @@ local audio = assert(assert(publisher:publish_audio_track_async("lua-tone", 4800
 local width, height = 160, 90
 local rgba = string.rep(string.char(40, 100, 180, 255), width * height)
 local video = assert(assert(publisher:publish_video_track_async("lua-video", rgba, width, height)):wait(50))
+assert(publisher:audio_source_queued_duration_ms(audio) >= 0)
+assert(publisher:update_video_encoding(video, {max_bitrate = 500000, max_framerate = 15}))
+assert(publisher:update_video_degradation_preference(
+  video, livekit.VIDEO_DEGRADATION_PREFERENCE.BALANCED))
 
 local function tone_frame()
   local parts = {}
@@ -93,6 +97,8 @@ assert(#local_video_stats > 0 and #remote_video_stats > 0, "video RTC stats did 
 assert(type(local_video_stats[1].id) == "string")
 assert(type(local_video_stats[1].bytes) == "number")
 assert(type(remote_video_stats[1].direction) == "number")
+assert(publisher:clear_audio_source_queue(audio))
+assert(assert(publisher:wait_audio_source_playout_async(audio, 1000)):wait(50))
 assert(receiver:remote_stream_dropped_frames(audio_stream) >= 0)
 assert(receiver:close_remote_stream(audio_stream))
 assert(receiver:close_remote_stream(video_stream))
