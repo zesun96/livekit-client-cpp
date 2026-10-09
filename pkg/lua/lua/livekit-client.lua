@@ -140,6 +140,66 @@ function room_methods:publish_video_track_async(label, first_frame, width, heigh
   return future_for(self, self:_start_publish_video_track(label, first_frame, width, height, format, screen))
 end
 
+function room_methods:publish_capture_track_async(kind, label, options)
+  return future_for(self, self:_start_publish_capture_track(kind, label, options))
+end
+
+function room_methods:publish_microphone_track(label, options)
+  return self:publish_capture_track("microphone", label, options)
+end
+
+function room_methods:publish_microphone_track_async(label, options)
+  return self:publish_capture_track_async("microphone", label, options)
+end
+
+function room_methods:publish_system_audio_track(label, options)
+  return self:publish_capture_track("system_audio", label, options)
+end
+
+function room_methods:publish_system_audio_track_async(label, options)
+  return self:publish_capture_track_async("system_audio", label, options)
+end
+
+function room_methods:publish_camera_track(label, options)
+  return self:publish_capture_track("camera", label, options)
+end
+
+function room_methods:publish_camera_track_async(label, options)
+  return self:publish_capture_track_async("camera", label, options)
+end
+
+function room_methods:publish_screen_track(label, options)
+  return self:publish_capture_track("screen", label, options)
+end
+
+function room_methods:publish_screen_track_async(label, options)
+  return self:publish_capture_track_async("screen", label, options)
+end
+
+function room_methods:start_capture(track_id)
+  return self:control_capture(track_id, "start")
+end
+
+function room_methods:stop_capture(track_id)
+  return self:control_capture(track_id, "stop")
+end
+
+function room_methods:switch_capture_source(track_id, source_id)
+  return self:control_capture(track_id, "switch", source_id)
+end
+
+function room_methods:start_capture_async(track_id)
+  return future_for(self, self:_start_control_capture(track_id, "start"))
+end
+
+function room_methods:stop_capture_async(track_id)
+  return future_for(self, self:_start_control_capture(track_id, "stop"))
+end
+
+function room_methods:switch_capture_source_async(track_id, source_id)
+  return future_for(self, self:_start_control_capture(track_id, "switch", source_id))
+end
+
 function room_methods:unpublish_local_track_async(track_id)
   return future_for(self, self:_start_unpublish_local_track(track_id))
 end

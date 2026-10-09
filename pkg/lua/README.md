@@ -1,8 +1,8 @@
 # livekit-client Lua binding
 
 This Lua 5.1+ binding uses the stable C ABI of `livekit-client-cpp`. It exposes room lifecycle,
-participant snapshots and updates, data and stream messages, RPC calls, E2EE keys, and device and
-remote-track controls. The Lua interpreter and module must use the same Lua runtime DLL and
+participant snapshots and updates, data and stream messages, RPC calls, E2EE keys, media capture,
+and remote-track controls. The Lua interpreter and module must use the same Lua runtime DLL and
 architecture. The `Lua51vs_rel_pdb` executable is statically linked and cannot safely host this
 DLL-linked module; use a DLL-linked interpreter or the optional test runner below.
 
@@ -165,6 +165,29 @@ return arrays of RTC stream statistics. A report that is not ready returns an em
 Optional measurements such as bitrate, jitter, round-trip time, and audio level are omitted when
 unavailable. Large counters are Lua numbers and may lose integer precision above 2^53.
 
+## Device capture
+
+`publish_microphone_track(label, options)`, `publish_system_audio_track(label, options)`,
+`publish_camera_track(label, options)`, and `publish_screen_track(label, options)` open a capture
+source and publish it. Each returns a track ID compatible with `set_local_track_muted`,
+`local_track_rtc_stats`, and `unpublish_local_track`. All four also have `*_async` variants so
+opening a device can run on the room worker thread. Capture begins when the source is created.
+Unpublishing or closing the room releases the source. `start_capture`, `stop_capture`, and
+`switch_capture_source` control the source afterward; each also has a coroutine `*_async`
+variant. `capture_is_running(track_id)` and `capture_source_id(track_id)` report its state.
+
+Microphone and system audio options accept `device_id` (empty for system default) and `queue_ms`
+(default 200, a positive multiple of 10). Microphone options also accept `echo_cancellation`,
+`auto_gain_control`, and `noise_suppression` booleans, all true by default. Camera options accept
+`device_id`, `width` (default 1280), `height` (default 720), and `fps` (default 30). Screen options
+require a `source_id` from `livekit.list_screen_sources()` and accept `fps` (default 15) and
+`include_cursor` (default true). Use `livekit.list_media_devices()` for microphone, speaker, and
+camera IDs. Screen source `kind` is `0` for a monitor or `1` for a window.
+`microphone_is_muted`, `microphone_set_muted`, `microphone_volume`,
+`microphone_set_volume`, `microphone_processing_options`,
+`microphone_set_processing_options`, and `microphone_processing_stats` expose microphone source
+controls and measurements. The source mute is distinct from `set_local_track_muted`.
+
 Additional room events include `room_sid_changed` (`previous_sid`, `sid`),
 `connection_quality_changed` (`identity`, `quality`), and `active_speakers_changed`
 (`identities`, an array of participant identities). Track mute changes arrive as `track_muted`
@@ -177,5 +200,5 @@ Subscription feedback arrives as `track_subscription_permission_changed` (`allow
 Runnable examples are in [examples](examples/README.md).
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
-exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Device capture,
-audio/video frame callbacks, and some advanced C API features are not yet wrapped.
+exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Audio/video frame
+callbacks and some advanced C API features are not yet wrapped.

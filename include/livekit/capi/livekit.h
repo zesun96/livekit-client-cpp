@@ -1783,6 +1783,9 @@ LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_option
 LKC_API lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* options,
                                                   lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_destroy(lk_video_source_t* source);
+/* Returns zero dimensions until a camera or screen source receives its first frame. */
+LKC_API lk_status_t lk_video_source_dimensions(const lk_video_source_t* source, uint32_t* width,
+                                              uint32_t* height);
 LKC_API lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
                                                   const lk_video_frame_input_t* frame);
 LKC_API lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,

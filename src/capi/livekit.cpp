@@ -5123,6 +5123,19 @@ lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
 	return LK_STATUS_OK;
 }
 
+lk_status_t lk_video_source_dimensions(const lk_video_source_t* source, uint32_t* width,
+                                       uint32_t* height) {
+	return Guard([&] {
+		if (source == nullptr || width == nullptr || height == nullptr ||
+		    source->source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source and dimensions are required");
+		}
+		*width = source->source->Width();
+		*height = source->source->Height();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
                                           const lk_video_frame_input_t* input) {
 	return Guard([&] {
