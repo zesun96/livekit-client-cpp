@@ -131,10 +131,18 @@ assert(room:on(function(_) end))
 assert(room:poll() == 0)
 local sent, send_error = room:publish_data("\0\1", true, "smoke")
 assert(sent == nil and type(send_error) == "string")
+local directed, directed_error = room:publish_data_with_options("\0\1", {
+  topic = "smoke", destination_identities = {"missing"}
+})
+assert(directed == nil and type(directed_error) == "string")
 local chat_id, chat_error = room:send_chat_message("hello")
 assert(chat_id == nil and type(chat_error) == "string")
 local text_sent, text_error = room:send_text("hello", "smoke")
 assert(text_sent == nil and type(text_error) == "string")
+local text_options, text_options_error = room:send_text_with_options("hello", {
+  topic = "smoke", attributes = {origin = "lua"}, compress = true
+})
+assert(text_options == nil and type(text_options_error) == "string")
 local bytes_sent, bytes_error = room:send_bytes("\0\1", "smoke")
 assert(bytes_sent == nil and type(bytes_error) == "string")
 for _, future in ipairs({

@@ -301,6 +301,9 @@ publish_data_track_native(Room* room, const DataTrackPublishConfig& config, uint
 lk_data_track_error_code_t
 subscribe_data_track_native(Room* room, const char* identity, const char* sid,
                             const lk_data_track_subscription_options_t& options, uint64_t& id);
+lk_status_t send_stream_one_shot_native(Room* room, AsyncOperation operation,
+                                        const std::string& payload,
+                                        const StreamWriterConfig& config);
 const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
                                 lua_Integer width, lua_Integer height, const char* format,
                                 int64_t timestamp_us);
@@ -321,6 +324,8 @@ int status_result(lua_State* L, lk_status_t status) {
 	lua_pushstring(L, safe(lk_last_error()));
 	return 2;
 }
+int media_error(lua_State* L, const char* message);
+StreamWriterConfig read_stream_writer_config(lua_State* L, bool text, int index);
 
 void string_field(lua_State* L, const char* key, const std::string& value);
 void integer_field(lua_State* L, const char* key, lua_Integer value);
@@ -450,6 +455,66 @@ subscribe_data_track_native(Room* room, const char* identity, const char* sid,
 	return code;
 }
 
+lk_status_t send_stream_one_shot_native(Room* room, AsyncOperation operation,
+                                        const std::string& payload,
+                                        const StreamWriterConfig& config) {
+	std::vector<const char*> destinations;
+	for (const auto& identity : config.destinations)
+		destinations.push_back(identity.c_str());
+	std::vector<const char*> attached;
+	for (const auto& id : config.attached_stream_ids)
+		attached.push_back(id.c_str());
+	std::vector<lk_attribute_t> attributes;
+	for (const auto& [key, value] : config.attributes)
+		attributes.push_back({key.c_str(), value.c_str()});
+	if (operation == AsyncOperation::Text) {
+		lk_text_send_options_t options;
+		lk_text_send_options_init(&options);
+		options.topic = config.topic.c_str();
+		options.destination_identities = destinations.data();
+		options.destination_identity_count = destinations.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.reply_to_stream_id = config.reply_to_stream_id.c_str();
+		options.attached_stream_ids = attached.data();
+		options.attached_stream_id_count = attached.size();
+		if (config.chunk_size != 0)
+			options.chunk_size = config.chunk_size;
+		options.compress = config.compress;
+		return lk_room_send_text(room->native, payload.c_str(), &options);
+	}
+	if (operation == AsyncOperation::Bytes) {
+		lk_byte_send_options_t options;
+		lk_byte_send_options_init(&options);
+		options.topic = config.topic.c_str();
+		options.mime_type =
+		    config.mime_type.empty() ? "application/octet-stream" : config.mime_type.c_str();
+		options.name = config.name.c_str();
+		options.destination_identities = destinations.data();
+		options.destination_identity_count = destinations.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		if (config.chunk_size != 0)
+			options.chunk_size = config.chunk_size;
+		options.compress = config.compress;
+		return lk_room_send_bytes(room->native, reinterpret_cast<const uint8_t*>(payload.data()),
+		                          payload.size(), &options);
+	}
+	lk_file_send_options_t options;
+	lk_file_send_options_init(&options);
+	options.topic = config.topic.c_str();
+	options.mime_type =
+	    config.mime_type.empty() ? "application/octet-stream" : config.mime_type.c_str();
+	options.destination_identities = destinations.data();
+	options.destination_identity_count = destinations.size();
+	options.attributes = attributes.data();
+	options.attribute_count = attributes.size();
+	if (config.chunk_size != 0)
+		options.chunk_size = config.chunk_size;
+	options.compress = config.compress;
+	return lk_room_send_file(room->native, payload.c_str(), &options);
+}
+
 bool enqueue(Room* room, Event event) noexcept {
 	try {
 		std::lock_guard<std::mutex> lock(room->mutex);
@@ -541,7 +606,13 @@ void worker_loop(Room* room) noexcept {
 				lk_data_publish_options_t options;
 				lk_data_publish_options_init(&options);
 				options.reliable = task->reliable ? 1 : 0;
-				options.topic = task->topic.c_str();
+				options.topic = task->stream_config.topic.empty() ? task->topic.c_str()
+				                                                  : task->stream_config.topic.c_str();
+				std::vector<const char*> destinations;
+				for (const auto& identity : task->stream_config.destinations)
+					destinations.push_back(identity.c_str());
+				options.destination_identities = destinations.data();
+				options.destination_identity_count = destinations.size();
 				status = lk_room_publish_data(room->native,
 				                              reinterpret_cast<const uint8_t*>(task->first.data()),
 				                              task->first.size(), &options);
@@ -580,30 +651,17 @@ void worker_loop(Room* room) noexcept {
 					task->chat_id = id;
 				break;
 			}
-			case AsyncOperation::Text: {
-				lk_text_send_options_t options;
-				lk_text_send_options_init(&options);
-				options.topic = task->topic.c_str();
-				status = lk_room_send_text(room->native, task->first.c_str(), &options);
-				break;
-			}
-			case AsyncOperation::Bytes: {
-				lk_byte_send_options_t options;
-				lk_byte_send_options_init(&options);
-				options.topic = task->topic.c_str();
-				options.mime_type = task->mime_type.c_str();
-				options.name = task->name.c_str();
-				status = lk_room_send_bytes(room->native,
-				                            reinterpret_cast<const uint8_t*>(task->first.data()),
-				                            task->first.size(), &options);
-				break;
-			}
+			case AsyncOperation::Text:
+			case AsyncOperation::Bytes:
 			case AsyncOperation::File: {
-				lk_file_send_options_t options;
-				lk_file_send_options_init(&options);
-				options.topic = task->topic.c_str();
-				options.mime_type = task->mime_type.c_str();
-				status = lk_room_send_file(room->native, task->first.c_str(), &options);
+				auto config = task->stream_config;
+				if (config.topic.empty())
+					config.topic = task->topic;
+				if (config.mime_type.empty())
+					config.mime_type = task->mime_type;
+				if (config.name.empty())
+					config.name = task->name;
+				status = send_stream_one_shot_native(room, task->operation, task->first, config);
 				break;
 			}
 			case AsyncOperation::PublishAudioTrack:
@@ -1870,6 +1928,52 @@ int publish_data(lua_State* L) {
 	return status_result(
 	    L,
 	    lk_room_publish_data(room->native, reinterpret_cast<const uint8_t*>(data), size, &options));
+}
+
+int publish_data_with_options(lua_State* L) {
+	Room* room = check_room(L, 1);
+	size_t size = 0;
+	const char* data = luaL_checklstring(L, 2, &size);
+	const auto config = read_stream_writer_config(L, false, 3);
+	lua_getfield(L, 3, "reliable");
+	if (!lua_isnil(L, -1))
+		luaL_checktype(L, -1, LUA_TBOOLEAN);
+	const bool reliable = lua_isnil(L, -1) || lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	if (async_busy(room))
+		return busy_result(L);
+	std::vector<const char*> destinations;
+	for (const auto& identity : config.destinations)
+		destinations.push_back(identity.c_str());
+	lk_data_publish_options_t options;
+	lk_data_publish_options_init(&options);
+	options.reliable = reliable;
+	options.topic = config.topic.c_str();
+	options.destination_identities = destinations.data();
+	options.destination_identity_count = destinations.size();
+	return status_result(
+	    L,
+	    lk_room_publish_data(room->native, reinterpret_cast<const uint8_t*>(data), size, &options));
+}
+
+int start_publish_data_with_options(lua_State* L) {
+	Room* room = check_room(L, 1);
+	size_t size = 0;
+	const char* data = luaL_checklstring(L, 2, &size);
+	auto config = read_stream_writer_config(L, false, 3);
+	lua_getfield(L, 3, "reliable");
+	if (!lua_isnil(L, -1))
+		luaL_checktype(L, -1, LUA_TBOOLEAN);
+	const bool reliable = lua_isnil(L, -1) || lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::PublishData;
+	task->first.assign(data, size);
+	task->stream_config = std::move(config);
+	task->reliable = reliable;
+	return start_task(L, room, std::move(task));
 }
 
 int start_connect(lua_State* L) {
@@ -3894,12 +3998,12 @@ int edit_chat_message(lua_State* L) {
 	return status_result(L, lk_room_edit_chat_message(room->native, id, timestamp, message));
 }
 
-StreamWriterConfig read_stream_writer_config(lua_State* L, bool text) {
-	luaL_checktype(L, 2, LUA_TTABLE);
+StreamWriterConfig read_stream_writer_config(lua_State* L, bool text, int index = 2) {
+	luaL_checktype(L, index, LUA_TTABLE);
 	StreamWriterConfig config;
 	config.text = text;
 	auto string_option = [&](const char* key, std::string& value) {
-		lua_getfield(L, 2, key);
+		lua_getfield(L, index, key);
 		if (!lua_isnil(L, -1))
 			value = luaL_checkstring(L, -1);
 		lua_pop(L, 1);
@@ -3910,7 +4014,7 @@ StreamWriterConfig read_stream_writer_config(lua_State* L, bool text) {
 	string_option("stream_id", config.stream_id);
 	string_option("reply_to_stream_id", config.reply_to_stream_id);
 	auto string_array = [&](const char* key, std::vector<std::string>& values) {
-		lua_getfield(L, 2, key);
+		lua_getfield(L, index, key);
 		if (!lua_isnil(L, -1)) {
 			luaL_checktype(L, -1, LUA_TTABLE);
 #if LUA_VERSION_NUM < 502
@@ -3928,12 +4032,12 @@ StreamWriterConfig read_stream_writer_config(lua_State* L, bool text) {
 	};
 	string_array("destination_identities", config.destinations);
 	string_array("attached_stream_ids", config.attached_stream_ids);
-	lua_getfield(L, 2, "attributes");
+	lua_getfield(L, index, "attributes");
 	if (!lua_isnil(L, -1)) {
 		luaL_checktype(L, -1, LUA_TTABLE);
 		lua_pushnil(L);
 		while (lua_next(L, -2) != 0) {
-			luaL_argcheck(L, lua_type(L, -2) == LUA_TSTRING, 2,
+			luaL_argcheck(L, lua_type(L, -2) == LUA_TSTRING, index,
 			              "attribute keys must be strings");
 			const char* key = lua_tostring(L, -2);
 			const char* value = luaL_checkstring(L, -1);
@@ -3942,38 +4046,38 @@ StreamWriterConfig read_stream_writer_config(lua_State* L, bool text) {
 		}
 	}
 	lua_pop(L, 1);
-	lua_getfield(L, 2, "total_size");
+	lua_getfield(L, index, "total_size");
 	if (!lua_isnil(L, -1)) {
 		const lua_Integer value = luaL_checkinteger(L, -1);
-		luaL_argcheck(L, value >= 0, 2, "total_size must be nonnegative");
+		luaL_argcheck(L, value >= 0, index, "total_size must be nonnegative");
 		config.has_total_size = true;
 		config.total_size = static_cast<uint64_t>(value);
 	}
 	lua_pop(L, 1);
-	lua_getfield(L, 2, "chunk_size");
+	lua_getfield(L, index, "chunk_size");
 	if (!lua_isnil(L, -1)) {
 		const lua_Integer value = luaL_checkinteger(L, -1);
-		luaL_argcheck(L, value > 0 && value <= 1024 * 1024, 2, "chunk_size is out of range");
+		luaL_argcheck(L, value > 0 && value <= 1024 * 1024, index, "chunk_size is out of range");
 		config.chunk_size = static_cast<size_t>(value);
 	}
 	lua_pop(L, 1);
-	lua_getfield(L, 2, "compress");
+	lua_getfield(L, index, "compress");
 	if (!lua_isnil(L, -1)) {
 		luaL_checktype(L, -1, LUA_TBOOLEAN);
 		config.compress = lua_toboolean(L, -1);
 	}
 	lua_pop(L, 1);
 	if (text) {
-		lua_getfield(L, 2, "update");
+		lua_getfield(L, index, "update");
 		if (!lua_isnil(L, -1)) {
 			luaL_checktype(L, -1, LUA_TBOOLEAN);
 			config.update = lua_toboolean(L, -1);
 		}
 		lua_pop(L, 1);
-		lua_getfield(L, 2, "version");
+		lua_getfield(L, index, "version");
 		if (!lua_isnil(L, -1)) {
 			const lua_Integer value = luaL_checkinteger(L, -1);
-			luaL_argcheck(L, value >= 0 && value <= INT32_MAX, 2, "version is out of range");
+			luaL_argcheck(L, value >= 0 && value <= INT32_MAX, index, "version is out of range");
 			config.version = static_cast<int32_t>(value);
 		}
 		lua_pop(L, 1);
@@ -4633,6 +4737,47 @@ int send_file(lua_State* L) {
 	options.mime_type = mime_type;
 	return status_result(L, lk_room_send_file(room->native, path, &options));
 }
+int send_with_options(lua_State* L, AsyncOperation operation, bool async) {
+	Room* room = check_room(L, 1);
+	size_t size = 0;
+	const char* data = luaL_checklstring(L, 2, &size);
+	const auto config = read_stream_writer_config(L, operation == AsyncOperation::Text, 3);
+	if (async) {
+		try {
+			auto task = std::make_shared<AsyncTask>();
+			task->operation = operation;
+			task->first.assign(data, size);
+			task->stream_config = config;
+			return start_task(L, room, std::move(task));
+		} catch (...) {
+			return media_error(L, "failed to allocate asynchronous stream operation");
+		}
+	}
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(
+	    L, send_stream_one_shot_native(room, operation, std::string(data, size), config));
+}
+int send_text_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::Text, false);
+}
+int start_text_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::Text, true);
+}
+int send_bytes_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::Bytes, false);
+}
+int start_bytes_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::Bytes, true);
+}
+int send_file_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::File, false);
+}
+int start_file_with_options(lua_State* L) {
+	return send_with_options(L, AsyncOperation::File, true);
+}
 int start_chat(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* message = luaL_checkstring(L, 2);
@@ -4875,6 +5020,8 @@ const luaL_Reg room_methods[] = {
     {"_start_disconnect", start_disconnect},
     {"close", close_room},
     {"publish_data", publish_data},
+    {"publish_data_with_options", publish_data_with_options},
+    {"_start_publish_data_with_options", start_publish_data_with_options},
     {"publish_audio_track", publish_audio_track},
     {"_start_publish_audio_track", start_publish_audio_track},
     {"publish_video_track", publish_video_track},
@@ -4995,10 +5142,16 @@ const luaL_Reg room_methods[] = {
     {"data_track_reader_stats", data_track_reader_stats},
     {"send_text", send_text},
     {"_start_text", start_text},
+    {"send_text_with_options", send_text_with_options},
+    {"_start_text_with_options", start_text_with_options},
     {"send_bytes", send_bytes},
     {"_start_bytes", start_bytes},
+    {"send_bytes_with_options", send_bytes_with_options},
+    {"_start_bytes_with_options", start_bytes_with_options},
     {"send_file", send_file},
     {"_start_file", start_file},
+    {"send_file_with_options", send_file_with_options},
+    {"_start_file_with_options", start_file_with_options},
     {"publish_dtmf", publish_dtmf},
     {"perform_rpc", perform_rpc},
     {"_start_rpc", start_rpc},

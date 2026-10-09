@@ -132,6 +132,10 @@ function room_methods:publish_data_async(payload, reliable, topic)
   return future_for(self, self:_start_publish_data(payload, reliable, topic))
 end
 
+function room_methods:publish_data_with_options_async(payload, options)
+  return future_for(self, self:_start_publish_data_with_options(payload, options or {}))
+end
+
 function room_methods:publish_audio_track_async(label, sample_rate, channels, queue_ms)
   return future_for(self, self:_start_publish_audio_track(label, sample_rate, channels, queue_ms))
 end
@@ -230,6 +234,18 @@ end
 
 function room_methods:send_file_async(path, topic, mime_type)
   return future_for(self, self:_start_file(path, topic, mime_type))
+end
+
+function room_methods:send_text_with_options_async(value, options)
+  return future_for(self, self:_start_text_with_options(value, options or {}))
+end
+
+function room_methods:send_bytes_with_options_async(data, options)
+  return future_for(self, self:_start_bytes_with_options(data, options or {}))
+end
+
+function room_methods:send_file_with_options_async(path, options)
+  return future_for(self, self:_start_file_with_options(path, options or {}))
 end
 
 function room_methods:stream_text(options)

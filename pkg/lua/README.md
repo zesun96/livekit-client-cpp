@@ -63,6 +63,12 @@ The E2EE table accepts `enabled`, binary `shared_key`, `ratchet_salt`,
 `unencrypted_magic_bytes`, `ratchet_window_size`, `failure_tolerance`, `key_ring_size`, and
 `key_derivation` (`0` for PBKDF2 SHA-256, `1` for HKDF SHA-256).
 Fallible methods return `true` or `nil, message`. Data payloads are binary-safe Lua strings.
+For recipient targeting, use `publish_data_with_options(payload, {reliable, topic,
+destination_identities})`. One-shot streams have `send_text_with_options(text, options)`,
+`send_bytes_with_options(data, options)`, and `send_file_with_options(path, options)`.
+These accept `topic`, `destination_identities`, `attributes`, `chunk_size`, and `compress`;
+text also accepts `reply_to_stream_id` and `attached_stream_ids`, while bytes and file accept
+`mime_type` and bytes accept `name`. All four methods have `*_async` variants.
 
 ## Coroutine asynchronous calls
 

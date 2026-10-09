@@ -10,7 +10,7 @@ end
 
 local receiver = assert(livekit.new_room())
 local publisher = assert(livekit.new_room())
-local chunks, closed = {}, {}
+local chunks, closed, received = {}, {}, {}
 assert(receiver:on(function(event)
   if event.type == "text_stream_event" or event.type == "byte_stream_event" then
     if event.phase == 1 then
@@ -18,6 +18,11 @@ assert(receiver:on(function(event)
     elseif event.phase == 2 then
       closed[event.topic] = true
     end
+  elseif event.type == "text_received" then
+    received[event.topic] = event.text
+  elseif event.type == "byte_received" or event.type == "file_received" or
+      event.type == "data_received" then
+    received[event.topic] = event.data
   end
 end))
 assert(receiver:register_text_stream_handler("lua-stream-text"))
@@ -51,13 +56,40 @@ assert(assert(publisher:stream_writer_cancel_async(cancelled_writer, "test cance
 assert(publisher:stream_writer_info(cancelled_writer).is_closed)
 assert(publisher:stream_writer_release(cancelled_writer))
 
+assert(publisher:send_text_with_options("directed text", {
+  topic = "lua-one-shot-text", destination_identities = {"receiver"},
+  attributes = {origin = "lua"}, compress = true, chunk_size = 1024
+}))
+assert(assert(publisher:send_bytes_with_options_async("\0\5", {
+  topic = "lua-one-shot-bytes", destination_identities = {"receiver"},
+  mime_type = "application/octet-stream", name = "bytes.bin", compress = true
+})):wait(50))
+local file_path = os.tmpname()
+local file = assert(io.open(file_path, "wb"))
+assert(file:write("file\0data"))
+file:close()
+assert(assert(publisher:send_file_with_options_async(file_path, {
+  topic = "lua-one-shot-file", destination_identities = {"receiver"},
+  mime_type = "application/octet-stream", compress = true
+})):wait(50))
+os.remove(file_path)
+assert(assert(publisher:publish_data_with_options_async("data\0message", {
+  topic = "lua-directed-data", destination_identities = {"receiver"}, reliable = true
+})):wait(50))
+
 for _ = 1, 200 do
   assert(receiver:step(25))
   assert(publisher:poll())
-  if closed["lua-stream-text"] and closed["lua-stream-bytes"] then break end
+  if closed["lua-stream-text"] and closed["lua-stream-bytes"] and
+      received["lua-one-shot-text"] and received["lua-one-shot-bytes"] and
+      received["lua-one-shot-file"] and received["lua-directed-data"] then break end
 end
 assert(chunks["lua-stream-text"] == "hello world" and closed["lua-stream-text"])
 assert(chunks["lua-stream-bytes"] == "\0\1\2\3" and closed["lua-stream-bytes"])
+assert(received["lua-one-shot-text"] == "directed text")
+assert(received["lua-one-shot-bytes"] == "\0\5")
+assert(received["lua-one-shot-file"] == "file\0data")
+assert(received["lua-directed-data"] == "data\0message")
 assert(receiver:unregister_text_stream_handler("lua-stream-text"))
 assert(receiver:unregister_byte_stream_handler("lua-stream-bytes"))
 assert(publisher:disconnect())
