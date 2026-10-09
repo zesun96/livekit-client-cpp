@@ -59,6 +59,13 @@ Connection options support `auto_subscribe`, `adaptive_stream`, `dynacast`, `joi
 `reconnect_timeout_ms`, `continual_gathering_policy`, `ice_transport_type`, `ice_servers`, and
 an `e2ee` table. ICE servers are arrays of `{urls = {"stun:..."}, username, password}`;
 `CONTINUAL_GATHERING_POLICY` and `ICE_TRANSPORT_TYPE` provide enum values.
+For renewable credentials, use `room:connect_with_token_source(provider, fetch_options,
+connect_options)` or its `_async` variant. The provider receives room and participant fields,
+`participant_attributes`, and `force_refresh`; return `{url = ..., token = ...}` or two strings.
+Fetch options can include room, participant, agent, and deployment fields. The provider runs on
+the Lua thread while `poll()` or `step()` handles a native request. Continue driving the room
+event loop during reconnection so refreshed credentials can be supplied. The synchronous
+variant drives the loop for the initial connection.
 The E2EE table accepts `enabled`, binary `shared_key`, `ratchet_salt`,
 `unencrypted_magic_bytes`, `ratchet_window_size`, `failure_tolerance`, `key_ring_size`, and
 `key_derivation` (`0` for PBKDF2 SHA-256, `1` for HKDF SHA-256).

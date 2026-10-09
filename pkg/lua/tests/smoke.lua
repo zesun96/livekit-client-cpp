@@ -191,6 +191,10 @@ local advanced, advanced_error = assert(room:connect_async("", "", {
   ice_servers = {{urls = {"stun:stun.example.invalid:3478"}}}
 })):wait(50)
 assert(advanced == nil and type(advanced_error) == "string")
+local no_token, no_token_error = assert(room:connect_with_token_source_async(function()
+  return nil, "no test token"
+end)):wait(50)
+assert(no_token == nil and type(no_token_error) == "string")
 local run_result, run_error = livekit.run(room, function()
   return assert(room:publish_data_async("data")):await()
 end)
@@ -210,6 +214,6 @@ assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
 
-for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "stream_writer", "data_track_schema", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "stream_writer", "data_track_schema", "token_source", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
   assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
 end

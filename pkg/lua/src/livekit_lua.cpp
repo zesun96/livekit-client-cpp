@@ -84,7 +84,19 @@ enum class AsyncOperation {
 	GetDataTrackSchema,
 	PublishDataTrack,
 	SubscribeDataTrack,
-	WaitAudioSource
+	WaitAudioSource,
+	ConnectTokenSource
+};
+
+struct TokenSourceConfig {
+	std::string room_name;
+	std::string participant_name;
+	std::string participant_identity;
+	std::string participant_metadata;
+	std::map<std::string, std::string> participant_attributes;
+	std::string agent_name;
+	std::string agent_metadata;
+	std::string deployment;
 };
 
 struct SchemaIdConfig {
@@ -204,6 +216,7 @@ struct AsyncTask {
 	SchemaIdConfig schema_id;
 	DataTrackPublishConfig data_track_publish;
 	lk_data_track_subscription_options_t data_track_subscription{};
+	TokenSourceConfig token_source;
 	ConnectConfig connect;
 	bool reliable = true;
 	bool done = false;
@@ -227,6 +240,15 @@ struct RpcRequest {
 	std::string error_message;
 	std::string error_data;
 	uint32_t error_code = 0;
+	std::atomic_bool done{false};
+};
+
+struct TokenRequest {
+	TokenSourceConfig options;
+	bool force_refresh = false;
+	std::string url;
+	std::string token;
+	std::string error;
 	std::atomic_bool done{false};
 };
 
@@ -263,10 +285,12 @@ struct DataTrackHandles {
 struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
+	int token_provider_ref = LUA_NOREF;
 	std::mutex mutex;
 	std::condition_variable wake;
 	std::deque<Event> events;
 	std::deque<std::shared_ptr<RpcRequest>> rpc_pending;
+	std::deque<std::shared_ptr<TokenRequest>> token_pending;
 	std::map<std::string, int> rpc_handlers;
 	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
 	std::map<uint64_t, LocalMediaTrack> local_tracks;
@@ -578,6 +602,53 @@ lk_rpc_handler_result_t on_rpc_invocation(void* user_data,
 	}
 }
 
+lk_status_t on_token_source(void* user_data, const lk_token_source_fetch_options_t* options,
+                            int force_refresh, lk_token_source_response_t* response) noexcept {
+	thread_local std::string response_url;
+	thread_local std::string response_token;
+	try {
+		if (options == nullptr || response == nullptr)
+			return LK_STATUS_INVALID_ARGUMENT;
+		auto* room = static_cast<Room*>(user_data);
+		auto request = std::make_shared<TokenRequest>();
+		request->force_refresh = force_refresh != 0;
+		request->options.room_name = safe(options->room_name);
+		request->options.participant_name = safe(options->participant_name);
+		request->options.participant_identity = safe(options->participant_identity);
+		request->options.participant_metadata = safe(options->participant_metadata);
+		request->options.agent_name = safe(options->agent_name);
+		request->options.agent_metadata = safe(options->agent_metadata);
+		request->options.deployment = safe(options->deployment);
+		for (size_t i = 0;
+		     options->participant_attributes != nullptr && i < options->participant_attribute_count;
+		     ++i) {
+			request->options.participant_attributes.emplace(
+			    safe(options->participant_attributes[i].key),
+			    safe(options->participant_attributes[i].value));
+		}
+		std::unique_lock<std::mutex> lock(room->mutex);
+		if (room->stopping || room->token_pending.size() >= kMaxQueuedEvents)
+			return LK_STATUS_OPERATION_FAILED;
+		room->token_pending.push_back(request);
+		room->wake.notify_all();
+		if (!room->wake.wait_for(lock, std::chrono::seconds(30),
+		                         [&] { return request->done || room->stopping; })) {
+			request->done = true;
+			return LK_STATUS_OPERATION_FAILED;
+		}
+		if (room->stopping || !request->error.empty() || request->url.empty() ||
+		    request->token.empty())
+			return LK_STATUS_OPERATION_FAILED;
+		response_url = request->url;
+		response_token = request->token;
+		response->server_url = response_url.c_str();
+		response->participant_token = response_token.c_str();
+		return LK_STATUS_OK;
+	} catch (...) {
+		return LK_STATUS_EXCEPTION;
+	}
+}
+
 void worker_loop(Room* room) noexcept {
 	for (;;) {
 		std::shared_ptr<AsyncTask> task;
@@ -599,6 +670,27 @@ void worker_loop(Room* room) noexcept {
 				status = lk_room_connect_with_options(room->native, task->first.c_str(),
 				                                      task->second.c_str(), &task->connect.options);
 				break;
+			case AsyncOperation::ConnectTokenSource: {
+				task->connect.prepare();
+				lk_token_source_fetch_options_t options;
+				lk_token_source_fetch_options_init(&options);
+				const auto& config = task->token_source;
+				options.room_name = config.room_name.c_str();
+				options.participant_name = config.participant_name.c_str();
+				options.participant_identity = config.participant_identity.c_str();
+				options.participant_metadata = config.participant_metadata.c_str();
+				options.agent_name = config.agent_name.c_str();
+				options.agent_metadata = config.agent_metadata.c_str();
+				options.deployment = config.deployment.c_str();
+				std::vector<lk_attribute_t> attributes;
+				for (const auto& [key, value] : config.participant_attributes)
+					attributes.push_back({key.c_str(), value.c_str()});
+				options.participant_attributes = attributes.data();
+				options.participant_attribute_count = attributes.size();
+				status = lk_room_connect_with_token_source_and_options(
+				    room->native, on_token_source, room, &options, &task->connect.options);
+				break;
+			}
 			case AsyncOperation::Disconnect:
 				status = lk_room_disconnect(room->native);
 				break;
@@ -606,8 +698,9 @@ void worker_loop(Room* room) noexcept {
 				lk_data_publish_options_t options;
 				lk_data_publish_options_init(&options);
 				options.reliable = task->reliable ? 1 : 0;
-				options.topic = task->stream_config.topic.empty() ? task->topic.c_str()
-				                                                  : task->stream_config.topic.c_str();
+				options.topic = task->stream_config.topic.empty()
+				                    ? task->topic.c_str()
+				                    : task->stream_config.topic.c_str();
 				std::vector<const char*> destinations;
 				for (const auto& identity : task->stream_config.destinations)
 					destinations.push_back(identity.c_str());
@@ -1368,6 +1461,7 @@ int close_room(lua_State* L) {
 			}
 			room->pending.clear();
 			room->rpc_pending.clear();
+			room->token_pending.clear();
 			room->wake.notify_all();
 		}
 		if (room->worker.joinable())
@@ -1404,6 +1498,10 @@ int close_room(lua_State* L) {
 	if (room->callback_ref != LUA_NOREF) {
 		luaL_unref(L, LUA_REGISTRYINDEX, room->callback_ref);
 		room->callback_ref = LUA_NOREF;
+	}
+	if (room->token_provider_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, room->token_provider_ref);
+		room->token_provider_ref = LUA_NOREF;
 	}
 	for (const auto& [method, ref] : room->rpc_handlers)
 		luaL_unref(L, LUA_REGISTRYINDEX, ref);
@@ -1633,6 +1731,63 @@ void dispatch_rpc(lua_State* L, Room* room, const std::shared_ptr<RpcRequest>& r
 	}
 }
 
+void dispatch_token(lua_State* L, Room* room, const std::shared_ptr<TokenRequest>& request) {
+	std::string url;
+	std::string token;
+	std::string error;
+	if (room->token_provider_ref == LUA_NOREF) {
+		error = "token provider is not registered";
+	} else {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, room->token_provider_ref);
+		lua_newtable(L);
+		string_field(L, "room_name", request->options.room_name);
+		string_field(L, "participant_name", request->options.participant_name);
+		string_field(L, "participant_identity", request->options.participant_identity);
+		string_field(L, "participant_metadata", request->options.participant_metadata);
+		string_field(L, "agent_name", request->options.agent_name);
+		string_field(L, "agent_metadata", request->options.agent_metadata);
+		string_field(L, "deployment", request->options.deployment);
+		boolean_field(L, "force_refresh", request->force_refresh);
+		lua_newtable(L);
+		for (const auto& [key, value] : request->options.participant_attributes)
+			string_field(L, key.c_str(), value);
+		lua_setfield(L, -2, "participant_attributes");
+		if (lua_pcall(L, 1, 2, 0) != 0) {
+			error = safe(lua_tostring(L, -1));
+			lua_pop(L, 1);
+		} else {
+			if (lua_istable(L, -2)) {
+				lua_getfield(L, -2, "url");
+				if (lua_isstring(L, -1))
+					url = lua_tostring(L, -1);
+				lua_pop(L, 1);
+				lua_getfield(L, -2, "token");
+				if (lua_isstring(L, -1))
+					token = lua_tostring(L, -1);
+				lua_pop(L, 1);
+			} else if (lua_isstring(L, -2) && lua_isstring(L, -1)) {
+				url = lua_tostring(L, -2);
+				token = lua_tostring(L, -1);
+			} else if (lua_isstring(L, -1)) {
+				error = lua_tostring(L, -1);
+			}
+			lua_pop(L, 2);
+		}
+	}
+	if (url.empty() || token.empty()) {
+		if (error.empty())
+			error = "token provider must return URL and token";
+	}
+	std::lock_guard<std::mutex> lock(room->mutex);
+	if (!request->done) {
+		request->url = std::move(url);
+		request->token = std::move(token);
+		request->error = std::move(error);
+		request->done = true;
+		room->wake.notify_all();
+	}
+}
+
 int poll(lua_State* L) {
 	Room* room = check_room(L, 1);
 	lua_Integer requested = luaL_optinteger(L, 2, 100);
@@ -1641,11 +1796,15 @@ int poll(lua_State* L) {
 	const int limit = static_cast<int>(requested > 1024 ? 1024 : requested);
 	int delivered = 0;
 	while (delivered < limit) {
+		std::shared_ptr<TokenRequest> token_request;
 		std::shared_ptr<RpcRequest> request;
 		Event event;
 		{
 			std::lock_guard<std::mutex> lock(room->mutex);
-			if (!room->rpc_pending.empty()) {
+			if (!room->token_pending.empty()) {
+				token_request = std::move(room->token_pending.front());
+				room->token_pending.pop_front();
+			} else if (!room->rpc_pending.empty()) {
 				request = std::move(room->rpc_pending.front());
 				room->rpc_pending.pop_front();
 			} else if (!room->events.empty()) {
@@ -1654,6 +1813,20 @@ int poll(lua_State* L) {
 			} else {
 				break;
 			}
+		}
+		if (token_request) {
+			if (!token_request->done) {
+				try {
+					dispatch_token(L, room, token_request);
+				} catch (...) {
+					std::lock_guard<std::mutex> lock(room->mutex);
+					token_request->error = "Lua token provider failed";
+					token_request->done = true;
+					room->wake.notify_all();
+				}
+				++delivered;
+			}
+			continue;
 		}
 		if (request) {
 			if (!request->done) {
@@ -1994,6 +2167,64 @@ int start_connect(lua_State* L) {
 	}
 }
 
+TokenSourceConfig read_token_source_config(lua_State* L) {
+	TokenSourceConfig config;
+	if (lua_isnoneornil(L, 3))
+		return config;
+	luaL_checktype(L, 3, LUA_TTABLE);
+	auto read_string = [&](const char* key, std::string& target) {
+		lua_getfield(L, 3, key);
+		if (!lua_isnil(L, -1))
+			target = luaL_checkstring(L, -1);
+		lua_pop(L, 1);
+	};
+	read_string("room_name", config.room_name);
+	read_string("participant_name", config.participant_name);
+	read_string("participant_identity", config.participant_identity);
+	read_string("participant_metadata", config.participant_metadata);
+	read_string("agent_name", config.agent_name);
+	read_string("agent_metadata", config.agent_metadata);
+	read_string("deployment", config.deployment);
+	lua_getfield(L, 3, "participant_attributes");
+	if (!lua_isnil(L, -1)) {
+		luaL_checktype(L, -1, LUA_TTABLE);
+		lua_pushnil(L);
+		while (lua_next(L, -2) != 0) {
+			luaL_argcheck(L, lua_type(L, -2) == LUA_TSTRING, 3,
+			              "participant attribute keys must be strings");
+			config.participant_attributes.emplace(lua_tostring(L, -2), luaL_checkstring(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	return config;
+}
+
+int start_connect_token_source(lua_State* L) {
+	Room* room = check_room(L, 1);
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	if (lk_room_is_connected(room->native) || async_busy(room))
+		return media_error(L, "room is already connected or busy");
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::ConnectTokenSource;
+		task->token_source = read_token_source_config(L);
+		read_connect_options(L, task->connect);
+		const int count = start_task(L, room, std::move(task));
+		if (count == 1) {
+			if (room->token_provider_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, room->token_provider_ref);
+			lua_pushvalue(L, 2);
+			room->token_provider_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+		}
+		return count;
+	} catch (...) {
+		return media_error(L, "failed to allocate token-source connection");
+	}
+}
+
 int start_disconnect(lua_State* L) {
 	Room* room = check_room(L, 1);
 	try {
@@ -2166,8 +2397,8 @@ int wait_room(lua_State* L) {
 		timeout = 60000;
 	std::unique_lock<std::mutex> lock(room->mutex);
 	const bool ready = room->wake.wait_for(lock, std::chrono::milliseconds(timeout), [&] {
-		return !room->events.empty() || !room->rpc_pending.empty() || room->completed_tasks != 0 ||
-		       room->stopping;
+		return !room->events.empty() || !room->rpc_pending.empty() ||
+		       !room->token_pending.empty() || room->completed_tasks != 0 || room->stopping;
 	});
 	lock.unlock();
 	lua_pushboolean(L, ready);
@@ -5016,6 +5247,7 @@ const luaL_Reg room_methods[] = {
     {"wait", wait_room},
     {"connect", connect_room},
     {"_start_connect", start_connect},
+    {"_start_connect_token_source", start_connect_token_source},
     {"disconnect", disconnect_room},
     {"_start_disconnect", start_disconnect},
     {"close", close_room},

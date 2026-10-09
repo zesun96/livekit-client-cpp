@@ -124,6 +124,16 @@ function room_methods:connect_async(url, token, options)
   return future_for(self, self:_start_connect(url, token, options))
 end
 
+function room_methods:connect_with_token_source_async(provider, fetch_options, connect_options)
+  return future_for(self, self:_start_connect_token_source(provider, fetch_options, connect_options))
+end
+
+function room_methods:connect_with_token_source(provider, fetch_options, connect_options)
+  return native.run(self, function()
+    return assert(self:connect_with_token_source_async(provider, fetch_options, connect_options)):await()
+  end)
+end
+
 function room_methods:disconnect_async()
   return future_for(self, self:_start_disconnect())
 end

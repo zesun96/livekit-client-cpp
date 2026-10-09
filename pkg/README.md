@@ -11,6 +11,7 @@ Swift, and Zig bindings have no implementation yet.
 | Room creation and cleanup | Yes | No | No | No |
 | Synchronous room connect and disconnect | Yes | No | No | No |
 | Coroutine asynchronous room connect and disconnect | Yes | No | No | No |
+| Dynamic token source and advanced ICE connection options | Yes | No | No | No |
 | Connection state, room SID, name, and metadata getters | Yes | No | No | No |
 | Connection and participant callbacks | Yes | No | No | No |
 | Receive data messages | Yes | No | No | No |

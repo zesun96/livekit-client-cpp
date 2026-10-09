@@ -26,6 +26,7 @@ $url = "http://localhost:7880/rtc"
 & $runner pkg/lua/examples/data_transfer.lua $url $senderToken C:/path/to/file.bin
 & $runner pkg/lua/examples/stream_writer.lua $url $senderToken
 & $runner pkg/lua/examples/data_track_schema.lua $url $senderToken
+& $runner pkg/lua/examples/token_source.lua $url $senderToken
 & $runner pkg/lua/examples/rpc_receiver.lua $url $receiverToken 30
 & $runner pkg/lua/examples/rpc_caller.lua $url $senderToken receiver-identity "hello"
 ```
@@ -41,6 +42,9 @@ physical devices. Start `receive_media.lua` first in another terminal.
 `publish_screen.lua` open real capture devices for 10 seconds. Pass an optional device ID to the
 first three or a monitor/window source ID to the last; the screen example selects the first
 monitor by default. Use `media_devices.lua` or `livekit.list_screen_sources()` to inspect IDs.
+
+`token_source.lua` shows the dynamic-credential callback shape. Its environment lookup is an
+example only; replace it with your own short-lived token service.
 
 `data_transfer.lua` sends one-shot text, bytes, an optional file, and a data message using
 coroutine futures. `stream_writer.lua` sends text in three chunks. `data_track_schema.lua`
