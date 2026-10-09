@@ -12,6 +12,7 @@ extern "C" {
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -3409,6 +3410,84 @@ int version(lua_State* L) {
 	return 1;
 }
 
+int log_options(lua_State* L) {
+	lk_log_options_t options;
+	lk_log_options_init(&options);
+	const lk_status_t status = lk_log_get_options(&options);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_newtable(L);
+	integer_field(L, "livekit_level", options.livekit_level);
+	integer_field(L, "webrtc_level", options.webrtc_level);
+	integer_field(L, "websocket_level", options.websocket_level);
+	return 1;
+}
+
+int set_log_options(lua_State* L) {
+	luaL_checktype(L, 1, LUA_TTABLE);
+	lk_log_options_t options;
+	lk_log_options_init(&options);
+	const lk_status_t status = lk_log_get_options(&options);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	for (const auto* field : {"livekit_level", "webrtc_level", "websocket_level"}) {
+		lua_getfield(L, 1, field);
+		if (!lua_isnil(L, -1)) {
+			const auto level = static_cast<lk_log_level_t>(luaL_checkinteger(L, -1));
+			if (std::strcmp(field, "livekit_level") == 0)
+				options.livekit_level = level;
+			else if (std::strcmp(field, "webrtc_level") == 0)
+				options.webrtc_level = level;
+			else
+				options.websocket_level = level;
+		}
+		lua_pop(L, 1);
+	}
+	return status_result(L, lk_log_set_options(&options));
+}
+
+int trace_options(lua_State* L) {
+	lk_trace_options_t options;
+	lk_trace_options_init(&options);
+	const lk_status_t status = lk_trace_get_options(&options);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_newtable(L);
+	boolean_field(L, "enabled", options.enabled != 0);
+	integer_field(L, "category_mask", static_cast<lua_Integer>(options.category_mask));
+	return 1;
+}
+
+int set_trace_options(lua_State* L) {
+	luaL_checktype(L, 1, LUA_TTABLE);
+	lk_trace_options_t options;
+	lk_trace_options_init(&options);
+	const lk_status_t status = lk_trace_get_options(&options);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_getfield(L, 1, "enabled");
+	if (!lua_isnil(L, -1)) {
+		luaL_checktype(L, -1, LUA_TBOOLEAN);
+		options.enabled = lua_toboolean(L, -1);
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 1, "category_mask");
+	if (!lua_isnil(L, -1)) {
+		const lua_Integer mask = luaL_checkinteger(L, -1);
+		if (mask < 0)
+			return luaL_argerror(L, 1, "category_mask must be nonnegative");
+		options.category_mask = static_cast<uint64_t>(mask);
+	}
+	lua_pop(L, 1);
+	return status_result(L, lk_trace_set_options(&options));
+}
+
+int trace_start_json_file(lua_State* L) {
+	return status_result(L, lk_trace_start_json_file(luaL_checkstring(L, 1)));
+}
+
+int trace_stop(lua_State* L) { return status_result(L, lk_trace_stop()); }
+
 const luaL_Reg room_methods[] = {
     {"on", on},
     {"register_rpc_method", register_rpc_method},
@@ -3516,6 +3595,12 @@ const luaL_Reg room_methods[] = {
     {nullptr, nullptr}};
 const luaL_Reg module_methods[] = {{"new_room", new_room},
                                    {"version", version},
+                                   {"log_options", log_options},
+                                   {"set_log_options", set_log_options},
+                                   {"trace_options", trace_options},
+                                   {"set_trace_options", set_trace_options},
+                                   {"trace_start_json_file", trace_start_json_file},
+                                   {"trace_stop", trace_stop},
                                    {"list_media_devices", list_media_devices},
                                    {"list_screen_sources", list_screen_sources},
                                    {nullptr, nullptr}};
@@ -3565,5 +3650,25 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 	lua_setfield(L, -2, "FAILED");
 	lua_pushinteger(L, LK_ROOM_STATE_RECONNECTING);
 	lua_setfield(L, -2, "RECONNECTING");
+	for (const auto& level : {std::pair{"LOG_TRACE", LK_LOG_LEVEL_TRACE},
+	                          {"LOG_DEBUG", LK_LOG_LEVEL_DEBUG},
+	                          {"LOG_INFO", LK_LOG_LEVEL_INFO},
+	                          {"LOG_WARNING", LK_LOG_LEVEL_WARNING},
+	                          {"LOG_ERROR", LK_LOG_LEVEL_ERROR},
+	                          {"LOG_OFF", LK_LOG_LEVEL_OFF}}) {
+		lua_pushinteger(L, level.second);
+		lua_setfield(L, -2, level.first);
+	}
+	for (const auto& category : {std::pair{"TRACE_LIFECYCLE", LK_TRACE_CATEGORY_LIFECYCLE},
+	                             {"TRACE_SIGNALING", LK_TRACE_CATEGORY_SIGNALING},
+	                             {"TRACE_TRANSPORT", LK_TRACE_CATEGORY_TRANSPORT},
+	                             {"TRACE_TRACK", LK_TRACE_CATEGORY_TRACK},
+	                             {"TRACE_DATA", LK_TRACE_CATEGORY_DATA},
+	                             {"TRACE_RPC", LK_TRACE_CATEGORY_RPC},
+	                             {"TRACE_E2EE", LK_TRACE_CATEGORY_E2EE},
+	                             {"TRACE_ALL", LK_TRACE_CATEGORY_ALL}}) {
+		lua_pushinteger(L, category.second);
+		lua_setfield(L, -2, category.first);
+	}
 	return 1;
 }

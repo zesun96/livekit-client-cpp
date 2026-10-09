@@ -30,6 +30,7 @@ Swift, and Zig bindings have no implementation yet.
 
 Lua covers outgoing streams and incoming completed stream events, RPC, E2EE key control,
 device enumeration and speaker control, recording status, and local/remote track RTC snapshots.
-Logging, tracing, and other advanced C API features remain unsupported. Lua
+Lua exposes logging levels and JSON trace configuration, but not log or trace callbacks. Other
+advanced C API features remain unsupported. Lua
 asynchronous calls use a native worker thread and resume coroutines when the Lua thread calls
 `room:poll()` or `room:step()`.

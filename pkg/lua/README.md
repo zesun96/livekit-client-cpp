@@ -2,8 +2,9 @@
 
 This Lua 5.1+ binding uses the stable C ABI of `livekit-client-cpp`. It exposes room lifecycle,
 participant snapshots and updates, data and stream messages, RPC calls, E2EE keys, media capture,
-and remote-track controls. The Lua interpreter and module must use the same Lua runtime DLL and
-architecture. The `Lua51vs_rel_pdb` executable is statically linked and cannot safely host this
+logging and tracing configuration, and remote-track controls. The Lua interpreter and module must
+use the same Lua runtime DLL and architecture. The `Lua51vs_rel_pdb` executable is statically
+linked and cannot safely host this
 DLL-linked module; use a DLL-linked interpreter or the optional test runner below.
 
 ## Build on Windows
@@ -104,6 +105,16 @@ operations, and is idempotent. The room is also closed by Lua garbage collection
 rooms before the Lua state exits.
 
 ## Additional API
+
+`livekit.log_options()` returns process-wide `livekit_level`, `webrtc_level`, and
+`websocket_level` values. `livekit.set_log_options({...})` updates only the supplied levels;
+constants `LOG_TRACE`, `LOG_DEBUG`, `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`, and `LOG_OFF`
+are provided. `livekit.trace_options()` and `livekit.set_trace_options({...})` read and update
+`enabled` and `category_mask`. Combine `TRACE_LIFECYCLE`, `TRACE_SIGNALING`,
+`TRACE_TRANSPORT`, `TRACE_TRACK`, `TRACE_DATA`, `TRACE_RPC`, and `TRACE_E2EE` by addition, or use
+`TRACE_ALL`. `livekit.trace_start_json_file(path)` replaces the process-wide trace sink with a
+Chrome Trace JSON file; call `livekit.trace_stop()` to flush and close it. These settings affect
+all rooms in the process. Logging and tracing callbacks are not exposed to Lua.
 
 `room:local_participant()` and `room:remote_participants()` return detached tables. Local
 participant name, metadata, and attributes can be changed through `set_local_name`,
