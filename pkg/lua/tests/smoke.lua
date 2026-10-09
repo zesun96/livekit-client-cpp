@@ -29,6 +29,15 @@ assert(livekit.set_trace_options(original_trace))
 local room, err = livekit.new_room()
 assert(room, err)
 assert(not room:is_connected())
+local unopened_writer, unopened_writer_error = room:stream_text({topic = "smoke"})
+assert(unopened_writer == nil and type(unopened_writer_error) == "string")
+local async_unopened_writer, async_unopened_error = assert(
+  room:stream_bytes_async({topic = "smoke"})):wait(50)
+assert(async_unopened_writer == nil and type(async_unopened_error) == "string")
+local missing_writer, missing_writer_error = room:stream_writer_info(99999)
+assert(missing_writer == nil and missing_writer_error == "stream writer is unavailable")
+local missing_write, missing_write_error = room:stream_writer_write(99999, "data")
+assert(missing_write == nil and missing_write_error == "stream writer is unavailable")
 assert(type(room:state()) == "number")
 assert(type(room:sid()) == "string")
 assert(type(room:name()) == "string")
@@ -170,6 +179,6 @@ assert(ok == nil and message == "room is closed")
 room = nil
 collectgarbage("collect")
 
-for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
+for _, example in ipairs({"media_devices", "cpp_sample", "room_event", "data_transfer", "stream_writer", "rpc_caller", "rpc_receiver", "publish_audio", "publish_video", "receive_media", "publish_microphone", "publish_system_audio", "publish_camera", "publish_screen"}) do
   assert(loadfile("pkg/lua/examples/" .. example .. ".lua"))
 end

@@ -228,6 +228,34 @@ function room_methods:send_file_async(path, topic, mime_type)
   return future_for(self, self:_start_file(path, topic, mime_type))
 end
 
+function room_methods:stream_text(options)
+  return self:_open_stream_writer(options or {}, true)
+end
+
+function room_methods:stream_bytes(options)
+  return self:_open_stream_writer(options or {}, false)
+end
+
+function room_methods:stream_text_async(options)
+  return future_for(self, self:_start_open_stream_writer(options or {}, true))
+end
+
+function room_methods:stream_bytes_async(options)
+  return future_for(self, self:_start_open_stream_writer(options or {}, false))
+end
+
+function room_methods:stream_writer_write_async(id, data)
+  return future_for(self, self:_start_stream_writer_write(id, data))
+end
+
+function room_methods:stream_writer_close_async(id)
+  return future_for(self, self:_start_stream_writer_close(id))
+end
+
+function room_methods:stream_writer_cancel_async(id, reason)
+  return future_for(self, self:_start_stream_writer_cancel(id, reason))
+end
+
 function room_methods:poll(max_events)
   local count, err = native_poll(self, max_events)
   if not count then return nil, err end

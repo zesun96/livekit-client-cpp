@@ -28,8 +28,9 @@ Swift, and Zig bindings have no implementation yet.
 | Media devices and remote recording | Partial | No | No | No |
 | Logging, tracing, and RTC statistics | Partial | No | No | No |
 
-Lua covers outgoing streams and incoming completed stream events, RPC, E2EE key control,
-device enumeration and speaker control, recording status, and local/remote track RTC snapshots.
+Lua covers one-shot and incremental outgoing streams and incoming completed stream events, RPC,
+E2EE key control, device enumeration and speaker control, recording status, and local/remote track
+RTC snapshots.
 Lua exposes logging levels and JSON trace configuration, but not log or trace callbacks. Other
 advanced C API features remain unsupported. Lua
 asynchronous calls use a native worker thread and resume coroutines when the Lua thread calls

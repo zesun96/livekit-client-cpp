@@ -24,6 +24,7 @@ $url = "http://localhost:7880/rtc"
 & $runner pkg/lua/examples/publish_screen.lua $url $senderToken
 & $runner pkg/lua/examples/room_event.lua $url $receiverToken 30
 & $runner pkg/lua/examples/data_transfer.lua $url $senderToken C:/path/to/file.bin
+& $runner pkg/lua/examples/stream_writer.lua $url $senderToken
 & $runner pkg/lua/examples/rpc_receiver.lua $url $receiverToken 30
 & $runner pkg/lua/examples/rpc_caller.lua $url $senderToken receiver-identity "hello"
 ```
@@ -41,7 +42,7 @@ first three or a monitor/window source ID to the last; the screen example select
 monitor by default. Use `media_devices.lua` or `livekit.list_screen_sources()` to inspect IDs.
 
 `data_transfer.lua` sends one-shot text, bytes, an optional file, and a data message using
-coroutine futures; incremental stream writers remain unavailable. Start `rpc_receiver.lua` in one
+coroutine futures. `stream_writer.lua` sends text in three chunks. Start `rpc_receiver.lua` in one
 terminal and `rpc_caller.lua` in another. Use different participant identities in the same room,
 and pass the receiver's printed identity to the caller. Registered Lua RPC handlers run when the
 Lua thread calls `room:poll()` or `room:step()`; they return a response string or a table with

@@ -75,7 +75,29 @@ enum class AsyncOperation {
 	UnpublishLocalTrack,
 	SetRemoteTrackSubscribed,
 	PublishCaptureTrack,
-	CaptureControl
+	CaptureControl,
+	OpenStreamWriter,
+	WriteStreamWriter,
+	CloseStreamWriter,
+	CancelStreamWriter
+};
+
+struct StreamWriterConfig {
+	bool text = true;
+	std::string topic;
+	std::string mime_type;
+	std::string name;
+	std::string stream_id;
+	std::string reply_to_stream_id;
+	std::vector<std::string> destinations;
+	std::vector<std::string> attached_stream_ids;
+	std::map<std::string, std::string> attributes;
+	uint64_t total_size = 0;
+	bool has_total_size = false;
+	size_t chunk_size = 0;
+	bool compress = false;
+	bool update = false;
+	int32_t version = 0;
 };
 
 struct ConnectConfig {
@@ -123,6 +145,7 @@ struct AsyncTask {
 	bool media_screen = false;
 	CaptureConfig capture;
 	CaptureAction capture_action = CaptureAction::Start;
+	StreamWriterConfig stream_config;
 	ConnectConfig connect;
 	bool reliable = true;
 	bool done = false;
@@ -169,6 +192,11 @@ struct RemoteMediaStream {
 	lk_video_stream_t* video = nullptr;
 };
 
+struct StreamWriter {
+	lk_text_stream_writer_t* text = nullptr;
+	lk_byte_stream_writer_t* bytes = nullptr;
+};
+
 struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
@@ -180,6 +208,7 @@ struct Room {
 	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
 	std::map<uint64_t, LocalMediaTrack> local_tracks;
 	std::map<uint64_t, RemoteMediaStream> remote_streams;
+	std::map<uint64_t, StreamWriter> stream_writers;
 	uint64_t next_media_id = 1;
 	size_t dropped = 0;
 	std::thread worker;
@@ -200,6 +229,9 @@ bool publish_capture_native(Room* room, const CaptureConfig& config, uint64_t& i
                             std::string& error);
 lk_status_t capture_control_native(Room* room, uint64_t id, CaptureAction action,
                                    const char* source_id, std::string& error);
+lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& config, uint64_t& id);
+lk_status_t stream_writer_operation_native(Room* room, AsyncOperation operation, uint64_t id,
+                                           const std::string& data, std::string& error);
 const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
                                 lua_Integer width, lua_Integer height, const char* format,
                                 int64_t timestamp_us);
@@ -235,6 +267,86 @@ std::string rpc_string(const lk_rpc_result_t* result,
 	getter(result, value.data(), value.size());
 	value.resize(required - 1);
 	return value;
+}
+
+lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& config, uint64_t& id) {
+	std::vector<const char*> destinations;
+	for (const auto& identity : config.destinations)
+		destinations.push_back(identity.c_str());
+	std::vector<const char*> attached;
+	for (const auto& stream_id : config.attached_stream_ids)
+		attached.push_back(stream_id.c_str());
+	std::vector<lk_attribute_t> attributes;
+	for (const auto& [key, value] : config.attributes)
+		attributes.push_back({key.c_str(), value.c_str()});
+	StreamWriter writer;
+	lk_status_t status;
+	if (config.text) {
+		lk_stream_text_options_t options;
+		lk_stream_text_options_init(&options);
+		options.topic = config.topic.c_str();
+		options.destination_identities = destinations.data();
+		options.destination_identity_count = destinations.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.reply_to_stream_id = config.reply_to_stream_id.c_str();
+		options.attached_stream_ids = attached.data();
+		options.attached_stream_id_count = attached.size();
+		options.stream_id = config.stream_id.empty() ? nullptr : config.stream_id.c_str();
+		options.has_total_size = config.has_total_size;
+		options.total_size = config.total_size;
+		if (config.chunk_size != 0)
+			options.chunk_size = config.chunk_size;
+		options.update = config.update;
+		options.version = config.version;
+		options.compress = config.compress;
+		status = lk_room_stream_text(room->native, &options, &writer.text);
+	} else {
+		lk_stream_bytes_options_t options;
+		lk_stream_bytes_options_init(&options);
+		options.topic = config.topic.c_str();
+		options.mime_type = config.mime_type.c_str();
+		options.name = config.name.c_str();
+		options.destination_identities = destinations.data();
+		options.destination_identity_count = destinations.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.stream_id = config.stream_id.empty() ? nullptr : config.stream_id.c_str();
+		options.has_total_size = config.has_total_size;
+		options.total_size = config.total_size;
+		if (config.chunk_size != 0)
+			options.chunk_size = config.chunk_size;
+		options.compress = config.compress;
+		status = lk_room_stream_bytes(room->native, &options, &writer.bytes);
+	}
+	if (status == LK_STATUS_OK) {
+		id = room->next_media_id++;
+		room->stream_writers.emplace(id, writer);
+	}
+	return status;
+}
+
+lk_status_t stream_writer_operation_native(Room* room, AsyncOperation operation, uint64_t id,
+                                           const std::string& data, std::string& error) {
+	auto found = room->stream_writers.find(id);
+	if (found == room->stream_writers.end()) {
+		error = "stream writer is unavailable";
+		return LK_STATUS_INVALID_ARGUMENT;
+	}
+	auto& writer = found->second;
+	if (writer.text != nullptr) {
+		if (operation == AsyncOperation::WriteStreamWriter)
+			return lk_text_stream_writer_write(writer.text, data.data(), data.size());
+		if (operation == AsyncOperation::CloseStreamWriter)
+			return lk_text_stream_writer_close(writer.text);
+		return lk_text_stream_writer_cancel(writer.text, data.c_str());
+	}
+	if (operation == AsyncOperation::WriteStreamWriter)
+		return lk_byte_stream_writer_write(
+		    writer.bytes, reinterpret_cast<const uint8_t*>(data.data()), data.size());
+	if (operation == AsyncOperation::CloseStreamWriter)
+		return lk_byte_stream_writer_close(writer.bytes);
+	return lk_byte_stream_writer_cancel(writer.bytes, data.c_str());
 }
 
 bool enqueue(Room* room, Event event) noexcept {
@@ -433,6 +545,15 @@ void worker_loop(Room* room) noexcept {
 			case AsyncOperation::CaptureControl:
 				status = capture_control_native(room, task->media_id, task->capture_action,
 				                                task->first.c_str(), error);
+				break;
+			case AsyncOperation::OpenStreamWriter:
+				status = open_stream_writer_native(room, task->stream_config, task->media_id);
+				break;
+			case AsyncOperation::WriteStreamWriter:
+			case AsyncOperation::CloseStreamWriter:
+			case AsyncOperation::CancelStreamWriter:
+				status = stream_writer_operation_native(room, task->operation, task->media_id,
+				                                        task->first, error);
 				break;
 			}
 			if (status != LK_STATUS_OK && error.empty())
@@ -844,6 +965,13 @@ int close_room(lua_State* L) {
 		for (auto& [id, stream] : room->remote_streams)
 			destroy_remote_stream(stream);
 		room->remote_streams.clear();
+		for (auto& [id, writer] : room->stream_writers) {
+			if (writer.text != nullptr)
+				lk_text_stream_writer_destroy(writer.text);
+			if (writer.bytes != nullptr)
+				lk_byte_stream_writer_destroy(writer.bytes);
+		}
+		room->stream_writers.clear();
 		if (lk_room_is_connected(room->native)) {
 			for (auto& [id, media] : room->local_tracks)
 				lk_local_track_unpublish(media.track, 1);
@@ -1450,7 +1578,8 @@ int async_result(lua_State* L) {
 			number_field(L, "timestamp", static_cast<lua_Number>(task->chat_timestamp));
 		} else if (task->operation == AsyncOperation::PublishAudioTrack ||
 		           task->operation == AsyncOperation::PublishVideoTrack ||
-		           task->operation == AsyncOperation::PublishCaptureTrack)
+		           task->operation == AsyncOperation::PublishCaptureTrack ||
+		           task->operation == AsyncOperation::OpenStreamWriter)
 			lua_pushnumber(L, static_cast<lua_Number>(task->media_id));
 		else
 			lua_pushboolean(L, 1);
@@ -3202,6 +3331,261 @@ int edit_chat_message(lua_State* L) {
 		return busy_result(L);
 	return status_result(L, lk_room_edit_chat_message(room->native, id, timestamp, message));
 }
+
+StreamWriterConfig read_stream_writer_config(lua_State* L, bool text) {
+	luaL_checktype(L, 2, LUA_TTABLE);
+	StreamWriterConfig config;
+	config.text = text;
+	auto string_option = [&](const char* key, std::string& value) {
+		lua_getfield(L, 2, key);
+		if (!lua_isnil(L, -1))
+			value = luaL_checkstring(L, -1);
+		lua_pop(L, 1);
+	};
+	string_option("topic", config.topic);
+	string_option("mime_type", config.mime_type);
+	string_option("name", config.name);
+	string_option("stream_id", config.stream_id);
+	string_option("reply_to_stream_id", config.reply_to_stream_id);
+	auto string_array = [&](const char* key, std::vector<std::string>& values) {
+		lua_getfield(L, 2, key);
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TTABLE);
+#if LUA_VERSION_NUM < 502
+			const size_t count = lua_objlen(L, -1);
+#else
+			const size_t count = lua_rawlen(L, -1);
+#endif
+			for (size_t i = 1; i <= count; ++i) {
+				lua_rawgeti(L, -1, static_cast<int>(i));
+				values.emplace_back(luaL_checkstring(L, -1));
+				lua_pop(L, 1);
+			}
+		}
+		lua_pop(L, 1);
+	};
+	string_array("destination_identities", config.destinations);
+	string_array("attached_stream_ids", config.attached_stream_ids);
+	lua_getfield(L, 2, "attributes");
+	if (!lua_isnil(L, -1)) {
+		luaL_checktype(L, -1, LUA_TTABLE);
+		lua_pushnil(L);
+		while (lua_next(L, -2) != 0) {
+			luaL_argcheck(L, lua_type(L, -2) == LUA_TSTRING, 2,
+			              "attribute keys must be strings");
+			const char* key = lua_tostring(L, -2);
+			const char* value = luaL_checkstring(L, -1);
+			config.attributes.emplace(key, value);
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "total_size");
+	if (!lua_isnil(L, -1)) {
+		const lua_Integer value = luaL_checkinteger(L, -1);
+		luaL_argcheck(L, value >= 0, 2, "total_size must be nonnegative");
+		config.has_total_size = true;
+		config.total_size = static_cast<uint64_t>(value);
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "chunk_size");
+	if (!lua_isnil(L, -1)) {
+		const lua_Integer value = luaL_checkinteger(L, -1);
+		luaL_argcheck(L, value > 0 && value <= 1024 * 1024, 2, "chunk_size is out of range");
+		config.chunk_size = static_cast<size_t>(value);
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "compress");
+	if (!lua_isnil(L, -1)) {
+		luaL_checktype(L, -1, LUA_TBOOLEAN);
+		config.compress = lua_toboolean(L, -1);
+	}
+	lua_pop(L, 1);
+	if (text) {
+		lua_getfield(L, 2, "update");
+		if (!lua_isnil(L, -1)) {
+			luaL_checktype(L, -1, LUA_TBOOLEAN);
+			config.update = lua_toboolean(L, -1);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, 2, "version");
+		if (!lua_isnil(L, -1)) {
+			const lua_Integer value = luaL_checkinteger(L, -1);
+			luaL_argcheck(L, value >= 0 && value <= INT32_MAX, 2, "version is out of range");
+			config.version = static_cast<int32_t>(value);
+		}
+		lua_pop(L, 1);
+	}
+	return config;
+}
+
+int open_stream_writer(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const bool is_text = lua_toboolean(L, 3);
+	const auto config = read_stream_writer_config(L, is_text);
+	if (room->native == nullptr) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "room is closed");
+		return 2;
+	}
+	if (async_busy(room))
+		return busy_result(L);
+	uint64_t id = 0;
+	const auto status = open_stream_writer_native(room, config, id);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+
+int start_open_stream_writer(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const bool is_text = lua_toboolean(L, 3);
+	auto config = read_stream_writer_config(L, is_text);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = AsyncOperation::OpenStreamWriter;
+	task->stream_config = std::move(config);
+	return start_task(L, room, std::move(task));
+}
+
+int stream_writer_operation(lua_State* L, AsyncOperation operation) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	size_t size = 0;
+	const char* data =
+	    operation == AsyncOperation::CloseStreamWriter ? "" : luaL_checklstring(L, 3, &size);
+	if (room->native == nullptr) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "room is closed");
+		return 2;
+	}
+	if (async_busy(room))
+		return busy_result(L);
+	std::string error;
+	const auto status =
+	    stream_writer_operation_native(room, operation, id, std::string(data, size), error);
+	if (!error.empty()) {
+		lua_pushnil(L);
+		lua_pushlstring(L, error.data(), error.size());
+		return 2;
+	}
+	return status_result(L, status);
+}
+
+int start_stream_writer_operation(lua_State* L, AsyncOperation operation) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	size_t size = 0;
+	const char* data =
+	    operation == AsyncOperation::CloseStreamWriter ? "" : luaL_checklstring(L, 3, &size);
+	auto task = std::make_shared<AsyncTask>();
+	task->operation = operation;
+	task->media_id = id;
+	task->first.assign(data, size);
+	return start_task(L, room, std::move(task));
+}
+
+int stream_writer_write(lua_State* L) {
+	return stream_writer_operation(L, AsyncOperation::WriteStreamWriter);
+}
+int stream_writer_close(lua_State* L) {
+	return stream_writer_operation(L, AsyncOperation::CloseStreamWriter);
+}
+int stream_writer_cancel(lua_State* L) {
+	return stream_writer_operation(L, AsyncOperation::CancelStreamWriter);
+}
+int start_stream_writer_write(lua_State* L) {
+	return start_stream_writer_operation(L, AsyncOperation::WriteStreamWriter);
+}
+int start_stream_writer_close(lua_State* L) {
+	return start_stream_writer_operation(L, AsyncOperation::CloseStreamWriter);
+}
+int start_stream_writer_cancel(lua_State* L) {
+	return start_stream_writer_operation(L, AsyncOperation::CancelStreamWriter);
+}
+
+int stream_writer_release(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->stream_writers.find(id);
+	if (found == room->stream_writers.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "stream writer is unavailable");
+		return 2;
+	}
+	if (found->second.text != nullptr)
+		lk_text_stream_writer_destroy(found->second.text);
+	if (found->second.bytes != nullptr)
+		lk_byte_stream_writer_destroy(found->second.bytes);
+	room->stream_writers.erase(found);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+int stream_writer_info(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = static_cast<uint64_t>(luaL_checknumber(L, 2));
+	if (async_busy(room))
+		return busy_result(L);
+	auto found = room->stream_writers.find(id);
+	if (found == room->stream_writers.end()) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "stream writer is unavailable");
+		return 2;
+	}
+	lk_data_stream_writer_info_snapshot_t* raw = nullptr;
+	const auto status = found->second.text != nullptr
+	                        ? lk_text_stream_writer_create_info_snapshot(found->second.text, &raw)
+	                        : lk_byte_stream_writer_create_info_snapshot(found->second.bytes, &raw);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	std::unique_ptr<lk_data_stream_writer_info_snapshot_t,
+	                decltype(&lk_data_stream_writer_info_snapshot_destroy)>
+	    snapshot(raw, lk_data_stream_writer_info_snapshot_destroy);
+	lk_data_stream_writer_info_t info;
+	lk_data_stream_writer_info_init(&info);
+	const auto info_status = lk_data_stream_writer_info_snapshot_info(raw, &info);
+	if (info_status != LK_STATUS_OK)
+		return status_result(L, info_status);
+	lua_newtable(L);
+	integer_field(L, "kind", info.kind);
+	boolean_field(L, "is_closed",
+	              found->second.text != nullptr
+	                  ? lk_text_stream_writer_is_closed(found->second.text)
+	                  : lk_byte_stream_writer_is_closed(found->second.bytes));
+	boolean_field(L, "has_total_size", info.has_total_size != 0);
+	if (info.has_total_size)
+		number_field(L, "total_size", static_cast<lua_Number>(info.total_size));
+	number_field(L, "timestamp", static_cast<lua_Number>(info.timestamp));
+	string_field(L, "stream_id", owned_string(lk_data_stream_writer_info_snapshot_stream_id, raw));
+	string_field(L, "topic", owned_string(lk_data_stream_writer_info_snapshot_topic, raw));
+	string_field(L, "mime_type", owned_string(lk_data_stream_writer_info_snapshot_mime_type, raw));
+	string_field(L, "participant_identity",
+	             owned_string(lk_data_stream_writer_info_snapshot_participant_identity, raw));
+	string_field(L, "name", owned_string(lk_data_stream_writer_info_snapshot_name, raw));
+	string_field(L, "reply_to_stream_id",
+	             owned_string(lk_data_stream_writer_info_snapshot_reply_to_stream_id, raw));
+	lua_newtable(L);
+	for (size_t i = 0; i < info.attribute_count; ++i) {
+		const auto key = owned_string(lk_data_stream_writer_info_snapshot_attribute_key, raw, i);
+		const auto value =
+		    owned_string(lk_data_stream_writer_info_snapshot_attribute_value, raw, i);
+		string_field(L, key.c_str(), value);
+	}
+	lua_setfield(L, -2, "attributes");
+	lua_newtable(L);
+	for (size_t i = 0; i < info.attached_stream_id_count; ++i) {
+		const auto value =
+		    owned_string(lk_data_stream_writer_info_snapshot_attached_stream_id, raw, i);
+		lua_pushlstring(L, value.data(), value.size());
+		lua_rawseti(L, -2, static_cast<int>(i + 1));
+	}
+	lua_setfield(L, -2, "attached_stream_ids");
+	return 1;
+}
+
 int send_text(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* text = luaL_checkstring(L, 2);
@@ -3582,6 +3966,16 @@ const luaL_Reg room_methods[] = {
     {"send_chat_message", send_chat_message},
     {"_start_chat", start_chat},
     {"edit_chat_message", edit_chat_message},
+    {"_open_stream_writer", open_stream_writer},
+    {"_start_open_stream_writer", start_open_stream_writer},
+    {"stream_writer_write", stream_writer_write},
+    {"stream_writer_close", stream_writer_close},
+    {"stream_writer_cancel", stream_writer_cancel},
+    {"_start_stream_writer_write", start_stream_writer_write},
+    {"_start_stream_writer_close", start_stream_writer_close},
+    {"_start_stream_writer_cancel", start_stream_writer_cancel},
+    {"stream_writer_release", stream_writer_release},
+    {"stream_writer_info", stream_writer_info},
     {"send_text", send_text},
     {"_start_text", start_text},
     {"send_bytes", send_bytes},

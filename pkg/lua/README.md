@@ -137,6 +137,18 @@ becomes an application RPC error. Inbound handlers run on the Lua thread during 
 `step()`, so the host must keep driving that loop while receiving calls. A handler must return
 promptly and cannot yield; avoid blocking room calls inside it.
 
+For incremental transfer, call `room:stream_text(options)` or `room:stream_bytes(options)` to
+obtain a room-owned writer ID. Both have `*_async` variants. Use
+`stream_writer_write(id, data)` for each chunk, then `stream_writer_close(id)` or
+`stream_writer_cancel(id, reason)`. Those three operations also have `*_async` variants.
+`stream_writer_info(id)` returns the stream ID, topic, MIME type, attributes, and close state;
+`stream_writer_release(id)` destroys the handle after it is no longer needed. Room close releases
+any remaining writers. Options accept `topic`, `stream_id`, `destination_identities`,
+`attributes`, `total_size`, `chunk_size`, and `compress`. Text writers also accept
+`reply_to_stream_id`, `attached_stream_ids`, `update`, and `version`; byte writers accept
+`mime_type` and `name`. Stream data is delivered through `text_received` and `byte_received`
+events after completion. Lua strings preserve binary byte chunks.
+
 `e2ee_is_configured`, `e2ee_is_enabled`, `e2ee_set_enabled`, shared and participant key methods,
 `e2ee_data_key_index`, `e2ee_set_data_key_index`, and frame-cryptor methods expose E2EE control.
 Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
