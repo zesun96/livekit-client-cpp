@@ -957,6 +957,66 @@ void on_file(void* user_data, lk_room_t*, const lk_file_received_t* received) {
 void on_byte(void* user_data, lk_room_t*, const lk_file_received_t* received) {
 	file_event(user_data, received, "byte_received");
 }
+void on_text_stream_event(void* user_data, lk_room_t*, const lk_text_stream_event_t* stream) {
+	try {
+		if (stream == nullptr)
+			return;
+		Event event{"text_stream_event"};
+		event.numbers.emplace_back("phase", stream->type);
+		event.strings.emplace_back("stream_id", safe(stream->stream_id));
+		event.strings.emplace_back("mime_type", safe(stream->mime_type));
+		event.strings.emplace_back("topic", safe(stream->topic));
+		event.strings.emplace_back("participant_identity", safe(stream->participant_identity));
+		event.strings.emplace_back("reason", safe(stream->reason));
+		event.strings.emplace_back("reply_to_stream_id", safe(stream->reply_to_stream_id));
+		event.strings.emplace_back("content",
+		                           stream->content != nullptr
+		                               ? std::string(stream->content, stream->content_size)
+		                               : std::string());
+		event.numbers.emplace_back("chunk_index", static_cast<lua_Number>(stream->chunk_index));
+		event.numbers.emplace_back("timestamp", static_cast<lua_Number>(stream->timestamp));
+		event.booleans.emplace_back("has_total_size", stream->has_total_size != 0);
+		if (stream->has_total_size)
+			event.numbers.emplace_back("total_size", static_cast<lua_Number>(stream->total_size));
+		for (size_t i = 0; stream->attributes != nullptr && i < stream->attribute_count; ++i)
+			event.attributes.emplace_back(safe(stream->attributes[i].key),
+			                              safe(stream->attributes[i].value));
+		for (size_t i = 0;
+		     stream->attached_stream_ids != nullptr && i < stream->attached_stream_id_count; ++i)
+			event.speakers.emplace_back(safe(stream->attached_stream_ids[i]));
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_byte_stream_event(void* user_data, lk_room_t*, const lk_byte_stream_event_t* stream) {
+	try {
+		if (stream == nullptr)
+			return;
+		Event event{"byte_stream_event"};
+		event.numbers.emplace_back("phase", stream->type);
+		event.strings.emplace_back("stream_id", safe(stream->stream_id));
+		event.strings.emplace_back("name", safe(stream->name));
+		event.strings.emplace_back("mime_type", safe(stream->mime_type));
+		event.strings.emplace_back("topic", safe(stream->topic));
+		event.strings.emplace_back("participant_identity", safe(stream->participant_identity));
+		event.strings.emplace_back("reason", safe(stream->reason));
+		event.strings.emplace_back(
+		    "content",
+		    stream->content != nullptr
+		        ? std::string(reinterpret_cast<const char*>(stream->content), stream->content_size)
+		        : std::string());
+		event.numbers.emplace_back("chunk_index", static_cast<lua_Number>(stream->chunk_index));
+		event.numbers.emplace_back("timestamp", static_cast<lua_Number>(stream->timestamp));
+		event.booleans.emplace_back("has_total_size", stream->has_total_size != 0);
+		if (stream->has_total_size)
+			event.numbers.emplace_back("total_size", static_cast<lua_Number>(stream->total_size));
+		for (size_t i = 0; stream->attributes != nullptr && i < stream->attribute_count; ++i)
+			event.attributes.emplace_back(safe(stream->attributes[i].key),
+			                              safe(stream->attributes[i].value));
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
 void on_room_metadata(void* user_data, lk_room_t*, const char* metadata) {
 	try {
 		Event event{"room_metadata_changed"};
@@ -1578,20 +1638,30 @@ int poll(lua_State* L) {
 				number_field(L, key.c_str(), value);
 			for (const auto& [key, value] : event.booleans)
 				boolean_field(L, key.c_str(), value);
-			if (event.type == "participant_attributes_changed") {
+			if (event.type == "participant_attributes_changed" ||
+			    event.type == "text_stream_event" || event.type == "byte_stream_event") {
 				lua_newtable(L);
 				for (const auto& [key, value] : event.attributes)
 					string_field(L, key.c_str(), value);
-				lua_setfield(L, -2, "changes");
+				lua_setfield(L, -2,
+				             event.type == "participant_attributes_changed" ? "changes"
+				                                                            : "attributes");
 			}
-			if (event.type == "active_speakers_changed" ||
-			    event.type == "participants_updated") {
+			if (event.type == "active_speakers_changed" || event.type == "participants_updated") {
 				lua_newtable(L);
 				for (size_t i = 0; i < event.speakers.size(); ++i) {
 					lua_pushlstring(L, event.speakers[i].data(), event.speakers[i].size());
 					lua_rawseti(L, -2, static_cast<int>(i + 1));
 				}
 				lua_setfield(L, -2, "identities");
+			}
+			if (event.type == "text_stream_event") {
+				lua_newtable(L);
+				for (size_t i = 0; i < event.speakers.size(); ++i) {
+					lua_pushlstring(L, event.speakers[i].data(), event.speakers[i].size());
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "attached_stream_ids");
 			}
 			if (lua_pcall(L, 1, 0, 0) != 0) {
 				lua_pushnil(L);
@@ -4078,6 +4148,37 @@ int stream_writer_info(lua_State* L) {
 	return 1;
 }
 
+int register_text_stream_handler(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* topic = luaL_checkstring(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(
+	    L, lk_room_register_text_stream_handler(room->native, topic, on_text_stream_event, room));
+}
+int unregister_text_stream_handler(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* topic = luaL_checkstring(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(L, lk_room_unregister_text_stream_handler(room->native, topic));
+}
+int register_byte_stream_handler(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* topic = luaL_checkstring(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(
+	    L, lk_room_register_byte_stream_handler(room->native, topic, on_byte_stream_event, room));
+}
+int unregister_byte_stream_handler(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* topic = luaL_checkstring(L, 2);
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(L, lk_room_unregister_byte_stream_handler(room->native, topic));
+}
+
 int data_track_error(lua_State* L, lk_data_track_error_code_t code) {
 	if (code == LK_DATA_TRACK_ERROR_NONE) {
 		lua_pushboolean(L, 1);
@@ -4872,6 +4973,10 @@ const luaL_Reg room_methods[] = {
     {"_start_stream_writer_cancel", start_stream_writer_cancel},
     {"stream_writer_release", stream_writer_release},
     {"stream_writer_info", stream_writer_info},
+    {"register_text_stream_handler", register_text_stream_handler},
+    {"unregister_text_stream_handler", unregister_text_stream_handler},
+    {"register_byte_stream_handler", register_byte_stream_handler},
+    {"unregister_byte_stream_handler", unregister_byte_stream_handler},
     {"store_data_track_schema", store_data_track_schema},
     {"_start_store_data_track_schema", start_store_data_track_schema},
     {"get_data_track_schema", get_data_track_schema},

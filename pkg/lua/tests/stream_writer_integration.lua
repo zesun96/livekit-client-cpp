@@ -10,12 +10,18 @@ end
 
 local receiver = assert(livekit.new_room())
 local publisher = assert(livekit.new_room())
-local received = {}
+local chunks, closed = {}, {}
 assert(receiver:on(function(event)
-  if event.type == "text_received" or event.type == "byte_received" then
-    received[event.topic] = event.text or event.data
+  if event.type == "text_stream_event" or event.type == "byte_stream_event" then
+    if event.phase == 1 then
+      chunks[event.topic] = (chunks[event.topic] or "") .. event.content
+    elseif event.phase == 2 then
+      closed[event.topic] = true
+    end
   end
 end))
+assert(receiver:register_text_stream_handler("lua-stream-text"))
+assert(receiver:register_byte_stream_handler("lua-stream-bytes"))
 assert(receiver:connect(url, receiver_token))
 assert(publisher:connect(url, publisher_token))
 
@@ -48,10 +54,12 @@ assert(publisher:stream_writer_release(cancelled_writer))
 for _ = 1, 200 do
   assert(receiver:step(25))
   assert(publisher:poll())
-  if received["lua-stream-text"] and received["lua-stream-bytes"] then break end
+  if closed["lua-stream-text"] and closed["lua-stream-bytes"] then break end
 end
-assert(received["lua-stream-text"] == "hello world")
-assert(received["lua-stream-bytes"] == "\0\1\2\3")
+assert(chunks["lua-stream-text"] == "hello world" and closed["lua-stream-text"])
+assert(chunks["lua-stream-bytes"] == "\0\1\2\3" and closed["lua-stream-bytes"])
+assert(receiver:unregister_text_stream_handler("lua-stream-text"))
+assert(receiver:unregister_byte_stream_handler("lua-stream-bytes"))
 assert(publisher:disconnect())
 assert(receiver:disconnect())
 assert(publisher:close())

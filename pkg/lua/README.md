@@ -151,6 +151,11 @@ any remaining writers. Options accept `topic`, `stream_id`, `destination_identit
 `reply_to_stream_id`, `attached_stream_ids`, `update`, and `version`; byte writers accept
 `mime_type` and `name`. Stream data is delivered through `text_received` and `byte_received`
 events after completion. Lua strings preserve binary byte chunks.
+For chunk-by-chunk receive, call `register_text_stream_handler(topic)` or
+`register_byte_stream_handler(topic)` and handle `text_stream_event` or `byte_stream_event` in
+`room:on`. The event carries `phase` (0 open, 1 chunk, 2 closed, 3 failed), binary `content`,
+`chunk_index`, stream metadata, and a failure `reason`. Registering a topic handler replaces the
+completed-message event for that topic until `unregister_*_stream_handler(topic)` is called.
 
 DataTrack uses binary-safe Lua strings for schema definitions and frames. Call
 `store_data_track_schema({name, encoding, custom_encoding}, definition)` before publishing a
