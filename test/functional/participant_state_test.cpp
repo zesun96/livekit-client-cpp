@@ -10,6 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -778,10 +781,12 @@ public:
 	void OnSubscribedQualityUpdate(TrackPublicationInterface* publication,
 	                               ParticipantInterface* participant,
 	                               const SubscribedQualityUpdate& update) override {
+		std::lock_guard<std::mutex> guard(quality_mutex);
 		++quality_update_count;
 		quality_track_sid = publication != nullptr ? publication->Sid() : "";
 		quality_event_is_local = participant != nullptr && participant->IsLocalParticipant();
 		quality_update = update;
+		quality_cv.notify_all();
 	}
 
 	int unpublished_count = 0;
@@ -794,6 +799,8 @@ public:
 	std::string quality_track_sid;
 	bool quality_event_is_local = false;
 	SubscribedQualityUpdate quality_update;
+	std::mutex quality_mutex;
+	std::condition_variable quality_cv;
 };
 
 class ConnectionEvents final : public RoomEventInterface {
@@ -1512,6 +1519,9 @@ TEST(LocalTrackStateTest, RetainsAndForwardsSubscribedQualityUpdates) {
 	high->set_enabled(true);
 	room.SubscribedQualityUpdateEvent(update);
 
+	std::unique_lock<std::mutex> quality_lock(events.quality_mutex);
+	ASSERT_TRUE(events.quality_cv.wait_for(quality_lock, std::chrono::seconds(2),
+	                                       [&] { return events.quality_update_count == 1; }));
 	EXPECT_EQ(events.quality_update_count, 1);
 	EXPECT_EQ(events.quality_track_sid, "TR_video");
 	EXPECT_TRUE(events.quality_event_is_local);
@@ -1533,7 +1543,14 @@ TEST(LocalTrackStateTest, RetainsAndForwardsSubscribedQualityUpdates) {
 
 	update.set_track_sid("TR_unknown");
 	room.SubscribedQualityUpdateEvent(update);
-	EXPECT_EQ(events.quality_update_count, 1);
+	update.set_track_sid("TR_video");
+	update.mutable_subscribed_qualities(0)->set_enabled(false);
+	room.SubscribedQualityUpdateEvent(update);
+	ASSERT_TRUE(events.quality_cv.wait_for(quality_lock, std::chrono::seconds(2),
+	                                       [&] { return events.quality_update_count == 2; }));
+	EXPECT_EQ(events.quality_update_count, 2);
+	EXPECT_FALSE(events.quality_update.qualities[0].enabled);
+	quality_lock.unlock();
 	room.RemoveEventListener();
 }
 

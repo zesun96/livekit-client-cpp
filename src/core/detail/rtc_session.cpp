@@ -243,6 +243,13 @@ void RtcSession::PublisherNegotiationNeeded() {
 	RequestPublisherNegotiation(false);
 }
 
+std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
+RtcSession::GetSubscriberTransceivers() const {
+	return subscriber_pc_ != nullptr
+	           ? subscriber_pc_->GetTransceivers()
+	           : std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>{};
+}
+
 void RtcSession::SetPublisherAnswer(std::unique_ptr<webrtc::SessionDescriptionInterface> answer) {
 	this->publisher_pc_->SetRemoteDescription(std::move(answer));
 	PublisherNegotiationCompleted();

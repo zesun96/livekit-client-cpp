@@ -4,6 +4,10 @@ The native C++ API can record one subscribed remote track to one file. The imple
 the per-track file-saving model used by the LiveKit Go SDK: received video stays encoded, while
 audio is written from libwebrtc's decoded PCM output.
 
+The [Lua binding](../pkg/lua/README.md) provides `start_track_recording` and
+`start_track_recording_async` with the same per-track file formats. The C ABI provides
+`lk_room_start_track_recording`, `lk_track_recorder_stop`, and recorder stats functions.
+
 ## Start and stop a recorder
 
 Start recording from `RoomEventInterface::OnTrackSubscribed()` and retain the returned recorder for

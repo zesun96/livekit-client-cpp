@@ -30,6 +30,7 @@
 #include <api/jsep.h>
 
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -52,7 +53,8 @@ public:
 
 	virtual void OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) = 0;
 
-	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) = 0;
+	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer,
+	                     std::map<std::string, std::string> mid_to_track_id) = 0;
 
 	virtual void OnRemoteMuteChanged(std::string sid, bool muted) = 0;
 

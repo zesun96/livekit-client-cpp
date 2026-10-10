@@ -61,6 +61,7 @@ typedef struct lk_data_track_frame lk_data_track_frame_t;
 typedef struct lk_data_track_schema lk_data_track_schema_t;
 typedef struct lk_audio_stream lk_audio_stream_t;
 typedef struct lk_video_stream lk_video_stream_t;
+typedef struct lk_track_recorder lk_track_recorder_t;
 typedef struct lk_owned_audio_frame lk_owned_audio_frame_t;
 typedef struct lk_owned_video_frame lk_owned_video_frame_t;
 
@@ -1322,6 +1323,26 @@ typedef struct lk_media_stream_options {
 	size_t capacity;
 } lk_media_stream_options_t;
 
+typedef struct lk_track_recorder_options {
+	size_t struct_size;
+	const char* output_path;
+	size_t queue_capacity;
+} lk_track_recorder_options_t;
+
+typedef enum lk_track_recorder_state {
+	LK_TRACK_RECORDER_RECORDING = 0,
+	LK_TRACK_RECORDER_STOPPED = 1,
+	LK_TRACK_RECORDER_FAILED = 2
+} lk_track_recorder_state_t;
+
+typedef struct lk_track_recorder_stats {
+	size_t struct_size;
+	lk_track_recorder_state_t state;
+	uint64_t frames_written;
+	uint64_t bytes_written;
+	uint64_t frames_dropped;
+} lk_track_recorder_stats_t;
+
 typedef struct lk_file_send_options {
 	size_t struct_size;
 	const char* topic;
@@ -1510,6 +1531,8 @@ LKC_API void lk_data_track_schema_id_init(lk_data_track_schema_id_t* schema_id);
 LKC_API void lk_data_track_publish_options_init(lk_data_track_publish_options_t* options);
 LKC_API void lk_data_track_subscription_options_init(lk_data_track_subscription_options_t* options);
 LKC_API void lk_media_stream_options_init(lk_media_stream_options_t* options);
+LKC_API void lk_track_recorder_options_init(lk_track_recorder_options_t* options);
+LKC_API void lk_track_recorder_stats_init(lk_track_recorder_stats_t* stats);
 LKC_API void lk_data_track_snapshot_info_init(lk_data_track_snapshot_info_t* info);
 LKC_API void lk_file_send_options_init(lk_file_send_options_t* options);
 LKC_API void lk_text_send_options_init(lk_text_send_options_t* options);
@@ -1783,6 +1806,9 @@ LKC_API lk_status_t lk_video_source_create_camera(const lk_camera_capture_option
 LKC_API lk_status_t lk_video_source_create_screen(const lk_screen_capture_options_t* options,
                                                   lk_video_source_t** source);
 LKC_API lk_status_t lk_video_source_destroy(lk_video_source_t* source);
+/* Returns zero dimensions until a camera or screen source receives its first frame. */
+LKC_API lk_status_t lk_video_source_dimensions(const lk_video_source_t* source, uint32_t* width,
+                                              uint32_t* height);
 LKC_API lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
                                                   const lk_video_frame_input_t* frame);
 LKC_API lk_status_t lk_video_source_capture_i420(lk_video_source_t* source, const uint8_t* data,
@@ -1938,6 +1964,19 @@ LKC_API lk_status_t lk_room_create_video_stream(lk_room_t* room, const char* par
                                                 const char* track_sid,
                                                 const lk_media_stream_options_t* options,
                                                 lk_video_stream_t** stream);
+/* The recorder owns its reader and can outlive a remote track. Stop before reading its file. */
+LKC_API lk_status_t lk_room_start_track_recording(lk_room_t* room, const char* participant_identity,
+                                                  const char* track_sid,
+                                                  const lk_track_recorder_options_t* options,
+                                                  lk_track_recorder_t** recorder);
+LKC_API void lk_track_recorder_destroy(lk_track_recorder_t* recorder);
+LKC_API void lk_track_recorder_stop(lk_track_recorder_t* recorder);
+LKC_API lk_status_t lk_track_recorder_get_stats(const lk_track_recorder_t* recorder,
+                                                lk_track_recorder_stats_t* stats);
+LKC_API size_t lk_track_recorder_output_path(const lk_track_recorder_t* recorder, char* buffer,
+                                             size_t buffer_size);
+LKC_API size_t lk_track_recorder_error(const lk_track_recorder_t* recorder, char* buffer,
+                                       size_t buffer_size);
 LKC_API void lk_audio_stream_destroy(lk_audio_stream_t* stream);
 LKC_API void lk_audio_stream_close(lk_audio_stream_t* stream);
 LKC_API int lk_audio_stream_is_closed(const lk_audio_stream_t* stream);

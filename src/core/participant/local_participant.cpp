@@ -44,6 +44,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <utility>
 
 namespace livekit {
@@ -470,6 +471,7 @@ LocalParticipant::~LocalParticipant() {
 		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
 		stop_backup_codec_worker_ = true;
 		backup_codec_requests_.clear();
+		pending_quality_updates_.clear();
 	}
 	backup_codec_cv_.notify_all();
 	if (backup_codec_worker_.joinable()) {
@@ -974,7 +976,8 @@ void LocalParticipant::LocalTrackSubscribed(const std::string& track_sid) {
 	if (auto* listener = event_listener_.load()) {
 		listener->OnLocalTrackSubscribed(publication->second.get(), this);
 	}
-	TryQueuePreconnectBuffers();
+	// Scanning preconnect buffers takes the publication lock, so leave it to the worker.
+	NotifyPreconnectAudioAvailable();
 }
 
 void LocalParticipant::UpdateAgentIdentities(std::vector<std::string> identities) {
@@ -987,7 +990,7 @@ void LocalParticipant::UpdateAgentIdentities(std::vector<std::string> identities
 			}
 		}
 	}
-	TryQueuePreconnectBuffers();
+	NotifyPreconnectAudioAvailable();
 }
 
 void LocalParticipant::TryQueuePreconnectBuffers() {
@@ -1109,26 +1112,40 @@ void LocalParticipant::QueueBackupCodec(std::string track_sid, VideoCodec codec)
 void LocalParticipant::RunBackupCodecWorker() {
 	for (;;) {
 		BackupCodecRequest request;
+		std::optional<core::SubscribedQualityUpdate> quality_update;
 		{
 			std::unique_lock<std::mutex> lock(backup_codec_mutex_);
 			backup_codec_cv_.wait(lock, [this] {
-				return stop_backup_codec_worker_ || !backup_codec_requests_.empty();
+				return stop_backup_codec_worker_ || !backup_codec_requests_.empty() ||
+				       !pending_quality_updates_.empty();
 			});
 			if (stop_backup_codec_worker_) {
 				return;
 			}
-			request = std::move(backup_codec_requests_.front());
-			backup_codec_requests_.pop_front();
+			if (!pending_quality_updates_.empty()) {
+				auto pending = pending_quality_updates_.begin();
+				quality_update = std::move(pending->second);
+				pending_quality_updates_.erase(pending);
+			} else {
+				request = std::move(backup_codec_requests_.front());
+				backup_codec_requests_.pop_front();
+			}
 		}
 		try {
-			PublishAdditionalCodec(request.track_sid, request.codec);
+			if (quality_update) {
+				ApplySubscribedQualityUpdate(std::move(*quality_update));
+			} else {
+				PublishAdditionalCodec(request.track_sid, request.codec);
+			}
 		} catch (const std::exception& error) {
-			LKC_LOG_ERROR << "failed to publish backup codec: " << error.what();
+			LKC_LOG_ERROR << "failed to update published video track: " << error.what();
 		} catch (...) {
-			LKC_LOG_ERROR << "failed to publish backup codec: unknown error";
+			LKC_LOG_ERROR << "failed to update published video track: unknown error";
 		}
-		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
-		pending_backup_codecs_.erase(std::make_pair(request.track_sid, request.codec));
+		if (!quality_update) {
+			std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+			pending_backup_codecs_.erase(std::make_pair(request.track_sid, request.codec));
+		}
 	}
 }
 
@@ -1253,6 +1270,23 @@ bool LocalParticipant::PublishAdditionalCodec(const std::string& track_sid, Vide
 }
 
 void LocalParticipant::SubscribedQualityUpdate(core::SubscribedQualityUpdate update) {
+	// Signal callbacks must keep receiving answers while publication holds media_publish_mutex_.
+	// Coalesce per-track feedback and apply it on the existing media control worker.
+	if (update.track_sid.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
+		if (stop_backup_codec_worker_) {
+			return;
+		}
+		auto track_sid = update.track_sid;
+		pending_quality_updates_.insert_or_assign(std::move(track_sid), std::move(update));
+	}
+	backup_codec_cv_.notify_one();
+}
+
+void LocalParticipant::ApplySubscribedQualityUpdate(core::SubscribedQualityUpdate update) {
 	std::lock_guard<std::recursive_mutex> publish_guard(media_publish_mutex_);
 	if (update.track_sid.empty()) {
 		return;
@@ -1373,6 +1407,7 @@ void LocalParticipant::ClearPublishedTracksForDisconnect() {
 		std::lock_guard<std::mutex> guard(backup_codec_mutex_);
 		backup_codec_requests_.clear();
 		pending_backup_codecs_.clear();
+		pending_quality_updates_.clear();
 	}
 	{
 		std::lock_guard<std::mutex> guard(preconnect_mutex_);

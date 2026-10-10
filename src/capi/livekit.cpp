@@ -4,6 +4,7 @@
 #include "livekit/core/e2ee/e2ee_manager.h"
 #include "livekit/core/livekit_client.h"
 #include "livekit/core/logging.h"
+#include "livekit/core/recording/track_recorder.h"
 #include "livekit/core/rpc.h"
 #include "livekit/core/tracing.h"
 #include "livekit/core/track/audio_source_interface.h"
@@ -69,6 +70,10 @@ struct lk_room {
 	std::vector<std::shared_ptr<AsyncRpcTask>> async_rpc_tasks;
 	lk_room_callbacks_t callbacks{};
 	std::shared_ptr<RoomHandleState> state = std::make_shared<RoomHandleState>();
+};
+
+struct lk_track_recorder {
+	std::unique_ptr<core::TrackRecorder> recorder;
 };
 
 struct lk_audio_source {
@@ -3223,6 +3228,21 @@ void lk_media_stream_options_init(lk_media_stream_options_t* options) {
 	}
 }
 
+void lk_track_recorder_options_init(lk_track_recorder_options_t* options) {
+	if (options != nullptr) {
+		*options = {};
+		options->struct_size = sizeof(*options);
+		options->queue_capacity = 256;
+	}
+}
+
+void lk_track_recorder_stats_init(lk_track_recorder_stats_t* stats) {
+	if (stats != nullptr) {
+		*stats = {};
+		stats->struct_size = sizeof(*stats);
+	}
+}
+
 void lk_data_track_snapshot_info_init(lk_data_track_snapshot_info_t* info) {
 	if (info != nullptr) {
 		*info = {};
@@ -5123,6 +5143,19 @@ lk_status_t lk_video_source_destroy(lk_video_source_t* source) {
 	return LK_STATUS_OK;
 }
 
+lk_status_t lk_video_source_dimensions(const lk_video_source_t* source, uint32_t* width,
+                                       uint32_t* height) {
+	return Guard([&] {
+		if (source == nullptr || width == nullptr || height == nullptr ||
+		    source->source == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "video source and dimensions are required");
+		}
+		*width = source->source->Width();
+		*height = source->source->Height();
+		return LK_STATUS_OK;
+	});
+}
+
 lk_status_t lk_video_source_capture_frame(lk_video_source_t* source,
                                           const lk_video_frame_input_t* input) {
 	return Guard([&] {
@@ -6269,6 +6302,82 @@ int lk_data_track_frame_has_user_timestamp(const lk_data_track_frame_t* frame) {
 
 uint64_t lk_data_track_frame_user_timestamp(const lk_data_track_frame_t* frame) {
 	return frame != nullptr ? frame->frame.user_timestamp.value_or(0) : 0;
+}
+
+lk_status_t lk_room_start_track_recording(lk_room_t* room, const char* participant_identity,
+                                          const char* track_sid,
+                                          const lk_track_recorder_options_t* options,
+                                          lk_track_recorder_t** recorder) {
+	return Guard([&] {
+		if (recorder == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "recorder output is required");
+		}
+		*recorder = nullptr;
+		if (room == nullptr || room->room == nullptr || participant_identity == nullptr ||
+		    *participant_identity == '\0' || track_sid == nullptr || *track_sid == '\0' ||
+		    options == nullptr || options->struct_size < sizeof(*options) ||
+		    options->output_path == nullptr || *options->output_path == '\0' ||
+		    options->queue_capacity == 0) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid track recorder arguments");
+		}
+		std::string error;
+		auto created = room->room->StartTrackRecording(
+		    participant_identity, track_sid, {options->output_path, options->queue_capacity},
+		    &error);
+		if (!created) {
+			return Failure(LK_STATUS_OPERATION_FAILED,
+			               error.empty() ? "failed to start track recording" : error.c_str());
+		}
+		auto result = std::make_unique<lk_track_recorder_t>();
+		result->recorder = std::move(created);
+		*recorder = result.release();
+		return LK_STATUS_OK;
+	});
+}
+
+void lk_track_recorder_destroy(lk_track_recorder_t* recorder) { delete recorder; }
+
+void lk_track_recorder_stop(lk_track_recorder_t* recorder) {
+	if (recorder != nullptr && recorder->recorder != nullptr) {
+		try {
+			recorder->recorder->Stop();
+		} catch (...) {
+		}
+	}
+}
+
+lk_status_t lk_track_recorder_get_stats(const lk_track_recorder_t* recorder,
+                                        lk_track_recorder_stats_t* stats) {
+	return Guard([&] {
+		if (recorder == nullptr || recorder->recorder == nullptr || stats == nullptr ||
+		    stats->struct_size < sizeof(*stats)) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "invalid track recorder stats arguments");
+		}
+		const auto snapshot = recorder->recorder->Stats();
+		stats->state = static_cast<lk_track_recorder_state_t>(snapshot.state);
+		stats->frames_written = snapshot.frames_written;
+		stats->bytes_written = snapshot.bytes_written;
+		stats->frames_dropped = snapshot.frames_dropped;
+		return LK_STATUS_OK;
+	});
+}
+
+size_t lk_track_recorder_output_path(const lk_track_recorder_t* recorder, char* buffer,
+                                     size_t buffer_size) {
+	return SizeGuard([&] {
+		return recorder != nullptr && recorder->recorder != nullptr
+		           ? CopyString(recorder->recorder->Stats().output_path, buffer, buffer_size)
+		           : InvalidSizeResult("track recorder is required");
+	});
+}
+
+size_t lk_track_recorder_error(const lk_track_recorder_t* recorder, char* buffer,
+                               size_t buffer_size) {
+	return SizeGuard([&] {
+		return recorder != nullptr && recorder->recorder != nullptr
+		           ? CopyString(recorder->recorder->Stats().error, buffer, buffer_size)
+		           : InvalidSizeResult("track recorder is required");
+	});
 }
 
 lk_status_t lk_room_create_audio_stream(lk_room_t* room, const char* participant_identity,

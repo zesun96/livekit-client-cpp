@@ -23,3 +23,10 @@ include(GNUInstallDirs)
 install(TARGETS livekit_client_native LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/lua
   RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}/lua)
 install(FILES lua/livekit-client.lua lua/livekit.lua DESTINATION ${CMAKE_INSTALL_DATADIR}/lua)
+
+option(LKC_LUA_BUILD_TEST_RUNNER "Build the DLL-linked Lua smoke test launcher" OFF)
+if(LKC_LUA_BUILD_TEST_RUNNER)
+  add_executable(livekit_lua_test_runner tests/runner.cpp)
+  target_include_directories(livekit_lua_test_runner PRIVATE ${LUA_INCLUDE_DIR})
+  target_link_libraries(livekit_lua_test_runner PRIVATE ${LUA_LIBRARIES})
+endif()

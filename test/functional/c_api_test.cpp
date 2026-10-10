@@ -647,6 +647,11 @@ TEST(CApiTest, RejectsCameraOperationsForExternalVideoSource) {
 	lk_video_source_t* source = nullptr;
 	ASSERT_EQ(lk_video_source_create(nullptr, &source), LK_STATUS_OK);
 	ASSERT_NE(source, nullptr);
+	uint32_t width = 1;
+	uint32_t height = 1;
+	EXPECT_EQ(lk_video_source_dimensions(source, &width, &height), LK_STATUS_OK);
+	EXPECT_EQ(width, 0u);
+	EXPECT_EQ(height, 0u);
 	EXPECT_EQ(lk_video_source_camera_start(source), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_camera_stop(source), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_camera_is_capturing(source), 0);
@@ -778,6 +783,11 @@ TEST(CApiTest, ValidatesArgumentsWithoutThrowingAcrossAbi) {
 	EXPECT_EQ(lk_audio_source_capture_frame(nullptr, nullptr, 0), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_video_source_capture_i420(nullptr, nullptr, 0, 0, 0, 0),
 	          LK_STATUS_INVALID_ARGUMENT);
+	uint32_t video_width = 0;
+	uint32_t video_height = 0;
+	EXPECT_EQ(lk_video_source_dimensions(nullptr, &video_width, &video_height),
+	          LK_STATUS_INVALID_ARGUMENT);
+	EXPECT_EQ(lk_video_source_dimensions(nullptr, nullptr, nullptr), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_unpublish(nullptr, 1), LK_STATUS_INVALID_ARGUMENT);
 	EXPECT_EQ(lk_local_track_rtc_stats(nullptr, nullptr, 0), 0u);
 	lk_error_info_t size_error;
@@ -1187,6 +1197,11 @@ TEST(CApiTest, CreatesRoomAndCapturesLocalFrames) {
 	EXPECT_EQ(lk_video_source_capture_i420(video, i420.data(), i420.size(), 4, 2, 123),
 	          LK_STATUS_OK)
 	    << lk_last_error();
+	uint32_t frame_width = 0;
+	uint32_t frame_height = 0;
+	EXPECT_EQ(lk_video_source_dimensions(video, &frame_width, &frame_height), LK_STATUS_OK);
+	EXPECT_EQ(frame_width, 4u);
+	EXPECT_EQ(frame_height, 2u);
 	std::vector<uint8_t> rgba(32, 255);
 	lk_video_frame_input_t video_frame;
 	lk_video_frame_input_init(&video_frame);
