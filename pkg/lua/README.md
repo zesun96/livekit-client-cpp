@@ -119,6 +119,7 @@ inside a `livekit.spawn` coroutine and keep calling `poll` or `step` from the Lu
 
 Native callbacks only copy data into a queue; they never call Lua from SDK threads. The event queue
 holds up to 1024 events and drops the oldest when full; `room:dropped_events()` reports that count.
+Optional audio/video frame events use a separate bounded queue described below.
 An event handler error returns `nil, message` from `poll` or `step`. Async operations on a room run
 in order on one worker thread. A synchronous operation returns `nil, message` while async work is
 pending or running. `room:close()` waits for an operation already in progress, discards queued
@@ -275,6 +276,19 @@ and `nil, "closed"` after the stream ends. A zero timeout (default) is nonblocki
 `remote_stream_dropped_frames` report its state. All track and stream IDs expire when the room
 closes. Media sources and readers are released automatically on room close.
 
+For frame callbacks, enable `room:set_media_frame_events({audio = true, video = true})` and
+handle `audio_frame` and `video_frame` in `room:on`. Events contain participant `identity`, track
+`sid`, and a `frame` table matching `read_audio_frame` or `read_video_frame`, including video
+metadata. The binding copies the frame before the native callback returns and dispatches it on
+the Lua thread during `poll()`/`step()`. Frame events are disabled by default and work alongside
+pull streams. The options also accept `capacity` (1..1024, default 64) and `max_bytes`
+(1..67108864, default 16 MiB) for the shared audio/video frame queue. Old frames are discarded
+when either limit is reached; a single frame larger than the byte budget is discarded.
+Room lifecycle events use their own queue and are dispatched first.
+`media_frame_event_stats()` returns `audio`, `video`, `capacity`, `max_bytes`, `queued`,
+`queued_bytes`, and cumulative `dropped` counts. Reconfiguring clears queued frames and counts
+them as dropped; pass `{}` to disable both types. Room close clears the queue.
+
 `local_track_rtc_stats(track_id)` and `remote_track_rtc_stats(participant_identity, track_sid)`
 return arrays of RTC stream statistics. A report that is not ready returns an empty array.
 Optional measurements such as bitrate, jitter, round-trip time, and audio level are omitted when
@@ -333,5 +347,4 @@ Subscription feedback arrives as `track_subscription_permission_changed` (`allow
 Runnable examples are in [examples](examples/README.md).
 
 The binding initializes the LiveKit runtime when loaded. The runtime remains active until process
-exit; do not call `lk_shutdown()` externally while Lua rooms may still exist. Audio/video frame
-callbacks and some advanced C API features are not yet wrapped.
+exit; do not call `lk_shutdown()` externally while Lua rooms may still exist.

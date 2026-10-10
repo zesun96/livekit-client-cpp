@@ -16,6 +16,7 @@ $url = "http://localhost:7880/rtc"
 & $runner pkg/lua/examples/media_devices.lua
 & $runner pkg/lua/examples/cpp_sample.lua $url $token
 & $runner pkg/lua/examples/receive_media.lua $url $receiverToken 15
+& $runner pkg/lua/examples/receive_media_events.lua $url $receiverToken 15
 & $runner pkg/lua/examples/publish_audio.lua $url $senderToken
 & $runner pkg/lua/examples/publish_video.lua $url $senderToken
 & $runner pkg/lua/examples/record_remote.lua $url $receiverToken C:/recordings 15
@@ -38,6 +39,7 @@ subscription feedback. `receive_media.lua` explicitly subscribes to published au
 and reads decoded PCM/I420 frames. `publish_audio.lua` sends a 440 Hz synthetic tone and
 `publish_video.lua` sends synthetic RGBA frames, matching the C++ examples without opening
 physical devices. Start `receive_media.lua` first in another terminal.
+`receive_media_events.lua` receives the same frames through `room:on`, with a bounded frame queue.
 `record_remote.lua` saves subscribed remote tracks to separate audio WAV or encoded video files.
 Create its output directory first, then run it alongside a publisher.
 

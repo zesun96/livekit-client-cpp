@@ -14,11 +14,28 @@ local audio_stream, video_stream
 local audio_sid, video_sid
 local subscription_futures = {}
 local local_subscribed = {}
+local audio_events, video_events = 0, 0
+assert(receiver:set_media_frame_events({audio = true, video = true, capacity = 8,
+  max_bytes = 1024 * 1024}))
 assert(publisher:on(function(event)
   if event.type == "local_track_subscribed" then local_subscribed[event.sid] = true end
 end))
 assert(receiver:on(function(event)
-  if event.type == "track_published" then
+  if event.type == "audio_frame" then
+    assert(event.identity and event.sid and type(event.frame.data) == "string")
+    local frame = event.frame
+    assert(#frame.data == frame.samples_per_channel * frame.channels * 2)
+    assert(frame.sample_rate > 0)
+    audio_events = audio_events + 1
+  elseif event.type == "video_frame" then
+    assert(event.identity and event.sid and type(event.frame.data) == "string")
+    local frame = event.frame
+    assert(frame.format == "I420" and frame.width == 160 and frame.height == 90)
+    assert(#frame.data == frame.width * frame.height * 3 / 2)
+    assert(type(frame.metadata) == "table" and type(frame.timestamp_us) == "number")
+    if frame.metadata.frame_id then assert(frame.metadata.user_data == "lua") end
+    video_events = video_events + 1
+  elseif event.type == "track_published" then
     subscription_futures[#subscription_futures + 1] = assert(
       receiver:set_remote_track_subscribed_async(event.participant_sid, event.sid, true))
   elseif event.type == "track_subscribed" then
@@ -75,6 +92,8 @@ for i = 1, 300 do
   end
   assert(receiver:step(10))
   assert(publisher:poll())
+  -- Frame events can wake the receiver immediately; pace the synthetic source separately.
+  publisher:wait(10)
   if audio_stream then
     while true do
       local frame, err = receiver:read_audio_frame(audio_stream)
@@ -98,6 +117,35 @@ for i = 1, 300 do
   end
 end
 assert(audio_stream and video_stream, "receiver did not subscribe to both tracks")
+assert(audio_events > 0 and video_events > 0, "media frame events were not delivered")
+-- A frame larger than the budget is discarded without displacing room lifecycle events.
+assert(receiver:set_media_frame_events({audio = true, video = true, capacity = 1, max_bytes = 1}))
+local dropped_before = receiver:media_frame_event_stats().dropped
+for i = 1, 30 do
+  assert(publisher:push_audio_frame(audio, pcm))
+  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+  receiver:wait(10)
+  assert(receiver:poll())
+  assert(publisher:poll())
+end
+local media_stats = receiver:media_frame_event_stats()
+assert(media_stats.queued == 0 and media_stats.queued_bytes == 0)
+assert(media_stats.dropped > dropped_before, "oversized frames were not counted")
+assert(receiver:set_media_frame_events({audio = true, video = true, capacity = 1,
+  max_bytes = 1024 * 1024}))
+dropped_before = receiver:media_frame_event_stats().dropped
+for i = 1, 30 do
+  assert(publisher:push_audio_frame(audio, pcm))
+  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+  assert(publisher:step(10))
+end
+media_stats = receiver:media_frame_event_stats()
+assert(media_stats.queued == 1 and media_stats.queued_bytes <= media_stats.max_bytes)
+assert(media_stats.dropped > dropped_before, "full media queues did not discard old frames")
+assert(receiver:set_media_frame_events({}))
+local audio_events_before, video_events_before = audio_events, video_events
+assert(receiver:poll())
+assert(audio_events == audio_events_before and video_events == video_events_before)
 for _, future in ipairs(subscription_futures) do assert(future:wait(50)) end
 assert(audio_frames > 0 and video_frames > 0,
   string.format("expected decoded media; audio=%d video=%d", audio_frames, video_frames))
@@ -189,10 +237,36 @@ local function check_republished_media(asynchronous)
 end
 check_republished_media(false)
 check_republished_media(true)
+-- Events also work without pull-stream handles, and each kind can be enabled independently.
+audio_events_before, video_events_before = audio_events, video_events
+assert(receiver:set_media_frame_events({audio = true}))
+for i = 1, 30 do
+  assert(publisher:push_audio_frame(audio, pcm))
+  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+  assert(receiver:step(10))
+  assert(publisher:poll())
+  publisher:wait(10)
+end
+assert(audio_events > audio_events_before and video_events == video_events_before)
+assert(receiver:set_media_frame_events({video = true}))
+audio_events_before = audio_events
+for i = 1, 30 do
+  assert(publisher:push_audio_frame(audio, pcm))
+  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+  assert(receiver:step(10))
+  assert(publisher:poll())
+  publisher:wait(10)
+end
+assert(video_events > video_events_before and audio_events == audio_events_before)
 assert(assert(publisher:unpublish_local_track_async(audio)):wait(50))
 assert(assert(publisher:unpublish_local_track_async(video)):wait(50))
 assert(publisher:publish_audio_track("close-cleanup", 48000, 1, 200, {dtx = false}))
 assert(publisher:close())
 assert(receiver:disconnect())
 assert(receiver:close())
+media_stats = receiver:media_frame_event_stats()
+assert(media_stats.queued == 0 and media_stats.queued_bytes == 0)
+assert(not media_stats.audio and not media_stats.video)
 print(string.format("received audio=%d video=%d", audio_frames, video_frames))
+print(string.format("frame events audio=%d video=%d dropped=%d",
+  audio_events, video_events, media_stats.dropped))

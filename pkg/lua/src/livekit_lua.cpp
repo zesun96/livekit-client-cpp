@@ -28,6 +28,7 @@ namespace {
 
 constexpr const char* kRoomType = "livekit.room";
 constexpr size_t kMaxQueuedEvents = 1024;
+constexpr size_t kMaxMediaEventBytes = 64 * 1024 * 1024;
 
 struct LogRecord {
 	int level = 0;
@@ -159,6 +160,21 @@ struct EventMetric {
 	std::string metadata;
 };
 
+struct MediaFrameEvent {
+	std::string data;
+	uint32_t sample_rate = 0;
+	uint32_t channels = 0;
+	uint32_t samples_per_channel = 0;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	int64_t timestamp_us = 0;
+	std::optional<uint64_t> user_timestamp_us;
+	std::optional<uint32_t> frame_id;
+	std::optional<std::string> user_data;
+
+	size_t bytes() const { return data.size() + (user_data ? user_data->size() : 0); }
+};
+
 struct Event {
 	std::string type;
 	std::string identity;
@@ -182,6 +198,7 @@ struct Event {
 	std::vector<TimeSeriesMetric> time_series;
 	std::vector<EventMetric> metric_events;
 	std::optional<MetricTime> metric_timestamp;
+	std::optional<MediaFrameEvent> frame;
 };
 
 enum class CaptureKind { None, Microphone, SystemAudio, Camera, Screen };
@@ -469,6 +486,13 @@ struct Room {
 	std::mutex mutex;
 	std::condition_variable wake;
 	std::deque<Event> events;
+	std::deque<Event> media_events;
+	std::atomic<bool> audio_frame_events{false};
+	std::atomic<bool> video_frame_events{false};
+	size_t media_event_capacity = 64;
+	size_t media_event_max_bytes = 16 * 1024 * 1024;
+	size_t media_event_bytes = 0;
+	size_t dropped_media_events = 0;
 	std::deque<std::shared_ptr<RpcRequest>> rpc_pending;
 	std::deque<std::shared_ptr<TokenRequest>> token_pending;
 	std::deque<std::shared_ptr<PolicyRequest>> policy_pending;
@@ -739,6 +763,89 @@ bool enqueue(Room* room, Event event) noexcept {
 	} catch (...) {
 		return false;
 	}
+}
+
+template <typename CopyFrame>
+void enqueue_media_frame(Room* room, bool audio, size_t bytes,
+                         const lk_track_publication_info_t* track,
+                         const lk_participant_info_t* participant, CopyFrame copy) noexcept {
+	try {
+		std::lock_guard<std::mutex> lock(room->mutex);
+		if (room->stopping ||
+		    !(audio ? room->audio_frame_events.load() : room->video_frame_events.load()))
+			return;
+		if (bytes > room->media_event_max_bytes) {
+			++room->dropped_media_events;
+			return;
+		}
+		Event event;
+		event.type = audio ? "audio_frame" : "video_frame";
+		event.sid = track ? safe(track->sid) : "";
+		event.identity = participant ? safe(participant->identity) : "";
+		event.frame.emplace();
+		copy(*event.frame);
+		while (!room->media_events.empty() &&
+		       (room->media_events.size() >= room->media_event_capacity ||
+		        room->media_event_bytes > room->media_event_max_bytes - bytes)) {
+			room->media_event_bytes -= room->media_events.front().frame->bytes();
+			room->media_events.pop_front();
+			++room->dropped_media_events;
+		}
+		room->media_events.push_back(std::move(event));
+		room->media_event_bytes += bytes;
+		room->wake.notify_all();
+	} catch (...) {
+	}
+}
+
+void on_audio_frame(void* user_data, lk_room_t*, const lk_track_publication_info_t* track,
+                    const lk_participant_info_t* participant, const lk_audio_frame_t* frame) {
+	auto* room = static_cast<Room*>(user_data);
+	if (!room->audio_frame_events.load() || !frame || !frame->data)
+		return;
+	// Count oversized frames without overflowing the byte-size calculation.
+	const size_t bytes = frame->sample_count > kMaxMediaEventBytes / sizeof(int16_t)
+	                         ? kMaxMediaEventBytes + 1
+	                         : frame->sample_count * sizeof(int16_t);
+	enqueue_media_frame(room, true, bytes, track, participant, [&](MediaFrameEvent& copy) {
+		copy.data.assign(reinterpret_cast<const char*>(frame->data),
+		                 frame->sample_count * sizeof(int16_t));
+		copy.sample_rate = frame->sample_rate;
+		copy.channels = frame->num_channels;
+		copy.samples_per_channel = frame->samples_per_channel;
+	});
+}
+
+void on_video_frame(void* user_data, lk_room_t*, const lk_track_publication_info_t* track,
+                    const lk_participant_info_t* participant, const lk_video_frame_t* frame,
+                    const lk_video_frame_metadata_t* metadata) {
+	auto* room = static_cast<Room*>(user_data);
+	if (!room->video_frame_events.load() || !frame || !frame->data)
+		return;
+	const size_t metadata_bytes =
+	    metadata && metadata->has_user_data ? metadata->user_data_size : 0;
+	if (metadata_bytes != 0 && !metadata->user_data)
+		return;
+	const size_t bytes = frame->data_size > kMaxMediaEventBytes ||
+	                             metadata_bytes > kMaxMediaEventBytes - frame->data_size
+	                         ? kMaxMediaEventBytes + 1
+	                         : frame->data_size + metadata_bytes;
+	enqueue_media_frame(room, false, bytes, track, participant, [&](MediaFrameEvent& copy) {
+		copy.data.assign(reinterpret_cast<const char*>(frame->data), frame->data_size);
+		copy.width = frame->width;
+		copy.height = frame->height;
+		copy.timestamp_us = frame->timestamp_us;
+		if (metadata) {
+			if (metadata->has_user_timestamp_us)
+				copy.user_timestamp_us = metadata->user_timestamp_us;
+			if (metadata->has_frame_id)
+				copy.frame_id = metadata->frame_id;
+			if (metadata->has_user_data)
+				copy.user_data = std::string(
+				    metadata_bytes ? reinterpret_cast<const char*>(metadata->user_data) : "",
+				    metadata_bytes);
+		}
+	});
 }
 
 lk_rpc_handler_result_t on_rpc_invocation(void* user_data,
@@ -1836,6 +1943,8 @@ int close_room(lua_State* L) {
 		{
 			std::lock_guard<std::mutex> lock(room->mutex);
 			room->stopping = true;
+			room->audio_frame_events = false;
+			room->video_frame_events = false;
 			for (auto& task : room->pending) {
 				task->status = LK_STATUS_INVALID_STATE;
 				task->done = true;
@@ -1900,6 +2009,8 @@ int close_room(lua_State* L) {
 	{
 		std::lock_guard<std::mutex> lock(room->mutex);
 		room->events.clear();
+		room->media_events.clear();
+		room->media_event_bytes = 0;
 		room->wake.notify_all();
 	}
 	lua_pushboolean(L, 1);
@@ -1976,6 +2087,8 @@ int new_room(lua_State* L) {
 	callbacks.on_local_data_track_published = on_local_data_track_published;
 	callbacks.on_local_data_track_unpublished = on_local_data_track_unpublished;
 	callbacks.on_data_track_frame = on_data_track_frame;
+	callbacks.on_audio_frame = on_audio_frame;
+	callbacks.on_video_frame_with_metadata = on_video_frame;
 	status = lk_room_set_callbacks(room->native, &callbacks);
 	if (status != LK_STATUS_OK) {
 		status_result(L, status);
@@ -2257,6 +2370,78 @@ void push_metric_labels(lua_State* L, uint32_t label, uint32_t identity, uint32_
 	integer_field(L, "rid", rid);
 }
 
+int set_media_frame_events(lua_State* L) {
+	Room* room = check_room(L, 1);
+	luaL_checktype(L, 2, LUA_TTABLE);
+	lua_getfield(L, 2, "audio");
+	if (!lua_isnil(L, -1) && !lua_isboolean(L, -1))
+		return luaL_argerror(L, 2, "audio must be boolean");
+	const bool audio = lua_toboolean(L, -1) != 0;
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "video");
+	if (!lua_isnil(L, -1) && !lua_isboolean(L, -1))
+		return luaL_argerror(L, 2, "video must be boolean");
+	const bool video = lua_toboolean(L, -1) != 0;
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "capacity");
+	const lua_Number capacity = luaL_optnumber(L, -1, 64);
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "max_bytes");
+	const lua_Number max_bytes = luaL_optnumber(L, -1, 16 * 1024 * 1024);
+	lua_pop(L, 1);
+	if (!std::isfinite(capacity) || std::floor(capacity) != capacity || capacity < 1 ||
+	    capacity > 1024 || !std::isfinite(max_bytes) || std::floor(max_bytes) != max_bytes ||
+	    max_bytes < 1 || max_bytes > static_cast<lua_Number>(kMaxMediaEventBytes))
+		return luaL_argerror(L, 2, "capacity must be 1..1024 and max_bytes 1..67108864");
+	bool closed;
+	{
+		std::lock_guard<std::mutex> lock(room->mutex);
+		closed = room->stopping;
+		if (!closed) {
+			room->audio_frame_events = audio;
+			room->video_frame_events = video;
+			room->media_event_capacity = static_cast<size_t>(capacity);
+			room->media_event_max_bytes = static_cast<size_t>(max_bytes);
+			// Reconfiguration discards frames captured under the previous settings.
+			room->dropped_media_events += room->media_events.size();
+			room->media_events.clear();
+			room->media_event_bytes = 0;
+		}
+	}
+	if (closed) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "room closed");
+		return 2;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+int media_frame_event_stats(lua_State* L) {
+	Room* room = check_room(L, 1);
+	size_t queued, bytes, dropped, capacity, max_bytes;
+	bool audio, video;
+	{
+		std::lock_guard<std::mutex> lock(room->mutex);
+		queued = room->media_events.size();
+		bytes = room->media_event_bytes;
+		dropped = room->dropped_media_events;
+		capacity = room->media_event_capacity;
+		max_bytes = room->media_event_max_bytes;
+		audio = room->audio_frame_events.load();
+		video = room->video_frame_events.load();
+	}
+	lua_newtable(L);
+	boolean_field(L, "audio", audio);
+	boolean_field(L, "video", video);
+	number_field(L, "queued", static_cast<lua_Number>(queued));
+	number_field(L, "queued_bytes", static_cast<lua_Number>(bytes));
+	number_field(L, "dropped", static_cast<lua_Number>(dropped));
+	number_field(L, "capacity", static_cast<lua_Number>(capacity));
+	number_field(L, "max_bytes", static_cast<lua_Number>(max_bytes));
+	return 1;
+}
+
 int poll(lua_State* L) {
 	Room* room = check_room(L, 1);
 	lua_Integer requested = luaL_optinteger(L, 2, 100);
@@ -2283,6 +2468,10 @@ int poll(lua_State* L) {
 			} else if (!room->events.empty()) {
 				event = std::move(room->events.front());
 				room->events.pop_front();
+			} else if (!room->media_events.empty()) {
+				event = std::move(room->media_events.front());
+				room->media_events.pop_front();
+				room->media_event_bytes -= event.frame->bytes();
 			} else {
 				break;
 			}
@@ -2339,6 +2528,31 @@ int poll(lua_State* L) {
 				field(L, "name", event.name);
 			if (!event.sid.empty())
 				field(L, "sid", event.sid);
+			if (event.frame) {
+				const auto& frame = *event.frame;
+				lua_newtable(L);
+				string_field(L, "data", frame.data);
+				if (event.type == "audio_frame") {
+					integer_field(L, "sample_rate", frame.sample_rate);
+					integer_field(L, "channels", frame.channels);
+					integer_field(L, "samples_per_channel", frame.samples_per_channel);
+				} else {
+					integer_field(L, "width", frame.width);
+					integer_field(L, "height", frame.height);
+					number_field(L, "timestamp_us", static_cast<lua_Number>(frame.timestamp_us));
+					string_field(L, "format", "I420");
+					lua_newtable(L);
+					if (frame.user_timestamp_us)
+						number_field(L, "user_timestamp_us",
+						             static_cast<lua_Number>(*frame.user_timestamp_us));
+					if (frame.frame_id)
+						integer_field(L, "frame_id", *frame.frame_id);
+					if (frame.user_data)
+						string_field(L, "user_data", *frame.user_data);
+					lua_setfield(L, -2, "metadata");
+				}
+				lua_setfield(L, -2, "frame");
+			}
 			if (event.type == "data_received") {
 				field(L, "topic", event.topic);
 				field(L, "data", event.data);
@@ -3034,7 +3248,7 @@ int wait_room(lua_State* L) {
 		timeout = 60000;
 	std::unique_lock<std::mutex> lock(room->mutex);
 	const bool ready = room->wake.wait_for(lock, std::chrono::milliseconds(timeout), [&] {
-		return !room->events.empty() || !room->rpc_pending.empty() ||
+		return !room->events.empty() || !room->media_events.empty() || !room->rpc_pending.empty() ||
 		       !room->token_pending.empty() || !room->policy_pending.empty() ||
 		       room->completed_tasks != 0 || room->stopping;
 	});
@@ -6392,6 +6606,8 @@ const luaL_Reg room_methods[] = {
     {"register_rpc_method", register_rpc_method},
     {"unregister_rpc_method", unregister_rpc_method},
     {"poll", poll},
+    {"set_media_frame_events", set_media_frame_events},
+    {"media_frame_event_stats", media_frame_event_stats},
     {"wait", wait_room},
     {"connect", connect_room},
     {"_start_connect", start_connect},
