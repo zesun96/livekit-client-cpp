@@ -141,6 +141,10 @@ struct StreamWriterConfig {
 	int32_t version = 0;
 };
 
+struct Room;
+int on_reconnect_policy(void* user_data, const lk_reconnect_context_t* context,
+                        uint32_t* retry_delay_ms) noexcept;
+
 struct ConnectConfig {
 	struct IceServer {
 		std::vector<std::string> urls;
@@ -150,6 +154,7 @@ struct ConnectConfig {
 	lk_room_connect_options_t options{};
 	lk_e2ee_options_t e2ee{};
 	bool has_e2ee = false;
+	bool has_reconnect_policy = false;
 	std::string shared_key;
 	std::string ratchet_salt;
 	std::string unencrypted_magic_bytes;
@@ -157,7 +162,11 @@ struct ConnectConfig {
 	std::vector<std::vector<const char*>> ice_urls;
 	std::vector<lk_ice_server_t> native_ice_servers;
 
-	void prepare() {
+	void prepare(Room* room) {
+		if (has_reconnect_policy) {
+			options.reconnect_policy = on_reconnect_policy;
+			options.reconnect_policy_user_data = room;
+		}
 		if (has_e2ee) {
 			e2ee.shared_key =
 			    shared_key.empty() ? nullptr : reinterpret_cast<const uint8_t*>(shared_key.data());
@@ -252,7 +261,16 @@ struct TokenRequest {
 	std::atomic_bool done{false};
 };
 
-struct Room;
+struct PolicyRequest {
+	uint32_t retry_count = 0;
+	uint64_t elapsed_ms = 0;
+	lk_reconnect_reason_t reason = LK_RECONNECT_REASON_UNKNOWN;
+	std::string server_url;
+	uint32_t delay_ms = 0;
+	bool retry = false;
+	std::atomic_bool done{false};
+};
+
 struct RpcHandlerContext {
 	Room* room = nullptr;
 	std::string method;
@@ -286,11 +304,13 @@ struct Room {
 	lk_room_t* native = nullptr;
 	int callback_ref = LUA_NOREF;
 	int token_provider_ref = LUA_NOREF;
+	int reconnect_policy_ref = LUA_NOREF;
 	std::mutex mutex;
 	std::condition_variable wake;
 	std::deque<Event> events;
 	std::deque<std::shared_ptr<RpcRequest>> rpc_pending;
 	std::deque<std::shared_ptr<TokenRequest>> token_pending;
+	std::deque<std::shared_ptr<PolicyRequest>> policy_pending;
 	std::map<std::string, int> rpc_handlers;
 	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
 	std::map<uint64_t, LocalMediaTrack> local_tracks;
@@ -649,6 +669,36 @@ lk_status_t on_token_source(void* user_data, const lk_token_source_fetch_options
 	}
 }
 
+int on_reconnect_policy(void* user_data, const lk_reconnect_context_t* context,
+                        uint32_t* retry_delay_ms) noexcept {
+	try {
+		if (context == nullptr || retry_delay_ms == nullptr)
+			return 0;
+		auto* room = static_cast<Room*>(user_data);
+		auto request = std::make_shared<PolicyRequest>();
+		request->retry_count = context->retry_count;
+		request->elapsed_ms = context->elapsed_ms;
+		request->reason = context->reason;
+		request->server_url = safe(context->server_url);
+		std::unique_lock<std::mutex> lock(room->mutex);
+		if (room->stopping || room->policy_pending.size() >= kMaxQueuedEvents)
+			return 0;
+		room->policy_pending.push_back(request);
+		room->wake.notify_all();
+		if (!room->wake.wait_for(lock, std::chrono::seconds(30),
+		                         [&] { return request->done || room->stopping; })) {
+			request->done = true;
+			return 0;
+		}
+		if (room->stopping || !request->retry)
+			return 0;
+		*retry_delay_ms = request->delay_ms;
+		return 1;
+	} catch (...) {
+		return 0;
+	}
+}
+
 void worker_loop(Room* room) noexcept {
 	for (;;) {
 		std::shared_ptr<AsyncTask> task;
@@ -666,12 +716,12 @@ void worker_loop(Room* room) noexcept {
 		try {
 			switch (task->operation) {
 			case AsyncOperation::Connect:
-				task->connect.prepare();
+				task->connect.prepare(room);
 				status = lk_room_connect_with_options(room->native, task->first.c_str(),
 				                                      task->second.c_str(), &task->connect.options);
 				break;
 			case AsyncOperation::ConnectTokenSource: {
-				task->connect.prepare();
+				task->connect.prepare(room);
 				lk_token_source_fetch_options_t options;
 				lk_token_source_fetch_options_init(&options);
 				const auto& config = task->token_source;
@@ -1462,6 +1512,7 @@ int close_room(lua_State* L) {
 			room->pending.clear();
 			room->rpc_pending.clear();
 			room->token_pending.clear();
+			room->policy_pending.clear();
 			room->wake.notify_all();
 		}
 		if (room->worker.joinable())
@@ -1502,6 +1553,10 @@ int close_room(lua_State* L) {
 	if (room->token_provider_ref != LUA_NOREF) {
 		luaL_unref(L, LUA_REGISTRYINDEX, room->token_provider_ref);
 		room->token_provider_ref = LUA_NOREF;
+	}
+	if (room->reconnect_policy_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, room->reconnect_policy_ref);
+		room->reconnect_policy_ref = LUA_NOREF;
 	}
 	for (const auto& [method, ref] : room->rpc_handlers)
 		luaL_unref(L, LUA_REGISTRYINDEX, ref);
@@ -1788,6 +1843,37 @@ void dispatch_token(lua_State* L, Room* room, const std::shared_ptr<TokenRequest
 	}
 }
 
+void dispatch_policy(lua_State* L, Room* room, const std::shared_ptr<PolicyRequest>& request) {
+	bool retry = false;
+	uint32_t delay = 0;
+	if (room->reconnect_policy_ref != LUA_NOREF) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, room->reconnect_policy_ref);
+		lua_newtable(L);
+		integer_field(L, "retry_count", request->retry_count);
+		number_field(L, "elapsed_ms", static_cast<lua_Number>(request->elapsed_ms));
+		integer_field(L, "reason", request->reason);
+		string_field(L, "server_url", request->server_url);
+		if (lua_pcall(L, 1, 1, 0) == 0) {
+			if (lua_isnumber(L, -1)) {
+				const lua_Number value = lua_tonumber(L, -1);
+				if (std::isfinite(value) && value >= 0 && value <= UINT32_MAX &&
+				    std::floor(value) == value) {
+					retry = true;
+					delay = static_cast<uint32_t>(value);
+				}
+			}
+		}
+		lua_pop(L, 1);
+	}
+	std::lock_guard<std::mutex> lock(room->mutex);
+	if (!request->done) {
+		request->retry = retry;
+		request->delay_ms = delay;
+		request->done = true;
+		room->wake.notify_all();
+	}
+}
+
 int poll(lua_State* L) {
 	Room* room = check_room(L, 1);
 	lua_Integer requested = luaL_optinteger(L, 2, 100);
@@ -1797,6 +1883,7 @@ int poll(lua_State* L) {
 	int delivered = 0;
 	while (delivered < limit) {
 		std::shared_ptr<TokenRequest> token_request;
+		std::shared_ptr<PolicyRequest> policy_request;
 		std::shared_ptr<RpcRequest> request;
 		Event event;
 		{
@@ -1804,6 +1891,9 @@ int poll(lua_State* L) {
 			if (!room->token_pending.empty()) {
 				token_request = std::move(room->token_pending.front());
 				room->token_pending.pop_front();
+			} else if (!room->policy_pending.empty()) {
+				policy_request = std::move(room->policy_pending.front());
+				room->policy_pending.pop_front();
 			} else if (!room->rpc_pending.empty()) {
 				request = std::move(room->rpc_pending.front());
 				room->rpc_pending.pop_front();
@@ -1822,6 +1912,19 @@ int poll(lua_State* L) {
 					std::lock_guard<std::mutex> lock(room->mutex);
 					token_request->error = "Lua token provider failed";
 					token_request->done = true;
+					room->wake.notify_all();
+				}
+				++delivered;
+			}
+			continue;
+		}
+		if (policy_request) {
+			if (!policy_request->done) {
+				try {
+					dispatch_policy(L, room, policy_request);
+				} catch (...) {
+					std::lock_guard<std::mutex> lock(room->mutex);
+					policy_request->done = true;
 					room->wake.notify_all();
 				}
 				++delivered;
@@ -2053,6 +2156,23 @@ int busy_result(lua_State* L) {
 	return 2;
 }
 
+void configure_reconnect_policy(lua_State* L, Room* room, ConnectConfig& config) {
+	if (lua_istable(L, 4))
+		lua_getfield(L, 4, "reconnect_policy");
+	else
+		lua_pushnil(L);
+	if (!lua_isnil(L, -1))
+		luaL_checktype(L, -1, LUA_TFUNCTION);
+	config.has_reconnect_policy = lua_isfunction(L, -1);
+	if (room->reconnect_policy_ref != LUA_NOREF)
+		luaL_unref(L, LUA_REGISTRYINDEX, room->reconnect_policy_ref);
+	room->reconnect_policy_ref = LUA_NOREF;
+	if (config.has_reconnect_policy)
+		room->reconnect_policy_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	else
+		lua_pop(L, 1);
+}
+
 int connect_room(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* url = luaL_checkstring(L, 2);
@@ -2064,9 +2184,13 @@ int connect_room(lua_State* L) {
 	}
 	if (async_busy(room))
 		return busy_result(L);
+	const auto state = lk_room_state(room->native);
+	if (state != LK_ROOM_STATE_DISCONNECTED && state != LK_ROOM_STATE_FAILED)
+		return media_error(L, "room is already connected or busy");
 	ConnectConfig config;
 	read_connect_options(L, config);
-	config.prepare();
+	configure_reconnect_policy(L, room, config);
+	config.prepare(room);
 	return status_result(L,
 	                     lk_room_connect_with_options(room->native, url, token, &config.options));
 }
@@ -2153,12 +2277,18 @@ int start_connect(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const char* url = luaL_checkstring(L, 2);
 	const char* token = luaL_checkstring(L, 3);
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	const auto state = lk_room_state(room->native);
+	if ((state != LK_ROOM_STATE_DISCONNECTED && state != LK_ROOM_STATE_FAILED) || async_busy(room))
+		return media_error(L, "room is already connected or busy");
 	try {
 		auto task = std::make_shared<AsyncTask>();
 		task->operation = AsyncOperation::Connect;
 		task->first = url;
 		task->second = token;
 		read_connect_options(L, task->connect);
+		configure_reconnect_policy(L, room, task->connect);
 		return start_task(L, room, std::move(task));
 	} catch (...) {
 		lua_pushnil(L);
@@ -2205,13 +2335,15 @@ int start_connect_token_source(lua_State* L) {
 	luaL_checktype(L, 2, LUA_TFUNCTION);
 	if (room->native == nullptr)
 		return media_error(L, "room is closed");
-	if (lk_room_is_connected(room->native) || async_busy(room))
+	const auto state = lk_room_state(room->native);
+	if ((state != LK_ROOM_STATE_DISCONNECTED && state != LK_ROOM_STATE_FAILED) || async_busy(room))
 		return media_error(L, "room is already connected or busy");
 	try {
 		auto task = std::make_shared<AsyncTask>();
 		task->operation = AsyncOperation::ConnectTokenSource;
 		task->token_source = read_token_source_config(L);
 		read_connect_options(L, task->connect);
+		configure_reconnect_policy(L, room, task->connect);
 		const int count = start_task(L, room, std::move(task));
 		if (count == 1) {
 			if (room->token_provider_ref != LUA_NOREF)
@@ -2398,7 +2530,8 @@ int wait_room(lua_State* L) {
 	std::unique_lock<std::mutex> lock(room->mutex);
 	const bool ready = room->wake.wait_for(lock, std::chrono::milliseconds(timeout), [&] {
 		return !room->events.empty() || !room->rpc_pending.empty() ||
-		       !room->token_pending.empty() || room->completed_tasks != 0 || room->stopping;
+		       !room->token_pending.empty() || !room->policy_pending.empty() ||
+		       room->completed_tasks != 0 || room->stopping;
 	});
 	lock.unlock();
 	lua_pushboolean(L, ready);

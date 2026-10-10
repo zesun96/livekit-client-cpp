@@ -33,7 +33,12 @@ local future = assert(second:connect_with_token_source_async(function(request)
   second_calls = second_calls + 1
   assert(request.participant_identity == "second")
   return url, second_token
-end, {participant_identity = "second"}, {join_retries = 2}))
+end, {participant_identity = "second"}, {
+  join_retries = 2, reconnect_policy = function(context)
+    assert(type(context.retry_count) == "number")
+    return 100
+  end
+}))
 assert(future:wait(50))
 for _ = 1, 100 do
   if second:is_connected() then break end

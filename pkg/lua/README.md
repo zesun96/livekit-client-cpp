@@ -56,9 +56,14 @@ room:close()
 `room:connect(url, token, options)`, `room:disconnect()`, and
 `room:publish_data(payload, reliable, topic)` are blocking calls. `reliable` defaults to `true`.
 Connection options support `auto_subscribe`, `adaptive_stream`, `dynacast`, `join_retries`,
-`reconnect_timeout_ms`, `continual_gathering_policy`, `ice_transport_type`, `ice_servers`, and
+`reconnect_timeout_ms`, `continual_gathering_policy`, `ice_transport_type`, `ice_servers`,
+`reconnect_policy`, and
 an `e2ee` table. ICE servers are arrays of `{urls = {"stun:..."}, username, password}`;
 `CONTINUAL_GATHERING_POLICY` and `ICE_TRANSPORT_TYPE` provide enum values.
+`reconnect_policy(context)` receives `retry_count`, `elapsed_ms`, `reason`, and `server_url`.
+Return a nonnegative integer delay in milliseconds to retry, or `nil`/`false` to stop.
+The callback runs on the Lua thread during `poll()`/`step()` and must not yield. Keep polling
+during recovery; an unanswered policy request stops retrying after 30 seconds.
 For renewable credentials, use `room:connect_with_token_source(provider, fetch_options,
 connect_options)` or its `_async` variant. The provider receives room and participant fields,
 `participant_attributes`, and `force_refresh`; return `{url = ..., token = ...}` or two strings.

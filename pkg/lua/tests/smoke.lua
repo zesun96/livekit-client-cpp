@@ -188,7 +188,8 @@ local advanced, advanced_error = assert(room:connect_async("", "", {
   join_retries = 2, reconnect_timeout_ms = 1000,
   continual_gathering_policy = livekit.CONTINUAL_GATHERING_POLICY.GATHER_ONCE,
   ice_transport_type = livekit.ICE_TRANSPORT_TYPE.ALL,
-  ice_servers = {{urls = {"stun:stun.example.invalid:3478"}}}
+  ice_servers = {{urls = {"stun:stun.example.invalid:3478"}}},
+  reconnect_policy = function() return nil end
 })):wait(50)
 assert(advanced == nil and type(advanced_error) == "string")
 local no_token, no_token_error = assert(room:connect_with_token_source_async(function()
