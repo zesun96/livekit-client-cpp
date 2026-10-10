@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <vector>
 
 namespace livekit {
 namespace core {
@@ -122,6 +123,8 @@ public:
 	    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const;
 	std::function<std::string()> CreateSubscriberStatsProvider(
 	    webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) const;
+	std::vector<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>>
+	GetSubscriberTransceivers() const;
 
 	void PublisherNegotiationNeeded();
 

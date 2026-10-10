@@ -535,6 +535,11 @@ void RtcEngine::ResetTransport(bool send_leave) {
 		}
 		join_resp_.Clear();
 	}
+	{
+		std::lock_guard<std::mutex> guard(subscriber_tracks_mutex_);
+		subscriber_mid_to_track_sid_.clear();
+		subscriber_receiver_track_sids_.clear();
+	}
 
 	{
 		std::lock_guard<std::mutex> guard(pending_track_resolvers_lock_);
@@ -1715,17 +1720,40 @@ void RtcEngine::OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse&
 	}
 }
 
-void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) {
-	std::lock_guard<std::mutex> guard(session_lock_);
-	if (rtc_session_) {
-		auto answer = rtc_session_->CreateSubscriberAnswerFromOffer(std::move(offer));
-		if (answer) {
-			if (auto signal_client = SignalClientSnapshot()) {
-				signal_client->SendAnswer(std::move(answer));
+void RtcEngine::OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer,
+                        std::map<std::string, std::string> mid_to_track_id) {
+	{
+		std::lock_guard<std::mutex> guard(subscriber_tracks_mutex_);
+		subscriber_mid_to_track_sid_ = std::move(mid_to_track_id);
+	}
+	std::vector<std::pair<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>,
+	                      std::function<std::string()>>>
+	    receiving_tracks;
+	{
+		std::lock_guard<std::mutex> guard(session_lock_);
+		if (rtc_session_) {
+			auto answer = rtc_session_->CreateSubscriberAnswerFromOffer(std::move(offer));
+			if (answer) {
+				if (auto signal_client = SignalClientSnapshot()) {
+					signal_client->SendAnswer(std::move(answer));
+				}
+				for (const auto& transceiver : rtc_session_->GetSubscriberTransceivers()) {
+					const auto direction = transceiver->current_direction();
+					if (direction == webrtc::RtpTransceiverDirection::kRecvOnly ||
+					    direction == webrtc::RtpTransceiverDirection::kSendRecv) {
+						receiving_tracks.emplace_back(
+						    transceiver, rtc_session_->CreateSubscriberStatsProvider(transceiver));
+					}
+				}
 			}
 		}
 	}
-	return;
+	// A server can reuse a receiving transceiver without firing another OnTrack callback.
+	// Reconcile its negotiated SID without holding the session lock across room callbacks.
+	for (auto& [transceiver, stats_provider] : receiving_tracks) {
+		OnTrack(PeerTransport::Target::SUBSCRIBER, std::move(transceiver),
+		        std::move(stats_provider));
+	}
 }
 void RtcEngine::OnRemoteMuteChanged(std::string sid, bool muted) {
 	if (auto* listener = room_listener_.load()) {
@@ -2145,14 +2173,39 @@ void RtcEngine::OnAddTrack(
 void RtcEngine::OnTrack(PeerTransport::Target target,
                         webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver,
                         std::function<std::string()> stats_provider) {
-	if (target != PeerTransport::Target::SUBSCRIBER || !transceiver || !transceiver->receiver()) {
+	if (target != PeerTransport::Target::SUBSCRIBER || !transceiver) {
 		return;
 	}
-	auto track = transceiver->receiver()->track();
+	auto receiver = transceiver->receiver();
+	if (!receiver) {
+		return;
+	}
+	auto track = receiver->track();
 	if (track) {
+		std::string track_sid = track->id();
+		std::string previous_sid;
+		const auto mid = transceiver->mid();
+		const auto receiver_id = receiver->id();
+		{
+			std::lock_guard<std::mutex> guard(subscriber_tracks_mutex_);
+			if (mid) {
+				const auto mapped = subscriber_mid_to_track_sid_.find(*mid);
+				if (mapped != subscriber_mid_to_track_sid_.end() && !mapped->second.empty()) {
+					track_sid = mapped->second;
+				}
+			}
+			auto& attached_sid = subscriber_receiver_track_sids_[receiver_id];
+			if (!attached_sid.empty() && attached_sid != track_sid) {
+				previous_sid = attached_sid;
+			}
+			attached_sid = track_sid;
+		}
 		if (auto* listener = room_listener_.load()) {
-			listener->MediaTrackEvent(std::move(track), transceiver->receiver(),
-			                          std::move(stats_provider));
+			if (!previous_sid.empty()) {
+				listener->MediaTrackRemovedEvent(previous_sid);
+			}
+			listener->MediaTrackEvent(std::move(track), std::move(receiver),
+			                          std::move(stats_provider), std::move(track_sid));
 		}
 	}
 }
@@ -2162,8 +2215,18 @@ void RtcEngine::OnRemoveTrack(PeerTransport::Target target,
 	if (target != PeerTransport::Target::SUBSCRIBER || !receiver || !receiver->track()) {
 		return;
 	}
+	std::string track_sid = receiver->track()->id();
+	const auto receiver_id = receiver->id();
+	{
+		std::lock_guard<std::mutex> guard(subscriber_tracks_mutex_);
+		const auto found = subscriber_receiver_track_sids_.find(receiver_id);
+		if (found != subscriber_receiver_track_sids_.end()) {
+			track_sid = found->second;
+			subscriber_receiver_track_sids_.erase(found);
+		}
+	}
 	if (auto* listener = room_listener_.load()) {
-		listener->MediaTrackRemovedEvent(receiver->track()->id());
+		listener->MediaTrackRemovedEvent(track_sid);
 	}
 }
 

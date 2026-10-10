@@ -158,6 +158,37 @@ assert(assert(publisher:wait_audio_source_playout_async(audio, 1000)):wait(50))
 assert(receiver:remote_stream_dropped_frames(audio_stream) >= 0)
 assert(receiver:close_remote_stream(audio_stream))
 assert(receiver:close_remote_stream(video_stream))
+local function check_republished_media(asynchronous)
+  local previous_audio_sid, previous_video_sid = audio_sid, video_sid
+  audio_stream, video_stream, audio_sid, video_sid = nil, nil, nil, nil
+  if asynchronous then
+    assert(assert(publisher:republish_all_tracks_async()):wait(50))
+  else
+    assert(publisher:republish_all_tracks())
+  end
+  local received_audio, received_video = 0, 0
+  for i = 1, 150 do
+    assert(publisher:push_audio_frame(audio, pcm))
+    if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+    assert(receiver:step(10))
+    assert(publisher:poll())
+    if audio_stream then
+      while receiver:read_audio_frame(audio_stream) do received_audio = received_audio + 1 end
+    end
+    if video_stream then
+      while receiver:read_video_frame(video_stream) do received_video = received_video + 1 end
+    end
+  end
+  assert(audio_sid and audio_sid ~= previous_audio_sid, "audio was not republished")
+  assert(video_sid and video_sid ~= previous_video_sid, "video was not republished")
+  assert(received_audio > 0 and received_video > 0, "media did not resume after republishing")
+  print(string.format("republished %s audio=%d video=%d",
+    asynchronous and "async" or "sync", received_audio, received_video))
+  assert(receiver:close_remote_stream(audio_stream))
+  assert(receiver:close_remote_stream(video_stream))
+end
+check_republished_media(false)
+check_republished_media(true)
 assert(assert(publisher:unpublish_local_track_async(audio)):wait(50))
 assert(assert(publisher:unpublish_local_track_async(video)):wait(50))
 assert(publisher:publish_audio_track("close-cleanup", 48000, 1, 200, {dtx = false}))

@@ -117,7 +117,8 @@ public:
 	ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) override;
 	void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
 	                     webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-	                     std::function<std::string()> stats_provider) override;
+	                     std::function<std::string()> stats_provider,
+	                     std::string track_sid) override;
 	void MediaTrackRemovedEvent(const std::string& track_sid) override;
 	void DataPacketEvent(const livekit::DataPacket& packet) override;
 	void RemoteMuteChangedEvent(const std::string& sid, bool muted) override;
@@ -214,6 +215,7 @@ private:
 		webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track;
 		webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver;
 		std::function<std::string()> stats_provider;
+		std::string track_sid;
 	};
 	std::map<std::string, PendingMediaTrack> pending_media_tracks_;
 	std::mutex incoming_streams_mutex_;

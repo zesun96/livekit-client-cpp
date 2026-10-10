@@ -160,7 +160,8 @@ tracks. Each permission table may specify `participant_identity` or `participant
 and an `allowed_track_sids` array. Pass an empty array to clear per-participant permissions.
 
 `republish_all_tracks()` and `republish_all_tracks_async()` republish local media tracks after
-a connection is established.
+a connection is established. Room-owned local track IDs remain valid. Remote publication SIDs
+may change; receivers should handle the new `track_published` and `track_subscribed` events.
 
 `edit_chat_message` and `publish_dtmf` are synchronous. `perform_rpc(destination, method,
 payload, timeout_ms)` and its

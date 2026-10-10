@@ -33,6 +33,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -119,6 +120,7 @@ private:
 
 	void QueueBackupCodec(std::string track_sid, VideoCodec codec);
 	void RunBackupCodecWorker();
+	void ApplySubscribedQualityUpdate(core::SubscribedQualityUpdate update);
 	bool PublishAdditionalCodec(const std::string& track_sid, VideoCodec codec);
 	void TryQueuePreconnectBuffers();
 	void NotifyPreconnectAudioAvailable();
@@ -145,6 +147,7 @@ private:
 	std::mutex backup_codec_mutex_;
 	std::condition_variable backup_codec_cv_;
 	std::deque<BackupCodecRequest> backup_codec_requests_;
+	std::map<std::string, core::SubscribedQualityUpdate> pending_quality_updates_;
 	std::set<std::pair<std::string, VideoCodec>> pending_backup_codecs_;
 	bool stop_backup_codec_worker_ = false;
 	std::thread backup_codec_worker_;

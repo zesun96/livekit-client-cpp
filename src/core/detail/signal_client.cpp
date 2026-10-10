@@ -516,7 +516,8 @@ void SignalClient::handleSignalResponse(livekit::SignalResponse& resp) {
 			return;
 		}
 		if (observer_) {
-			observer_->OnOffer(std::move(sd));
+			observer_->OnOffer(std::move(sd), {resp.offer().mid_to_track_id().begin(),
+			                                   resp.offer().mid_to_track_id().end()});
 		}
 		break;
 	}

@@ -61,7 +61,8 @@ public:
 		ParticipantUpdateEvent(const std::vector<livekit::ParticipantInfo>& updates) = 0;
 		virtual void MediaTrackEvent(webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track,
 		                             webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
-		                             std::function<std::string()> stats_provider) = 0;
+		                             std::function<std::string()> stats_provider,
+		                             std::string track_sid) = 0;
 		virtual void MediaTrackRemovedEvent(const std::string& track_sid) = 0;
 		virtual void DataPacketEvent(const livekit::DataPacket& packet) = 0;
 		virtual void RemoteMuteChangedEvent(const std::string& sid, bool muted) = 0;
@@ -156,7 +157,8 @@ public:
 	virtual void OnLocalTrackPublished(const livekit::TrackPublishedResponse& response) override;
 	virtual void
 	OnLocalTrackUnpublished(const livekit::TrackUnpublishedResponse& response) override;
-	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer) override;
+	virtual void OnOffer(std::unique_ptr<webrtc::SessionDescriptionInterface> offer,
+	                     std::map<std::string, std::string> mid_to_track_id) override;
 	virtual void OnRemoteMuteChanged(std::string sid, bool muted) override;
 	virtual void OnSubscribedQualityUpdate(const livekit::SubscribedQualityUpdate& update) override;
 	virtual void OnTokenRefresh(const std::string& token) override;
@@ -297,6 +299,9 @@ private:
 	mutable std::mutex signal_client_lock_;
 	std::shared_ptr<SignalClient> signal_client_;
 	std::unique_ptr<RtcSession> rtc_session_;
+	std::mutex subscriber_tracks_mutex_;
+	std::map<std::string, std::string> subscriber_mid_to_track_sid_;
+	std::map<std::string, std::string> subscriber_receiver_track_sids_;
 	// Local media tracks are created by this factory. Keep it stable while replacing peer
 	// connections so those tracks can be republished safely after a full reconnect.
 	mutable std::mutex peer_factory_lock_;
