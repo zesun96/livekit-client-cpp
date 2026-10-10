@@ -13,6 +13,10 @@ local publisher = assert(livekit.new_room())
 local audio_stream, video_stream
 local audio_sid, video_sid
 local subscription_futures = {}
+local local_subscribed = {}
+assert(publisher:on(function(event)
+  if event.type == "local_track_subscribed" then local_subscribed[event.sid] = true end
+end))
 assert(receiver:on(function(event)
   if event.type == "track_published" then
     subscription_futures[#subscription_futures + 1] = assert(
@@ -83,6 +87,8 @@ assert(audio_stream and video_stream, "receiver did not subscribe to both tracks
 for _, future in ipairs(subscription_futures) do assert(future:wait(50)) end
 assert(audio_frames > 0 and video_frames > 0,
   string.format("expected decoded media; audio=%d video=%d", audio_frames, video_frames))
+assert(local_subscribed[audio_sid] or local_subscribed[video_sid],
+  "publisher did not observe a local-track subscription")
 assert(type(publisher:local_track_rtc_stats(audio)) == "table")
 assert(type(receiver:remote_track_rtc_stats("lua-publisher", audio_sid)) == "table")
 local local_video_stats, remote_video_stats

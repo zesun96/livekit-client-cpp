@@ -203,6 +203,16 @@ Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
 `e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
 message, participant, track, and encryption state events through `room:on`.
+Additional `room:on` events include `local_track_subscribed`,
+`participant_permissions_changed`, `transcription_received`, and
+`subscribed_quality_update`, and `metrics_received`. Permissions events carry
+`previous_permissions` and `permissions`
+tables with publication and subscription flags plus `can_publish_sources`. Transcription events
+carry `identity`, `sid`, and `segments` with text, language, times, and finality. Quality updates
+carry track `sid`, `qualities`, and per-codec `codecs` arrays.
+Metrics events carry `timestamp_ms`, optional `normalized_timestamp`, `string_data`,
+`time_series`, and `events`. Metric label and participant/track/rid fields are zero-based indices
+into `string_data`; add one when indexing the Lua array.
 
 ## Media publishing and subscription
 

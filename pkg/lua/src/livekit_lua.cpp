@@ -17,6 +17,7 @@ extern "C" {
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -27,6 +28,66 @@ namespace {
 
 constexpr const char* kRoomType = "livekit.room";
 constexpr size_t kMaxQueuedEvents = 1024;
+
+struct PermissionSnapshot {
+	bool can_subscribe = false;
+	bool can_publish = false;
+	bool can_publish_data = false;
+	bool hidden = false;
+	bool recorder = false;
+	bool can_update_metadata = false;
+	bool agent = false;
+	bool can_subscribe_metrics = false;
+	bool can_manage_agent_session = false;
+	std::vector<int> can_publish_sources;
+};
+
+struct TranscriptionSegment {
+	std::string id;
+	std::string text;
+	std::string language;
+	uint64_t start_time = 0;
+	uint64_t end_time = 0;
+	bool is_final = false;
+	int64_t first_received_time = 0;
+	int64_t last_received_time = 0;
+};
+
+struct SubscribedCodec {
+	std::string codec;
+	std::vector<std::pair<int, bool>> qualities;
+};
+
+struct MetricTime {
+	int64_t seconds = 0;
+	int32_t nanos = 0;
+};
+
+struct MetricSample {
+	int64_t timestamp_ms = 0;
+	std::optional<MetricTime> normalized_timestamp;
+	float value = 0;
+};
+
+struct TimeSeriesMetric {
+	uint32_t label = 0;
+	uint32_t participant_identity = 0;
+	uint32_t track_sid = 0;
+	uint32_t rid = 0;
+	std::vector<MetricSample> samples;
+};
+
+struct EventMetric {
+	uint32_t label = 0;
+	uint32_t participant_identity = 0;
+	uint32_t track_sid = 0;
+	uint32_t rid = 0;
+	int64_t start_timestamp_ms = 0;
+	std::optional<int64_t> end_timestamp_ms;
+	std::optional<MetricTime> normalized_start_timestamp;
+	std::optional<MetricTime> normalized_end_timestamp;
+	std::string metadata;
+};
 
 struct Event {
 	std::string type;
@@ -42,6 +103,15 @@ struct Event {
 	std::vector<std::pair<std::string, bool>> booleans;
 	std::vector<std::pair<std::string, std::string>> attributes;
 	std::vector<std::string> speakers;
+	std::vector<TranscriptionSegment> segments;
+	std::vector<std::pair<int, bool>> qualities;
+	std::vector<SubscribedCodec> codecs;
+	std::optional<PermissionSnapshot> previous_permissions;
+	std::optional<PermissionSnapshot> permissions;
+	std::vector<std::string> metric_strings;
+	std::vector<TimeSeriesMetric> time_series;
+	std::vector<EventMetric> metric_events;
+	std::optional<MetricTime> metric_timestamp;
 };
 
 enum class CaptureKind { None, Microphone, SystemAudio, Camera, Screen };
@@ -1325,6 +1395,110 @@ void on_participant_attributes(void* user_data, lk_room_t*, const lk_attribute_t
 	} catch (...) {
 	}
 }
+PermissionSnapshot copy_permissions(const lk_participant_permissions_t* source) {
+	PermissionSnapshot result;
+	if (source == nullptr)
+		return result;
+	result.can_subscribe = source->can_subscribe != 0;
+	result.can_publish = source->can_publish != 0;
+	result.can_publish_data = source->can_publish_data != 0;
+	result.hidden = source->hidden != 0;
+	result.recorder = source->recorder != 0;
+	result.can_update_metadata = source->can_update_metadata != 0;
+	result.agent = source->agent != 0;
+	result.can_subscribe_metrics = source->can_subscribe_metrics != 0;
+	result.can_manage_agent_session = source->can_manage_agent_session != 0;
+	for (size_t i = 0;
+	     source->can_publish_sources != nullptr && i < source->can_publish_source_count; ++i)
+		result.can_publish_sources.push_back(source->can_publish_sources[i]);
+	return result;
+}
+void on_participant_permissions(void* user_data, lk_room_t*,
+                                const lk_participant_permissions_t* previous,
+                                const lk_participant_permissions_t* current,
+                                const lk_participant_info_t* participant) {
+	try {
+		Event event{"participant_permissions_changed"};
+		event.identity = participant != nullptr ? safe(participant->identity) : "";
+		if (previous != nullptr)
+			event.previous_permissions = copy_permissions(previous);
+		if (current != nullptr)
+			event.permissions = copy_permissions(current);
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+void on_transcription(void* user_data, lk_room_t*, const lk_transcription_received_t* source) {
+	try {
+		if (source == nullptr)
+			return;
+		Event event{"transcription_received"};
+		event.identity = safe(source->transcribed_participant_identity);
+		event.sid = safe(source->track_id);
+		for (size_t i = 0; source->segments != nullptr && i < source->segment_count; ++i) {
+			const auto& segment = source->segments[i];
+			event.segments.push_back({safe(segment.id), safe(segment.text), safe(segment.language),
+			                          segment.start_time, segment.end_time, segment.is_final != 0,
+			                          segment.first_received_time, segment.last_received_time});
+		}
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
+MetricTime copy_metric_time(const lk_metric_timestamp_t& source) {
+	return {source.seconds, source.nanos};
+}
+void on_metrics(void* user_data, lk_room_t*, const lk_metrics_received_t* source) {
+	try {
+		if (source == nullptr)
+			return;
+		Event event{"metrics_received"};
+		event.identity = safe(source->participant_identity);
+		event.numbers.emplace_back("timestamp_ms", static_cast<lua_Number>(source->timestamp_ms));
+		if (source->has_normalized_timestamp)
+			event.metric_timestamp = copy_metric_time(source->normalized_timestamp);
+		for (size_t i = 0; source->string_data != nullptr && i < source->string_data_count; ++i)
+			event.metric_strings.emplace_back(safe(source->string_data[i]));
+		for (size_t i = 0; source->time_series != nullptr && i < source->time_series_count; ++i) {
+			const auto& series = source->time_series[i];
+			TimeSeriesMetric copy;
+			copy.label = series.label;
+			copy.participant_identity = series.participant_identity;
+			copy.track_sid = series.track_sid;
+			copy.rid = series.rid;
+			for (size_t j = 0; series.samples != nullptr && j < series.sample_count; ++j) {
+				const auto& sample = series.samples[j];
+				MetricSample value;
+				value.timestamp_ms = sample.timestamp_ms;
+				value.value = sample.value;
+				if (sample.has_normalized_timestamp)
+					value.normalized_timestamp = copy_metric_time(sample.normalized_timestamp);
+				copy.samples.push_back(std::move(value));
+			}
+			event.time_series.push_back(std::move(copy));
+		}
+		for (size_t i = 0; source->events != nullptr && i < source->event_count; ++i) {
+			const auto& metric = source->events[i];
+			EventMetric copy;
+			copy.label = metric.label;
+			copy.participant_identity = metric.participant_identity;
+			copy.track_sid = metric.track_sid;
+			copy.rid = metric.rid;
+			copy.start_timestamp_ms = metric.start_timestamp_ms;
+			if (metric.has_end_timestamp_ms)
+				copy.end_timestamp_ms = metric.end_timestamp_ms;
+			if (metric.has_normalized_start_timestamp)
+				copy.normalized_start_timestamp =
+				    copy_metric_time(metric.normalized_start_timestamp);
+			if (metric.has_normalized_end_timestamp)
+				copy.normalized_end_timestamp = copy_metric_time(metric.normalized_end_timestamp);
+			copy.metadata = safe(metric.metadata);
+			event.metric_events.push_back(std::move(copy));
+		}
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
+}
 void track_event(void* user_data, const lk_track_publication_info_t* track,
                  const lk_participant_info_t* participant, const char* type) noexcept {
 	try {
@@ -1417,6 +1591,39 @@ void on_local_track_published(void* u, lk_room_t*, const lk_track_publication_in
 void on_local_track_unpublished(void* u, lk_room_t*, const lk_track_publication_info_t* t,
                                 const lk_participant_info_t* p) {
 	track_event(u, t, p, "local_track_unpublished");
+}
+void on_local_track_subscribed(void* u, lk_room_t*, const lk_track_publication_info_t* t,
+                               const lk_participant_info_t* p) {
+	track_event(u, t, p, "local_track_subscribed");
+}
+void on_subscribed_quality_update(void* user_data, lk_room_t*,
+                                  const lk_track_publication_info_t* track,
+                                  const lk_participant_info_t* participant,
+                                  const lk_subscribed_quality_update_t* update) {
+	try {
+		if (update == nullptr)
+			return;
+		Event event{"subscribed_quality_update"};
+		event.sid = safe(update->track_sid);
+		if (track != nullptr)
+			event.name = safe(track->name);
+		if (participant != nullptr)
+			event.identity = safe(participant->identity);
+		for (size_t i = 0; update->qualities != nullptr && i < update->quality_count; ++i)
+			event.qualities.emplace_back(update->qualities[i].quality,
+			                             update->qualities[i].enabled != 0);
+		for (size_t i = 0; update->codecs != nullptr && i < update->codec_count; ++i) {
+			SubscribedCodec codec;
+			codec.codec = safe(update->codecs[i].codec);
+			for (size_t j = 0;
+			     update->codecs[i].qualities != nullptr && j < update->codecs[i].quality_count; ++j)
+				codec.qualities.emplace_back(update->codecs[i].qualities[j].quality,
+				                             update->codecs[i].qualities[j].enabled != 0);
+			event.codecs.push_back(std::move(codec));
+		}
+		enqueue(static_cast<Room*>(user_data), std::move(event));
+	} catch (...) {
+	}
 }
 void data_track_event(void* user_data, const lk_data_track_info_t* track,
                       const lk_participant_info_t* participant, const char* type) noexcept {
@@ -1633,6 +1840,9 @@ int new_room(lua_State* L) {
 	callbacks.on_participant_metadata_changed = on_participant_metadata;
 	callbacks.on_participant_name_changed = on_participant_name;
 	callbacks.on_participant_attributes_changed = on_participant_attributes;
+	callbacks.on_participant_permissions_changed = on_participant_permissions;
+	callbacks.on_transcription_received = on_transcription;
+	callbacks.on_metrics_received = on_metrics;
 	callbacks.on_track_published = on_track_published;
 	callbacks.on_track_unpublished = on_track_unpublished;
 	callbacks.on_track_subscribed = on_track_subscribed;
@@ -1645,6 +1855,8 @@ int new_room(lua_State* L) {
 	callbacks.on_track_subscription_status_changed = on_subscription_status;
 	callbacks.on_local_track_published = on_local_track_published;
 	callbacks.on_local_track_unpublished = on_local_track_unpublished;
+	callbacks.on_local_track_subscribed = on_local_track_subscribed;
+	callbacks.on_subscribed_quality_update = on_subscribed_quality_update;
 	callbacks.on_data_track_published = on_data_track_published;
 	callbacks.on_data_track_unpublished = on_data_track_unpublished;
 	callbacks.on_local_data_track_published = on_local_data_track_published;
@@ -1888,6 +2100,49 @@ void dispatch_policy(lua_State* L, Room* room, const std::shared_ptr<PolicyReque
 	}
 }
 
+void push_permissions(lua_State* L, const PermissionSnapshot& permissions) {
+	lua_newtable(L);
+	boolean_field(L, "can_subscribe", permissions.can_subscribe);
+	boolean_field(L, "can_publish", permissions.can_publish);
+	boolean_field(L, "can_publish_data", permissions.can_publish_data);
+	boolean_field(L, "hidden", permissions.hidden);
+	boolean_field(L, "recorder", permissions.recorder);
+	boolean_field(L, "can_update_metadata", permissions.can_update_metadata);
+	boolean_field(L, "agent", permissions.agent);
+	boolean_field(L, "can_subscribe_metrics", permissions.can_subscribe_metrics);
+	boolean_field(L, "can_manage_agent_session", permissions.can_manage_agent_session);
+	lua_newtable(L);
+	for (size_t i = 0; i < permissions.can_publish_sources.size(); ++i) {
+		lua_pushinteger(L, permissions.can_publish_sources[i]);
+		lua_rawseti(L, -2, static_cast<int>(i + 1));
+	}
+	lua_setfield(L, -2, "can_publish_sources");
+}
+
+void push_qualities(lua_State* L, const std::vector<std::pair<int, bool>>& qualities) {
+	lua_newtable(L);
+	for (size_t i = 0; i < qualities.size(); ++i) {
+		lua_newtable(L);
+		integer_field(L, "quality", qualities[i].first);
+		boolean_field(L, "enabled", qualities[i].second);
+		lua_rawseti(L, -2, static_cast<int>(i + 1));
+	}
+}
+
+void push_metric_time(lua_State* L, const MetricTime& timestamp) {
+	lua_newtable(L);
+	number_field(L, "seconds", static_cast<lua_Number>(timestamp.seconds));
+	integer_field(L, "nanos", timestamp.nanos);
+}
+
+void push_metric_labels(lua_State* L, uint32_t label, uint32_t identity, uint32_t track_sid,
+                        uint32_t rid) {
+	integer_field(L, "label", label);
+	integer_field(L, "participant_identity", identity);
+	integer_field(L, "track_sid", track_sid);
+	integer_field(L, "rid", rid);
+}
+
 int poll(lua_State* L) {
 	Room* room = check_room(L, 1);
 	lua_Integer requested = luaL_optinteger(L, 2, 100);
@@ -1986,6 +2241,105 @@ int poll(lua_State* L) {
 				number_field(L, key.c_str(), value);
 			for (const auto& [key, value] : event.booleans)
 				boolean_field(L, key.c_str(), value);
+			if (event.previous_permissions) {
+				push_permissions(L, *event.previous_permissions);
+				lua_setfield(L, -2, "previous_permissions");
+			}
+			if (event.permissions) {
+				push_permissions(L, *event.permissions);
+				lua_setfield(L, -2, "permissions");
+			}
+			if (event.type == "transcription_received") {
+				lua_newtable(L);
+				for (size_t i = 0; i < event.segments.size(); ++i) {
+					const auto& segment = event.segments[i];
+					lua_newtable(L);
+					string_field(L, "id", segment.id);
+					string_field(L, "text", segment.text);
+					string_field(L, "language", segment.language);
+					number_field(L, "start_time", static_cast<lua_Number>(segment.start_time));
+					number_field(L, "end_time", static_cast<lua_Number>(segment.end_time));
+					boolean_field(L, "is_final", segment.is_final);
+					number_field(L, "first_received_time",
+					             static_cast<lua_Number>(segment.first_received_time));
+					number_field(L, "last_received_time",
+					             static_cast<lua_Number>(segment.last_received_time));
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "segments");
+			}
+			if (event.type == "subscribed_quality_update") {
+				push_qualities(L, event.qualities);
+				lua_setfield(L, -2, "qualities");
+				lua_newtable(L);
+				for (size_t i = 0; i < event.codecs.size(); ++i) {
+					lua_newtable(L);
+					string_field(L, "codec", event.codecs[i].codec);
+					push_qualities(L, event.codecs[i].qualities);
+					lua_setfield(L, -2, "qualities");
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "codecs");
+			}
+			if (event.type == "metrics_received") {
+				if (event.metric_timestamp) {
+					push_metric_time(L, *event.metric_timestamp);
+					lua_setfield(L, -2, "normalized_timestamp");
+				}
+				lua_newtable(L);
+				for (size_t i = 0; i < event.metric_strings.size(); ++i) {
+					lua_pushlstring(L, event.metric_strings[i].data(),
+					                event.metric_strings[i].size());
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "string_data");
+				lua_newtable(L);
+				for (size_t i = 0; i < event.time_series.size(); ++i) {
+					const auto& series = event.time_series[i];
+					lua_newtable(L);
+					push_metric_labels(L, series.label, series.participant_identity,
+					                   series.track_sid, series.rid);
+					lua_newtable(L);
+					for (size_t j = 0; j < series.samples.size(); ++j) {
+						const auto& sample = series.samples[j];
+						lua_newtable(L);
+						number_field(L, "timestamp_ms",
+						             static_cast<lua_Number>(sample.timestamp_ms));
+						number_field(L, "value", sample.value);
+						if (sample.normalized_timestamp) {
+							push_metric_time(L, *sample.normalized_timestamp);
+							lua_setfield(L, -2, "normalized_timestamp");
+						}
+						lua_rawseti(L, -2, static_cast<int>(j + 1));
+					}
+					lua_setfield(L, -2, "samples");
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "time_series");
+				lua_newtable(L);
+				for (size_t i = 0; i < event.metric_events.size(); ++i) {
+					const auto& metric = event.metric_events[i];
+					lua_newtable(L);
+					push_metric_labels(L, metric.label, metric.participant_identity,
+					                   metric.track_sid, metric.rid);
+					number_field(L, "start_timestamp_ms",
+					             static_cast<lua_Number>(metric.start_timestamp_ms));
+					if (metric.end_timestamp_ms)
+						number_field(L, "end_timestamp_ms",
+						             static_cast<lua_Number>(*metric.end_timestamp_ms));
+					if (metric.normalized_start_timestamp) {
+						push_metric_time(L, *metric.normalized_start_timestamp);
+						lua_setfield(L, -2, "normalized_start_timestamp");
+					}
+					if (metric.normalized_end_timestamp) {
+						push_metric_time(L, *metric.normalized_end_timestamp);
+						lua_setfield(L, -2, "normalized_end_timestamp");
+					}
+					string_field(L, "metadata", metric.metadata);
+					lua_rawseti(L, -2, static_cast<int>(i + 1));
+				}
+				lua_setfield(L, -2, "events");
+			}
 			if (event.type == "participant_attributes_changed" ||
 			    event.type == "text_stream_event" || event.type == "byte_stream_event" ||
 			    event.type == "text_received" || event.type == "byte_received" ||
