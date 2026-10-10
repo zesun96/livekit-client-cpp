@@ -6924,6 +6924,30 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 	lua_setfield(L, -2, "DATA_TRACK");
 	lua_setfield(L, -2, "ERROR_DOMAIN");
 	lua_newtable(L);
+	lua_pushinteger(L, LK_E2EE_KEY_DERIVATION_PBKDF2_SHA256);
+	lua_setfield(L, -2, "PBKDF2_SHA256");
+	lua_pushinteger(L, LK_E2EE_KEY_DERIVATION_HKDF_SHA256);
+	lua_setfield(L, -2, "HKDF_SHA256");
+	lua_setfield(L, -2, "E2EE_KEY_DERIVATION");
+	lua_newtable(L);
+	lua_pushinteger(L, LK_FRAME_CRYPTOR_DIRECTION_SENDER);
+	lua_setfield(L, -2, "SENDER");
+	lua_pushinteger(L, LK_FRAME_CRYPTOR_DIRECTION_RECEIVER);
+	lua_setfield(L, -2, "RECEIVER");
+	lua_setfield(L, -2, "FRAME_CRYPTOR_DIRECTION");
+	lua_newtable(L);
+	for (const auto& state : {std::pair{"NEW", LK_FRAME_CRYPTOR_STATE_NEW},
+	                          {"OK", LK_FRAME_CRYPTOR_STATE_OK},
+	                          {"ENCRYPTION_FAILED", LK_FRAME_CRYPTOR_STATE_ENCRYPTION_FAILED},
+	                          {"DECRYPTION_FAILED", LK_FRAME_CRYPTOR_STATE_DECRYPTION_FAILED},
+	                          {"MISSING_KEY", LK_FRAME_CRYPTOR_STATE_MISSING_KEY},
+	                          {"KEY_RATCHETED", LK_FRAME_CRYPTOR_STATE_KEY_RATCHETED},
+	                          {"INTERNAL_ERROR", LK_FRAME_CRYPTOR_STATE_INTERNAL_ERROR}}) {
+		lua_pushinteger(L, state.second);
+		lua_setfield(L, -2, state.first);
+	}
+	lua_setfield(L, -2, "FRAME_CRYPTOR_STATE");
+	lua_newtable(L);
 	lua_pushinteger(L, LK_DATA_STREAM_COMPLETION_COMPLETED);
 	lua_setfield(L, -2, "COMPLETED");
 	lua_pushinteger(L, LK_DATA_STREAM_COMPLETION_CANCELLED);

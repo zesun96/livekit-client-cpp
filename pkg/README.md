@@ -27,7 +27,7 @@ Swift, and Zig bindings have no implementation yet.
 | Text and byte streams, chat, and file transfer | Yes | No | No | No |
 | DataTrack schema, publishing, and subscription | Yes | No | No | No |
 | RPC calls and method handlers | Yes | No | No | No |
-| E2EE | Partial | No | No | No |
+| E2EE (C ABI GCM, keys, frame cryptors) | Yes | No | No | No |
 | Media devices and remote recording | Yes | No | No | No |
 | Logging, tracing, and RTC statistics | Yes | No | No | No |
 

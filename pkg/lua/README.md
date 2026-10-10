@@ -73,7 +73,7 @@ event loop during reconnection so refreshed credentials can be supplied. The syn
 variant drives the loop for the initial connection.
 The E2EE table accepts `enabled`, binary `shared_key`, `ratchet_salt`,
 `unencrypted_magic_bytes`, `ratchet_window_size`, `failure_tolerance`, `key_ring_size`, and
-`key_derivation` (`0` for PBKDF2 SHA-256, `1` for HKDF SHA-256).
+`key_derivation` (`livekit.E2EE_KEY_DERIVATION.PBKDF2_SHA256` or `HKDF_SHA256`).
 Fallible methods return `true` or `nil, message`. Data payloads are binary-safe Lua strings.
 For recipient targeting, use `publish_data_with_options(payload, {reliable, topic,
 destination_identities})`. One-shot streams have `send_text_with_options(text, options)`,
@@ -223,7 +223,8 @@ Synchronous DataTrack failures return `nil, message, error_code`; async futures 
 `e2ee_set_enabled_async(enabled)` returns a coroutine future so a connected room can republish
 encrypted tracks without blocking the Lua thread.
 Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
-`e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
+`e2ee_frame_cryptors()` to inspect current cryptors; `FRAME_CRYPTOR_DIRECTION` and
+`FRAME_CRYPTOR_STATE` provide constants for cryptor control and snapshots. The binding also exposes
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
 message, participant, track, and encryption state events through `room:on`.
 Additional `room:on` events include `local_track_subscribed`,
