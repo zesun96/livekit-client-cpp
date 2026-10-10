@@ -5684,6 +5684,23 @@ int version(lua_State* L) {
 	return 1;
 }
 
+int last_error_info(lua_State* L) {
+	lk_error_info_t info;
+	lk_error_info_init(&info);
+	if (lk_last_error_info(&info) != LK_STATUS_OK)
+		return media_error(L, "failed to read error information");
+	const size_t required = lk_last_error_message(nullptr, 0);
+	std::string message(required, '\0');
+	if (required != 0)
+		lk_last_error_message(message.data(), message.size());
+	lua_newtable(L);
+	integer_field(L, "domain", info.domain);
+	integer_field(L, "code", info.code);
+	lua_pushlstring(L, message.data(), required > 0 ? required - 1 : 0);
+	lua_setfield(L, -2, "message");
+	return 1;
+}
+
 int log_options(lua_State* L) {
 	lk_log_options_t options;
 	lk_log_options_init(&options);
@@ -5916,6 +5933,7 @@ const luaL_Reg room_methods[] = {
     {nullptr, nullptr}};
 const luaL_Reg module_methods[] = {{"new_room", new_room},
                                    {"version", version},
+                                   {"last_error_info", last_error_info},
                                    {"log_options", log_options},
                                    {"set_log_options", set_log_options},
                                    {"trace_options", trace_options},
@@ -5971,6 +5989,14 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 	lua_setfield(L, -2, "FAILED");
 	lua_pushinteger(L, LK_ROOM_STATE_RECONNECTING);
 	lua_setfield(L, -2, "RECONNECTING");
+	lua_newtable(L);
+	lua_pushinteger(L, LK_ERROR_DOMAIN_NONE);
+	lua_setfield(L, -2, "NONE");
+	lua_pushinteger(L, LK_ERROR_DOMAIN_STATUS);
+	lua_setfield(L, -2, "STATUS");
+	lua_pushinteger(L, LK_ERROR_DOMAIN_DATA_TRACK);
+	lua_setfield(L, -2, "DATA_TRACK");
+	lua_setfield(L, -2, "ERROR_DOMAIN");
 	for (const auto& level : {std::pair{"LOG_TRACE", LK_LOG_LEVEL_TRACE},
 	                          {"LOG_DEBUG", LK_LOG_LEVEL_DEBUG},
 	                          {"LOG_INFO", LK_LOG_LEVEL_INFO},

@@ -136,6 +136,8 @@ are provided. `livekit.trace_options()` and `livekit.set_trace_options({...})` r
 `TRACE_ALL`. `livekit.trace_start_json_file(path)` replaces the process-wide trace sink with a
 Chrome Trace JSON file; call `livekit.trace_stop()` to flush and close it. These settings affect
 all rooms in the process. Logging and tracing callbacks are not exposed to Lua.
+`livekit.last_error_info()` returns the current thread's `{domain, code, message}` snapshot;
+`livekit.ERROR_DOMAIN` names the domain values.
 
 `room:local_participant()` and `room:remote_participants()` return detached tables. Local
 participant name, metadata, and attributes can be changed through `set_local_name`,
@@ -204,10 +206,10 @@ Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
 message, participant, track, and encryption state events through `room:on`.
 Additional `room:on` events include `local_track_subscribed`,
-`participant_permissions_changed`, `transcription_received`, and
+`participant_permissions_changed`, `transcription_received`,
 `subscribed_quality_update`, and `metrics_received`. Permissions events carry
-`previous_permissions` and `permissions`
-tables with publication and subscription flags plus `can_publish_sources`. Transcription events
+`previous_permissions` and `permissions` tables with publication and subscription flags plus
+`can_publish_sources`. Transcription events
 carry `identity`, `sid`, and `segments` with text, language, times, and finality. Quality updates
 carry track `sid`, `qualities`, and per-codec `codecs` arrays.
 Metrics events carry `timestamp_ms`, optional `normalized_timestamp`, `string_data`,
