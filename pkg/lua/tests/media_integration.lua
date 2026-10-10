@@ -131,6 +131,28 @@ assert(#local_video_stats > 0 and #remote_video_stats > 0, "video RTC stats did 
 assert(type(local_video_stats[1].id) == "string")
 assert(type(local_video_stats[1].bytes) == "number")
 assert(type(remote_video_stats[1].direction) == "number")
+local audio_recording = assert(receiver:start_track_recording(
+  "lua-publisher", audio_sid, "out/lua-media-audio", 64))
+local video_recording = assert(assert(receiver:start_track_recording_async(
+  "lua-publisher", video_sid, "out/lua-media-video", 64)):wait(50))
+for i = 1, 60 do
+  assert(publisher:push_audio_frame(audio, pcm))
+  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height, "RGBA")) end
+  assert(receiver:step(10))
+  assert(publisher:poll())
+end
+assert(receiver:stop_track_recording(audio_recording))
+assert(assert(receiver:stop_track_recording_async(video_recording)):wait(50))
+for _, id in ipairs({audio_recording, video_recording}) do
+  local stats = assert(receiver:track_recording_stats(id))
+  assert(stats.state == 1 and stats.frames_written > 0 and stats.bytes_written > 0,
+    "remote recording did not write frames")
+  local file = assert(io.open(stats.output_path, "rb"))
+  assert(file:seek("end") > 0)
+  file:close()
+  assert(receiver:close_track_recording(id))
+  assert(os.remove(stats.output_path))
+end
 assert(publisher:clear_audio_source_queue(audio))
 assert(assert(publisher:wait_audio_source_playout_async(audio, 1000)):wait(50))
 assert(receiver:remote_stream_dropped_frames(audio_stream) >= 0)

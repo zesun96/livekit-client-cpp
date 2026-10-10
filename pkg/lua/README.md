@@ -279,6 +279,17 @@ return arrays of RTC stream statistics. A report that is not ready returns an em
 Optional measurements such as bitrate, jitter, round-trip time, and audio level are omitted when
 unavailable. Large counters are Lua numbers and may lose integer precision above 2^53.
 
+`start_track_recording(participant_identity, track_sid, output_path, queue_capacity)` records a
+subscribed remote track to a local file. The optional queue capacity defaults to 256 frames; the
+output directory must already exist. `start_track_recording_async(...)` returns a coroutine
+future with the same recorder ID. Use `track_recording_stats(id)` for the resolved file path,
+state (`0` recording, `1` stopped, `2` failed), written frame and byte counts, dropped frames,
+and error text. `stop_track_recording(id)` finalizes the file and is safe to call more than once;
+`stop_track_recording_async(id)` returns a coroutine future for the same operation.
+`close_track_recording(id)` releases the recorder. Room close releases any remaining recorders.
+Audio is written as PCM WAV. Video preserves its received codec as H264/H265 Annex-B or
+VP8/VP9/AV1 IVF. See [remote recording](../../docs/RECORDING.md) for format details.
+
 ## Device capture
 
 `publish_microphone_track(label, options)`, `publish_system_audio_track(label, options)`,

@@ -644,6 +644,32 @@ std::shared_ptr<VideoStream> Room::CreateVideoStream(std::string participant_ide
 	return track->second->CreateVideoStream(options);
 }
 
+std::unique_ptr<TrackRecorder> Room::StartTrackRecording(std::string participant_identity,
+                                                         std::string track_sid,
+                                                         TrackRecorderOptions options,
+                                                         std::string* error) {
+	std::shared_ptr<RemoteTrack> track;
+	{
+		std::lock_guard<std::mutex> guard(participants_mutex_);
+		const auto participant =
+		    std::find_if(remote_participants_.begin(), remote_participants_.end(),
+		                 [&participant_identity](const auto& entry) {
+			                 return entry.second->Identity() == participant_identity;
+		                 });
+		const auto found = remote_tracks_.find(track_sid);
+		if (participant != remote_participants_.end() && found != remote_tracks_.end() &&
+		    participant->second->HasTrackSid(track_sid)) {
+			track = found->second;
+		}
+	}
+	if (!track) {
+		if (error != nullptr)
+			*error = "remote track is unavailable";
+		return nullptr;
+	}
+	return core::StartTrackRecording(*track, std::move(options), error);
+}
+
 RemoteParticipantInterface* Room::GetRemoteParticipantBySid(std::string sid) {
 	std::lock_guard<std::mutex> guard(participants_mutex_);
 	auto participant = remote_participants_.find(sid);
@@ -920,6 +946,17 @@ std::shared_ptr<VideoStream> RoomInterface::CreateVideoStream(std::string partic
 	return room != nullptr ? room->CreateVideoStream(std::move(participant_identity),
 	                                                 std::move(track_sid), options)
 	                       : nullptr;
+}
+
+std::unique_ptr<TrackRecorder> RoomInterface::StartTrackRecording(std::string participant_identity,
+                                                                  std::string track_sid,
+                                                                  TrackRecorderOptions options,
+                                                                  std::string* error) {
+	auto* room = dynamic_cast<Room*>(this);
+	return room != nullptr
+	           ? room->StartTrackRecording(std::move(participant_identity), std::move(track_sid),
+	                                       std::move(options), error)
+	           : nullptr;
 }
 
 RoomInterface::RoomState RoomInterface::State() const {

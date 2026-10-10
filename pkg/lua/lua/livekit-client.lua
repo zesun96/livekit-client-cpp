@@ -142,6 +142,14 @@ function room_methods:republish_all_tracks_async()
   return future_for(self, self:_start_republish_all_tracks())
 end
 
+function room_methods:start_track_recording_async(identity, sid, path, capacity)
+  return future_for(self, self:_start_track_recording(identity, sid, path, capacity))
+end
+
+function room_methods:stop_track_recording_async(id)
+  return future_for(self, self:_stop_track_recording(id))
+end
+
 function room_methods:publish_data_async(payload, reliable, topic)
   return future_for(self, self:_start_publish_data(payload, reliable, topic))
 end

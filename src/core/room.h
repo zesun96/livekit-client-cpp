@@ -80,6 +80,10 @@ public:
 	std::shared_ptr<VideoStream> CreateVideoStream(std::string participant_identity,
 	                                               std::string track_sid,
 	                                               MediaStreamOptions options);
+	std::unique_ptr<TrackRecorder> StartTrackRecording(std::string participant_identity,
+	                                                   std::string track_sid,
+	                                                   TrackRecorderOptions options,
+	                                                   std::string* error);
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) override;
 	virtual RemoteParticipantInterface* GetRemoteParticipantByName(std::string name) override;
 	virtual std::vector<ParticipantInterface*> Participants() override;

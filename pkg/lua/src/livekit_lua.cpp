@@ -243,7 +243,9 @@ enum class AsyncOperation {
 	SubscribeDataTrack,
 	WaitAudioSource,
 	ConnectTokenSource,
-	RepublishAllTracks
+	RepublishAllTracks,
+	StartTrackRecording,
+	StopTrackRecording
 };
 
 struct TokenSourceConfig {
@@ -474,6 +476,7 @@ struct Room {
 	std::vector<std::unique_ptr<RpcHandlerContext>> rpc_contexts;
 	std::map<uint64_t, LocalMediaTrack> local_tracks;
 	std::map<uint64_t, RemoteMediaStream> remote_streams;
+	std::map<uint64_t, lk_track_recorder_t*> recorders;
 	std::map<uint64_t, StreamWriter> stream_writers;
 	DataTrackHandles data_tracks;
 	uint64_t next_media_id = 1;
@@ -507,6 +510,9 @@ subscribe_data_track_native(Room* room, const char* identity, const char* sid,
 lk_status_t send_stream_one_shot_native(Room* room, AsyncOperation operation,
                                         const std::string& payload,
                                         const StreamWriterConfig& config);
+lk_status_t start_track_recording_native(Room* room, const std::string& identity,
+                                         const std::string& sid, const std::string& path,
+                                         size_t capacity, uint64_t& id);
 const char* prepare_video_frame(lk_video_frame_input_t& frame, const char* pixels, size_t bytes,
                                 lua_Integer width, lua_Integer height, const char* format,
                                 int64_t timestamp_us);
@@ -906,6 +912,22 @@ void worker_loop(Room* room) noexcept {
 			case AsyncOperation::RepublishAllTracks:
 				status = lk_room_republish_all_tracks(room->native);
 				break;
+			case AsyncOperation::StartTrackRecording:
+				status = start_track_recording_native(room, task->first, task->second, task->name,
+				                                      task->media_queue_ms, task->media_id);
+				break;
+			case AsyncOperation::StopTrackRecording: {
+				std::lock_guard<std::mutex> lock(room->mutex);
+				const auto found = room->recorders.find(task->media_id);
+				if (found == room->recorders.end()) {
+					error = "track recorder is unavailable";
+					status = LK_STATUS_INVALID_ARGUMENT;
+				} else {
+					lk_track_recorder_stop(found->second);
+					status = LK_STATUS_OK;
+				}
+				break;
+			}
 			case AsyncOperation::PublishData: {
 				lk_data_publish_options_t options;
 				lk_data_publish_options_init(&options);
@@ -1830,6 +1852,9 @@ int close_room(lua_State* L) {
 		for (auto& [id, stream] : room->remote_streams)
 			destroy_remote_stream(stream);
 		room->remote_streams.clear();
+		for (auto& [id, recorder] : room->recorders)
+			lk_track_recorder_destroy(recorder);
+		room->recorders.clear();
 		for (auto& [id, writer] : room->stream_writers) {
 			if (writer.text != nullptr)
 				lk_text_stream_writer_destroy(writer.text);
@@ -2988,7 +3013,8 @@ int async_result(lua_State* L) {
 		           task->operation == AsyncOperation::PublishCaptureTrack ||
 		           task->operation == AsyncOperation::OpenStreamWriter ||
 		           task->operation == AsyncOperation::PublishDataTrack ||
-		           task->operation == AsyncOperation::SubscribeDataTrack)
+		           task->operation == AsyncOperation::SubscribeDataTrack ||
+		           task->operation == AsyncOperation::StartTrackRecording)
 			lua_pushnumber(L, static_cast<lua_Number>(task->media_id));
 		else
 			lua_pushboolean(L, 1);
@@ -4757,6 +4783,122 @@ int open_remote_stream(lua_State* L, bool audio) {
 }
 int open_audio_stream(lua_State* L) { return open_remote_stream(L, true); }
 int open_video_stream(lua_State* L) { return open_remote_stream(L, false); }
+lk_status_t start_track_recording_native(Room* room, const std::string& identity,
+                                         const std::string& sid, const std::string& path,
+                                         size_t capacity, uint64_t& id) {
+	lk_track_recorder_options_t options;
+	lk_track_recorder_options_init(&options);
+	options.output_path = path.c_str();
+	options.queue_capacity = capacity;
+	lk_track_recorder_t* recorder = nullptr;
+	const auto status = lk_room_start_track_recording(room->native, identity.c_str(), sid.c_str(),
+	                                                  &options, &recorder);
+	if (status != LK_STATUS_OK)
+		return status;
+	try {
+		std::lock_guard<std::mutex> lock(room->mutex);
+		id = room->next_media_id++;
+		room->recorders.emplace(id, recorder);
+		return LK_STATUS_OK;
+	} catch (...) {
+		lk_track_recorder_destroy(recorder);
+		throw;
+	}
+}
+int start_track_recording(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* sid = luaL_checkstring(L, 3);
+	const char* path = luaL_checkstring(L, 4);
+	const lua_Integer capacity = luaL_optinteger(L, 5, 256);
+	if (capacity <= 0 || capacity > 65536)
+		return media_error(L, "recorder capacity must be between 1 and 65536");
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	uint64_t id = 0;
+	const auto status =
+	    start_track_recording_native(room, identity, sid, path, static_cast<size_t>(capacity), id);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_pushnumber(L, static_cast<lua_Number>(id));
+	return 1;
+}
+int start_track_recording_async(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const char* identity = luaL_checkstring(L, 2);
+	const char* sid = luaL_checkstring(L, 3);
+	const char* path = luaL_checkstring(L, 4);
+	const lua_Integer capacity = luaL_optinteger(L, 5, 256);
+	if (capacity <= 0 || capacity > 65536)
+		return media_error(L, "recorder capacity must be between 1 and 65536");
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::StartTrackRecording;
+		task->first = identity;
+		task->second = sid;
+		task->name = path;
+		task->media_queue_ms = static_cast<uint32_t>(capacity);
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous recorder operation");
+	}
+}
+int stop_track_recording(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	std::lock_guard<std::mutex> lock(room->mutex);
+	const auto found = room->recorders.find(id);
+	if (found == room->recorders.end())
+		return media_error(L, "track recorder is unavailable");
+	lk_track_recorder_stop(found->second);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+int stop_track_recording_async(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::StopTrackRecording;
+		task->media_id = id;
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous recorder operation");
+	}
+}
+int track_recording_stats(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	std::lock_guard<std::mutex> lock(room->mutex);
+	const auto found = room->recorders.find(id);
+	if (found == room->recorders.end())
+		return media_error(L, "track recorder is unavailable");
+	lk_track_recorder_stats_t stats;
+	lk_track_recorder_stats_init(&stats);
+	const auto status = lk_track_recorder_get_stats(found->second, &stats);
+	if (status != LK_STATUS_OK)
+		return status_result(L, status);
+	lua_newtable(L);
+	integer_field(L, "state", stats.state);
+	string_field(L, "output_path", owned_string(lk_track_recorder_output_path, found->second));
+	number_field(L, "frames_written", static_cast<lua_Number>(stats.frames_written));
+	number_field(L, "bytes_written", static_cast<lua_Number>(stats.bytes_written));
+	number_field(L, "frames_dropped", static_cast<lua_Number>(stats.frames_dropped));
+	string_field(L, "error", owned_string(lk_track_recorder_error, found->second));
+	return 1;
+}
+int close_track_recording(lua_State* L) {
+	Room* room = check_room(L, 1);
+	const uint64_t id = media_id(L, 2);
+	std::lock_guard<std::mutex> lock(room->mutex);
+	const auto found = room->recorders.find(id);
+	if (found == room->recorders.end())
+		return media_error(L, "track recorder is unavailable");
+	lk_track_recorder_destroy(found->second);
+	room->recorders.erase(found);
+	lua_pushboolean(L, 1);
+	return 1;
+}
 int close_remote_stream(lua_State* L) {
 	Room* room = check_room(L, 1);
 	const uint64_t id = media_id(L, 2);
@@ -6292,6 +6434,12 @@ const luaL_Reg room_methods[] = {
     {"_start_unpublish_local_track", start_unpublish_local_track},
     {"open_audio_stream", open_audio_stream},
     {"open_video_stream", open_video_stream},
+    {"start_track_recording", start_track_recording},
+    {"_start_track_recording", start_track_recording_async},
+    {"stop_track_recording", stop_track_recording},
+    {"_stop_track_recording", stop_track_recording_async},
+    {"track_recording_stats", track_recording_stats},
+    {"close_track_recording", close_track_recording},
     {"read_audio_frame", read_audio_frame},
     {"read_video_frame", read_video_frame},
     {"close_remote_stream", close_remote_stream},

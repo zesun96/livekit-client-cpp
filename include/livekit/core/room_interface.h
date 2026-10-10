@@ -27,6 +27,7 @@
 #include "participant/participant_snapshot.h"
 #include "participant/remote_participant_interface.h"
 #include "protostruct/livekit_rtc_struct.h"
+#include "recording/track_recorder.h"
 #include "room_event_interface.h"
 #include "rpc.h"
 #include "token_source.h"
@@ -82,6 +83,11 @@ public:
 	std::shared_ptr<VideoStream> CreateVideoStream(std::string participant_identity,
 	                                               std::string track_sid,
 	                                               MediaStreamOptions options = {});
+	// Holds the remote track alive while opening a local recorder.
+	std::unique_ptr<TrackRecorder> StartTrackRecording(std::string participant_identity,
+	                                                   std::string track_sid,
+	                                                   TrackRecorderOptions options,
+	                                                   std::string* error = nullptr);
 	virtual RemoteParticipantInterface* GetRemoteParticipantBySid(std::string sid) = 0;
 	// LiveKit identity is stable for a participant session and should normally be preferred over
 	// the mutable display name.
