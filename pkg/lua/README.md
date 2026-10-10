@@ -146,6 +146,9 @@ Use `set_track_subscription_permissions(all_allowed, permissions)` to restrict a
 tracks. Each permission table may specify `participant_identity` or `participant_sid`, `allow_all`,
 and an `allowed_track_sids` array. Pass an empty array to clear per-participant permissions.
 
+`republish_all_tracks()` and `republish_all_tracks_async()` republish local media tracks after
+a connection is established.
+
 `edit_chat_message` and `publish_dtmf` are synchronous. `perform_rpc(destination, method,
 payload, timeout_ms)` and its
 async variant return a table with `ok`, `payload`, `error_code`, `error_message`, and `error_data`.
@@ -168,7 +171,8 @@ any remaining writers. Options accept `topic`, `stream_id`, `destination_identit
 `attributes`, `total_size`, `chunk_size`, and `compress`. Text writers also accept
 `reply_to_stream_id`, `attached_stream_ids`, `update`, and `version`; byte writers accept
 `mime_type` and `name`. Stream data is delivered through `text_received` and `byte_received`
-events after completion. Lua strings preserve binary byte chunks.
+events after completion. Lua strings preserve binary byte chunks. Completed text, byte, and file
+events include `attributes`; completed text events also include `attached_stream_ids`.
 For chunk-by-chunk receive, call `register_text_stream_handler(topic)` or
 `register_byte_stream_handler(topic)` and handle `text_stream_event` or `byte_stream_event` in
 `room:on`. The event carries `phase` (0 open, 1 chunk, 2 closed, 3 failed), binary `content`,

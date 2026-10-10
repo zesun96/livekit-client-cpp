@@ -85,7 +85,8 @@ enum class AsyncOperation {
 	PublishDataTrack,
 	SubscribeDataTrack,
 	WaitAudioSource,
-	ConnectTokenSource
+	ConnectTokenSource,
+	RepublishAllTracks
 };
 
 struct TokenSourceConfig {
@@ -744,6 +745,9 @@ void worker_loop(Room* room) noexcept {
 			case AsyncOperation::Disconnect:
 				status = lk_room_disconnect(room->native);
 				break;
+			case AsyncOperation::RepublishAllTracks:
+				status = lk_room_republish_all_tracks(room->native);
+				break;
 			case AsyncOperation::PublishData: {
 				lk_data_publish_options_t options;
 				lk_data_publish_options_init(&options);
@@ -1126,6 +1130,13 @@ void on_text(void* user_data, lk_room_t*, const lk_text_received_t* received) {
 		event.strings.emplace_back("participant_identity", safe(received->participant_identity));
 		event.strings.emplace_back("reply_to_stream_id", safe(received->reply_to_stream_id));
 		event.numbers.emplace_back("timestamp", static_cast<lua_Number>(received->timestamp));
+		for (size_t i = 0; received->attributes != nullptr && i < received->attribute_count; ++i)
+			event.attributes.emplace_back(safe(received->attributes[i].key),
+			                              safe(received->attributes[i].value));
+		for (size_t i = 0;
+		     received->attached_stream_ids != nullptr && i < received->attached_stream_id_count;
+		     ++i)
+			event.speakers.emplace_back(safe(received->attached_stream_ids[i]));
 		enqueue(static_cast<Room*>(user_data), std::move(event));
 	} catch (...) {
 	}
@@ -1148,6 +1159,9 @@ void file_event(void* user_data, const lk_file_received_t* received, const char*
 		event.strings.emplace_back("topic", safe(received->topic));
 		event.strings.emplace_back("participant_identity", safe(received->participant_identity));
 		event.numbers.emplace_back("timestamp", static_cast<lua_Number>(received->timestamp));
+		for (size_t i = 0; received->attributes != nullptr && i < received->attribute_count; ++i)
+			event.attributes.emplace_back(safe(received->attributes[i].key),
+			                              safe(received->attributes[i].value));
 		enqueue(static_cast<Room*>(user_data), std::move(event));
 	} catch (...) {
 	}
@@ -1973,7 +1987,9 @@ int poll(lua_State* L) {
 			for (const auto& [key, value] : event.booleans)
 				boolean_field(L, key.c_str(), value);
 			if (event.type == "participant_attributes_changed" ||
-			    event.type == "text_stream_event" || event.type == "byte_stream_event") {
+			    event.type == "text_stream_event" || event.type == "byte_stream_event" ||
+			    event.type == "text_received" || event.type == "byte_received" ||
+			    event.type == "file_received") {
 				lua_newtable(L);
 				for (const auto& [key, value] : event.attributes)
 					string_field(L, key.c_str(), value);
@@ -1989,7 +2005,7 @@ int poll(lua_State* L) {
 				}
 				lua_setfield(L, -2, "identities");
 			}
-			if (event.type == "text_stream_event") {
+			if (event.type == "text_stream_event" || event.type == "text_received") {
 				lua_newtable(L);
 				for (size_t i = 0; i < event.speakers.size(); ++i) {
 					lua_pushlstring(L, event.speakers[i].data(), event.speakers[i].size());
@@ -2207,6 +2223,15 @@ int disconnect_room(lua_State* L) {
 	return status_result(L, lk_room_disconnect(room->native));
 }
 
+int republish_all_tracks(lua_State* L) {
+	Room* room = check_room(L, 1);
+	if (room->native == nullptr)
+		return media_error(L, "room is closed");
+	if (async_busy(room))
+		return busy_result(L);
+	return status_result(L, lk_room_republish_all_tracks(room->native));
+}
+
 int publish_data(lua_State* L) {
 	Room* room = check_room(L, 1);
 	size_t size = 0;
@@ -2367,6 +2392,17 @@ int start_disconnect(lua_State* L) {
 		lua_pushnil(L);
 		lua_pushliteral(L, "failed to allocate asynchronous operation");
 		return 2;
+	}
+}
+
+int start_republish_all_tracks(lua_State* L) {
+	Room* room = check_room(L, 1);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::RepublishAllTracks;
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous operation");
 	}
 }
 
@@ -5383,6 +5419,8 @@ const luaL_Reg room_methods[] = {
     {"_start_connect_token_source", start_connect_token_source},
     {"disconnect", disconnect_room},
     {"_start_disconnect", start_disconnect},
+    {"republish_all_tracks", republish_all_tracks},
+    {"_start_republish_all_tracks", start_republish_all_tracks},
     {"close", close_room},
     {"publish_data", publish_data},
     {"publish_data_with_options", publish_data_with_options},

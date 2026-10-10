@@ -10,7 +10,7 @@ end
 
 local receiver = assert(livekit.new_room())
 local publisher = assert(livekit.new_room())
-local chunks, closed, received = {}, {}, {}
+local chunks, closed, received, received_events = {}, {}, {}, {}
 assert(receiver:on(function(event)
   if event.type == "text_stream_event" or event.type == "byte_stream_event" then
     if event.phase == 1 then
@@ -20,15 +20,19 @@ assert(receiver:on(function(event)
     end
   elseif event.type == "text_received" then
     received[event.topic] = event.text
+    received_events[event.topic] = event
   elseif event.type == "byte_received" or event.type == "file_received" or
       event.type == "data_received" then
     received[event.topic] = event.data
+    received_events[event.topic] = event
   end
 end))
 assert(receiver:register_text_stream_handler("lua-stream-text"))
 assert(receiver:register_byte_stream_handler("lua-stream-bytes"))
 assert(receiver:connect(url, receiver_token))
 assert(publisher:connect(url, publisher_token))
+assert(publisher:republish_all_tracks())
+assert(assert(publisher:republish_all_tracks_async()):wait(50))
 
 local text_writer = assert(publisher:stream_text({
   topic = "lua-stream-text", attributes = {origin = "lua"}, total_size = 11
@@ -62,7 +66,8 @@ assert(publisher:send_text_with_options("directed text", {
 }))
 assert(assert(publisher:send_bytes_with_options_async("\0\5", {
   topic = "lua-one-shot-bytes", destination_identities = {"receiver"},
-  mime_type = "application/octet-stream", name = "bytes.bin", compress = true
+  mime_type = "application/octet-stream", name = "bytes.bin", compress = true,
+  attributes = {origin = "lua"}
 })):wait(50))
 local file_path = os.tmpname()
 local file = assert(io.open(file_path, "wb"))
@@ -70,7 +75,7 @@ assert(file:write("file\0data"))
 file:close()
 assert(assert(publisher:send_file_with_options_async(file_path, {
   topic = "lua-one-shot-file", destination_identities = {"receiver"},
-  mime_type = "application/octet-stream", compress = true
+  mime_type = "application/octet-stream", compress = true, attributes = {origin = "lua"}
 })):wait(50))
 os.remove(file_path)
 assert(assert(publisher:publish_data_with_options_async("data\0message", {
@@ -87,8 +92,12 @@ end
 assert(chunks["lua-stream-text"] == "hello world" and closed["lua-stream-text"])
 assert(chunks["lua-stream-bytes"] == "\0\1\2\3" and closed["lua-stream-bytes"])
 assert(received["lua-one-shot-text"] == "directed text")
+assert(received_events["lua-one-shot-text"].attributes.origin == "lua")
+assert(type(received_events["lua-one-shot-text"].attached_stream_ids) == "table")
 assert(received["lua-one-shot-bytes"] == "\0\5")
+assert(received_events["lua-one-shot-bytes"].attributes.origin == "lua")
 assert(received["lua-one-shot-file"] == "file\0data")
+assert(received_events["lua-one-shot-file"].attributes.origin == "lua")
 assert(received["lua-directed-data"] == "data\0message")
 assert(receiver:unregister_text_stream_handler("lua-stream-text"))
 assert(receiver:unregister_byte_stream_handler("lua-stream-bytes"))

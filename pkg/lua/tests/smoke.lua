@@ -91,6 +91,8 @@ assert(type(room:speaker_is_muted()) == "boolean")
 assert(type(room:audio_playback_stats()) == "table")
 local unpublished, unpublished_error = room:publish_audio_track("tone")
 assert(unpublished == nil and unpublished_error == "room is not connected")
+assert(room:republish_all_tracks())
+assert(assert(room:republish_all_tracks_async()):wait(50))
 local uncaptured, uncaptured_error = room:publish_microphone_track("mic")
 assert(uncaptured == nil and uncaptured_error == "room is not connected")
 local async_uncaptured, async_uncaptured_error = assert(

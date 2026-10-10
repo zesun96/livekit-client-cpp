@@ -138,6 +138,10 @@ function room_methods:disconnect_async()
   return future_for(self, self:_start_disconnect())
 end
 
+function room_methods:republish_all_tracks_async()
+  return future_for(self, self:_start_republish_all_tracks())
+end
+
 function room_methods:publish_data_async(payload, reliable, topic)
   return future_for(self, self:_start_publish_data(payload, reliable, topic))
 end
