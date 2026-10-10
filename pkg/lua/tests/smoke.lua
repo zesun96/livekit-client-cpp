@@ -87,6 +87,8 @@ assert(room:register_rpc_method("example.echo", function(request)
   return "echo:" .. request.payload
 end))
 local local_participant = assert(room:local_participant())
+assert(type(local_participant.permissions) == "table")
+assert(type(local_participant.permissions.can_subscribe) == "boolean")
 assert(type(local_participant.attributes) == "table")
 assert(type(room:remote_participants()) == "table")
 assert(type(livekit.list_media_devices()) == "table")

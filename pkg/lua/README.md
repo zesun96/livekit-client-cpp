@@ -148,7 +148,10 @@ previous sink of the same kind, and starting JSON tracing replaces trace capture
 `livekit.ERROR_DOMAIN` names the domain values.
 
 `room:local_participant()` and `room:remote_participants()` return detached tables. Local
-participant name, metadata, and attributes can be changed through `set_local_name`,
+and remote participant tables include `permissions`. Remote publication tables include
+`is_simulcasted`, `encryption`, and an optional `subscription_error`; subscribed publications
+also include a `track` table with its stream state, dimensions, and enabled flag.
+The local participant's name, metadata, and attributes can be changed through `set_local_name`,
 `set_local_metadata`, and `set_local_attributes`. Remote tracks can be controlled with
 `set_remote_track_subscribed(participant_sid, track_sid, subscribed)` and
 `update_remote_track_settings(participant_sid, track_sid, settings)`.

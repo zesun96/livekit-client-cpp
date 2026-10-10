@@ -101,6 +101,20 @@ assert(audio_stream and video_stream, "receiver did not subscribe to both tracks
 for _, future in ipairs(subscription_futures) do assert(future:wait(50)) end
 assert(audio_frames > 0 and video_frames > 0,
   string.format("expected decoded media; audio=%d video=%d", audio_frames, video_frames))
+local remote_participant
+for _, participant in ipairs(assert(receiver:remote_participants())) do
+  if participant.identity == "lua-publisher" then remote_participant = participant; break end
+end
+assert(remote_participant and type(remote_participant.permissions.can_publish) == "boolean")
+local subscribed_video
+for _, publication in ipairs(remote_participant.publications) do
+  if publication.sid == video_sid then subscribed_video = publication; break end
+end
+assert(subscribed_video and subscribed_video.has_subscribed_track)
+assert(type(subscribed_video.encryption) == "number")
+assert(type(subscribed_video.is_simulcasted) == "boolean")
+assert(subscribed_video.track and subscribed_video.track.sid == video_sid)
+assert(type(subscribed_video.track.stream_state) == "number")
 assert(local_subscribed[audio_sid] or local_subscribed[video_sid],
   "publisher did not observe a local-track subscription")
 assert(type(publisher:local_track_rtc_stats(audio)) == "table")

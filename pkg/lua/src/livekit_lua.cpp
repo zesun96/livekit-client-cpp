@@ -3234,6 +3234,11 @@ int local_participant(lua_State* L) {
 		lua_setfield(L, -2, key.c_str());
 	}
 	lua_setfield(L, -2, "attributes");
+	lk_participant_permissions_t permissions{};
+	if (lk_local_participant_snapshot_permissions(raw, &permissions) != LK_STATUS_OK)
+		return status_result(L, LK_STATUS_OPERATION_FAILED);
+	push_permissions(L, copy_permissions(&permissions));
+	lua_setfield(L, -2, "permissions");
 	return 1;
 }
 
@@ -3281,6 +3286,11 @@ int remote_participants(lua_State* L) {
 			lua_setfield(L, -2, key.c_str());
 		}
 		lua_setfield(L, -2, "attributes");
+		lk_participant_permissions_t permissions{};
+		if (lk_remote_participant_snapshot_permissions(participant, &permissions) != LK_STATUS_OK)
+			return status_result(L, LK_STATUS_OPERATION_FAILED);
+		push_permissions(L, copy_permissions(&permissions));
+		lua_setfield(L, -2, "permissions");
 		lua_newtable(L);
 		const size_t publication_count =
 		    lk_remote_participant_snapshot_publication_count(participant);
@@ -3305,9 +3315,32 @@ int remote_participants(lua_State* L) {
 			integer_field(L, "width", track_info.width);
 			integer_field(L, "height", track_info.height);
 			boolean_field(L, "is_muted", track_info.is_muted != 0);
+			boolean_field(L, "is_simulcasted", track_info.is_simulcasted != 0);
 			boolean_field(L, "subscription_allowed", track_info.subscription_allowed != 0);
 			integer_field(L, "subscription_status", track_info.subscription_status);
+			if (track_info.has_subscription_error)
+				integer_field(L, "subscription_error", track_info.subscription_error);
+			integer_field(L, "encryption", track_info.encryption);
 			boolean_field(L, "has_subscribed_track", track_info.has_subscribed_track != 0);
+			const lk_remote_track_snapshot_t* track = nullptr;
+			if (lk_remote_track_publication_snapshot_track(publication, &track) != LK_STATUS_OK)
+				return status_result(L, LK_STATUS_OPERATION_FAILED);
+			if (track != nullptr) {
+				lk_remote_track_snapshot_info_t subscribed_info;
+				lk_remote_track_snapshot_info_init(&subscribed_info);
+				if (lk_remote_track_snapshot_info(track, &subscribed_info) != LK_STATUS_OK)
+					return status_result(L, LK_STATUS_OPERATION_FAILED);
+				lua_newtable(L);
+				string_field(L, "sid", owned_string(lk_remote_track_snapshot_sid, track));
+				string_field(L, "name", owned_string(lk_remote_track_snapshot_name, track));
+				integer_field(L, "kind", subscribed_info.kind);
+				integer_field(L, "source", subscribed_info.source);
+				integer_field(L, "stream_state", subscribed_info.stream_state);
+				integer_field(L, "width", subscribed_info.width);
+				integer_field(L, "height", subscribed_info.height);
+				boolean_field(L, "enabled", subscribed_info.enabled != 0);
+				lua_setfield(L, -2, "track");
+			}
 			lua_rawseti(L, -2, static_cast<int>(j + 1));
 		}
 		lua_setfield(L, -2, "publications");
