@@ -142,6 +142,10 @@ function room_methods:republish_all_tracks_async()
   return future_for(self, self:_start_republish_all_tracks())
 end
 
+function room_methods:e2ee_set_enabled_async(enabled)
+  return future_for(self, self:_start_e2ee_set_enabled(enabled))
+end
+
 function room_methods:start_track_recording_async(identity, sid, path, capacity)
   return future_for(self, self:_start_track_recording(identity, sid, path, capacity))
 end

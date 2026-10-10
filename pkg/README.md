@@ -24,18 +24,17 @@ Swift, and Zig bindings have no implementation yet.
 | External audio/video tracks, frame push, and remote frame streams | Yes | No | No | No |
 | Audio/video frame events with bounded queues and video metadata | Yes | No | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | No | No | No |
-| Text and byte streams, chat, and file transfer | Partial | No | No | No |
+| Text and byte streams, chat, and file transfer | Yes | No | No | No |
 | DataTrack schema, publishing, and subscription | Yes | No | No | No |
 | RPC calls and method handlers | Yes | No | No | No |
 | E2EE | Partial | No | No | No |
 | Media devices and remote recording | Yes | No | No | No |
 | Logging, tracing, and RTC statistics | Yes | No | No | No |
 
-Lua covers one-shot and incremental outgoing streams and incoming completed stream events,
-DataTrack, RPC, E2EE key control, device enumeration and speaker control, recording status, and
-local/remote track RTC snapshots.
+Lua covers one-shot and incremental outgoing streams, writer progress and completion events,
+and incoming completed and incremental stream events.
+It also covers DataTrack, RPC, E2EE key control, device enumeration and speaker control, recording
+status, and local/remote track RTC snapshots.
 Lua exposes remote-track recording, bounded media, logging and tracing record queues, and JSON
-trace output. Incremental outgoing stream progress and completion callbacks are not yet exposed.
-Lua asynchronous calls use a native
-worker thread and resume coroutines when the Lua thread calls
-`room:poll()` or `room:step()`.
+trace output. Lua asynchronous calls use a native worker thread and resume coroutines when the Lua
+thread calls `room:poll()` or `room:step()`.

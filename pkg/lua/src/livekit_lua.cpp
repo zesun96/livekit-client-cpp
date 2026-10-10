@@ -261,6 +261,7 @@ enum class AsyncOperation {
 	WaitAudioSource,
 	ConnectTokenSource,
 	RepublishAllTracks,
+	SetE2eeEnabled,
 	StartTrackRecording,
 	StopTrackRecording
 };
@@ -406,6 +407,7 @@ struct AsyncTask {
 	ConnectConfig connect;
 	PublishConfig publish;
 	bool reliable = true;
+	bool e2ee_enabled = false;
 	bool done = false;
 	lk_status_t status = LK_STATUS_INVALID_STATE;
 	std::string error;
@@ -468,9 +470,15 @@ struct RemoteMediaStream {
 	lk_video_stream_t* video = nullptr;
 };
 
+struct StreamWriterCallbackContext {
+	Room* room = nullptr;
+	uint64_t writer_id = 0;
+};
+
 struct StreamWriter {
 	lk_text_stream_writer_t* text = nullptr;
 	lk_byte_stream_writer_t* bytes = nullptr;
+	std::unique_ptr<StreamWriterCallbackContext> callbacks;
 };
 
 struct DataTrackHandles {
@@ -564,6 +572,10 @@ void string_field(lua_State* L, const char* key, const std::string& value);
 void integer_field(lua_State* L, const char* key, lua_Integer value);
 void number_field(lua_State* L, const char* key, lua_Number value);
 void boolean_field(lua_State* L, const char* key, bool value);
+void on_stream_writer_progress(void* user_data, uint64_t bytes_sent, int has_total_size,
+                               uint64_t total_size) noexcept;
+void on_stream_writer_complete(void* user_data,
+                               const lk_data_stream_completion_t* completion) noexcept;
 
 std::string rpc_string(const lk_rpc_result_t* result,
                        size_t (*getter)(const lk_rpc_result_t*, char*, size_t)) {
@@ -587,6 +599,8 @@ lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& conf
 	for (const auto& [key, value] : config.attributes)
 		attributes.push_back({key.c_str(), value.c_str()});
 	StreamWriter writer;
+	writer.callbacks = std::make_unique<StreamWriterCallbackContext>(
+	    StreamWriterCallbackContext{room, room->next_media_id});
 	lk_status_t status;
 	if (config.text) {
 		lk_stream_text_options_t options;
@@ -607,6 +621,10 @@ lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& conf
 		options.update = config.update;
 		options.version = config.version;
 		options.compress = config.compress;
+		options.on_progress = on_stream_writer_progress;
+		options.progress_user_data = writer.callbacks.get();
+		options.on_complete = on_stream_writer_complete;
+		options.completion_user_data = writer.callbacks.get();
 		status = lk_room_stream_text(room->native, &options, &writer.text);
 	} else {
 		lk_stream_bytes_options_t options;
@@ -624,11 +642,15 @@ lk_status_t open_stream_writer_native(Room* room, const StreamWriterConfig& conf
 		if (config.chunk_size != 0)
 			options.chunk_size = config.chunk_size;
 		options.compress = config.compress;
+		options.on_progress = on_stream_writer_progress;
+		options.progress_user_data = writer.callbacks.get();
+		options.on_complete = on_stream_writer_complete;
+		options.completion_user_data = writer.callbacks.get();
 		status = lk_room_stream_bytes(room->native, &options, &writer.bytes);
 	}
 	if (status == LK_STATUS_OK) {
 		id = room->next_media_id++;
-		room->stream_writers.emplace(id, writer);
+		room->stream_writers.emplace(id, std::move(writer));
 	}
 	return status;
 }
@@ -762,6 +784,47 @@ bool enqueue(Room* room, Event event) noexcept {
 		return true;
 	} catch (...) {
 		return false;
+	}
+}
+
+void on_stream_writer_progress(void* user_data, uint64_t bytes_sent, int has_total_size,
+                               uint64_t total_size) noexcept {
+	try {
+		auto* context = static_cast<StreamWriterCallbackContext*>(user_data);
+		if (context == nullptr || context->room == nullptr)
+			return;
+		Event event{"stream_writer_progress"};
+		event.numbers.emplace_back("writer_id", static_cast<lua_Number>(context->writer_id));
+		event.numbers.emplace_back("bytes_sent", static_cast<lua_Number>(bytes_sent));
+		event.booleans.emplace_back("has_total_size", has_total_size != 0);
+		if (has_total_size)
+			event.numbers.emplace_back("total_size", static_cast<lua_Number>(total_size));
+		enqueue(context->room, std::move(event));
+	} catch (...) {
+	}
+}
+
+void on_stream_writer_complete(void* user_data,
+                               const lk_data_stream_completion_t* completion) noexcept {
+	try {
+		auto* context = static_cast<StreamWriterCallbackContext*>(user_data);
+		if (context == nullptr || context->room == nullptr || completion == nullptr)
+			return;
+		Event event{"stream_writer_complete"};
+		event.numbers.emplace_back("writer_id", static_cast<lua_Number>(context->writer_id));
+		event.numbers.emplace_back("status", static_cast<lua_Number>(completion->status));
+		event.numbers.emplace_back("bytes_sent", static_cast<lua_Number>(completion->bytes_sent));
+		event.numbers.emplace_back("error_domain",
+		                           static_cast<lua_Number>(completion->error_domain));
+		event.numbers.emplace_back("error_code", static_cast<lua_Number>(completion->error_code));
+		event.booleans.emplace_back("has_total_size", completion->has_total_size != 0);
+		if (completion->has_total_size)
+			event.numbers.emplace_back("total_size",
+			                           static_cast<lua_Number>(completion->total_size));
+		event.strings.emplace_back("stream_id", safe(completion->stream_id));
+		event.strings.emplace_back("reason", safe(completion->reason));
+		enqueue(context->room, std::move(event));
+	} catch (...) {
 	}
 }
 
@@ -1018,6 +1081,9 @@ void worker_loop(Room* room) noexcept {
 				break;
 			case AsyncOperation::RepublishAllTracks:
 				status = lk_room_republish_all_tracks(room->native);
+				break;
+			case AsyncOperation::SetE2eeEnabled:
+				status = lk_room_e2ee_set_enabled(room->native, task->e2ee_enabled);
 				break;
 			case AsyncOperation::StartTrackRecording:
 				status = start_track_recording_native(room, task->first, task->second, task->name,
@@ -3315,6 +3381,18 @@ int e2ee_set_enabled(lua_State* L) {
 	Room* room = check_room(L, 1);
 	luaL_checktype(L, 2, LUA_TBOOLEAN);
 	return status_result(L, lk_room_e2ee_set_enabled(room->native, lua_toboolean(L, 2)));
+}
+int start_e2ee_set_enabled(lua_State* L) {
+	Room* room = check_room(L, 1);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	try {
+		auto task = std::make_shared<AsyncTask>();
+		task->operation = AsyncOperation::SetE2eeEnabled;
+		task->e2ee_enabled = lua_toboolean(L, 2);
+		return start_task(L, room, std::move(task));
+	} catch (...) {
+		return media_error(L, "failed to allocate asynchronous operation");
+	}
 }
 int e2ee_set_shared_key(lua_State* L) {
 	Room* room = check_room(L, 1);
@@ -6676,6 +6754,7 @@ const luaL_Reg room_methods[] = {
     {"e2ee_is_configured", e2ee_is_configured},
     {"e2ee_is_enabled", e2ee_is_enabled},
     {"e2ee_set_enabled", e2ee_set_enabled},
+    {"_start_e2ee_set_enabled", start_e2ee_set_enabled},
     {"e2ee_set_shared_key", e2ee_set_shared_key},
     {"e2ee_export_shared_key", e2ee_export_shared_key},
     {"e2ee_ratchet_shared_key", e2ee_ratchet_shared_key},
@@ -6844,6 +6923,14 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 	lua_pushinteger(L, LK_ERROR_DOMAIN_DATA_TRACK);
 	lua_setfield(L, -2, "DATA_TRACK");
 	lua_setfield(L, -2, "ERROR_DOMAIN");
+	lua_newtable(L);
+	lua_pushinteger(L, LK_DATA_STREAM_COMPLETION_COMPLETED);
+	lua_setfield(L, -2, "COMPLETED");
+	lua_pushinteger(L, LK_DATA_STREAM_COMPLETION_CANCELLED);
+	lua_setfield(L, -2, "CANCELLED");
+	lua_pushinteger(L, LK_DATA_STREAM_COMPLETION_FAILED);
+	lua_setfield(L, -2, "FAILED");
+	lua_setfield(L, -2, "STREAM_COMPLETION");
 	for (const auto& level : {std::pair{"LOG_TRACE", LK_LOG_LEVEL_TRACE},
 	                          {"LOG_DEBUG", LK_LOG_LEVEL_DEBUG},
 	                          {"LOG_INFO", LK_LOG_LEVEL_INFO},

@@ -11,6 +11,20 @@ end
 local receiver = assert(livekit.new_room())
 local publisher = assert(livekit.new_room())
 local chunks, closed, received, received_events = {}, {}, {}, {}
+local progress, completions = {}, {}
+assert(publisher:on(function(event)
+  if event.type == "stream_writer_progress" then
+    assert(type(event.writer_id) == "number" and type(event.bytes_sent) == "number")
+    assert(type(event.has_total_size) == "boolean")
+    progress[event.writer_id] = event
+  elseif event.type == "stream_writer_complete" then
+    assert(type(event.stream_id) == "string" and event.stream_id ~= "")
+    assert(type(event.reason) == "string" and type(event.error_code) == "number")
+    assert(type(event.error_domain) == "number")
+    assert(not completions[event.writer_id], "completion was delivered more than once")
+    completions[event.writer_id] = event
+  end
+end))
 assert(receiver:on(function(event)
   if event.type == "text_stream_event" or event.type == "byte_stream_event" then
     if event.phase == 1 then
@@ -59,6 +73,33 @@ assert(publisher:stream_writer_write(cancelled_writer, "discard"))
 assert(assert(publisher:stream_writer_cancel_async(cancelled_writer, "test cancellation")):wait(50))
 assert(publisher:stream_writer_info(cancelled_writer).is_closed)
 assert(publisher:stream_writer_release(cancelled_writer))
+local abandoned_writer = assert(publisher:stream_bytes({topic = "lua-stream-abandoned"}))
+assert(publisher:stream_writer_release(abandoned_writer))
+local incomplete_writer = assert(publisher:stream_text({
+  topic = "lua-stream-incomplete", total_size = 4
+}))
+assert(publisher:stream_writer_write(incomplete_writer, "abc"))
+local incomplete_ok, incomplete_error = publisher:stream_writer_close(incomplete_writer)
+assert(incomplete_ok == nil and type(incomplete_error) == "string")
+assert(publisher:stream_writer_release(incomplete_writer))
+assert(publisher:poll())
+assert(progress[text_writer] and progress[text_writer].bytes_sent == 11)
+assert(progress[text_writer].has_total_size and progress[text_writer].total_size == 11)
+assert(completions[text_writer].status == livekit.STREAM_COMPLETION.COMPLETED)
+assert(completions[text_writer].bytes_sent == 11)
+assert(completions[text_writer].has_total_size and completions[text_writer].total_size == 11)
+assert(progress[byte_writer] and progress[byte_writer].bytes_sent == 4)
+assert(not progress[byte_writer].has_total_size and progress[byte_writer].total_size == nil)
+assert(completions[byte_writer].status == livekit.STREAM_COMPLETION.COMPLETED)
+assert(completions[byte_writer].bytes_sent == 4)
+assert(completions[cancelled_writer].status == livekit.STREAM_COMPLETION.CANCELLED)
+assert(completions[cancelled_writer].reason == "test cancellation")
+assert(completions[abandoned_writer].status == livekit.STREAM_COMPLETION.CANCELLED)
+assert(completions[abandoned_writer].reason == "writer destroyed before close")
+assert(completions[incomplete_writer].status == livekit.STREAM_COMPLETION.FAILED)
+assert(completions[incomplete_writer].bytes_sent == 3)
+assert(completions[incomplete_writer].error_domain == livekit.ERROR_DOMAIN.STATUS)
+assert(completions[incomplete_writer].error_code ~= 0)
 
 assert(publisher:send_text_with_options("directed text", {
   topic = "lua-one-shot-text", destination_identities = {"receiver"},

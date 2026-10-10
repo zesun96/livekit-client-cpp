@@ -188,6 +188,12 @@ any remaining writers. Options accept `topic`, `stream_id`, `destination_identit
 `mime_type` and `name`. Stream data is delivered through `text_received` and `byte_received`
 events after completion. Lua strings preserve binary byte chunks. Completed text, byte, and file
 events include `attributes`; completed text events also include `attached_stream_ids`.
+Outgoing writers emit `stream_writer_progress` events with `writer_id`, `bytes_sent`,
+`has_total_size`, and optional `total_size`. They emit one `stream_writer_complete` event on
+close, cancel, write failure, or release of an open writer. Completion events also include
+`stream_id`, `status` (`livekit.STREAM_COMPLETION.COMPLETED`, `CANCELLED`, or `FAILED`), `reason`,
+`error_domain`, and `error_code`. Native callbacks only copy event data; `poll()` or `step()`
+delivers it on the Lua thread. Room close discards queued events.
 For chunk-by-chunk receive, call `register_text_stream_handler(topic)` or
 `register_byte_stream_handler(topic)` and handle `text_stream_event` or `byte_stream_event` in
 `room:on`. The event carries `phase` (0 open, 1 chunk, 2 closed, 3 failed), binary `content`,
@@ -214,6 +220,8 @@ Synchronous DataTrack failures return `nil, message, error_code`; async futures 
 
 `e2ee_is_configured`, `e2ee_is_enabled`, `e2ee_set_enabled`, shared and participant key methods,
 `e2ee_data_key_index`, `e2ee_set_data_key_index`, and frame-cryptor methods expose E2EE control.
+`e2ee_set_enabled_async(enabled)` returns a coroutine future so a connected room can republish
+encrypted tracks without blocking the Lua thread.
 Keys are binary-safe Lua strings; exporting them returns the raw key bytes. Use
 `e2ee_frame_cryptors()` to inspect current cryptors. The binding also exposes
 `list_media_devices()`, speaker controls, audio playback statistics, recording status, and
