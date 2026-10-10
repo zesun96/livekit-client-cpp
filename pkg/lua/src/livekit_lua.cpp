@@ -29,6 +29,76 @@ namespace {
 constexpr const char* kRoomType = "livekit.room";
 constexpr size_t kMaxQueuedEvents = 1024;
 
+struct LogRecord {
+	int level = 0;
+	int source = 0;
+	std::string message;
+	std::string file;
+	int32_t line = 0;
+};
+
+struct TraceRecord {
+	int phase = 0;
+	uint64_t category = 0;
+	std::string name;
+	uint64_t timestamp_us = 0;
+	uint64_t thread_id = 0;
+	uint64_t correlation_id = 0;
+};
+
+std::mutex diagnostic_mutex;
+std::mutex diagnostic_config_mutex;
+std::deque<LogRecord> log_records;
+std::deque<TraceRecord> trace_records;
+size_t dropped_log_records = 0;
+size_t dropped_trace_records = 0;
+struct DiagnosticGuard {};
+DiagnosticGuard* log_capture_owner = nullptr;
+DiagnosticGuard* trace_capture_owner = nullptr;
+
+DiagnosticGuard* diagnostic_guard(lua_State* L) {
+	lua_getfield(L, LUA_REGISTRYINDEX, "livekit.diagnostic_capture_guard");
+	auto* guard = static_cast<DiagnosticGuard*>(lua_touserdata(L, -1));
+	lua_pop(L, 1);
+	return guard;
+}
+
+void on_log_record(void*, const lk_log_record_t* record) {
+	if (record == nullptr)
+		return;
+	try {
+		LogRecord copy{record->level, record->source, record->message ? record->message : "",
+		               record->file ? record->file : "", record->line};
+		std::lock_guard<std::mutex> guard(diagnostic_mutex);
+		if (log_records.size() == kMaxQueuedEvents) {
+			log_records.pop_front();
+			++dropped_log_records;
+		}
+		log_records.push_back(std::move(copy));
+	} catch (...) {
+	}
+}
+
+void on_trace_record(void*, const lk_trace_record_t* record) {
+	if (record == nullptr)
+		return;
+	try {
+		TraceRecord copy{record->phase,
+		                 static_cast<uint64_t>(record->category),
+		                 record->name ? record->name : "",
+		                 record->timestamp_us,
+		                 record->thread_id,
+		                 record->correlation_id};
+		std::lock_guard<std::mutex> guard(diagnostic_mutex);
+		if (trace_records.size() == kMaxQueuedEvents) {
+			trace_records.pop_front();
+			++dropped_trace_records;
+		}
+		trace_records.push_back(std::move(copy));
+	} catch (...) {
+	}
+}
+
 struct PermissionSnapshot {
 	bool can_subscribe = false;
 	bool can_publish = false;
@@ -5976,6 +6046,57 @@ int set_log_options(lua_State* L) {
 	return status_result(L, lk_log_set_options(&options));
 }
 
+int log_capture_start(lua_State* L) {
+	auto* owner = diagnostic_guard(L);
+	lk_status_t status;
+	{
+		std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+		{
+			std::lock_guard<std::mutex> guard(diagnostic_mutex);
+			log_records.clear();
+			dropped_log_records = 0;
+		}
+		status = lk_log_set_callback(on_log_record, nullptr);
+		if (status == LK_STATUS_OK)
+			log_capture_owner = owner;
+	}
+	return status_result(L, status);
+}
+
+int log_capture_stop(lua_State* L) {
+	lk_status_t status;
+	{
+		std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+		status = lk_log_set_callback(nullptr, nullptr);
+		if (status == LK_STATUS_OK)
+			log_capture_owner = nullptr;
+	}
+	return status_result(L, status);
+}
+
+int read_log_records(lua_State* L) {
+	std::deque<LogRecord> records;
+	size_t dropped = 0;
+	{
+		std::lock_guard<std::mutex> guard(diagnostic_mutex);
+		records.swap(log_records);
+		dropped = std::exchange(dropped_log_records, 0);
+	}
+	lua_newtable(L);
+	int index = 1;
+	for (const auto& record : records) {
+		lua_newtable(L);
+		integer_field(L, "level", record.level);
+		integer_field(L, "source", record.source);
+		string_field(L, "message", record.message);
+		string_field(L, "file", record.file);
+		integer_field(L, "line", record.line);
+		lua_rawseti(L, -2, index++);
+	}
+	lua_pushnumber(L, static_cast<lua_Number>(dropped));
+	return 2;
+}
+
 int trace_options(lua_State* L) {
 	lk_trace_options_t options;
 	lk_trace_options_init(&options);
@@ -6012,11 +6133,84 @@ int set_trace_options(lua_State* L) {
 	return status_result(L, lk_trace_set_options(&options));
 }
 
-int trace_start_json_file(lua_State* L) {
-	return status_result(L, lk_trace_start_json_file(luaL_checkstring(L, 1)));
+int trace_capture_start(lua_State* L) {
+	auto* owner = diagnostic_guard(L);
+	lk_status_t status;
+	{
+		std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+		{
+			std::lock_guard<std::mutex> guard(diagnostic_mutex);
+			trace_records.clear();
+			dropped_trace_records = 0;
+		}
+		status = lk_trace_set_callback(on_trace_record, nullptr);
+		if (status == LK_STATUS_OK)
+			trace_capture_owner = owner;
+	}
+	return status_result(L, status);
 }
 
-int trace_stop(lua_State* L) { return status_result(L, lk_trace_stop()); }
+int read_trace_records(lua_State* L) {
+	std::deque<TraceRecord> records;
+	size_t dropped = 0;
+	{
+		std::lock_guard<std::mutex> guard(diagnostic_mutex);
+		records.swap(trace_records);
+		dropped = std::exchange(dropped_trace_records, 0);
+	}
+	lua_newtable(L);
+	int index = 1;
+	for (const auto& record : records) {
+		lua_newtable(L);
+		integer_field(L, "phase", record.phase);
+		integer_field(L, "category", static_cast<lua_Integer>(record.category));
+		string_field(L, "name", record.name);
+		lua_pushnumber(L, static_cast<lua_Number>(record.timestamp_us));
+		lua_setfield(L, -2, "timestamp_us");
+		string_field(L, "thread_id", std::to_string(record.thread_id));
+		string_field(L, "correlation_id", std::to_string(record.correlation_id));
+		lua_rawseti(L, -2, index++);
+	}
+	lua_pushnumber(L, static_cast<lua_Number>(dropped));
+	return 2;
+}
+
+int trace_start_json_file(lua_State* L) {
+	const char* path = luaL_checkstring(L, 1);
+	lk_status_t status;
+	{
+		std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+		status = lk_trace_start_json_file(path);
+		if (status == LK_STATUS_OK)
+			trace_capture_owner = nullptr;
+	}
+	return status_result(L, status);
+}
+
+int trace_stop(lua_State* L) {
+	lk_status_t status;
+	{
+		std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+		status = lk_trace_stop();
+		if (status == LK_STATUS_OK)
+			trace_capture_owner = nullptr;
+	}
+	return status_result(L, status);
+}
+
+int gc_diagnostic_capture(lua_State* L) {
+	auto* guard = static_cast<DiagnosticGuard*>(lua_touserdata(L, 1));
+	std::lock_guard<std::mutex> config_guard(diagnostic_config_mutex);
+	if (log_capture_owner == guard) {
+		lk_log_set_callback(nullptr, nullptr);
+		log_capture_owner = nullptr;
+	}
+	if (trace_capture_owner == guard) {
+		lk_trace_stop();
+		trace_capture_owner = nullptr;
+	}
+	return 0;
+}
 
 const luaL_Reg room_methods[] = {
     {"on", on},
@@ -6175,8 +6369,13 @@ const luaL_Reg module_methods[] = {{"new_room", new_room},
                                    {"last_error_info", last_error_info},
                                    {"log_options", log_options},
                                    {"set_log_options", set_log_options},
+                                   {"log_capture_start", log_capture_start},
+                                   {"log_capture_stop", log_capture_stop},
+                                   {"read_log_records", read_log_records},
                                    {"trace_options", trace_options},
                                    {"set_trace_options", set_trace_options},
+                                   {"trace_capture_start", trace_capture_start},
+                                   {"read_trace_records", read_trace_records},
                                    {"trace_start_json_file", trace_start_json_file},
                                    {"trace_stop", trace_stop},
                                    {"list_media_devices", list_media_devices},
@@ -6203,6 +6402,18 @@ extern "C" LIVEKIT_LUA_EXPORT int luaopen_livekit_client_native(lua_State* L) {
 	lk_status_t status = lk_init();
 	if (status != LK_STATUS_OK)
 		return luaL_error(L, "LiveKit initialization failed: %s", safe(lk_last_error()));
+	lua_getfield(L, LUA_REGISTRYINDEX, "livekit.diagnostic_capture_guard");
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		lua_newuserdata(L, sizeof(DiagnosticGuard));
+		luaL_newmetatable(L, "livekit.diagnostic_capture_guard_type");
+		lua_pushcfunction(L, gc_diagnostic_capture);
+		lua_setfield(L, -2, "__gc");
+		lua_setmetatable(L, -2);
+		lua_setfield(L, LUA_REGISTRYINDEX, "livekit.diagnostic_capture_guard");
+	} else {
+		lua_pop(L, 1);
+	}
 	luaL_newmetatable(L, kRoomType);
 	lua_pushcfunction(L, gc_room);
 	lua_setfield(L, -2, "__gc");

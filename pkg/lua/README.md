@@ -134,8 +134,16 @@ are provided. `livekit.trace_options()` and `livekit.set_trace_options({...})` r
 `enabled` and `category_mask`. Combine `TRACE_LIFECYCLE`, `TRACE_SIGNALING`,
 `TRACE_TRANSPORT`, `TRACE_TRACK`, `TRACE_DATA`, `TRACE_RPC`, and `TRACE_E2EE` by addition, or use
 `TRACE_ALL`. `livekit.trace_start_json_file(path)` replaces the process-wide trace sink with a
-Chrome Trace JSON file; call `livekit.trace_stop()` to flush and close it. These settings affect
-all rooms in the process. Logging and tracing callbacks are not exposed to Lua.
+Chrome Trace JSON file; call `livekit.trace_stop()` to flush and close it. Use
+`livekit.log_capture_start()` and `livekit.read_log_records()` to collect log records, then
+`livekit.log_capture_stop()` to unregister the sink. Each log record has `level`, `source`,
+`message`, `file`, and `line`. Use `livekit.trace_capture_start()` and
+`livekit.read_trace_records()` to collect trace records, then `livekit.trace_stop()` to unregister
+the sink. Trace records contain `phase`, `category`, `name`, `timestamp_us`, `thread_id`, and
+`correlation_id`; the two IDs are decimal strings to preserve all 64 bits in Lua 5.1.
+Each read returns `records, dropped_count` and drains a bounded queue of 1024 records.
+These sinks and settings affect all rooms in the process; starting a capture replaces any
+previous sink of the same kind, and starting JSON tracing replaces trace capture.
 `livekit.last_error_info()` returns the current thread's `{domain, code, message}` snapshot;
 `livekit.ERROR_DOMAIN` names the domain values.
 
