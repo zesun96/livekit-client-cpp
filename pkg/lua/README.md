@@ -222,13 +222,24 @@ into `string_data`; add one when indexing the Lua array.
 audio source. It returns a room-owned track ID. `push_audio_frame(track_id, pcm)` accepts exactly
 10 ms of interleaved signed 16-bit PCM as a binary Lua string. The defaults are 48 kHz, mono, and
 a 200 ms source queue. The sample rate must be divisible by 100, and the queue size must be a
-multiple of 10 ms. `publish_video_track(label, first_frame, width, height, format, screen)`
+multiple of 10 ms. An optional fifth `publish_options` table configures the audio publication.
+`publish_video_track(label, first_frame, width, height, format, screen, publish_options)`
 creates and publishes an external video source; a first frame is required before publishing.
-`push_video_frame(track_id, pixels, width, height, format, timestamp_us)` submits later frames.
+`push_video_frame(track_id, pixels, width, height, format, timestamp_us, metadata)` submits later
+frames. Optional `metadata` accepts `user_timestamp_us`, `frame_id`, binary `user_data`, and
+`rotation` (0, 90, 180, or 270 degrees). Enable the corresponding
+`publish_options.frame_metadata_features` fields before publishing to request metadata transport.
 `format` is `"RGBA"` (default) or `"I420"`; I420 frames require even dimensions. Use
 `set_local_track_muted(track_id, muted)` and `unpublish_local_track(track_id)` to control and
 release a publication. Publishing and unpublishing also have `*_async` variants that return
 coroutine futures; frame push remains a direct call on the Lua thread.
+The same publication options work with both async methods. Capture track options accept a nested
+`publish_options` table. Publication options include `dtx`, `red`, `simulcast`, `stream`,
+`video_codec`, `scalability_mode`, `backup_video_codec`, `backup_codec_policy`,
+`video_encoding`, `backup_video_encoding`, `frame_metadata_features`, `preconnect_buffer`, and
+`degradation_preference`. Encoding tables accept `max_bitrate` and `max_framerate`; metadata
+feature tables accept `user_timestamp`, `frame_id`, and `user_data` booleans. Use
+`VIDEO_CODEC`, `BACKUP_CODEC_POLICY`, and `VIDEO_DEGRADATION_PREFERENCE` for enum values.
 
 Audio source queue controls are `audio_source_queued_duration_ms(track_id)`,
 `clear_audio_source_queue(track_id)`, and `wait_audio_source_playout(track_id, timeout_ms)`;

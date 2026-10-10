@@ -150,12 +150,15 @@ function room_methods:publish_data_with_options_async(payload, options)
   return future_for(self, self:_start_publish_data_with_options(payload, options or {}))
 end
 
-function room_methods:publish_audio_track_async(label, sample_rate, channels, queue_ms)
-  return future_for(self, self:_start_publish_audio_track(label, sample_rate, channels, queue_ms))
+function room_methods:publish_audio_track_async(label, sample_rate, channels, queue_ms, publish_options)
+  return future_for(self, self:_start_publish_audio_track(
+    label, sample_rate, channels, queue_ms, publish_options))
 end
 
-function room_methods:publish_video_track_async(label, first_frame, width, height, format, screen)
-  return future_for(self, self:_start_publish_video_track(label, first_frame, width, height, format, screen))
+function room_methods:publish_video_track_async(label, first_frame, width, height, format, screen,
+                                                 publish_options)
+  return future_for(self, self:_start_publish_video_track(
+    label, first_frame, width, height, format, screen, publish_options))
 end
 
 function room_methods:wait_audio_source_playout_async(track_id, timeout_ms)

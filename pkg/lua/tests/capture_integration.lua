@@ -36,7 +36,8 @@ end
 assert(receiver:is_connected() and publisher:is_connected())
 
 local track = assert(assert(publisher:publish_screen_track_async("lua-screen", {
-  source_id = source_id, fps = 10, include_cursor = false
+  source_id = source_id, fps = 10, include_cursor = false,
+  publish_options = {simulcast = false, video_codec = livekit.VIDEO_CODEC.VP8}
 })):wait(50))
 assert(publisher:capture_is_running(track))
 assert(publisher:capture_source_id(track) == source_id)

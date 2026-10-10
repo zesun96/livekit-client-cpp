@@ -40,10 +40,17 @@ for _ = 1, 100 do
 end
 assert(receiver:is_connected() and publisher:is_connected(), "rooms did not become connected")
 
-local audio = assert(assert(publisher:publish_audio_track_async("lua-tone", 48000, 1)):wait(50))
+local audio = assert(assert(publisher:publish_audio_track_async("lua-tone", 48000, 1, 200,
+  {dtx = false, red = false, stream = "lua-media"})):wait(50))
 local width, height = 160, 90
 local rgba = string.rep(string.char(40, 100, 180, 255), width * height)
-local video = assert(assert(publisher:publish_video_track_async("lua-video", rgba, width, height)):wait(50))
+local video = assert(assert(publisher:publish_video_track_async("lua-video", rgba, width, height,
+  "RGBA", false, {simulcast = false, stream = "lua-media", video_codec = livekit.VIDEO_CODEC.VP8,
+    video_encoding = {max_bitrate = 500000, max_framerate = 15},
+    frame_metadata_features = {user_timestamp = true, frame_id = true, user_data = true}})):wait(50))
+local invalid_metadata, invalid_metadata_error = publisher:push_video_frame(
+  video, rgba, width, height, "RGBA", nil, {frame_id = -1})
+assert(invalid_metadata == nil and invalid_metadata_error == "frame_id is out of range")
 assert(publisher:audio_source_queued_duration_ms(audio) >= 0)
 assert(publisher:update_video_encoding(video, {max_bitrate = 500000, max_framerate = 15}))
 assert(publisher:update_video_degradation_preference(
@@ -62,7 +69,10 @@ local pcm = tone_frame()
 local audio_frames, video_frames = 0, 0
 for i = 1, 300 do
   assert(publisher:push_audio_frame(audio, pcm))
-  if i % 3 == 1 then assert(publisher:push_video_frame(video, rgba, width, height)) end
+  if i % 3 == 1 then
+    assert(publisher:push_video_frame(video, rgba, width, height, "RGBA", nil,
+      {user_timestamp_us = i * 1000, frame_id = i, user_data = "lua"}))
+  end
   assert(receiver:step(10))
   assert(publisher:poll())
   if audio_stream then
@@ -79,6 +89,9 @@ for i = 1, 300 do
       if not frame then assert(err == "empty" or err == "closed", err); break end
       assert(frame.width == width and frame.height == height and frame.format == "I420")
       assert(type(frame.metadata) == "table")
+      if frame.metadata.frame_id then
+        assert(frame.metadata.user_data == "lua")
+      end
       assert(#frame.data == width * height * 3 / 2)
       video_frames = video_frames + 1
     end
@@ -111,7 +124,7 @@ assert(receiver:close_remote_stream(audio_stream))
 assert(receiver:close_remote_stream(video_stream))
 assert(assert(publisher:unpublish_local_track_async(audio)):wait(50))
 assert(assert(publisher:unpublish_local_track_async(video)):wait(50))
-assert(publisher:publish_audio_track("close-cleanup", 48000, 1))
+assert(publisher:publish_audio_track("close-cleanup", 48000, 1, 200, {dtx = false}))
 assert(publisher:close())
 assert(receiver:disconnect())
 assert(receiver:close())
