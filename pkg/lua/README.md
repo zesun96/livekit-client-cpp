@@ -244,7 +244,9 @@ event contains both `participant_sid` and `participant_identity`. Use
 `open_audio_stream(participant_identity, track_sid, capacity)` or `open_video_stream(...)` to get a
 room-owned stream ID. `read_audio_frame(stream_id, timeout_ms)` returns a table with binary PCM,
 sample rate, channel count, and samples per channel. `read_video_frame(...)` returns decoded I420
-bytes, dimensions, and timestamp. The read methods return `nil, "empty"` when no frame is ready
+bytes, dimensions, timestamp, and a `metadata` table. The metadata table contains optional
+`user_timestamp_us`, `frame_id`, and binary `user_data` fields. The read methods return
+`nil, "empty"` when no frame is ready
 and `nil, "closed"` after the stream ends. A zero timeout (default) is nonblocking. Use
 `close_remote_stream(stream_id)` to release the reader; `remote_stream_is_closed` and
 `remote_stream_dropped_frames` report its state. All track and stream IDs expire when the room

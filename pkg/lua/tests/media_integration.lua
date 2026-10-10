@@ -78,6 +78,7 @@ for i = 1, 300 do
       local frame, err = receiver:read_video_frame(video_stream)
       if not frame then assert(err == "empty" or err == "closed", err); break end
       assert(frame.width == width and frame.height == height and frame.format == "I420")
+      assert(type(frame.metadata) == "table")
       assert(#frame.data == width * height * 3 / 2)
       video_frames = video_frames + 1
     end

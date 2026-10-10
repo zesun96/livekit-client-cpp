@@ -4530,6 +4530,24 @@ int read_remote_frame(lua_State* L, bool audio) {
 	number_field(L, "timestamp_us", static_cast<lua_Number>(data.timestamp_us));
 	lua_pushliteral(L, "I420");
 	lua_setfield(L, -2, "format");
+	lk_video_frame_metadata_t metadata;
+	lk_video_frame_metadata_init(&metadata);
+	const auto metadata_status = lk_owned_video_frame_metadata(raw, &metadata);
+	if (metadata_status != LK_STATUS_OK)
+		return status_result(L, metadata_status);
+	lua_newtable(L);
+	if (metadata.has_user_timestamp_us)
+		number_field(L, "user_timestamp_us", static_cast<lua_Number>(metadata.user_timestamp_us));
+	if (metadata.has_frame_id)
+		integer_field(L, "frame_id", metadata.frame_id);
+	if (metadata.has_user_data) {
+		lua_pushlstring(
+		    L,
+		    metadata.user_data != nullptr ? reinterpret_cast<const char*>(metadata.user_data) : "",
+		    metadata.user_data_size);
+		lua_setfield(L, -2, "user_data");
+	}
+	lua_setfield(L, -2, "metadata");
 	return 1;
 }
 int read_audio_frame(lua_State* L) { return read_remote_frame(L, true); }
