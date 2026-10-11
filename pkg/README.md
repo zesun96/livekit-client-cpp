@@ -21,12 +21,12 @@ and Zig bindings have no implementation yet.
 | Local participant metadata and attributes | Yes | Yes | No | No |
 | Remote track subscription and settings | Yes | Yes | No | No |
 | Track subscription permissions and feedback events | Yes | Yes | No | No |
-| External audio/video tracks, frame push, and remote frame streams | Yes | No | No | No |
+| External audio/video tracks, frame push, and remote frame streams | Yes | Partial | No | No |
 | Audio/video frame events with bounded queues and video metadata | Yes | No | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | No | No | No |
 | Text and byte streams, chat, and file transfer | Yes | Partial | No | No |
 | DataTrack schema, publishing, and subscription | Yes | No | No | No |
-| RPC calls and method handlers | Yes | Partial | No | No |
+| RPC calls and method handlers | Yes | Yes | No | No |
 | E2EE (C ABI GCM, keys, frame cryptors) | Yes | Partial | No | No |
 | Media devices and remote recording | Yes | Partial | No | No |
 | Logging, tracing, and RTC statistics | Yes | No | No | No |

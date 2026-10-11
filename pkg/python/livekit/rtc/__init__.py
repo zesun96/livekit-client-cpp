@@ -19,6 +19,7 @@ from .room import (
     __version__,
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
+from .media import AudioSource, VideoSource, LocalTrack, TrackPublishOptions, TrackSource
 from .e2ee import (
     E2EEManager, E2EEOptions, EncryptionState, FrameCryptor,
     FrameCryptorDirection, KeyDerivation,
@@ -29,6 +30,7 @@ from ._models import (
     ParticipantTrackPermission, ReconnectContext, ReconnectReason, RtcConfiguration,
     SubscriptionError, TrackStreamState, TrackSubscriptionStatus,
     TokenSourceFetchOptions, TokenSourceResponse,
+    RpcInvocationData,
 )
 
 __all__ = [
@@ -60,8 +62,14 @@ __all__ = [
     "TrackStreamState",
     "TrackSubscriptionStatus",
     "RpcError",
+    "RpcInvocationData",
     "__version__",
     "MediaDevice",
+    "AudioSource",
+    "VideoSource",
+    "LocalTrack",
+    "TrackPublishOptions",
+    "TrackSource",
     "ScreenSource",
     "list_media_devices",
     "list_screen_sources",

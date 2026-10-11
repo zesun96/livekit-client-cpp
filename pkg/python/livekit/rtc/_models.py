@@ -266,6 +266,14 @@ class RpcError(LiveKitError):
         self.data = data
 
 
+@dataclass(frozen=True)
+class RpcInvocationData:
+    request_id: str
+    caller_identity: str
+    payload: str
+    response_timeout_ms: int
+
+
 def copy_attributes(values, count: int) -> dict[str, str]:
     return {decode(values[index].key): decode(values[index].value)
             for index in range(count)} if values else {}

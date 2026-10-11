@@ -2680,6 +2680,20 @@ lk_status_t ConnectWithTokenSource(lk_room_t* room, lk_token_source_callback cal
 	return LK_STATUS_OK;
 }
 
+core::RpcResult RpcResultFromHandler(const lk_rpc_handler_result_t& response) {
+	if (response.error_code == 0) {
+		return core::RpcResult::Success(response.payload != nullptr ? response.payload : "");
+	}
+	auto error = core::RpcError::BuiltIn(static_cast<core::RpcErrorCode>(response.error_code));
+	if (response.error_message != nullptr) {
+		error.message = response.error_message;
+	}
+	if (response.error_data != nullptr) {
+		error.data = response.error_data;
+	}
+	return core::RpcResult::Failure(std::move(error));
+}
+
 } // namespace
 
 extern "C" {
@@ -7474,20 +7488,28 @@ lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* method, lk_
 			        invocation.request_id.c_str(), invocation.caller_identity.c_str(),
 			        invocation.payload.c_str(),
 			        static_cast<uint32_t>(invocation.response_timeout.count())};
-			    const auto response = handler(user_data, &c_invocation);
-			    if (response.error_code == 0) {
-				    return core::RpcResult::Success(response.payload != nullptr ? response.payload
-				                                                                : "");
-			    }
-			    auto error =
-			        core::RpcError::BuiltIn(static_cast<core::RpcErrorCode>(response.error_code));
-			    if (response.error_message != nullptr) {
-				    error.message = response.error_message;
-			    }
-			    if (response.error_data != nullptr) {
-				    error.data = response.error_data;
-			    }
-			    return core::RpcResult::Failure(std::move(error));
+			    return RpcResultFromHandler(handler(user_data, &c_invocation));
+		    });
+		return registered ? LK_STATUS_OK
+		                  : Failure(LK_STATUS_INVALID_STATE, "RPC method is already registered");
+	});
+}
+
+lk_status_t lk_room_register_rpc_method_out(lk_room_t* room, const char* method,
+                                            lk_rpc_handler_out handler, void* user_data) {
+	return Guard([&] {
+		if (room == nullptr || method == nullptr || *method == '\0' || handler == nullptr) {
+			return Failure(LK_STATUS_INVALID_ARGUMENT, "room, method, and handler are required");
+		}
+		const bool registered = room->room->RegisterRpcMethod(
+		    method, [handler, user_data](const core::RpcInvocationData& invocation) {
+			    const lk_rpc_invocation_t c_invocation{
+			        invocation.request_id.c_str(), invocation.caller_identity.c_str(),
+			        invocation.payload.c_str(),
+			        static_cast<uint32_t>(invocation.response_timeout.count())};
+			    lk_rpc_handler_result_t response{};
+			    handler(user_data, &c_invocation, &response);
+			    return RpcResultFromHandler(response);
 		    });
 		return registered ? LK_STATUS_OK
 		                  : Failure(LK_STATUS_INVALID_STATE, "RPC method is already registered");

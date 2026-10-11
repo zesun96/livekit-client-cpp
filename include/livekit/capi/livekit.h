@@ -936,6 +936,9 @@ typedef struct lk_rpc_handler_result {
 
 typedef lk_rpc_handler_result_t (*lk_rpc_handler)(void* user_data,
                                                   const lk_rpc_invocation_t* invocation);
+/* Callback form suitable for FFI runtimes that cannot return a C struct by value. */
+typedef void (*lk_rpc_handler_out)(void* user_data, const lk_rpc_invocation_t* invocation,
+                                   lk_rpc_handler_result_t* result);
 /*
  * Called at most once after successful scheduling. It is suppressed when the room is destroyed.
  * The result is borrowed for the callback duration; use lk_rpc_result_clone() to retain it. Do not
@@ -2078,6 +2081,8 @@ LKC_API lk_status_t lk_room_unregister_byte_stream_handler(lk_room_t* room, cons
 
 LKC_API lk_status_t lk_room_register_rpc_method(lk_room_t* room, const char* method,
                                                 lk_rpc_handler handler, void* user_data);
+LKC_API lk_status_t lk_room_register_rpc_method_out(lk_room_t* room, const char* method,
+                                                    lk_rpc_handler_out handler, void* user_data);
 LKC_API lk_status_t lk_room_unregister_rpc_method(lk_room_t* room, const char* method);
 LKC_API lk_status_t lk_room_perform_rpc(lk_room_t* room, const lk_rpc_perform_options_t* options,
                                         lk_rpc_result_t** result);

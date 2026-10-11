@@ -111,6 +111,45 @@ Use `await room.set_audio_output_device(device_id)`,
 `await room.set_speaker_volume(volume)`, and
 `await room.set_speaker_muted(muted)` to control local playback.
 
+Register a synchronous or asynchronous RPC handler before connecting. The
+handler runs on the Room event loop and returns a string. Raise `RpcError` to
+send a specific error code and optional data to the caller.
+
+```python
+async def echo(request: rtc.RpcInvocationData):
+    return request.payload
+
+room.local_participant.register_rpc_method("echo", echo)
+```
+
+Alternatively, call `room.register_rpc_method("echo", echo)` directly. Call
+`unregister_rpc_method("echo")` when the handler is no longer needed.
+
+External media sources do not open devices. Create sources, then create and
+publish tracks after the Room connects:
+
+```python
+audio = rtc.AudioSource(sample_rate=48000, num_channels=1)
+video = rtc.VideoSource()
+try:
+    await room.connect(url, token)
+    audio_track = await room.local_participant.create_audio_track("tone", audio)
+    video_track = await room.local_participant.create_video_track("slides", video)
+    await room.local_participant.publish_track(audio_track)
+    await room.local_participant.publish_track(video_track)
+    await audio.capture_frame(pcm16_bytes)
+    await video.capture_i420(i420_bytes, width=640, height=360)
+finally:
+    await room.disconnect()
+    await room.aclose()  # closes Room-owned track handles
+    audio.close()
+    video.close()
+```
+
+Audio input is signed 16-bit interleaved PCM at the source's configured rate
+and channel count. Video input is tightly packed I420. Explicit source closure
+releases native memory; a source cannot close while a track still uses it.
+
 For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
 alias). Peers need the same key and compatible key derivation settings. Use
 `room.e2ee` or `room.e2ee_manager` to update keys and frame cryptors; both
@@ -152,7 +191,8 @@ borrowed connection and subscription option buffers. `_models.py` contains
 detached public values, `_events.py` dispatches callbacks through a bounded
 queue, `_token_source.py` bridges token refreshes to the event loop,
 `e2ee.py` owns encryption options and key control, and
-`media_devices.py` handles read-only device enumeration. Raw callback memory
+`_rpc.py` bridges RPC handlers, `media.py` owns external sources and tracks,
+and `media_devices.py` handles read-only device enumeration. Raw callback memory
 is copied before the Python event loop sees it.
 
 ## Offline checks

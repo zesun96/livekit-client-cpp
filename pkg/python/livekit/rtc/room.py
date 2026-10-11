@@ -50,6 +50,7 @@ from ._models import (
     ParticipantTrackPermission,
     RoomOptions,
     RpcError,
+    RpcInvocationData,
     StreamEventType,
     SubscriptionError,
     TextMessage,
@@ -64,6 +65,8 @@ from ._models import (
 from ._events import EventDispatcher
 from ._connection import connection_options, subscription_permissions
 from ._token_source import TokenSourceBridge, fetch_options_raw
+from ._rpc import RpcHandlerBridge
+from .media import AudioSource, LocalTrack, TrackPublishOptions, VideoSource
 from .e2ee import E2EEManager, EncryptionState
 
 __version__ = "0.6.0"
@@ -131,6 +134,51 @@ class LocalParticipant:
             destination_identities=destination_identities,
         )
 
+    def register_rpc_method(self, method: str, handler: Callable[[RpcInvocationData], str]) -> None:
+        self._room.register_rpc_method(method, handler)
+
+    def unregister_rpc_method(self, method: str) -> None:
+        self._room.unregister_rpc_method(method)
+
+    async def create_audio_track(self, label: str, source: AudioSource) -> LocalTrack:
+        return await self._create_track("audio", label, source)
+
+    async def create_video_track(self, label: str, source: VideoSource) -> LocalTrack:
+        return await self._create_track("video", label, source)
+
+    async def publish_track(
+        self, track: LocalTrack, options: TrackPublishOptions | None = None,
+    ) -> None:
+        if track._room is not self._room:
+            raise ValueError("track belongs to another room")
+        await track.publish(options)
+
+    async def unpublish_track(
+        self, track: LocalTrack, *, stop_on_unpublish: bool = False,
+    ) -> None:
+        if track._room is not self._room:
+            raise ValueError("track belongs to another room")
+        await track.unpublish(stop_on_unpublish=stop_on_unpublish)
+
+    async def _create_track(self, kind: str, label: str, source) -> LocalTrack:
+        expected = AudioSource if kind == "audio" else VideoSource
+        if not isinstance(source, expected):
+            raise TypeError(f"{kind} track requires {expected.__name__}")
+
+        def create():
+            with source._lock:
+                source._assert_open()
+                handle = C.c_void_p()
+                fn = getattr(self._room._native.lib, f"lk_room_create_{kind}_track")
+                self._room._native.check(fn(
+                    self._room._handle, utf8(label), source._handle, C.byref(handle)
+                ))
+                track = LocalTrack(self._room, source, handle)
+                self._room._local_tracks.add(track)
+                return track
+
+        return await self._room._run_callable(create)
+
 
 class Room:
     """One LiveKit room. Await operations and call ``aclose`` before leaving the loop.
@@ -153,6 +201,8 @@ class Room:
         self._text_decoder_lock = threading.Lock()
         self._callbacks = RoomCallbacks()
         self._callback_refs: list[object] = []
+        self._rpc_handlers: dict[str, RpcHandlerBridge] = {}
+        self._local_tracks: set[LocalTrack] = set()
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
         self._install_callbacks()
         try:
@@ -216,6 +266,29 @@ class Room:
 
     def unregister_byte_stream_handler(self, topic: str) -> None:
         self._unregister_stream_handler("byte", topic)
+
+    def register_rpc_method(
+        self, method: str, handler: Callable[[RpcInvocationData], str],
+    ) -> None:
+        self._assert_open()
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
+            raise LiveKitError("room is bound to another event loop")
+        bridge = RpcHandlerBridge(handler, loop)
+        self._native.check(self._native.lib.lk_room_register_rpc_method_out(
+            self._handle, utf8(method), bridge.callback, None
+        ))
+        self._rpc_handlers[method] = bridge
+        self._callback_refs.append(bridge)
+
+    def unregister_rpc_method(self, method: str) -> None:
+        self._assert_open()
+        self._native.check(self._native.lib.lk_room_unregister_rpc_method(
+            self._handle, utf8(method)
+        ))
+        self._rpc_handlers.pop(method, None)
 
     def _post(self, event: str, *args) -> None:
         self._dispatcher.post(event, *args)
@@ -459,6 +532,9 @@ class Room:
 
     async def disconnect(self) -> None:
         await self._run(self._native.lib.lk_room_disconnect, self._handle)
+
+    async def republish_all_tracks(self) -> None:
+        await self._run(self._native.lib.lk_room_republish_all_tracks, self._handle)
 
     async def publish_data(
         self, data: bytes, *, reliable: bool = True, topic: str = "",
@@ -773,7 +849,7 @@ class Room:
         if self._close_future is None:
             self._closed = True
             self._close_future = loop.run_in_executor(
-                self._executor, self._native.lib.lk_room_destroy, self._handle
+                self._executor, self._destroy_native
             )
             self._close_future.add_done_callback(self._finish_close)
         try:
@@ -782,10 +858,19 @@ class Room:
             await asyncio.shield(self._close_future)
             raise
 
+    def _destroy_native(self) -> None:
+        self._native.lib.lk_room_destroy(self._handle)
+        for track in tuple(self._local_tracks):
+            if track._handle:
+                self._native.check(self._native.lib.lk_local_track_destroy(track._handle))
+                track._handle = C.c_void_p()
+        self._local_tracks.clear()
+
     def _finish_close(self, _future: asyncio.Future) -> None:
         self._executor.shutdown(wait=False)
         self._handle = C.c_void_p()
         self._callback_refs.clear()
+        self._rpc_handlers.clear()
         self._dispatcher.close()
         with self._text_decoder_lock:
             self._text_decoders.clear()

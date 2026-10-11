@@ -123,6 +123,48 @@ class AudioPlaybackStatsRaw(C.Structure):
     ]
 
 
+class AudioSourceOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("sample_rate", C.c_uint32),
+        ("num_channels", C.c_uint32), ("queue_size_ms", C.c_uint32),
+        ("echo_cancellation", C.c_int), ("auto_gain_control", C.c_int),
+        ("noise_suppression", C.c_int),
+    ]
+
+
+class VideoSourceOptionsRaw(C.Structure):
+    _fields_ = [("struct_size", C.c_size_t), ("is_screencast", C.c_int)]
+
+
+class VideoEncodingRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("max_bitrate", C.c_uint64),
+        ("max_framerate", C.c_float),
+    ]
+
+
+class FrameMetadataFeaturesRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("user_timestamp", C.c_int),
+        ("frame_id", C.c_int), ("user_data", C.c_int),
+    ]
+
+
+class TrackPublishOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("source", C.c_int),
+        ("dtx", C.c_int), ("red", C.c_int), ("simulcast", C.c_int),
+        ("stream", C.c_char_p), ("video_codec", C.c_int),
+        ("scalability_mode", C.c_char_p), ("backup_video_codec_enabled", C.c_int),
+        ("backup_video_codec", C.c_int), ("backup_codec_policy", C.c_int),
+        ("video_encoding", VideoEncodingRaw),
+        ("backup_video_encoding", VideoEncodingRaw),
+        ("frame_metadata_features", FrameMetadataFeaturesRaw),
+        ("preconnect_buffer", C.c_int), ("has_degradation_preference", C.c_int),
+        ("degradation_preference", C.c_int),
+    ]
+
+
 class TextSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -295,6 +337,25 @@ class RpcPerformOptions(C.Structure):
     ]
 
 
+class RpcInvocationRaw(C.Structure):
+    _fields_ = [
+        ("request_id", C.c_char_p), ("caller_identity", C.c_char_p),
+        ("payload", C.c_char_p), ("response_timeout_ms", C.c_uint32),
+    ]
+
+
+class RpcHandlerResultRaw(C.Structure):
+    _fields_ = [
+        ("payload", C.c_char_p), ("error_code", C.c_uint32),
+        ("error_message", C.c_char_p), ("error_data", C.c_char_p),
+    ]
+
+
+RPC_HANDLER_OUT = C.CFUNCTYPE(
+    None, C.c_void_p, C.POINTER(RpcInvocationRaw), C.POINTER(RpcHandlerResultRaw)
+)
+
+
 ROOM_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p)
 PARTICIPANT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(ParticipantInfo))
 DATA_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(DataReceived))
@@ -416,6 +477,28 @@ class Native:
         self._bind("lk_room_speaker_is_muted", C.c_int, p)
         self._bind("lk_room_audio_playback_stats", C.c_int, p,
                    C.POINTER(AudioPlaybackStatsRaw))
+        self._bind("lk_audio_source_options_init", None, C.POINTER(AudioSourceOptionsRaw))
+        self._bind("lk_video_source_options_init", None, C.POINTER(VideoSourceOptionsRaw))
+        self._bind("lk_track_publish_options_init", None, C.POINTER(TrackPublishOptionsRaw))
+        self._bind("lk_audio_source_create", C.c_int, C.POINTER(AudioSourceOptionsRaw), C.POINTER(p))
+        self._bind("lk_audio_source_destroy", C.c_int, p)
+        self._bind("lk_audio_source_capture_frame", C.c_int, p, p, C.c_uint32)
+        self._bind("lk_audio_source_queued_duration_ms", C.c_int, p, C.POINTER(C.c_uint32))
+        self._bind("lk_audio_source_clear_queue", C.c_int, p)
+        self._bind("lk_audio_source_wait_for_playout", C.c_int, p, C.c_uint32)
+        self._bind("lk_video_source_create", C.c_int, C.POINTER(VideoSourceOptionsRaw), C.POINTER(p))
+        self._bind("lk_video_source_destroy", C.c_int, p)
+        self._bind("lk_video_source_dimensions", C.c_int, p,
+                   C.POINTER(C.c_uint32), C.POINTER(C.c_uint32))
+        self._bind("lk_video_source_capture_i420", C.c_int, p, p, s,
+                   C.c_uint32, C.c_uint32, C.c_int64)
+        self._bind("lk_room_create_audio_track", C.c_int, p, b, p, C.POINTER(p))
+        self._bind("lk_room_create_video_track", C.c_int, p, b, p, C.POINTER(p))
+        self._bind("lk_local_track_publish", C.c_int, p, p, C.POINTER(TrackPublishOptionsRaw))
+        self._bind("lk_local_track_unpublish", C.c_int, p, C.c_int)
+        self._bind("lk_local_track_set_muted", C.c_int, p, C.c_int)
+        self._bind("lk_local_track_destroy", C.c_int, p)
+        self._bind("lk_room_republish_all_tracks", C.c_int, p)
         self._bind("lk_room_disconnect_reason", C.c_int, p)
         self._bind("lk_room_e2ee_is_configured", C.c_int, p)
         self._bind("lk_room_e2ee_is_enabled", C.c_int, p)
@@ -472,6 +555,8 @@ class Native:
                    BYTE_STREAM_HANDLER, p)
         self._bind("lk_room_unregister_byte_stream_handler", C.c_int, p, b)
         self._bind("lk_room_perform_rpc", C.c_int, p, C.POINTER(RpcPerformOptions), C.POINTER(p))
+        self._bind("lk_room_register_rpc_method_out", C.c_int, p, b, RPC_HANDLER_OUT, p)
+        self._bind("lk_room_unregister_rpc_method", C.c_int, p, b)
         self._bind("lk_rpc_perform_options_init", None, C.POINTER(RpcPerformOptions))
         self._bind("lk_rpc_result_destroy", None, p)
         self._bind("lk_rpc_result_ok", C.c_int, p)
