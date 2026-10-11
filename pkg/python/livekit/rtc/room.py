@@ -90,7 +90,7 @@ from .data_track import (
     _check as _check_data_track,
 )
 from .e2ee import E2EEManager, EncryptionState
-from .stream import StreamWriter
+from .stream import StreamCallbackBridge, StreamWriter
 from .recording import TrackRecorder
 from .stats import RtcTrackStats, read_rtc_stats
 
@@ -872,6 +872,9 @@ class Room:
         raw.total_size = total_size or 0
         raw.chunk_size = chunk_size
         raw.compress = int(compress)
+        callbacks = StreamCallbackBridge(self)
+        raw.on_progress = C.cast(callbacks.progress, C.c_void_p)
+        raw.on_complete = C.cast(callbacks.completion, C.c_void_p)
         if kind == "text":
             raw.reply_to_stream_id = utf8(extra["reply_to_stream_id"])
             attached = [utf8(value) for value in (extra["attached_stream_ids"] or [])]
@@ -888,7 +891,7 @@ class Room:
             self._native.check(getattr(lib, f"lk_room_stream_{kind}")(
                 self._handle, C.byref(raw), C.byref(handle)
             ))
-            writer = StreamWriter(self, kind, handle)
+            writer = StreamWriter(self, kind, handle, callbacks)
             self._stream_writers.add(writer)
             return writer
 

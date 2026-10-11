@@ -407,6 +407,19 @@ class StreamBytesOptions(C.Structure):
     ]
 
 
+class StreamCompletionRaw(C.Structure):
+    _fields_ = [
+        ("status", C.c_int), ("stream_id", C.c_char_p),
+        ("bytes_sent", C.c_uint64), ("has_total_size", C.c_int),
+        ("total_size", C.c_uint64), ("reason", C.c_char_p),
+        ("error_domain", C.c_int), ("error_code", C.c_int32),
+    ]
+
+
+STREAM_PROGRESS = C.CFUNCTYPE(None, C.c_void_p, C.c_uint64, C.c_int, C.c_uint64)
+STREAM_COMPLETION = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(StreamCompletionRaw))
+
+
 class TrackRecorderOptionsRaw(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("output_path", C.c_char_p),

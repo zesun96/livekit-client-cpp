@@ -3,19 +3,77 @@
 from __future__ import annotations
 
 import ctypes as C
+from dataclasses import dataclass
+from enum import IntEnum
 
-from ._native import LiveKitError, utf8
+from ._native import (
+    LiveKitError, STREAM_COMPLETION, STREAM_PROGRESS, decode, utf8,
+)
+
+
+class StreamCompletionStatus(IntEnum):
+    COMPLETED = 0
+    CANCELLED = 1
+    FAILED = 2
+
+
+@dataclass(frozen=True)
+class StreamProgress:
+    stream_id: str
+    bytes_sent: int
+    total_size: int | None
+
+
+@dataclass(frozen=True)
+class StreamCompletion:
+    status: StreamCompletionStatus
+    stream_id: str
+    bytes_sent: int
+    total_size: int | None
+    reason: str
+    error_domain: int
+    error_code: int
+
+
+class StreamCallbackBridge:
+    def __init__(self, room):
+        self.stream_id = ""
+
+        def on_progress(_user, sent, has_total, total):
+            room._post("stream_progress", StreamProgress(
+                self.stream_id, sent, total if has_total else None
+            ))
+
+        def on_complete(_user, raw):
+            try:
+                value = raw.contents
+                room._post("stream_complete", StreamCompletion(
+                    status=StreamCompletionStatus(value.status),
+                    stream_id=decode(value.stream_id),
+                    bytes_sent=value.bytes_sent,
+                    total_size=value.total_size if value.has_total_size else None,
+                    reason=decode(value.reason), error_domain=value.error_domain,
+                    error_code=value.error_code,
+                ))
+            except Exception:
+                pass
+
+        self.progress = STREAM_PROGRESS(on_progress)
+        self.completion = STREAM_COMPLETION(on_complete)
 
 
 class StreamWriter:
     """A room-owned text or byte stream writer."""
 
-    def __init__(self, room, kind: str, handle: C.c_void_p):
+    def __init__(self, room, kind: str, handle: C.c_void_p,
+                 callbacks: StreamCallbackBridge):
         self._room = room
         self._kind = kind
         self._handle = handle
         self._prefix = f"lk_{'text' if kind == 'text' else 'byte'}_stream_writer_"
         self._id = room._native.string(self._prefix + "id", handle)
+        self._callbacks = callbacks
+        callbacks.stream_id = self._id
 
     @property
     def id(self) -> str:
