@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from ._native import (
-    LiveKitError, STREAM_COMPLETION, STREAM_PROGRESS, decode, utf8,
+    LiveKitError, STREAM_COMPLETION, STREAM_PROGRESS, StreamWriterInfoRaw,
+    decode, utf8,
 )
 
 
@@ -15,6 +16,26 @@ class StreamCompletionStatus(IntEnum):
     COMPLETED = 0
     CANCELLED = 1
     FAILED = 2
+
+
+class StreamWriterKind(IntEnum):
+    TEXT = 0
+    BYTES = 1
+
+
+@dataclass(frozen=True)
+class StreamWriterInfo:
+    kind: StreamWriterKind
+    stream_id: str
+    mime_type: str
+    topic: str
+    participant_identity: str
+    name: str
+    reply_to_stream_id: str
+    total_size: int | None
+    timestamp: int
+    attributes: dict[str, str]
+    attached_stream_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -84,6 +105,50 @@ class StreamWriter:
         return not self._handle or bool(getattr(
             self._room._native.lib, self._prefix + "is_closed"
         )(self._handle))
+
+    async def get_info(self) -> StreamWriterInfo:
+        """Copy the native writer metadata while the writer is open."""
+        def call():
+            if not self._handle:
+                raise LiveKitError("stream writer is closed")
+            lib = self._room._native.lib
+            snapshot = C.c_void_p()
+            self._room._native.check(getattr(
+                lib, self._prefix + "create_info_snapshot"
+            )(self._handle, C.byref(snapshot)))
+            try:
+                raw = StreamWriterInfoRaw()
+                lib.lk_data_stream_writer_info_init(C.byref(raw))
+                self._room._native.check(lib.lk_data_stream_writer_info_snapshot_info(
+                    snapshot, C.byref(raw)
+                ))
+                prefix = "lk_data_stream_writer_info_snapshot_"
+                def string(name):
+                    return self._room._native.string(prefix + name, snapshot)
+                def indexed(name, index):
+                    fn = getattr(lib, prefix + name)
+                    size = fn(snapshot, index, None, 0)
+                    buffer = C.create_string_buffer(size)
+                    fn(snapshot, index, buffer, size)
+                    return decode(buffer.value)
+                attributes = {
+                    indexed("attribute_key", index): indexed("attribute_value", index)
+                    for index in range(raw.attribute_count)
+                }
+                return StreamWriterInfo(
+                    kind=StreamWriterKind(raw.kind), stream_id=string("stream_id"),
+                    mime_type=string("mime_type"), topic=string("topic"),
+                    participant_identity=string("participant_identity"),
+                    name=string("name"), reply_to_stream_id=string("reply_to_stream_id"),
+                    total_size=raw.total_size if raw.has_total_size else None,
+                    timestamp=raw.timestamp, attributes=attributes,
+                    attached_stream_ids=tuple(indexed("attached_stream_id", index)
+                                              for index in range(raw.attached_stream_id_count)),
+                )
+            finally:
+                lib.lk_data_stream_writer_info_snapshot_destroy(snapshot)
+
+        return await self._room._run_callable(call)
 
     async def write(self, chunk: str | bytes) -> None:
         if self._kind == "text":

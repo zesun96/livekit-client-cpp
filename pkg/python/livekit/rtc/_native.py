@@ -434,6 +434,15 @@ class StreamCompletionRaw(C.Structure):
     ]
 
 
+class StreamWriterInfoRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("kind", C.c_int),
+        ("has_total_size", C.c_int), ("total_size", C.c_uint64),
+        ("timestamp", C.c_int64), ("attribute_count", C.c_size_t),
+        ("attached_stream_id_count", C.c_size_t),
+    ]
+
+
 STREAM_PROGRESS = C.CFUNCTYPE(None, C.c_void_p, C.c_uint64, C.c_int, C.c_uint64)
 STREAM_COMPLETION = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(StreamCompletionRaw))
 
@@ -927,6 +936,11 @@ class Native:
         self._bind("lk_local_data_track_unpublish", C.c_int, p)
         self._bind("lk_local_data_track_destroy", C.c_int, p)
         self._bind("lk_local_data_track_is_published", C.c_int, p)
+        self._bind("lk_local_data_track_info", C.c_int, p,
+                   C.POINTER(DataTrackSnapshotInfoRaw))
+        for name in ("custom_frame_encoding", "schema_name",
+                     "custom_schema_encoding"):
+            self._bind("lk_local_data_track_" + name, s, p, b, s)
         self._bind("lk_local_data_track_sid", s, p, b, s)
         self._bind("lk_local_data_track_name", s, p, b, s)
         self._bind("lk_room_create_remote_data_track_snapshot", C.c_int, p, C.POINTER(p))
@@ -1011,6 +1025,16 @@ class Native:
             self._bind(prefix + "id", s, p, b, s)
             self._bind(prefix + "is_closed", C.c_int, p)
             self._bind(prefix + "destroy", None, p)
+            self._bind(prefix + "create_info_snapshot", C.c_int, p, C.POINTER(p))
+        self._bind("lk_data_stream_writer_info_init", None, C.POINTER(StreamWriterInfoRaw))
+        self._bind("lk_data_stream_writer_info_snapshot_destroy", None, p)
+        self._bind("lk_data_stream_writer_info_snapshot_info", C.c_int, p,
+                   C.POINTER(StreamWriterInfoRaw))
+        for name in ("stream_id", "mime_type", "topic", "participant_identity",
+                     "name", "reply_to_stream_id"):
+            self._bind("lk_data_stream_writer_info_snapshot_" + name, s, p, b, s)
+        for name in ("attribute_key", "attribute_value", "attached_stream_id"):
+            self._bind("lk_data_stream_writer_info_snapshot_" + name, s, p, s, b, s)
         self._bind("lk_room_register_text_stream_handler", C.c_int, p, b,
                    TEXT_STREAM_HANDLER, p)
         self._bind("lk_room_unregister_text_stream_handler", C.c_int, p, b)

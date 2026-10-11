@@ -196,6 +196,7 @@ publisher = await room.local_participant.publish_data_track(
     )
 )
 await publisher.try_push(b'{"temperature":21}', user_timestamp=123)
+publication = publisher.publication
 
 reader = await room.subscribe_data_track("publisher-identity", "DT_track_sid")
 frame = await reader.read(timeout_ms=1000)
@@ -232,6 +233,8 @@ ID and supports `await writer.write(chunk)`, `await writer.close()`, and
 `await writer.cancel(reason)`. Close or cancel writers after use; Room cleanup
 cancels any writers still open. `stream_progress` and `stream_complete` Room
 events deliver detached `StreamProgress` and `StreamCompletion` values.
+`await writer.get_info()` returns a detached metadata snapshot while the
+writer is open.
 
 Incoming completed streams emit `text_received`, `byte_received`, or
 `file_received` with detached `TextMessage` or `ByteMessage` values. For

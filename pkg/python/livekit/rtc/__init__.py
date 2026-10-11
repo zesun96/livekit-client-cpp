@@ -19,7 +19,10 @@ from .room import (
     __version__,
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
-from .stream import StreamCompletion, StreamCompletionStatus, StreamProgress, StreamWriter
+from .stream import (
+    StreamCompletion, StreamCompletionStatus, StreamProgress, StreamWriter,
+    StreamWriterInfo, StreamWriterKind,
+)
 from .recording import TrackRecorder, TrackRecorderState, TrackRecorderStats
 from .stats import RtcStatsDirection, RtcTrackStats
 from .diagnostics import (
@@ -64,6 +67,8 @@ __all__ = [
     "StreamProgress",
     "StreamCompletion",
     "StreamCompletionStatus",
+    "StreamWriterInfo",
+    "StreamWriterKind",
     "TrackRecorder",
     "TrackRecorderState",
     "TrackRecorderStats",

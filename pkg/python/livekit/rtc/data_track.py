@@ -184,6 +184,29 @@ class LocalDataTrack:
         self._assert_open()
         return bool(self._room._native.lib.lk_local_data_track_is_published(self._handle))
 
+    @property
+    def publication(self) -> DataTrackPublication:
+        """Detached metadata for this local DataTrack."""
+        self._assert_open()
+        lib = self._room._native.lib
+        raw = DataTrackSnapshotInfoRaw()
+        lib.lk_data_track_snapshot_info_init(C.byref(raw))
+        self._room._native.check(lib.lk_local_data_track_info(
+            self._handle, C.byref(raw)
+        ))
+        get = lambda name: self._room._native.string(
+            "lk_local_data_track_" + name, self._handle
+        )
+        return DataTrackPublication(
+            publisher_handle=raw.publisher_handle,
+            sid=get("sid"), name=get("name"), uses_e2ee=bool(raw.uses_e2ee),
+            frame_encoding=raw.frame_encoding if raw.has_frame_encoding else None,
+            custom_frame_encoding=get("custom_frame_encoding"),
+            schema_name=get("schema_name"),
+            schema_encoding=raw.schema_encoding if raw.has_schema else None,
+            custom_schema_encoding=get("custom_schema_encoding"),
+        )
+
     async def try_push(self, data: bytes, *, user_timestamp: int | None = None) -> None:
         if not isinstance(data, bytes):
             raise TypeError("DataTrack frame must be bytes")
