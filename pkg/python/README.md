@@ -196,6 +196,13 @@ reader.close()
 `local_data_track_published`, `local_data_track_unpublished`, and
 `data_track_frame` copy borrowed native values before dispatch.
 
+Process-wide diagnostics are exposed through `get_log_levels()`,
+`set_log_levels(...)`, `set_log_callback(...)`, `get_trace_options()`,
+`set_trace_options(...)`, `set_trace_callback(...)`,
+`start_trace_json_file(path)`, and `stop_trace()`. Log and trace callbacks run
+on native threads; keep them short and thread safe. Pass `None` to unregister a
+callback. Trace JSON output writes to the supplied local path.
+
 For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
 alias). Peers need the same key and compatible key derivation settings. Use
 `room.e2ee` or `room.e2ee_manager` to update keys and frame cryptors; both

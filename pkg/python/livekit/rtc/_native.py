@@ -14,6 +14,37 @@ class LiveKitError(RuntimeError):
         self.code = code
 
 
+class LogOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("livekit_level", C.c_int),
+        ("webrtc_level", C.c_int), ("websocket_level", C.c_int),
+    ]
+
+
+class LogRecordRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("level", C.c_int),
+        ("source", C.c_int), ("message", C.c_char_p),
+        ("file", C.c_char_p), ("line", C.c_int32),
+    ]
+
+
+class TraceOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("enabled", C.c_int),
+        ("category_mask", C.c_uint64),
+    ]
+
+
+class TraceRecordRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("phase", C.c_int),
+        ("category", C.c_int), ("name", C.c_char_p),
+        ("timestamp_us", C.c_uint64), ("thread_id", C.c_uint64),
+        ("correlation_id", C.c_uint64),
+    ]
+
+
 class ParticipantInfo(C.Structure):
     _fields_ = [
         ("sid", C.c_char_p), ("identity", C.c_char_p),
@@ -756,6 +787,16 @@ class Native:
         self._bind("lk_track_recorder_get_stats", C.c_int, p, C.POINTER(TrackRecorderStatsRaw))
         self._bind("lk_track_recorder_output_path", s, p, b, s)
         self._bind("lk_track_recorder_error", s, p, b, s)
+        self._bind("lk_log_options_init", None, C.POINTER(LogOptionsRaw))
+        self._bind("lk_log_set_options", C.c_int, C.POINTER(LogOptionsRaw))
+        self._bind("lk_log_get_options", C.c_int, C.POINTER(LogOptionsRaw))
+        self._bind("lk_log_set_callback", C.c_int, p, p)
+        self._bind("lk_trace_options_init", None, C.POINTER(TraceOptionsRaw))
+        self._bind("lk_trace_set_options", C.c_int, C.POINTER(TraceOptionsRaw))
+        self._bind("lk_trace_get_options", C.c_int, C.POINTER(TraceOptionsRaw))
+        self._bind("lk_trace_set_callback", C.c_int, p, p)
+        self._bind("lk_trace_start_json_file", C.c_int, b)
+        self._bind("lk_trace_stop", C.c_int)
         for kind, frame in (("audio", AudioFrameRaw), ("video", VideoFrameRaw)):
             self._bind(f"lk_room_create_{kind}_stream", C.c_int, p, b, b,
                        C.POINTER(MediaStreamOptionsRaw), C.POINTER(p))

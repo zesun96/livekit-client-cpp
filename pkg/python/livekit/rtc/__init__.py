@@ -21,6 +21,11 @@ from .room import (
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
 from .stream import StreamWriter
 from .recording import TrackRecorder, TrackRecorderState, TrackRecorderStats
+from .diagnostics import (
+    LogLevel, LogRecord, LogSource, TraceCategory, TracePhase, TraceRecord,
+    get_log_levels, get_trace_options, set_log_callback, set_log_levels,
+    set_trace_callback, set_trace_options, start_trace_json_file, stop_trace,
+)
 from .media import (
     AudioFrame, AudioSource, LocalTrack, MicrophoneProcessingStats,
     RemoteMediaStream, TrackPublishOptions,
@@ -56,6 +61,20 @@ __all__ = [
     "TrackRecorder",
     "TrackRecorderState",
     "TrackRecorderStats",
+    "LogLevel",
+    "LogRecord",
+    "LogSource",
+    "TraceCategory",
+    "TracePhase",
+    "TraceRecord",
+    "get_log_levels",
+    "get_trace_options",
+    "set_log_callback",
+    "set_log_levels",
+    "set_trace_callback",
+    "set_trace_options",
+    "start_trace_json_file",
+    "stop_trace",
     "DataPacket",
     "LiveKitError",
     "LocalParticipant",
