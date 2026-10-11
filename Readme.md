@@ -168,6 +168,13 @@ source build and an installed package.
 | Language | Available API | Guide |
 | --- | --- | --- |
 | Lua | Room lifecycle, connection and participant events, data messages, and synchronous or coroutine-based connection and data operations | [Lua binding](pkg/lua/README.md) |
+| Python 3.10+ | Async room and participant APIs, media publishing and capture, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Python binding](pkg/python/README.md) |
+
+The Python package uses the same stable C ABI and imports as `from livekit import rtc`.
+Install it with `python -m pip install -e pkg/python`, then point
+`LIVEKIT_CLIENT_CPP_LIBRARY` to the built `livekitclient.dll` and make its native
+dependencies available to the Windows loader. See the [Python examples](pkg/python/examples/README.md)
+for standalone programs and a local-server smoke test using two Python participants.
 
 See the [binding API support matrix](pkg/README.md) for feature coverage and the status of other
 language bindings.
