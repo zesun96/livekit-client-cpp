@@ -19,6 +19,10 @@ from .room import (
     __version__,
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
+from .e2ee import (
+    E2EEManager, E2EEOptions, EncryptionState, FrameCryptor,
+    FrameCryptorDirection, KeyDerivation,
+)
 
 __all__ = [
     "ConnectionState",
@@ -41,4 +45,10 @@ __all__ = [
     "ScreenSource",
     "list_media_devices",
     "list_screen_sources",
+    "E2EEManager",
+    "E2EEOptions",
+    "EncryptionState",
+    "KeyDerivation",
+    "FrameCryptor",
+    "FrameCryptorDirection",
 ]

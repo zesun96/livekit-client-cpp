@@ -5,12 +5,8 @@ from __future__ import annotations
 import asyncio
 import codecs
 import ctypes as C
-import logging
 import threading
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import Callable
 
 from ._native import (
@@ -26,14 +22,13 @@ from ._native import (
     ROOM_EVENT,
     STATE_EVENT,
     TRACK_EVENT,
+    ENCRYPTION_EVENT,
     DataPublishOptions,
     TextSendOptions,
     ByteSendOptions,
     FileSendOptions,
     Attribute,
     LiveKitError,
-    ParticipantInfo,
-    TrackPublicationInfo,
     RoomCallbacks,
     RoomConnectOptions,
     RemoteTrackPublicationInfo,
@@ -43,174 +38,26 @@ from ._native import (
     native,
     utf8,
 )
+from ._models import (
+    ByteMessage,
+    ByteStreamEvent,
+    ChatMessage,
+    ConnectionState,
+    DataPacket,
+    Participant,
+    RoomOptions,
+    RpcError,
+    StreamEventType,
+    TextMessage,
+    TextStreamEvent,
+    TrackPublication,
+    copy_attributes as _attributes,
+    copy_strings as _strings,
+)
+from ._events import EventDispatcher
+from .e2ee import E2EEManager, EncryptionState
 
 __version__ = "0.6.0"
-_log = logging.getLogger(__name__)
-
-
-class ConnectionState(IntEnum):
-    CONNECTING = 0
-    CONNECTED = 1
-    DISCONNECTING = 2
-    DISCONNECTED = 3
-    FAILED = 4
-    RECONNECTING = 5
-
-
-@dataclass(frozen=True)
-class RoomOptions:
-    auto_subscribe: bool = True
-    adaptive_stream: bool = False
-    dynacast: bool = False
-    join_retries: int | None = None
-    reconnect_timeout_ms: int | None = None
-
-
-@dataclass(frozen=True)
-class Participant:
-    sid: str
-    identity: str
-    name: str
-    metadata: str
-    audio_level: float = 0.0
-    connection_quality: int = 0
-    is_speaking: bool = False
-    is_local: bool = False
-    attributes: dict[str, str] = field(default_factory=dict)
-    track_publications: dict[str, TrackPublication] = field(default_factory=dict)
-
-    @classmethod
-    def from_native(cls, info: ParticipantInfo) -> Participant:
-        return cls(
-            sid=decode(info.sid), identity=decode(info.identity),
-            name=decode(info.name), metadata=decode(info.metadata),
-            audio_level=info.audio_level, connection_quality=info.connection_quality,
-            is_speaking=bool(info.is_speaking), is_local=bool(info.is_local),
-        )
-
-
-@dataclass(frozen=True)
-class TrackPublication:
-    sid: str
-    name: str
-    mime_type: str
-    kind: int
-    source: int
-    width: int
-    height: int
-    is_muted: bool
-    is_simulcasted: bool
-    subscription_allowed: bool
-    subscription_status: int = 0
-    has_subscribed_track: bool = False
-
-    @classmethod
-    def from_native(cls, info: TrackPublicationInfo) -> TrackPublication:
-        return cls(
-            sid=decode(info.sid), name=decode(info.name),
-            mime_type=decode(info.mime_type), kind=info.kind, source=info.source,
-            width=info.width, height=info.height, is_muted=bool(info.is_muted),
-            is_simulcasted=bool(info.is_simulcasted),
-            subscription_allowed=bool(info.subscription_allowed),
-        )
-
-
-@dataclass(frozen=True)
-class DataPacket:
-    data: bytes
-    topic: str
-    participant_identity: str
-    reliable: bool
-
-
-@dataclass(frozen=True)
-class ChatMessage:
-    id: str
-    timestamp: int
-    message: str
-    participant_identity: str
-    edit_timestamp: int | None = None
-    deleted: bool = False
-    generated: bool = False
-
-
-class StreamEventType(IntEnum):
-    OPEN = 0
-    CHUNK = 1
-    CLOSED = 2
-    FAILED = 3
-
-
-@dataclass(frozen=True)
-class TextMessage:
-    stream_id: str
-    text: str
-    topic: str
-    participant_identity: str
-    reply_to_stream_id: str
-    timestamp: int
-    attached_stream_ids: tuple[str, ...]
-    attributes: dict[str, str]
-
-
-@dataclass(frozen=True)
-class ByteMessage:
-    data: bytes
-    stream_id: str
-    name: str
-    mime_type: str
-    topic: str
-    participant_identity: str
-    timestamp: int
-    attributes: dict[str, str]
-
-
-@dataclass(frozen=True)
-class TextStreamEvent:
-    type: StreamEventType
-    stream_id: str
-    mime_type: str
-    topic: str
-    participant_identity: str
-    content: str
-    chunk_index: int
-    total_size: int | None
-    reason: str
-    attributes: dict[str, str]
-    timestamp: int
-    reply_to_stream_id: str
-    attached_stream_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ByteStreamEvent:
-    type: StreamEventType
-    stream_id: str
-    name: str
-    mime_type: str
-    topic: str
-    participant_identity: str
-    content: bytes
-    chunk_index: int
-    total_size: int | None
-    reason: str
-    attributes: dict[str, str]
-    timestamp: int
-
-
-def _attributes(values, count: int) -> dict[str, str]:
-    return {decode(values[index].key): decode(values[index].value)
-            for index in range(count)} if values else {}
-
-
-def _strings(values, count: int) -> tuple[str, ...]:
-    return tuple(decode(values[index]) for index in range(count)) if values else ()
-
-
-class RpcError(LiveKitError):
-    def __init__(self, message: str, code: int, data: str = ""):
-        super().__init__(message, code)
-        self.data = data
 
 
 class LocalParticipant:
@@ -283,15 +130,10 @@ class Room:
         self._loop: asyncio.AbstractEventLoop | None = loop
         self._closed = False
         self._close_future: asyncio.Future | None = None
-        self._listeners: dict[str, list[Callable]] = {}
-        self._stream_handlers: dict[tuple[str, str], Callable] = {}
+        self._dispatcher = EventDispatcher(lambda: self._loop)
         self._text_decoders: dict[str, codecs.IncrementalDecoder] = {}
         self._text_stream_topics: dict[str, str] = {}
         self._text_decoder_lock = threading.Lock()
-        self._events: deque[tuple[str, tuple]] = deque()
-        self._events_lock = threading.Lock()
-        self._events_scheduled = False
-        self._dropped_events = 0
         self._callbacks = RoomCallbacks()
         self._callback_refs: list[object] = []
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
@@ -305,18 +147,15 @@ class Room:
             self._executor.shutdown(wait=True)
             raise
         self.local_participant = LocalParticipant(self)
+        self.e2ee = E2EEManager(self)
+        self.e2ee_manager = self.e2ee
 
     def on(self, event: str, callback: Callable | None = None):
         """Register a listener; can also be used as ``@room.on('connected')``."""
-        if callback is None:
-            return lambda fn: self.on(event, fn)
-        self._listeners.setdefault(event, []).append(callback)
-        return callback
+        return self._dispatcher.on(event, callback)
 
     def off(self, event: str, callback: Callable) -> None:
-        listeners = self._listeners.get(event, [])
-        if callback in listeners:
-            listeners.remove(callback)
+        self._dispatcher.off(event, callback)
 
     def _register_stream_handler(self, kind: str, topic: str, handler: Callable) -> None:
         self._assert_open()
@@ -328,14 +167,14 @@ class Room:
         if not callable(handler):
             raise TypeError("handler must be callable")
         key = (kind, topic)
-        if key in self._stream_handlers:
+        if key in self._dispatcher.stream_handlers:
             raise LiveKitError(f"{kind} stream topic is already registered: {topic}")
         factory = TEXT_STREAM_HANDLER if kind == "text" else BYTE_STREAM_HANDLER
         callback = factory(self._on_text_stream if kind == "text" else self._on_byte_stream)
         fn = getattr(self._native.lib, f"lk_room_register_{kind}_stream_handler")
         self._native.check(fn(self._handle, utf8(topic), callback, None))
         self._callback_refs.append(callback)
-        self._stream_handlers[key] = handler
+        self._dispatcher.stream_handlers[key] = handler
 
     def register_text_stream_handler(self, topic: str, handler: Callable) -> None:
         self._register_stream_handler("text", topic, handler)
@@ -347,7 +186,7 @@ class Room:
         self._assert_open()
         fn = getattr(self._native.lib, f"lk_room_unregister_{kind}_stream_handler")
         self._native.check(fn(self._handle, utf8(topic)))
-        self._stream_handlers.pop((kind, topic), None)
+        self._dispatcher.stream_handlers.pop((kind, topic), None)
         if kind == "text":
             with self._text_decoder_lock:
                 for stream_id, stream_topic in tuple(self._text_stream_topics.items()):
@@ -361,57 +200,12 @@ class Room:
     def unregister_byte_stream_handler(self, topic: str) -> None:
         self._unregister_stream_handler("byte", topic)
 
-    def _emit(self, event: str, *args) -> None:
-        callbacks = list(self._listeners.get(event, ()))
-        if event in ("text_stream_event", "byte_stream_event"):
-            kind = "text" if event == "text_stream_event" else "byte"
-            handler = self._stream_handlers.get((kind, args[0].topic))
-            if handler is not None:
-                callbacks.append(handler)
-        for callback in callbacks:
-            try:
-                result = callback(*args)
-                if asyncio.iscoroutine(result):
-                    self._loop.create_task(result)
-            except Exception:
-                _log.exception("LiveKit event handler failed: %s", event)
-
     def _post(self, event: str, *args) -> None:
-        loop = self._loop
-        if self._closed or loop is None or loop.is_closed():
-            return
-        with self._events_lock:
-            if self._closed:
-                return
-            if len(self._events) == 1024:
-                self._events.popleft()
-                self._dropped_events += 1
-            self._events.append((event, args))
-            if self._events_scheduled:
-                return
-            self._events_scheduled = True
-        try:
-            loop.call_soon_threadsafe(self._drain_events)
-        except RuntimeError:
-            with self._events_lock:
-                self._events.clear()
-                self._events_scheduled = False
-
-    def _drain_events(self) -> None:
-        for _ in range(256):
-            with self._events_lock:
-                if not self._events:
-                    self._events_scheduled = False
-                    return
-                event, args = self._events.popleft()
-            if not self._closed:
-                self._emit(event, *args)
-        self._loop.call_soon(self._drain_events)
+        self._dispatcher.post(event, *args)
 
     @property
     def dropped_events(self) -> int:
-        with self._events_lock:
-            return self._dropped_events
+        return self._dispatcher.dropped_events
 
     def _assert_open(self) -> None:
         if self._closed:
@@ -442,6 +236,11 @@ class Room:
                        lambda _user, _room, value:
                        self._post("room_metadata_changed", decode(value)))
         self._callback("on_chat_message_received", CHAT_EVENT, self._on_chat)
+        self._callback("on_encryption_state_changed", ENCRYPTION_EVENT,
+                       lambda _user, _room, value:
+                       self._post("encryption_state_changed",
+                                  EncryptionState.from_native(value.contents))
+                       if value else None)
         self._callback("on_text_received", TEXT_EVENT, self._on_text)
         self._callback("on_file_received", FILE_EVENT,
                        lambda user, room, value: self._on_bytes("file_received", value))
@@ -594,6 +393,9 @@ class Room:
             raw.join_retries = options.join_retries
         if options.reconnect_timeout_ms is not None:
             raw.reconnect_timeout_ms = options.reconnect_timeout_ms
+        encryption = options.encryption or options.e2ee
+        if encryption is not None:
+            raw.e2ee_options = C.pointer(encryption._native(self._native.lib))
         await self._run(self._native.lib.lk_room_connect_with_options,
                         self._handle, utf8(url), utf8(token), C.byref(raw))
 
@@ -867,10 +669,7 @@ class Room:
         self._executor.shutdown(wait=False)
         self._handle = C.c_void_p()
         self._callback_refs.clear()
-        self._stream_handlers.clear()
-        with self._events_lock:
-            self._events.clear()
-            self._events_scheduled = False
+        self._dispatcher.close()
         with self._text_decoder_lock:
             self._text_decoders.clear()
             self._text_stream_topics.clear()

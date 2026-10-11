@@ -5,11 +5,14 @@ import ctypes as C
 import os
 import unittest
 
-from livekit.rtc import ConnectionState, LiveKitError, Room, StreamEventType
+from livekit.rtc import (
+    ConnectionState, E2EEOptions, EncryptionState, FrameCryptorDirection, KeyDerivation,
+    LiveKitError, Room, RoomOptions, StreamEventType,
+)
 from livekit.rtc._native import (
     Attribute, ByteStreamEvent, ChatMessage, DataReceived, FileReceived, ParticipantInfo,
-    RoomCallbacks, TextReceived, TextStreamEvent, TrackPublicationInfo,
-    TRACK_EVENT, _CALLBACK_NAMES,
+    RoomCallbacks, RoomConnectOptions, TextReceived, TextStreamEvent, TrackPublicationInfo,
+    EncryptionStateRaw, ENCRYPTION_EVENT, TRACK_EVENT, _CALLBACK_NAMES,
 )
 
 
@@ -160,6 +163,53 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
             self.room._on_text_stream(None, None, C.pointer(event))
         await asyncio.sleep(0)
         self.assertEqual([event.content for event in received], ["", "中"])
+
+    async def test_e2ee_options_and_unconfigured_key_api(self):
+        options = E2EEOptions(
+            shared_key=b"secret\x00key", ratchet_salt=b"salt",
+            key_derivation=KeyDerivation.HKDF_SHA256,
+        )
+        raw = RoomConnectOptions()
+        raw.e2ee_options = C.pointer(options._native(self.room._native.lib))
+        self.assertEqual(
+            raw.e2ee_options.contents.struct_size,
+            C.sizeof(type(raw.e2ee_options.contents)),
+        )
+        self.assertEqual(C.string_at(
+            raw.e2ee_options.contents.shared_key,
+            raw.e2ee_options.contents.shared_key_size,
+        ), b"secret\x00key")
+        self.assertEqual(raw.e2ee_options.contents.key_derivation, 1)
+        self.assertFalse(self.room.e2ee.is_configured)
+        with self.assertRaisesRegex(LiveKitError, "not configured"):
+            await self.room.e2ee.set_shared_key(b"key")
+        with self.assertRaisesRegex(LiveKitError, "not configured"):
+            await self.room.e2ee.export_shared_key()
+        with self.assertRaisesRegex(LiveKitError, "not configured"):
+            await self.room.e2ee.frame_cryptors()
+        with self.assertRaisesRegex(LiveKitError, "not configured"):
+            await self.room.e2ee.set_frame_cryptor_enabled(
+                "TR_1", FrameCryptorDirection.SENDER, True
+            )
+        with self.assertRaises(ValueError):
+            await self.room.e2ee.set_shared_key(b"key", key_index=-1)
+        with self.assertRaisesRegex(LiveKitError, "URL, and token"):
+            await self.room.connect("", "", RoomOptions(encryption=options))
+
+    async def test_encryption_event_copies_borrowed_strings(self):
+        self.room._loop = asyncio.get_running_loop()
+        received = []
+        self.room.on("encryption_state_changed", received.append)
+        track_id = C.create_string_buffer(b"TR_1")
+        raw = EncryptionStateRaw(
+            C.cast(track_id, C.c_char_p), b"peer", 1, 0, 1, 2, 1
+        )
+        callback = ENCRYPTION_EVENT(self.room._callbacks.on_encryption_state_changed)
+        callback(None, self.room._handle, C.pointer(raw))
+        track_id[0] = b"x"
+        await asyncio.sleep(0)
+        self.assertIsInstance(received[0], EncryptionState)
+        self.assertEqual(received[0].track_id, "TR_1")
 
 
 class LayoutTests(unittest.TestCase):

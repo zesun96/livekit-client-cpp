@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes as C
 import os
+import threading
 from pathlib import Path
 
 
@@ -182,6 +183,34 @@ class DataPublishOptions(C.Structure):
     ]
 
 
+class E2EEOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("enabled", C.c_int),
+        ("shared_key", C.POINTER(C.c_uint8)), ("shared_key_size", C.c_size_t),
+        ("ratchet_salt", C.POINTER(C.c_uint8)), ("ratchet_salt_size", C.c_size_t),
+        ("unencrypted_magic_bytes", C.POINTER(C.c_uint8)),
+        ("unencrypted_magic_bytes_size", C.c_size_t),
+        ("ratchet_window_size", C.c_size_t), ("failure_tolerance", C.c_int),
+        ("key_ring_size", C.c_size_t), ("key_derivation", C.c_int),
+    ]
+
+
+class EncryptionStateRaw(C.Structure):
+    _fields_ = [
+        ("track_id", C.c_char_p), ("participant_identity", C.c_char_p),
+        ("kind", C.c_int), ("direction", C.c_int), ("enabled", C.c_int),
+        ("key_index", C.c_size_t), ("state", C.c_int),
+    ]
+
+
+class FrameCryptorInfoRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("kind", C.c_int),
+        ("direction", C.c_int), ("enabled", C.c_int),
+        ("key_index", C.c_size_t), ("state", C.c_int),
+    ]
+
+
 class RoomConnectOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("auto_subscribe", C.c_int),
@@ -190,7 +219,7 @@ class RoomConnectOptions(C.Structure):
         ("ice_servers", C.c_void_p), ("ice_server_count", C.c_size_t),
         ("continual_gathering_policy", C.c_int), ("ice_transport_type", C.c_int),
         ("reconnect_policy", C.c_void_p), ("reconnect_policy_user_data", C.c_void_p),
-        ("e2ee_options", C.c_void_p),
+        ("e2ee_options", C.POINTER(E2EEOptionsRaw)),
     ]
 
 
@@ -221,6 +250,8 @@ TEXT_STREAM_HANDLER = C.CFUNCTYPE(
 BYTE_STREAM_HANDLER = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p, C.POINTER(ByteStreamEvent)
 )
+ENCRYPTION_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                              C.POINTER(EncryptionStateRaw))
 
 # Keep the complete field order. Native init uses struct_size to version the callback table.
 _CALLBACK_NAMES = """on_connected on_disconnected on_participant_connected
@@ -262,7 +293,10 @@ def decode(value: bytes | None) -> str:
 def _load_library() -> C.CDLL:
     path = os.environ.get("LIVEKIT_CLIENT_CPP_LIBRARY")
     if path:
-        return C.CDLL(str(Path(path).expanduser()))
+        try:
+            return C.CDLL(str(Path(path).expanduser()))
+        except OSError as error:
+            raise LiveKitError(f"could not load livekitclient library: {error}") from error
     # Use the platform loader so an installed SDK can live on PATH/LD_LIBRARY_PATH.
     from ctypes.util import find_library
 
@@ -271,7 +305,10 @@ def _load_library() -> C.CDLL:
         raise LiveKitError(
             "livekitclient shared library was not found; set LIVEKIT_CLIENT_CPP_LIBRARY"
         )
-    return C.CDLL(name)
+    try:
+        return C.CDLL(name)
+    except OSError as error:
+        raise LiveKitError(f"could not load livekitclient library: {error}") from error
 
 
 class Native:
@@ -289,10 +326,39 @@ class Native:
         self._bind("lk_room_set_callbacks", C.c_int, p, C.POINTER(RoomCallbacks))
         self._bind("lk_room_connect_with_options", C.c_int, p, b, b, C.POINTER(RoomConnectOptions))
         self._bind("lk_room_connect_options_init", None, C.POINTER(RoomConnectOptions))
+        self._bind("lk_e2ee_options_init", None, C.POINTER(E2EEOptionsRaw))
         self._bind("lk_room_disconnect", C.c_int, p)
         self._bind("lk_room_state", C.c_int, p)
         self._bind("lk_room_is_connected", C.c_int, p)
         self._bind("lk_room_disconnect_reason", C.c_int, p)
+        self._bind("lk_room_e2ee_is_configured", C.c_int, p)
+        self._bind("lk_room_e2ee_is_enabled", C.c_int, p)
+        self._bind("lk_room_e2ee_set_enabled", C.c_int, p, C.c_int)
+        self._bind("lk_room_e2ee_set_shared_key", C.c_int, p, p, s, s)
+        self._bind("lk_room_e2ee_export_shared_key", s, p, s, p, s)
+        self._bind("lk_room_e2ee_ratchet_shared_key", C.c_int, p, s)
+        self._bind("lk_room_e2ee_remove_shared_key", C.c_int, p, s)
+        self._bind("lk_room_e2ee_set_participant_key", C.c_int, p, b, p, s, s)
+        self._bind("lk_room_e2ee_export_participant_key", s, p, b, s, p, s)
+        self._bind("lk_room_e2ee_ratchet_participant_key", C.c_int, p, b, s)
+        self._bind("lk_room_e2ee_remove_participant_key", C.c_int, p, b, s)
+        self._bind("lk_room_e2ee_remove_participant_keys", C.c_int, p, b)
+        self._bind("lk_room_e2ee_clear_keys", C.c_int, p)
+        self._bind("lk_room_e2ee_data_key_index", s, p)
+        self._bind("lk_room_e2ee_set_data_key_index", C.c_int, p, s)
+        self._bind("lk_room_e2ee_set_frame_cryptor_enabled", C.c_int, p, b,
+                   C.c_int, C.c_int)
+        self._bind("lk_room_e2ee_set_frame_cryptor_key_index", C.c_int, p, b,
+                   C.c_int, s)
+        self._bind("lk_room_e2ee_set_participant_enabled", C.c_int, p, b,
+                   C.c_int, C.POINTER(s))
+        self._bind("lk_frame_cryptor_list_create", C.c_int, p, C.POINTER(p))
+        self._bind("lk_frame_cryptor_list_destroy", None, p)
+        self._bind("lk_frame_cryptor_list_count", s, p)
+        self._bind("lk_frame_cryptor_list_info", C.c_int, p, s,
+                   C.POINTER(FrameCryptorInfoRaw))
+        self._bind("lk_frame_cryptor_list_track_id", s, p, s, b, s)
+        self._bind("lk_frame_cryptor_list_participant_identity", s, p, s, b, s)
         for name in ("lk_room_sid", "lk_room_name", "lk_room_metadata",
                      "lk_local_participant_sid", "lk_local_participant_identity",
                      "lk_local_participant_name", "lk_local_participant_metadata"):
@@ -366,7 +432,12 @@ class Native:
         self.check(self.lib.lk_init())
 
     def _bind(self, name, result, *args):
-        fn = getattr(self.lib, name)
+        try:
+            fn = getattr(self.lib, name)
+        except AttributeError as error:
+            raise LiveKitError(
+                f"native library is missing {name}; use a matching livekit-client-cpp build"
+            ) from error
         fn.restype = result
         fn.argtypes = list(args)
 
@@ -386,10 +457,12 @@ class Native:
 
 
 _native: Native | None = None
+_native_lock = threading.Lock()
 
 
 def native() -> Native:
     global _native
-    if _native is None:
-        _native = Native()
+    with _native_lock:
+        if _native is None:
+            _native = Native()
     return _native

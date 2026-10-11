@@ -27,7 +27,7 @@ and Zig bindings have no implementation yet.
 | Text and byte streams, chat, and file transfer | Yes | Partial | No | No |
 | DataTrack schema, publishing, and subscription | Yes | No | No | No |
 | RPC calls and method handlers | Yes | Partial | No | No |
-| E2EE (C ABI GCM, keys, frame cryptors) | Yes | No | No | No |
+| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Partial | No | No |
 | Media devices and remote recording | Yes | Partial | No | No |
 | Logging, tracing, and RTC statistics | Yes | No | No | No |
 

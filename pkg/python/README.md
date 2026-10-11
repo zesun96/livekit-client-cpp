@@ -54,8 +54,20 @@ participant string properties are live getters.
 Use `rtc.list_media_devices()` and `rtc.list_screen_sources()` to enumerate
 available input, output, camera, monitor, and window IDs without opening them.
 `RoomOptions` covers auto subscribe, adaptive stream, dynacast, join retries,
-and reconnect timeout. Other C ABI capabilities remain available through the
-C++ SDK and are not represented by this initial Python surface.
+reconnect timeout, and E2EE configuration. Other C ABI capabilities remain
+available through the C++ SDK and are not represented by this Python surface.
+
+For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
+alias). Peers need the same key and compatible key derivation settings. Use
+`room.e2ee` or `room.e2ee_manager` to update keys and frame cryptors; both
+names refer to the same manager. `encryption_state_changed` emits detached
+`EncryptionState` values.
+
+```python
+key = bytes.fromhex(os.environ["LIVEKIT_E2EE_KEY_HEX"])
+options = rtc.RoomOptions(encryption=rtc.E2EEOptions(shared_key=key))
+await room.connect(url, token, options)
+```
 
 Incoming completed streams emit `text_received`, `byte_received`, or
 `file_received` with detached `TextMessage` or `ByteMessage` values. For
@@ -78,7 +90,19 @@ The native runtime is initialized once when the first `Room` is created. Do
 not call `lk_shutdown()` while Python rooms may exist. Always close a room
 with `async with` or `await room.aclose()`.
 
+## Package layout
+
+`room.py` owns room lifecycle and native operations. `_native.py` defines the
+versioned C ABI structures and function signatures. `_models.py` contains
+detached public values, `_events.py` dispatches callbacks through a bounded
+queue, `e2ee.py` owns encryption options and key control, and
+`media_devices.py` handles read-only device enumeration. Raw callback memory
+is copied before the Python event loop sees it.
+
 ## Offline checks
+
+The event dispatcher and callback table tests run without the native library;
+room tests skip until `LIVEKIT_CLIENT_CPP_LIBRARY` is set.
 
 ```powershell
 $env:PYTHONPATH = 'pkg/python'
