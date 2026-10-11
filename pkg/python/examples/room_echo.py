@@ -1,15 +1,16 @@
 """Join a LiveKit room and print incoming data and participant events.
 
-Requires LIVEKIT_URL and LIVEKIT_TOKEN. The token must grant room join.
+Set LIVEKIT_URL and LIVEKIT_TOKEN or pass --url and --token.
 """
 
 import asyncio
-import os
 
 from livekit import rtc
+from _common import connection_parser, run_for, wait_connected
 
 
 async def main() -> None:
+    args = connection_parser(__doc__, duration=10).parse_args()
     async with rtc.Room() as room:
         room.on("participant_connected", lambda participant:
                 print(f"joined: {participant.identity}"))
@@ -18,11 +19,11 @@ async def main() -> None:
         room.on("chat_message_received", lambda message:
                 print(f"chat from {message.participant_identity}: {message.message}"))
 
-        await room.connect(os.environ["LIVEKIT_URL"], os.environ["LIVEKIT_TOKEN"])
+        await room.connect(args.url, args.token)
+        await wait_connected(room)
         print(f"connected: room={room.name} identity={room.local_participant.identity}")
         await room.local_participant.publish_data(b"hello from Python", topic="greeting")
-        await asyncio.sleep(10)
-        await room.disconnect()
+        await run_for(args.seconds)
 
 
 if __name__ == "__main__":
