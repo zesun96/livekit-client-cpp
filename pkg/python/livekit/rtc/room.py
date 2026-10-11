@@ -34,6 +34,7 @@ from ._native import (
     ByteSendOptions,
     StreamTextOptions,
     StreamBytesOptions,
+    TrackRecorderOptionsRaw,
     FileSendOptions,
     Attribute,
     DataTrackSnapshotInfoRaw,
@@ -87,6 +88,7 @@ from .data_track import (
 )
 from .e2ee import E2EEManager, EncryptionState
 from .stream import StreamWriter
+from .recording import TrackRecorder
 
 __version__ = "0.6.0"
 
@@ -229,6 +231,7 @@ class Room:
         self._data_track_readers: set[DataTrackReader] = set()
         self._media_streams: set[RemoteMediaStream] = set()
         self._stream_writers: set[StreamWriter] = set()
+        self._recorders: set[TrackRecorder] = set()
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
         self._install_callbacks()
         try:
@@ -708,6 +711,31 @@ class Room:
                 ))
         await self._run_callable(call)
 
+    async def start_track_recording(
+        self, participant_identity: str, track_sid: str, output_path: str,
+        *, queue_capacity: int = 256,
+    ) -> TrackRecorder:
+        if not participant_identity or not track_sid or not output_path:
+            raise ValueError("participant identity, track SID, and output path are required")
+        if queue_capacity <= 0:
+            raise ValueError("queue_capacity must be positive")
+        raw = TrackRecorderOptionsRaw()
+        self._native.lib.lk_track_recorder_options_init(C.byref(raw))
+        raw.output_path = utf8(output_path)
+        raw.queue_capacity = queue_capacity
+
+        def call():
+            handle = C.c_void_p()
+            self._native.check(self._native.lib.lk_room_start_track_recording(
+                self._handle, utf8(participant_identity), utf8(track_sid),
+                C.byref(raw), C.byref(handle)
+            ))
+            recorder = TrackRecorder(self, handle)
+            self._recorders.add(recorder)
+            return recorder
+
+        return await self._run_callable(call)
+
     async def create_audio_stream(
         self, participant_identity: str, track_sid: str, *, capacity: int = 16,
     ) -> RemoteMediaStream:
@@ -1165,6 +1193,8 @@ class Room:
             raise
 
     def _destroy_native(self) -> None:
+        for recorder in tuple(self._recorders):
+            recorder._destroy()
         for writer in tuple(self._stream_writers):
             writer._destroy()
         for reader in tuple(self._data_track_readers):

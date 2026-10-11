@@ -356,6 +356,21 @@ class StreamBytesOptions(C.Structure):
     ]
 
 
+class TrackRecorderOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("output_path", C.c_char_p),
+        ("queue_capacity", C.c_size_t),
+    ]
+
+
+class TrackRecorderStatsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("state", C.c_int),
+        ("frames_written", C.c_uint64), ("bytes_written", C.c_uint64),
+        ("frames_dropped", C.c_uint64),
+    ]
+
+
 class FileSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -732,6 +747,15 @@ class Native:
         self._bind("lk_local_track_destroy", C.c_int, p)
         self._bind("lk_room_republish_all_tracks", C.c_int, p)
         self._bind("lk_media_stream_options_init", None, C.POINTER(MediaStreamOptionsRaw))
+        self._bind("lk_track_recorder_options_init", None, C.POINTER(TrackRecorderOptionsRaw))
+        self._bind("lk_track_recorder_stats_init", None, C.POINTER(TrackRecorderStatsRaw))
+        self._bind("lk_room_start_track_recording", C.c_int, p, b, b,
+                   C.POINTER(TrackRecorderOptionsRaw), C.POINTER(p))
+        self._bind("lk_track_recorder_destroy", None, p)
+        self._bind("lk_track_recorder_stop", None, p)
+        self._bind("lk_track_recorder_get_stats", C.c_int, p, C.POINTER(TrackRecorderStatsRaw))
+        self._bind("lk_track_recorder_output_path", s, p, b, s)
+        self._bind("lk_track_recorder_error", s, p, b, s)
         for kind, frame in (("audio", AudioFrameRaw), ("video", VideoFrameRaw)):
             self._bind(f"lk_room_create_{kind}_stream", C.c_int, p, b, b,
                        C.POINTER(MediaStreamOptionsRaw), C.POINTER(p))

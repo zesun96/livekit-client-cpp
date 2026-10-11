@@ -164,6 +164,12 @@ Sources expose capture status, current device or screen ID, and switching.
 Microphone sources also expose mute, volume, processing options, and processing
 statistics. Device constructors open the selected physical device.
 
+To save a subscribed remote track, call
+`await room.start_track_recording(identity, track_sid, output_path)`. Inspect
+`recorder.stats`, then `await recorder.stop()` before reading the output file.
+Call `await recorder.aclose()` to release it; Room cleanup also closes any
+remaining recorders.
+
 DataTrack schemas, publishers, remote snapshots, and bounded pull readers are
 available after connecting. Schema definitions and frames use `bytes`:
 
