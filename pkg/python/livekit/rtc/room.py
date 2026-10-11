@@ -11,6 +11,8 @@ from typing import Callable
 
 from ._native import (
     DATA_EVENT,
+    DATA_TRACK_EVENT,
+    DATA_TRACK_FRAME_EVENT,
     FILE_EVENT,
     TEXT_EVENT,
     TEXT_STREAM_HANDLER,
@@ -29,6 +31,7 @@ from ._native import (
     ByteSendOptions,
     FileSendOptions,
     Attribute,
+    DataTrackSnapshotInfoRaw,
     AudioPlaybackStatsRaw,
     LiveKitError,
     RoomCallbacks,
@@ -67,6 +70,12 @@ from ._connection import connection_options, subscription_permissions
 from ._token_source import TokenSourceBridge, fetch_options_raw
 from ._rpc import RpcHandlerBridge
 from .media import AudioSource, LocalTrack, TrackPublishOptions, VideoSource
+from .data_track import (
+    DataTrackFrame, DataTrackPublication, DataTrackPublishOptions, DataTrackReader,
+    DataTrackSchema, DataTrackSchemaEncoding, DataTrackSchemaId,
+    DataTrackSubscriptionOptions, LocalDataTrack, RemoteDataTrack,
+    _check as _check_data_track,
+)
 from .e2ee import E2EEManager, EncryptionState
 
 __version__ = "0.6.0"
@@ -133,6 +142,9 @@ class LocalParticipant:
             data, reliable=reliable, topic=topic,
             destination_identities=destination_identities,
         )
+
+    async def publish_data_track(self, options: DataTrackPublishOptions) -> LocalDataTrack:
+        return await self._room.publish_data_track(options)
 
     def register_rpc_method(self, method: str, handler: Callable[[RpcInvocationData], str]) -> None:
         self._room.register_rpc_method(method, handler)
@@ -203,6 +215,8 @@ class Room:
         self._callback_refs: list[object] = []
         self._rpc_handlers: dict[str, RpcHandlerBridge] = {}
         self._local_tracks: set[LocalTrack] = set()
+        self._local_data_tracks: set[LocalDataTrack] = set()
+        self._data_track_readers: set[DataTrackReader] = set()
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
         self._install_callbacks()
         try:
@@ -329,6 +343,16 @@ class Room:
                        lambda _user, _room, recording:
                        self._post("recording_status_changed", bool(recording)))
         self._callback("on_chat_message_received", CHAT_EVENT, self._on_chat)
+        for event in ("data_track_published", "data_track_unpublished",
+                      "local_data_track_published", "local_data_track_unpublished"):
+            self._callback("on_" + event, DATA_TRACK_EVENT,
+                           lambda _user, _room, track, participant, name=event:
+                           self._post(name,
+                                      DataTrackPublication.from_native(track.contents),
+                                      Participant.from_native(participant.contents))
+                           if track and participant else None)
+        self._callback("on_data_track_frame", DATA_TRACK_FRAME_EVENT,
+                       self._on_data_track_frame)
         self._callback("on_encryption_state_changed", ENCRYPTION_EVENT,
                        lambda _user, _room, value:
                        self._post("encryption_state_changed",
@@ -379,6 +403,18 @@ class Room:
             reliable=bool(value.reliable),
         )
         self._post("data_received", packet)
+
+    def _on_data_track_frame(self, _user, _room, track, participant, frame) -> None:
+        if not track or not participant or not frame:
+            return
+        value = frame.contents
+        self._post("data_track_frame",
+                   DataTrackPublication.from_native(track.contents),
+                   Participant.from_native(participant.contents),
+                   DataTrackFrame(
+                       C.string_at(value.data, value.data_size) if value.data_size else b"",
+                       value.user_timestamp if value.has_user_timestamp else None,
+                   ))
 
     def _on_chat(self, _user, _room, received) -> None:
         if not received:
@@ -553,6 +589,86 @@ class Room:
         payload = C.create_string_buffer(data)
         await self._run(self._native.lib.lk_room_publish_data, self._handle,
                         C.cast(payload, C.c_void_p), len(data), C.byref(raw))
+
+    async def store_data_track_schema(self, schema: DataTrackSchema) -> None:
+        if not isinstance(schema.definition, bytes):
+            raise TypeError("schema definition must be bytes")
+        raw = schema.id._raw(self._native.lib)
+        payload = C.create_string_buffer(schema.definition)
+
+        def call():
+            _check_data_track(self._native, self._native.lib.lk_room_store_data_track_schema(
+                self._handle, C.byref(raw), C.cast(payload, C.c_void_p),
+                len(schema.definition),
+            ))
+        await self._run_callable(call)
+
+    async def get_data_track_schema(
+        self, participant_identity: str, schema_id: DataTrackSchemaId,
+    ) -> DataTrackSchema:
+        raw = schema_id._raw(self._native.lib)
+
+        def call():
+            lib = self._native.lib
+            handle = C.c_void_p()
+            _check_data_track(self._native, lib.lk_room_get_data_track_schema(
+                self._handle, utf8(participant_identity), C.byref(raw), C.byref(handle)
+            ))
+            try:
+                name = self._native.string("lk_data_track_schema_name", handle)
+                encoding = DataTrackSchemaEncoding(lib.lk_data_track_schema_encoding(handle))
+                custom = self._native.string("lk_data_track_schema_custom_encoding", handle)
+                size = lib.lk_data_track_schema_definition(handle, None, 0)
+                buffer = C.create_string_buffer(size)
+                lib.lk_data_track_schema_definition(handle, C.cast(buffer, C.c_void_p), size)
+                return DataTrackSchema(DataTrackSchemaId(name, encoding, custom),
+                                       bytes(buffer.raw[:size]))
+            finally:
+                lib.lk_data_track_schema_destroy(handle)
+        return await self._run_callable(call)
+
+    async def publish_data_track(self, options: DataTrackPublishOptions) -> LocalDataTrack:
+        raw = options._raw(self._native.lib)
+
+        def call():
+            handle = C.c_void_p()
+            _check_data_track(self._native, self._native.lib.lk_room_publish_data_track(
+                self._handle, C.byref(raw), C.byref(handle)
+            ))
+            track = LocalDataTrack(self, handle)
+            self._local_data_tracks.add(track)
+            return track
+        return await self._run_callable(call)
+
+    async def subscribe_data_track(
+        self, participant_identity: str, track_sid: str,
+        options: DataTrackSubscriptionOptions | None = None,
+    ) -> DataTrackReader:
+        raw = (options or DataTrackSubscriptionOptions())._raw(self._native.lib)
+
+        def call():
+            handle = C.c_void_p()
+            _check_data_track(self._native, self._native.lib.lk_room_subscribe_data_track(
+                self._handle, utf8(participant_identity), utf8(track_sid),
+                C.byref(raw), C.byref(handle),
+            ))
+            reader = DataTrackReader(self, handle)
+            self._data_track_readers.add(reader)
+            return reader
+        return await self._run_callable(call)
+
+    async def update_data_track_subscription_options(
+        self, participant_identity: str, track_sid: str,
+        options: DataTrackSubscriptionOptions,
+    ) -> None:
+        raw = options._raw(self._native.lib)
+
+        def call():
+            _check_data_track(self._native,
+                self._native.lib.lk_room_update_data_track_subscription_options(
+                    self._handle, utf8(participant_identity), utf8(track_sid), C.byref(raw)
+                ))
+        await self._run_callable(call)
 
     async def publish_dtmf(self, code: int, digit: str) -> None:
         await self._run(self._native.lib.lk_room_publish_dtmf,
@@ -840,6 +956,45 @@ class Room:
         finally:
             lib.lk_remote_participant_list_destroy(snapshot)
 
+    @property
+    def remote_data_tracks(self) -> dict[str, RemoteDataTrack]:
+        self._assert_open()
+        lib = self._native.lib
+        snapshot = C.c_void_p()
+        self._native.check(lib.lk_room_create_remote_data_track_snapshot(
+            self._handle, C.byref(snapshot)
+        ))
+        try:
+            tracks = {}
+            for index in range(lib.lk_remote_data_track_list_count(snapshot)):
+                handle = C.c_void_p()
+                self._native.check(lib.lk_remote_data_track_list_at(
+                    snapshot, index, C.byref(handle)
+                ))
+                info = DataTrackSnapshotInfoRaw()
+                lib.lk_data_track_snapshot_info_init(C.byref(info))
+                self._native.check(lib.lk_remote_data_track_snapshot_info(
+                    handle, C.byref(info)
+                ))
+                get = lambda field: self._native.string(
+                    "lk_remote_data_track_snapshot_" + field, handle
+                )
+                item = RemoteDataTrack(
+                    publisher_identity=get("publisher_identity"), sid=get("sid"),
+                    name=get("name"), publisher_handle=info.publisher_handle,
+                    uses_e2ee=bool(info.uses_e2ee),
+                    frame_encoding=info.frame_encoding if info.has_frame_encoding else None,
+                    custom_frame_encoding=get("custom_frame_encoding"),
+                    schema_name=get("schema_name"),
+                    schema_encoding=info.schema_encoding if info.has_schema else None,
+                    custom_schema_encoding=get("custom_schema_encoding"),
+                    is_published=bool(info.is_published),
+                )
+                tracks[item.sid] = item
+            return tracks
+        finally:
+            lib.lk_remote_data_track_list_destroy(snapshot)
+
     async def aclose(self) -> None:
         loop = asyncio.get_running_loop()
         if self._loop is not None and self._loop is not loop:
@@ -859,12 +1014,20 @@ class Room:
             raise
 
     def _destroy_native(self) -> None:
+        for reader in tuple(self._data_track_readers):
+            reader.close()
         self._native.lib.lk_room_destroy(self._handle)
         for track in tuple(self._local_tracks):
             if track._handle:
                 self._native.check(self._native.lib.lk_local_track_destroy(track._handle))
                 track._handle = C.c_void_p()
         self._local_tracks.clear()
+        for track in tuple(self._local_data_tracks):
+            if track._handle:
+                _check_data_track(self._native,
+                    self._native.lib.lk_local_data_track_destroy(track._handle))
+                track._handle = C.c_void_p()
+        self._local_data_tracks.clear()
 
     def _finish_close(self, _future: asyncio.Future) -> None:
         self._executor.shutdown(wait=False)

@@ -150,6 +150,32 @@ Audio input is signed 16-bit interleaved PCM at the source's configured rate
 and channel count. Video input is tightly packed I420. Explicit source closure
 releases native memory; a source cannot close while a track still uses it.
 
+DataTrack schemas, publishers, remote snapshots, and bounded pull readers are
+available after connecting. Schema definitions and frames use `bytes`:
+
+```python
+schema_id = rtc.DataTrackSchemaId(
+    "telemetry", rtc.DataTrackSchemaEncoding.JSON_SCHEMA
+)
+await room.store_data_track_schema(rtc.DataTrackSchema(schema_id, b'{"type":"object"}'))
+publisher = await room.local_participant.publish_data_track(
+    rtc.DataTrackPublishOptions(
+        "telemetry", frame_encoding=rtc.DataTrackFrameEncoding.JSON,
+        schema=schema_id,
+    )
+)
+await publisher.try_push(b'{"temperature":21}', user_timestamp=123)
+
+reader = await room.subscribe_data_track("publisher-identity", "DT_track_sid")
+frame = await reader.read(timeout_ms=1000)
+reader.close()
+```
+
+`remote_data_tracks` contains detached snapshots keyed by SID. Room events
+`data_track_published`, `data_track_unpublished`,
+`local_data_track_published`, `local_data_track_unpublished`, and
+`data_track_frame` copy borrowed native values before dispatch.
+
 For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
 alias). Peers need the same key and compatible key derivation settings. Use
 `room.e2ee` or `room.e2ee_manager` to update keys and frame cryptors; both
@@ -192,6 +218,7 @@ detached public values, `_events.py` dispatches callbacks through a bounded
 queue, `_token_source.py` bridges token refreshes to the event loop,
 `e2ee.py` owns encryption options and key control, and
 `_rpc.py` bridges RPC handlers, `media.py` owns external sources and tracks,
+`data_track.py` owns DataTrack handles and detached values,
 and `media_devices.py` handles read-only device enumeration. Raw callback memory
 is copied before the Python event loop sees it.
 

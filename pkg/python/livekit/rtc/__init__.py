@@ -20,6 +20,11 @@ from .room import (
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
 from .media import AudioSource, VideoSource, LocalTrack, TrackPublishOptions, TrackSource
+from .data_track import (
+    DataTrackError, DataTrackFrame, DataTrackFrameEncoding, DataTrackPublication,
+    DataTrackPublishOptions, DataTrackReader, DataTrackSchema, DataTrackSchemaEncoding,
+    DataTrackSchemaId, DataTrackSubscriptionOptions, LocalDataTrack, RemoteDataTrack,
+)
 from .e2ee import (
     E2EEManager, E2EEOptions, EncryptionState, FrameCryptor,
     FrameCryptorDirection, KeyDerivation,
@@ -70,6 +75,18 @@ __all__ = [
     "LocalTrack",
     "TrackPublishOptions",
     "TrackSource",
+    "DataTrackError",
+    "DataTrackFrame",
+    "DataTrackFrameEncoding",
+    "DataTrackPublication",
+    "DataTrackPublishOptions",
+    "DataTrackReader",
+    "DataTrackSchema",
+    "DataTrackSchemaEncoding",
+    "DataTrackSchemaId",
+    "DataTrackSubscriptionOptions",
+    "LocalDataTrack",
+    "RemoteDataTrack",
     "ScreenSource",
     "list_media_devices",
     "list_screen_sources",

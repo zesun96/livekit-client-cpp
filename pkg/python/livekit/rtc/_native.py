@@ -165,6 +165,57 @@ class TrackPublishOptionsRaw(C.Structure):
     ]
 
 
+class DataTrackSchemaIdRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("name", C.c_char_p),
+        ("encoding", C.c_int), ("custom_encoding", C.c_char_p),
+    ]
+
+
+class DataTrackPublishOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("name", C.c_char_p),
+        ("has_frame_encoding", C.c_int), ("frame_encoding", C.c_int),
+        ("custom_frame_encoding", C.c_char_p),
+        ("has_schema", C.c_int), ("schema", DataTrackSchemaIdRaw),
+    ]
+
+
+class DataTrackSubscriptionOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("has_target_fps", C.c_int),
+        ("target_fps", C.c_uint32), ("buffer_capacity", C.c_size_t),
+        ("max_partial_frames", C.c_size_t),
+    ]
+
+
+class DataTrackSnapshotInfoRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("publisher_handle", C.c_uint16),
+        ("uses_e2ee", C.c_int), ("has_frame_encoding", C.c_int),
+        ("frame_encoding", C.c_int), ("has_schema", C.c_int),
+        ("schema_encoding", C.c_int), ("is_published", C.c_int),
+    ]
+
+
+class DataTrackInfoRaw(C.Structure):
+    _fields_ = [
+        ("publisher_handle", C.c_uint16), ("sid", C.c_char_p),
+        ("name", C.c_char_p), ("uses_e2ee", C.c_int),
+        ("has_frame_encoding", C.c_int), ("frame_encoding", C.c_int),
+        ("custom_frame_encoding", C.c_char_p), ("has_schema", C.c_int),
+        ("schema_name", C.c_char_p), ("schema_encoding", C.c_int),
+        ("custom_schema_encoding", C.c_char_p),
+    ]
+
+
+class DataTrackFrameViewRaw(C.Structure):
+    _fields_ = [
+        ("data", C.c_void_p), ("data_size", C.c_size_t),
+        ("has_user_timestamp", C.c_int), ("user_timestamp", C.c_uint64),
+    ]
+
+
 class TextSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -371,6 +422,15 @@ TRACK_FEEDBACK_EVENT = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p,
     C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo), C.c_int,
 )
+DATA_TRACK_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(DataTrackInfoRaw), C.POINTER(ParticipantInfo),
+)
+DATA_TRACK_FRAME_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(DataTrackInfoRaw), C.POINTER(ParticipantInfo),
+    C.POINTER(DataTrackFrameViewRaw),
+)
 FILE_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(FileReceived))
 TEXT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(TextReceived))
 TEXT_STREAM_HANDLER = C.CFUNCTYPE(
@@ -499,6 +559,52 @@ class Native:
         self._bind("lk_local_track_set_muted", C.c_int, p, C.c_int)
         self._bind("lk_local_track_destroy", C.c_int, p)
         self._bind("lk_room_republish_all_tracks", C.c_int, p)
+        self._bind("lk_data_track_schema_id_init", None, C.POINTER(DataTrackSchemaIdRaw))
+        self._bind("lk_data_track_publish_options_init", None,
+                   C.POINTER(DataTrackPublishOptionsRaw))
+        self._bind("lk_data_track_subscription_options_init", None,
+                   C.POINTER(DataTrackSubscriptionOptionsRaw))
+        self._bind("lk_data_track_snapshot_info_init", None,
+                   C.POINTER(DataTrackSnapshotInfoRaw))
+        self._bind("lk_room_store_data_track_schema", C.c_int, p,
+                   C.POINTER(DataTrackSchemaIdRaw), p, s)
+        self._bind("lk_room_get_data_track_schema", C.c_int, p, b,
+                   C.POINTER(DataTrackSchemaIdRaw), C.POINTER(p))
+        self._bind("lk_data_track_schema_destroy", None, p)
+        self._bind("lk_data_track_schema_name", s, p, b, s)
+        self._bind("lk_data_track_schema_encoding", C.c_int, p)
+        self._bind("lk_data_track_schema_custom_encoding", s, p, b, s)
+        self._bind("lk_data_track_schema_definition", s, p, p, s)
+        self._bind("lk_room_publish_data_track", C.c_int, p,
+                   C.POINTER(DataTrackPublishOptionsRaw), C.POINTER(p))
+        self._bind("lk_local_data_track_try_push", C.c_int, p, p, s, C.c_int, C.c_uint64)
+        self._bind("lk_local_data_track_unpublish", C.c_int, p)
+        self._bind("lk_local_data_track_destroy", C.c_int, p)
+        self._bind("lk_local_data_track_is_published", C.c_int, p)
+        self._bind("lk_local_data_track_sid", s, p, b, s)
+        self._bind("lk_local_data_track_name", s, p, b, s)
+        self._bind("lk_room_create_remote_data_track_snapshot", C.c_int, p, C.POINTER(p))
+        self._bind("lk_remote_data_track_list_destroy", None, p)
+        self._bind("lk_remote_data_track_list_count", s, p)
+        self._bind("lk_remote_data_track_list_at", C.c_int, p, s, C.POINTER(p))
+        self._bind("lk_remote_data_track_snapshot_info", C.c_int, p,
+                   C.POINTER(DataTrackSnapshotInfoRaw))
+        for suffix in ("publisher_identity", "sid", "name", "custom_frame_encoding",
+                       "schema_name", "custom_schema_encoding"):
+            self._bind("lk_remote_data_track_snapshot_" + suffix, s, p, b, s)
+        self._bind("lk_room_subscribe_data_track", C.c_int, p, b, b,
+                   C.POINTER(DataTrackSubscriptionOptionsRaw), C.POINTER(p))
+        self._bind("lk_room_update_data_track_subscription_options", C.c_int, p, b, b,
+                   C.POINTER(DataTrackSubscriptionOptionsRaw))
+        self._bind("lk_data_track_reader_destroy", None, p)
+        self._bind("lk_data_track_reader_close", None, p)
+        self._bind("lk_data_track_reader_is_closed", C.c_int, p)
+        self._bind("lk_data_track_reader_dropped_frames", s, p)
+        self._bind("lk_data_track_reader_read_for", C.c_int, p, C.c_uint32, C.POINTER(p))
+        self._bind("lk_data_track_frame_destroy", None, p)
+        self._bind("lk_data_track_frame_data", s, p, p, s)
+        self._bind("lk_data_track_frame_has_user_timestamp", C.c_int, p)
+        self._bind("lk_data_track_frame_user_timestamp", C.c_uint64, p)
         self._bind("lk_room_disconnect_reason", C.c_int, p)
         self._bind("lk_room_e2ee_is_configured", C.c_int, p)
         self._bind("lk_room_e2ee_is_enabled", C.c_int, p)

@@ -25,7 +25,7 @@ and Zig bindings have no implementation yet.
 | Audio/video frame events with bounded queues and video metadata | Yes | No | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | No | No | No |
 | Text and byte streams, chat, and file transfer | Yes | Partial | No | No |
-| DataTrack schema, publishing, and subscription | Yes | No | No | No |
+| DataTrack schema, publishing, and subscription | Yes | Partial | No | No |
 | RPC calls and method handlers | Yes | Yes | No | No |
 | E2EE (C ABI GCM, keys, frame cryptors) | Yes | Partial | No | No |
 | Media devices and remote recording | Yes | Partial | No | No |
