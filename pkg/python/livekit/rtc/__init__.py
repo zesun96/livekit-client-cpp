@@ -21,6 +21,7 @@ from .room import (
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
 from .stream import StreamWriter
 from .recording import TrackRecorder, TrackRecorderState, TrackRecorderStats
+from .stats import RtcStatsDirection, RtcTrackStats
 from .diagnostics import (
     LogLevel, LogRecord, LogSource, TraceCategory, TracePhase, TraceRecord,
     get_log_levels, get_trace_options, set_log_callback, set_log_levels,
@@ -61,6 +62,8 @@ __all__ = [
     "TrackRecorder",
     "TrackRecorderState",
     "TrackRecorderStats",
+    "RtcStatsDirection",
+    "RtcTrackStats",
     "LogLevel",
     "LogRecord",
     "LogSource",

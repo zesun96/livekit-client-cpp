@@ -402,6 +402,24 @@ class TrackRecorderStatsRaw(C.Structure):
     ]
 
 
+class RtcTrackStatsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("direction", C.c_int),
+        ("timestamp_ms", C.c_double), ("bytes", C.c_uint64),
+        ("packets", C.c_uint64), ("packets_lost", C.c_int64),
+        ("has_bitrate_bps", C.c_int), ("bitrate_bps", C.c_double),
+        ("has_round_trip_time_seconds", C.c_int),
+        ("round_trip_time_seconds", C.c_double),
+        ("has_jitter_seconds", C.c_int), ("jitter_seconds", C.c_double),
+        ("has_audio_level", C.c_int), ("audio_level", C.c_double),
+        ("concealed_samples", C.c_uint64), ("frame_width", C.c_uint32),
+        ("frame_height", C.c_uint32), ("frames_per_second", C.c_double),
+        ("frames", C.c_uint64), ("frames_dropped", C.c_uint64),
+        ("fir_count", C.c_uint64), ("pli_count", C.c_uint64),
+        ("nack_count", C.c_uint64), ("qp_sum", C.c_uint64),
+    ]
+
+
 class FileSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -787,6 +805,18 @@ class Native:
         self._bind("lk_track_recorder_get_stats", C.c_int, p, C.POINTER(TrackRecorderStatsRaw))
         self._bind("lk_track_recorder_output_path", s, p, b, s)
         self._bind("lk_track_recorder_error", s, p, b, s)
+        self._bind("lk_rtc_track_stats_init", None, C.POINTER(RtcTrackStatsRaw))
+        self._bind("lk_rtc_stats_snapshot_destroy", None, p)
+        self._bind("lk_rtc_stats_snapshot_count", s, p)
+        self._bind("lk_rtc_stats_snapshot_info", C.c_int, p, s,
+                   C.POINTER(RtcTrackStatsRaw))
+        for name in ("id", "kind", "rid", "codec_mime_type",
+                     "codec_implementation", "quality_limitation_reason"):
+            self._bind("lk_rtc_stats_snapshot_" + name, s, p, s, b, s)
+        self._bind("lk_local_track_create_rtc_stats_snapshot", C.c_int, p, C.POINTER(p))
+        self._bind("lk_remote_track_publication_snapshot_track", C.c_int, p, C.POINTER(p))
+        self._bind("lk_remote_track_snapshot_create_rtc_stats_snapshot", C.c_int,
+                   p, C.POINTER(p))
         self._bind("lk_log_options_init", None, C.POINTER(LogOptionsRaw))
         self._bind("lk_log_set_options", C.c_int, C.POINTER(LogOptionsRaw))
         self._bind("lk_log_get_options", C.c_int, C.POINTER(LogOptionsRaw))

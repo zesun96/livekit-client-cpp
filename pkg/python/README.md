@@ -169,6 +169,9 @@ To save a subscribed remote track, call
 `recorder.stats`, then `await recorder.stop()` before reading the output file.
 Call `await recorder.aclose()` to release it; Room cleanup also closes any
 remaining recorders.
+`LocalTrack.rtc_stats` and
+`room.get_remote_track_rtc_stats(identity, track_sid)` return detached,
+normalized RTC stream stats. An unavailable report yields an empty tuple.
 
 DataTrack schemas, publishers, remote snapshots, and bounded pull readers are
 available after connecting. Schema definitions and frames use `bytes`:

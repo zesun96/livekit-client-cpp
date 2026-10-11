@@ -29,7 +29,7 @@ and Zig bindings have no implementation yet.
 | RPC calls and method handlers | Yes | Yes | No | No |
 | E2EE (C ABI GCM, keys, frame cryptors) | Yes | Partial | No | No |
 | Media devices and remote recording | Yes | Partial | No | No |
-| Logging, tracing, and RTC statistics | Yes | Partial | No | No |
+| Logging, tracing, and RTC statistics | Yes | Yes | No | No |
 
 Lua covers one-shot and incremental outgoing streams, writer progress and completion events,
 and incoming completed and incremental stream events.

@@ -89,6 +89,7 @@ from .data_track import (
 from .e2ee import E2EEManager, EncryptionState
 from .stream import StreamWriter
 from .recording import TrackRecorder
+from .stats import RtcTrackStats, read_rtc_stats
 
 __version__ = "0.6.0"
 
@@ -1067,6 +1068,56 @@ class Room:
     def metadata(self) -> str:
         self._assert_open()
         return self._native.string("lk_room_metadata", self._handle)
+
+    def get_remote_track_rtc_stats(
+        self, participant_identity: str, track_sid: str,
+    ) -> tuple[RtcTrackStats, ...]:
+        """Return detached normalized stats for a subscribed remote track."""
+        self._assert_open()
+        lib = self._native.lib
+        participants = C.c_void_p()
+        self._native.check(lib.lk_room_create_remote_participant_snapshot(
+            self._handle, C.byref(participants)
+        ))
+        try:
+            for index in range(lib.lk_remote_participant_list_count(participants)):
+                participant = C.c_void_p()
+                self._native.check(lib.lk_remote_participant_list_at(
+                    participants, index, C.byref(participant)
+                ))
+                identity = self._native.string(
+                    "lk_remote_participant_snapshot_identity", participant
+                )
+                if identity != participant_identity:
+                    continue
+                for track_index in range(
+                    lib.lk_remote_participant_snapshot_publication_count(participant)
+                ):
+                    publication = C.c_void_p()
+                    self._native.check(lib.lk_remote_participant_snapshot_publication_at(
+                        participant, track_index, C.byref(publication)
+                    ))
+                    sid = self._native.string(
+                        "lk_remote_track_publication_snapshot_sid", publication
+                    )
+                    if sid != track_sid:
+                        continue
+                    track = C.c_void_p()
+                    self._native.check(lib.lk_remote_track_publication_snapshot_track(
+                        publication, C.byref(track)
+                    ))
+                    if not track:
+                        return ()
+                    snapshot = C.c_void_p()
+                    self._native.check(
+                        lib.lk_remote_track_snapshot_create_rtc_stats_snapshot(
+                            track, C.byref(snapshot)
+                        )
+                    )
+                    return read_rtc_stats(self._native, snapshot)
+            raise LiveKitError("remote track was not found")
+        finally:
+            lib.lk_remote_participant_list_destroy(participants)
 
     @property
     def remote_participants(self) -> dict[str, Participant]:

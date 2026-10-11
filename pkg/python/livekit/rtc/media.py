@@ -536,6 +536,20 @@ class LocalTrack:
         if not self._handle:
             raise LiveKitError("local track is closed")
 
+    @property
+    def rtc_stats(self):
+        """Detached normalized RTC stats for this published track."""
+        from .stats import read_rtc_stats
+
+        self._assert_open()
+        snapshot = C.c_void_p()
+        self._room._native.check(
+            self._room._native.lib.lk_local_track_create_rtc_stats_snapshot(
+                self._handle, C.byref(snapshot)
+            )
+        )
+        return read_rtc_stats(self._room._native, snapshot)
+
     async def publish(self, options: TrackPublishOptions | None = None) -> None:
         self._assert_open()
         raw = (options or TrackPublishOptions())._native(self._room._native.lib)
