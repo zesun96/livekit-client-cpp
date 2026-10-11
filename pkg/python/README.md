@@ -202,6 +202,12 @@ options = rtc.RoomOptions(encryption=rtc.E2EEOptions(shared_key=key))
 await room.connect(url, token, options)
 ```
 
+For incremental outgoing streams, call `await room.stream_text(...)` or
+`await room.stream_bytes(...)`. The returned `StreamWriter` exposes its stream
+ID and supports `await writer.write(chunk)`, `await writer.close()`, and
+`await writer.cancel(reason)`. Close or cancel writers after use; Room cleanup
+cancels any writers still open.
+
 Incoming completed streams emit `text_received`, `byte_received`, or
 `file_received` with detached `TextMessage` or `ByteMessage` values. For
 incremental streams, register a topic before connecting:

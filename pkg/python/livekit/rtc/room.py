@@ -32,6 +32,8 @@ from ._native import (
     DataPublishOptions,
     TextSendOptions,
     ByteSendOptions,
+    StreamTextOptions,
+    StreamBytesOptions,
     FileSendOptions,
     Attribute,
     DataTrackSnapshotInfoRaw,
@@ -84,6 +86,7 @@ from .data_track import (
     _check as _check_data_track,
 )
 from .e2ee import E2EEManager, EncryptionState
+from .stream import StreamWriter
 
 __version__ = "0.6.0"
 
@@ -225,6 +228,7 @@ class Room:
         self._local_data_tracks: set[LocalDataTrack] = set()
         self._data_track_readers: set[DataTrackReader] = set()
         self._media_streams: set[RemoteMediaStream] = set()
+        self._stream_writers: set[StreamWriter] = set()
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
         self._install_callbacks()
         try:
@@ -776,6 +780,84 @@ class Room:
         await self._run(self._native.lib.lk_room_send_text,
                         self._handle, utf8(text), C.byref(raw))
 
+    async def stream_text(
+        self, *, topic: str = "", destination_identities: list[str] | None = None,
+        attributes: dict[str, str] | None = None, reply_to_stream_id: str = "",
+        attached_stream_ids: list[str] | None = None, stream_id: str = "",
+        total_size: int | None = None, chunk_size: int = 15000,
+        update: bool = False, version: int = 0, compress: bool = False,
+    ) -> StreamWriter:
+        return await self._stream_writer(
+            "text", topic=topic, destination_identities=destination_identities,
+            attributes=attributes, stream_id=stream_id, total_size=total_size,
+            chunk_size=chunk_size, compress=compress,
+            reply_to_stream_id=reply_to_stream_id,
+            attached_stream_ids=attached_stream_ids, update=update, version=version,
+        )
+
+    async def stream_bytes(
+        self, *, topic: str = "", mime_type: str = "application/octet-stream",
+        name: str = "unknown", destination_identities: list[str] | None = None,
+        attributes: dict[str, str] | None = None, stream_id: str = "",
+        total_size: int | None = None, chunk_size: int = 15000,
+        compress: bool = False,
+    ) -> StreamWriter:
+        return await self._stream_writer(
+            "bytes", topic=topic, destination_identities=destination_identities,
+            attributes=attributes, stream_id=stream_id, total_size=total_size,
+            chunk_size=chunk_size, compress=compress, mime_type=mime_type, name=name,
+        )
+
+    async def _stream_writer(
+        self, kind: str, *, topic: str, destination_identities: list[str] | None,
+        attributes: dict[str, str] | None, stream_id: str, total_size: int | None,
+        chunk_size: int, compress: bool, **extra,
+    ) -> StreamWriter:
+        if total_size is not None and not 0 <= total_size <= 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("total_size is out of range")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if kind == "text" and not -0x80000000 <= extra["version"] <= 0x7FFFFFFF:
+            raise ValueError("version is out of range")
+        raw = StreamTextOptions() if kind == "text" else StreamBytesOptions()
+        lib = self._native.lib
+        getattr(lib, f"lk_stream_{kind}_options_init")(C.byref(raw))
+        raw.topic = utf8(topic)
+        destinations = [utf8(value) for value in (destination_identities or [])]
+        raw.destination_identities = (C.c_char_p * len(destinations))(*destinations)
+        raw.destination_identity_count = len(destinations)
+        attrs = attributes or {}
+        raw.attributes = (Attribute * len(attrs))(
+            *(Attribute(utf8(key), utf8(value)) for key, value in attrs.items())
+        )
+        raw.attribute_count = len(attrs)
+        raw.stream_id = utf8(stream_id) if stream_id else None
+        raw.has_total_size = int(total_size is not None)
+        raw.total_size = total_size or 0
+        raw.chunk_size = chunk_size
+        raw.compress = int(compress)
+        if kind == "text":
+            raw.reply_to_stream_id = utf8(extra["reply_to_stream_id"])
+            attached = [utf8(value) for value in (extra["attached_stream_ids"] or [])]
+            raw.attached_stream_ids = (C.c_char_p * len(attached))(*attached)
+            raw.attached_stream_id_count = len(attached)
+            raw.update = int(extra["update"])
+            raw.version = extra["version"]
+        else:
+            raw.mime_type = utf8(extra["mime_type"])
+            raw.name = utf8(extra["name"])
+
+        def call():
+            handle = C.c_void_p()
+            self._native.check(getattr(lib, f"lk_room_stream_{kind}")(
+                self._handle, C.byref(raw), C.byref(handle)
+            ))
+            writer = StreamWriter(self, kind, handle)
+            self._stream_writers.add(writer)
+            return writer
+
+        return await self._run_callable(call)
+
     async def send_bytes(
         self, data: bytes, *, topic: str = "", mime_type: str = "application/octet-stream",
         name: str = "", destination_identities: list[str] | None = None,
@@ -1083,6 +1165,8 @@ class Room:
             raise
 
     def _destroy_native(self) -> None:
+        for writer in tuple(self._stream_writers):
+            writer._destroy()
         for reader in tuple(self._data_track_readers):
             reader.close()
         for stream in tuple(self._media_streams):

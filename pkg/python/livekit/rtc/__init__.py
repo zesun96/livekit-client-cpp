@@ -19,6 +19,7 @@ from .room import (
     __version__,
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
+from .stream import StreamWriter
 from .media import (
     AudioFrame, AudioSource, LocalTrack, MicrophoneProcessingStats,
     RemoteMediaStream, TrackPublishOptions,
@@ -50,6 +51,7 @@ __all__ = [
     "TextStreamEvent",
     "ByteStreamEvent",
     "StreamEventType",
+    "StreamWriter",
     "DataPacket",
     "LiveKitError",
     "LocalParticipant",

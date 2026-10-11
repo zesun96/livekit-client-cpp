@@ -323,6 +323,39 @@ class ByteSendOptions(C.Structure):
     ]
 
 
+class StreamTextOptions(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("topic", C.c_char_p),
+        ("destination_identities", C.POINTER(C.c_char_p)),
+        ("destination_identity_count", C.c_size_t),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+        ("reply_to_stream_id", C.c_char_p),
+        ("attached_stream_ids", C.POINTER(C.c_char_p)),
+        ("attached_stream_id_count", C.c_size_t),
+        ("stream_id", C.c_char_p), ("has_total_size", C.c_int),
+        ("total_size", C.c_uint64), ("chunk_size", C.c_size_t),
+        ("update", C.c_int), ("version", C.c_int32),
+        ("on_progress", C.c_void_p), ("progress_user_data", C.c_void_p),
+        ("compress", C.c_int), ("on_complete", C.c_void_p),
+        ("completion_user_data", C.c_void_p),
+    ]
+
+
+class StreamBytesOptions(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("topic", C.c_char_p),
+        ("mime_type", C.c_char_p), ("name", C.c_char_p),
+        ("destination_identities", C.POINTER(C.c_char_p)),
+        ("destination_identity_count", C.c_size_t),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+        ("stream_id", C.c_char_p), ("has_total_size", C.c_int),
+        ("total_size", C.c_uint64), ("chunk_size", C.c_size_t),
+        ("on_progress", C.c_void_p), ("progress_user_data", C.c_void_p),
+        ("compress", C.c_int), ("on_complete", C.c_void_p),
+        ("completion_user_data", C.c_void_p),
+    ]
+
+
 class FileSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -806,6 +839,17 @@ class Native:
         self._bind("lk_byte_send_options_init", None, C.POINTER(ByteSendOptions))
         self._bind("lk_room_send_file", C.c_int, p, b, C.POINTER(FileSendOptions))
         self._bind("lk_file_send_options_init", None, C.POINTER(FileSendOptions))
+        for kind, options in (("text", StreamTextOptions), ("bytes", StreamBytesOptions)):
+            self._bind(f"lk_stream_{kind}_options_init", None, C.POINTER(options))
+            self._bind(f"lk_room_stream_{kind}", C.c_int, p, C.POINTER(options), C.POINTER(p))
+            self._bind(f"lk_{kind if kind == 'text' else 'byte'}_stream_writer_write",
+                       C.c_int, p, b if kind == "text" else p, s)
+            prefix = f"lk_{kind if kind == 'text' else 'byte'}_stream_writer_"
+            self._bind(prefix + "close", C.c_int, p)
+            self._bind(prefix + "cancel", C.c_int, p, b)
+            self._bind(prefix + "id", s, p, b, s)
+            self._bind(prefix + "is_closed", C.c_int, p)
+            self._bind(prefix + "destroy", None, p)
         self._bind("lk_room_register_text_stream_handler", C.c_int, p, b,
                    TEXT_STREAM_HANDLER, p)
         self._bind("lk_room_unregister_text_stream_handler", C.c_int, p, b)
