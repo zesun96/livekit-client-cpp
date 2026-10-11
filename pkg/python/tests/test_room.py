@@ -7,14 +7,14 @@ import unittest
 
 from livekit.rtc import (
     ConnectionState, E2EEOptions, EncryptionState, FrameCryptorDirection, KeyDerivation,
-    IceServer, LiveKitError, ParticipantTrackPermission, Room, RoomOptions,
+    AudioPlaybackStats, IceServer, LiveKitError, ParticipantTrackPermission, Room, RoomOptions,
     RtcConfiguration, StreamEventType, SubscriptionError, TrackStreamState,
     TrackSubscriptionStatus,
 )
 from livekit.rtc._native import (
     Attribute, ByteStreamEvent, ChatMessage, DataReceived, FileReceived, ParticipantInfo,
     RoomCallbacks, RoomConnectOptions, TextReceived, TextStreamEvent, TrackPublicationInfo,
-    EncryptionStateRaw, ENCRYPTION_EVENT, TRACK_EVENT, TRACK_FEEDBACK_EVENT,
+    EncryptionStateRaw, ENCRYPTION_EVENT, STATE_EVENT, TRACK_EVENT, TRACK_FEEDBACK_EVENT,
     _CALLBACK_NAMES,
 )
 
@@ -53,6 +53,23 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
             )],
         )
         await self.room.set_track_subscription_permissions(True)
+
+    async def test_audio_and_recording_read_only_state(self):
+        self.assertFalse(self.room.is_recording)
+        self.assertIsInstance(self.room.audio_output_device, str)
+        self.assertIsInstance(self.room.speaker_volume, float)
+        self.assertIsInstance(self.room.speaker_muted, bool)
+        stats = self.room.audio_playback_stats
+        self.assertIsInstance(stats, AudioPlaybackStats)
+        self.assertGreaterEqual(stats.queued_frames, 0)
+
+        received = []
+        self.room._loop = asyncio.get_running_loop()
+        self.room.on("recording_status_changed", received.append)
+        callback = STATE_EVENT(self.room._callbacks.on_recording_status_changed)
+        callback(None, self.room._handle, 1)
+        await asyncio.sleep(0)
+        self.assertEqual(received, [True])
 
     async def test_binary_data_callback_copies_borrowed_buffer(self):
         self.room._loop = asyncio.get_running_loop()

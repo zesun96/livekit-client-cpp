@@ -29,6 +29,7 @@ from ._native import (
     ByteSendOptions,
     FileSendOptions,
     Attribute,
+    AudioPlaybackStatsRaw,
     LiveKitError,
     RoomCallbacks,
     RemoteTrackPublicationInfo,
@@ -39,6 +40,7 @@ from ._native import (
     utf8,
 )
 from ._models import (
+    AudioPlaybackStats,
     ByteMessage,
     ByteStreamEvent,
     ChatMessage,
@@ -55,11 +57,13 @@ from ._models import (
     TrackPublication,
     TrackStreamState,
     TrackSubscriptionStatus,
+    TokenSourceFetchOptions,
     copy_attributes as _attributes,
     copy_strings as _strings,
 )
 from ._events import EventDispatcher
 from ._connection import connection_options, subscription_permissions
+from ._token_source import TokenSourceBridge, fetch_options_raw
 from .e2ee import E2EEManager, EncryptionState
 
 __version__ = "0.6.0"
@@ -248,6 +252,9 @@ class Room:
         self._callback("on_room_metadata_changed", METADATA_EVENT,
                        lambda _user, _room, value:
                        self._post("room_metadata_changed", decode(value)))
+        self._callback("on_recording_status_changed", STATE_EVENT,
+                       lambda _user, _room, recording:
+                       self._post("recording_status_changed", bool(recording)))
         self._callback("on_chat_message_received", CHAT_EVENT, self._on_chat)
         self._callback("on_encryption_state_changed", ENCRYPTION_EVENT,
                        lambda _user, _room, value:
@@ -421,6 +428,34 @@ class Room:
             self._callback_refs.append(callback)
         await self._run(self._native.lib.lk_room_connect_with_options,
                         self._handle, utf8(url), utf8(token), C.byref(raw))
+
+    async def connect_with_token_source(
+        self, provider: Callable,
+        fetch_options: TokenSourceFetchOptions | None = None,
+        options: RoomOptions | None = None,
+    ) -> None:
+        """Connect using a sync or async provider, including later token refreshes."""
+        self._assert_open()
+        loop = asyncio.get_running_loop()
+        if self._loop is not None and self._loop is not loop:
+            raise LiveKitError("room is bound to another event loop")
+        bridge = TokenSourceBridge(provider, loop)
+        source = fetch_options_raw(
+            self._native.lib, fetch_options or TokenSourceFetchOptions()
+        )
+        connect, policy = connection_options(self._native.lib, options or RoomOptions())
+        self._callback_refs.append(bridge)
+        if policy is not None:
+            self._callback_refs.append(policy)
+        try:
+            await self._run(
+                self._native.lib.lk_room_connect_with_token_source_and_options,
+                self._handle, bridge.callback, None, C.byref(source), C.byref(connect),
+            )
+        except LiveKitError as error:
+            if bridge.last_error is not None:
+                raise LiveKitError(f"token source failed: {bridge.last_error}", error.code) from error
+            raise
 
     async def disconnect(self) -> None:
         await self._run(self._native.lib.lk_room_disconnect, self._handle)
@@ -598,6 +633,54 @@ class Room:
     def is_connected(self) -> bool:
         self._assert_open()
         return bool(self._native.lib.lk_room_is_connected(self._handle))
+
+    @property
+    def is_recording(self) -> bool:
+        self._assert_open()
+        return bool(self._native.lib.lk_room_is_recording(self._handle))
+
+    @property
+    def audio_output_device(self) -> str:
+        self._assert_open()
+        return self._native.string("lk_room_audio_output_device", self._handle)
+
+    async def set_audio_output_device(self, device_id: str) -> None:
+        await self._run(self._native.lib.lk_room_set_audio_output_device,
+                        self._handle, utf8(device_id))
+
+    @property
+    def speaker_volume(self) -> float:
+        self._assert_open()
+        return float(self._native.lib.lk_room_speaker_volume(self._handle))
+
+    async def set_speaker_volume(self, volume: float) -> None:
+        await self._run(self._native.lib.lk_room_set_speaker_volume,
+                        self._handle, volume)
+
+    @property
+    def speaker_muted(self) -> bool:
+        self._assert_open()
+        return bool(self._native.lib.lk_room_speaker_is_muted(self._handle))
+
+    async def set_speaker_muted(self, muted: bool) -> None:
+        await self._run(self._native.lib.lk_room_set_speaker_muted,
+                        self._handle, int(muted))
+
+    @property
+    def audio_playback_stats(self) -> AudioPlaybackStats:
+        self._assert_open()
+        raw = AudioPlaybackStatsRaw()
+        self._native.lib.lk_audio_playback_stats_init(C.byref(raw))
+        self._native.check(self._native.lib.lk_room_audio_playback_stats(
+            self._handle, C.byref(raw)
+        ))
+        return AudioPlaybackStats(
+            queued_frames=raw.queued_frames, played_frames=raw.played_frames,
+            dropped_frames=raw.dropped_frames, underrun_frames=raw.underrun_frames,
+            buffered_duration_ms=raw.buffered_duration_ms,
+            device_latency_ms=raw.device_latency_ms,
+            estimated_delay_ms=raw.estimated_delay_ms,
+        )
 
     @property
     def sid(self) -> str:

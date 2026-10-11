@@ -78,6 +78,36 @@ class ReconnectContext:
 
 
 @dataclass(frozen=True)
+class TokenSourceFetchOptions:
+    room_name: str = ""
+    participant_name: str = ""
+    participant_identity: str = ""
+    participant_metadata: str = ""
+    participant_attributes: dict[str, str] = field(default_factory=dict)
+    agent_name: str = ""
+    agent_metadata: str = ""
+    deployment: str = ""
+    force_refresh: bool = False
+
+
+@dataclass(frozen=True)
+class TokenSourceResponse:
+    server_url: str
+    participant_token: str
+
+
+@dataclass(frozen=True)
+class AudioPlaybackStats:
+    queued_frames: int
+    played_frames: int
+    dropped_frames: int
+    underrun_frames: int
+    buffered_duration_ms: int
+    device_latency_ms: int
+    estimated_delay_ms: int
+
+
+@dataclass(frozen=True)
 class ParticipantTrackPermission:
     participant_sid: str = ""
     participant_identity: str = ""

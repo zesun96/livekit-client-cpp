@@ -24,9 +24,11 @@ from .e2ee import (
     FrameCryptorDirection, KeyDerivation,
 )
 from ._models import (
+    AudioPlaybackStats,
     ContinualGatheringPolicy, IceServer, IceTransportType,
     ParticipantTrackPermission, ReconnectContext, ReconnectReason, RtcConfiguration,
     SubscriptionError, TrackStreamState, TrackSubscriptionStatus,
+    TokenSourceFetchOptions, TokenSourceResponse,
 )
 
 __all__ = [
@@ -44,6 +46,9 @@ __all__ = [
     "TrackPublication",
     "Room",
     "RoomOptions",
+    "TokenSourceFetchOptions",
+    "TokenSourceResponse",
+    "AudioPlaybackStats",
     "RtcConfiguration",
     "IceServer",
     "IceTransportType",

@@ -44,7 +44,8 @@ Python event loop. Register event handlers before `connect`; `on` also accepts
 `room.on("event", callback)`. Supported events are `connected`, `disconnected`,
 `reconnecting`, `reconnected`, `connection_state_changed`, `disconnect_reason`,
 `participant_connected`, `participant_disconnected`, `data_received`,
-`room_metadata_changed`, `chat_message_received`, `token_refreshed`, and `room_eos`.
+`room_metadata_changed`, `chat_message_received`, `token_refreshed`,
+`recording_status_changed`, and `room_eos`.
 Track subscription feedback events are `track_subscription_permission_changed`,
 `track_subscription_failed`, `track_stream_state_changed`, and
 `track_subscription_status_changed`. Each supplies detached track and
@@ -83,6 +84,32 @@ The reconnect policy runs on the native recovery thread. Return a delay in
 milliseconds to retry, or `None` to stop. Keep it short and synchronous; the
 binding stops recovery if it raises or returns an invalid delay. Subscription
 permissions can also be updated through `room.set_track_subscription_permissions`.
+
+For dynamic credentials, pass a synchronous or asynchronous provider to
+`connect_with_token_source`. The SDK calls it initially and again during token
+refresh. The provider runs on the Room event loop and receives a detached
+`TokenSourceFetchOptions` value, including `force_refresh`. Return
+`TokenSourceResponse(server_url, participant_token)` or a `(url, token)` tuple.
+
+```python
+async def get_credentials(request: rtc.TokenSourceFetchOptions):
+    return rtc.TokenSourceResponse(
+        server_url=os.environ["LIVEKIT_URL"],
+        participant_token=await fetch_token(request.force_refresh),
+    )
+
+await room.connect_with_token_source(
+    get_credentials,
+    fetch_options=rtc.TokenSourceFetchOptions(room_name="studio"),
+    options=rtc.RoomOptions(auto_subscribe=True),
+)
+```
+
+`room.is_recording`, `room.audio_output_device`, `room.speaker_volume`,
+`room.speaker_muted`, and `room.audio_playback_stats` expose current room state.
+Use `await room.set_audio_output_device(device_id)`,
+`await room.set_speaker_volume(volume)`, and
+`await room.set_speaker_muted(muted)` to control local playback.
 
 For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
 alias). Peers need the same key and compatible key derivation settings. Use
@@ -123,7 +150,8 @@ with `async with` or `await room.aclose()`.
 versioned C ABI structures and function signatures. `_connection.py` owns
 borrowed connection and subscription option buffers. `_models.py` contains
 detached public values, `_events.py` dispatches callbacks through a bounded
-queue, `e2ee.py` owns encryption options and key control, and
+queue, `_token_source.py` bridges token refreshes to the event loop,
+`e2ee.py` owns encryption options and key control, and
 `media_devices.py` handles read-only device enumeration. Raw callback memory
 is copied before the Python event loop sees it.
 

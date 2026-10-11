@@ -89,6 +89,40 @@ class Attribute(C.Structure):
     _fields_ = [("key", C.c_char_p), ("value", C.c_char_p)]
 
 
+class TokenSourceFetchOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("room_name", C.c_char_p),
+        ("participant_name", C.c_char_p), ("participant_identity", C.c_char_p),
+        ("participant_metadata", C.c_char_p),
+        ("participant_attributes", C.POINTER(Attribute)),
+        ("participant_attribute_count", C.c_size_t),
+        ("agent_name", C.c_char_p), ("agent_metadata", C.c_char_p),
+        ("deployment", C.c_char_p),
+    ]
+
+
+class TokenSourceResponseRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("server_url", C.c_char_p),
+        ("participant_token", C.c_char_p),
+    ]
+
+
+TOKEN_SOURCE_CALLBACK = C.CFUNCTYPE(
+    C.c_int, C.c_void_p, C.POINTER(TokenSourceFetchOptionsRaw),
+    C.c_int, C.POINTER(TokenSourceResponseRaw),
+)
+
+
+class AudioPlaybackStatsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("queued_frames", C.c_uint64),
+        ("played_frames", C.c_uint64), ("dropped_frames", C.c_uint64),
+        ("underrun_frames", C.c_uint64), ("buffered_duration_ms", C.c_uint32),
+        ("device_latency_ms", C.c_uint32), ("estimated_delay_ms", C.c_uint32),
+    ]
+
+
 class TextSendOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("topic", C.c_char_p),
@@ -359,12 +393,29 @@ class Native:
         self._bind("lk_room_callbacks_init", None, C.POINTER(RoomCallbacks))
         self._bind("lk_room_set_callbacks", C.c_int, p, C.POINTER(RoomCallbacks))
         self._bind("lk_room_connect_with_options", C.c_int, p, b, b, C.POINTER(RoomConnectOptions))
+        self._bind("lk_room_connect_with_token_source_and_options", C.c_int, p,
+                   TOKEN_SOURCE_CALLBACK, p, C.POINTER(TokenSourceFetchOptionsRaw),
+                   C.POINTER(RoomConnectOptions))
         self._bind("lk_room_connect_options_init", None, C.POINTER(RoomConnectOptions))
+        self._bind("lk_token_source_fetch_options_init", None,
+                   C.POINTER(TokenSourceFetchOptionsRaw))
+        self._bind("lk_token_source_response_init", None,
+                   C.POINTER(TokenSourceResponseRaw))
+        self._bind("lk_audio_playback_stats_init", None, C.POINTER(AudioPlaybackStatsRaw))
         self._bind("lk_ice_server_init", None, C.POINTER(IceServerRaw))
         self._bind("lk_e2ee_options_init", None, C.POINTER(E2EEOptionsRaw))
         self._bind("lk_room_disconnect", C.c_int, p)
         self._bind("lk_room_state", C.c_int, p)
         self._bind("lk_room_is_connected", C.c_int, p)
+        self._bind("lk_room_is_recording", C.c_int, p)
+        self._bind("lk_room_set_audio_output_device", C.c_int, p, b)
+        self._bind("lk_room_audio_output_device", s, p, b, s)
+        self._bind("lk_room_set_speaker_volume", C.c_int, p, C.c_float)
+        self._bind("lk_room_speaker_volume", C.c_float, p)
+        self._bind("lk_room_set_speaker_muted", C.c_int, p, C.c_int)
+        self._bind("lk_room_speaker_is_muted", C.c_int, p)
+        self._bind("lk_room_audio_playback_stats", C.c_int, p,
+                   C.POINTER(AudioPlaybackStatsRaw))
         self._bind("lk_room_disconnect_reason", C.c_int, p)
         self._bind("lk_room_e2ee_is_configured", C.c_int, p)
         self._bind("lk_room_e2ee_is_enabled", C.c_int, p)
