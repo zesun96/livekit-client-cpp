@@ -39,6 +39,8 @@ from ._native import (
     Attribute,
     DataTrackSnapshotInfoRaw,
     MediaStreamOptionsRaw,
+    ParticipantSnapshotInfoRaw,
+    ParticipantPermissionsRaw,
     AudioPlaybackStatsRaw,
     LiveKitError,
     RoomCallbacks,
@@ -57,6 +59,7 @@ from ._models import (
     ConnectionState,
     DataPacket,
     Participant,
+    ParticipantPermissions,
     ParticipantTrackPermission,
     RoomOptions,
     RpcError,
@@ -101,6 +104,10 @@ class LocalParticipant:
     def _string(self, suffix: str) -> str:
         self._room._assert_open()
         return self._room._native.string("lk_local_participant_" + suffix, self._room._handle)
+
+    @property
+    def snapshot(self) -> Participant:
+        return self._room.local_participant_snapshot
 
     @property
     def sid(self) -> str:
@@ -1069,6 +1076,64 @@ class Room:
         self._assert_open()
         return self._native.string("lk_room_metadata", self._handle)
 
+    def _participant_snapshot_data(self, handle, kind: str) -> dict:
+        lib = self._native.lib
+        prefix = f"lk_{kind}_participant_snapshot_"
+        info = ParticipantSnapshotInfoRaw()
+        getattr(lib, prefix + "info_init")(C.byref(info))
+        self._native.check(getattr(lib, prefix + "info")(handle, C.byref(info)))
+        permissions = ParticipantPermissionsRaw()
+        self._native.check(getattr(lib, prefix + "permissions")(
+            handle, C.byref(permissions)
+        ))
+        permission_value = ParticipantPermissions(
+            can_subscribe=bool(permissions.can_subscribe),
+            can_publish=bool(permissions.can_publish),
+            can_publish_data=bool(permissions.can_publish_data),
+            can_publish_sources=tuple(permissions.can_publish_sources[index]
+                for index in range(permissions.can_publish_source_count)),
+            hidden=bool(permissions.hidden), recorder=bool(permissions.recorder),
+            can_update_metadata=bool(permissions.can_update_metadata),
+            agent=bool(permissions.agent),
+            can_subscribe_metrics=bool(permissions.can_subscribe_metrics),
+            can_manage_agent_session=bool(permissions.can_manage_agent_session),
+        )
+        attributes = {}
+        count = getattr(lib, prefix + "attribute_count")(handle)
+        for index in range(count):
+            def attribute(part: str) -> str:
+                fn = getattr(lib, prefix + "attribute_" + part)
+                size = fn(handle, index, None, 0)
+                value = C.create_string_buffer(size)
+                fn(handle, index, value, size)
+                return decode(value.value)
+            attributes[attribute("key")] = attribute("value")
+        return dict(
+            sid=self._native.string(prefix + "sid", handle),
+            identity=self._native.string(prefix + "identity", handle),
+            name=self._native.string(prefix + "name", handle),
+            metadata=self._native.string(prefix + "metadata", handle),
+            audio_level=info.audio_level,
+            connection_quality=info.connection_quality,
+            is_speaking=bool(info.is_speaking),
+            is_local=(kind == "local"),
+            attributes=attributes,
+            permissions=permission_value,
+        )
+
+    @property
+    def local_participant_snapshot(self) -> Participant:
+        self._assert_open()
+        lib = self._native.lib
+        snapshot = C.c_void_p()
+        self._native.check(lib.lk_room_create_local_participant_snapshot(
+            self._handle, C.byref(snapshot)
+        ))
+        try:
+            return Participant(**self._participant_snapshot_data(snapshot, "local"))
+        finally:
+            lib.lk_local_participant_snapshot_destroy(snapshot)
+
     def get_remote_track_rtc_stats(
         self, participant_identity: str, track_sid: str,
     ) -> tuple[RtcTrackStats, ...]:
@@ -1135,20 +1200,6 @@ class Room:
                 self._native.check(lib.lk_remote_participant_list_at(
                     snapshot, index, C.byref(item)
                 ))
-                get = lambda field: self._native.string(
-                    "lk_remote_participant_snapshot_" + field, item
-                )
-                attributes = {}
-                for attribute_index in range(
-                    lib.lk_remote_participant_snapshot_attribute_count(item)
-                ):
-                    def attribute(part: str) -> str:
-                        fn = getattr(lib, "lk_remote_participant_snapshot_attribute_" + part)
-                        size = fn(item, attribute_index, None, 0)
-                        value = C.create_string_buffer(size)
-                        fn(item, attribute_index, value, size)
-                        return decode(value.value)
-                    attributes[attribute("key")] = attribute("value")
                 publications = {}
                 for publication_index in range(
                     lib.lk_remote_participant_snapshot_publication_count(item)
@@ -1177,9 +1228,8 @@ class Room:
                     )
                     publications[track.sid] = track
                 participant = Participant(
-                    sid=get("sid"), identity=get("identity"),
-                    name=get("name"), metadata=get("metadata"),
-                    attributes=attributes, track_publications=publications,
+                    **self._participant_snapshot_data(item, "remote"),
+                    track_publications=publications,
                 )
                 participants[participant.identity] = participant
             return participants

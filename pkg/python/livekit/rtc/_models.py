@@ -129,6 +129,20 @@ class RoomOptions:
 
 
 @dataclass(frozen=True)
+class ParticipantPermissions:
+    can_subscribe: bool
+    can_publish: bool
+    can_publish_data: bool
+    can_publish_sources: tuple[int, ...]
+    hidden: bool
+    recorder: bool
+    can_update_metadata: bool
+    agent: bool
+    can_subscribe_metrics: bool
+    can_manage_agent_session: bool
+
+
+@dataclass(frozen=True)
 class Participant:
     sid: str
     identity: str
@@ -140,6 +154,7 @@ class Participant:
     is_local: bool = False
     attributes: dict[str, str] = field(default_factory=dict)
     track_publications: dict[str, TrackPublication] = field(default_factory=dict)
+    permissions: ParticipantPermissions | None = None
 
     @classmethod
     def from_native(cls, info: ParticipantInfo) -> Participant:

@@ -55,7 +55,9 @@ participant values followed by a boolean or enum status.
 attributes and track publications, keyed by identity. Track events deliver
 detached publication and participant values. `set_remote_track_subscribed`
 and `update_remote_track_settings` control received tracks. Room and local
-participant string properties are live getters.
+participant string properties are live getters. `room.local_participant_snapshot`
+and `room.remote_participants` return detached participant values including
+permissions, audio level, connection quality, speaking state, and attributes.
 Use `rtc.list_media_devices()` and `rtc.list_screen_sources()` to enumerate
 available input, output, camera, monitor, and window IDs without opening them.
 `RoomOptions` covers auto subscribe, adaptive stream, dynacast, join retries,

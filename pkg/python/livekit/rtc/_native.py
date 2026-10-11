@@ -54,6 +54,26 @@ class ParticipantInfo(C.Structure):
     ]
 
 
+class ParticipantSnapshotInfoRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("audio_level", C.c_float),
+        ("connection_quality", C.c_int), ("is_speaking", C.c_int),
+    ]
+
+
+class ParticipantPermissionsRaw(C.Structure):
+    _fields_ = [
+        ("can_subscribe", C.c_int), ("can_publish", C.c_int),
+        ("can_publish_data", C.c_int),
+        ("can_publish_sources", C.POINTER(C.c_int)),
+        ("can_publish_source_count", C.c_size_t),
+        ("hidden", C.c_int), ("recorder", C.c_int),
+        ("can_update_metadata", C.c_int), ("agent", C.c_int),
+        ("can_subscribe_metrics", C.c_int),
+        ("can_manage_agent_session", C.c_int),
+    ]
+
+
 class TrackPublicationInfo(C.Structure):
     _fields_ = [
         ("sid", C.c_char_p), ("name", C.c_char_p), ("mime_type", C.c_char_p),
@@ -962,6 +982,20 @@ class Native:
         self._bind("lk_rpc_result_error_message", s, p, b, s)
         self._bind("lk_rpc_result_error_data", s, p, b, s)
         self._bind("lk_room_create_remote_participant_snapshot", C.c_int, p, C.POINTER(p))
+        self._bind("lk_room_create_local_participant_snapshot", C.c_int, p, C.POINTER(p))
+        self._bind("lk_local_participant_snapshot_destroy", None, p)
+        for kind in ("local", "remote"):
+            self._bind(f"lk_{kind}_participant_snapshot_info_init", None,
+                       C.POINTER(ParticipantSnapshotInfoRaw))
+            self._bind(f"lk_{kind}_participant_snapshot_info", C.c_int, p,
+                       C.POINTER(ParticipantSnapshotInfoRaw))
+            self._bind(f"lk_{kind}_participant_snapshot_permissions", C.c_int, p,
+                       C.POINTER(ParticipantPermissionsRaw))
+        for name in ("sid", "identity", "name", "metadata"):
+            self._bind("lk_local_participant_snapshot_" + name, s, p, b, s)
+        self._bind("lk_local_participant_snapshot_attribute_count", s, p)
+        for name in ("key", "value"):
+            self._bind("lk_local_participant_snapshot_attribute_" + name, s, p, s, b, s)
         self._bind("lk_remote_participant_list_destroy", None, p)
         self._bind("lk_remote_participant_list_count", s, p)
         self._bind("lk_remote_participant_list_at", C.c_int, p, s, C.POINTER(p))

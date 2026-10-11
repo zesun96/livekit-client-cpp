@@ -17,7 +17,7 @@ and Zig bindings have no implementation yet.
 | Receive data messages | Yes | Yes | No | No |
 | Publish data messages synchronously | Yes | No | No | No |
 | Publish data messages asynchronously | Yes | Yes | No | No |
-| Local participant and remote participant snapshots | Yes | Partial | No | No |
+| Local participant and remote participant snapshots | Yes | Yes | No | No |
 | Local participant metadata and attributes | Yes | Yes | No | No |
 | Remote track subscription and settings | Yes | Yes | No | No |
 | Track subscription permissions and feedback events | Yes | Yes | No | No |
