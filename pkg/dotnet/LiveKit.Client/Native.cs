@@ -315,6 +315,27 @@ internal static partial class Native
     internal static extern IntPtr lk_last_error();
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int lk_init();
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int lk_shutdown();
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ErrorInfo
+    {
+        internal nuint StructSize;
+        internal int Domain;
+        internal int Code;
+        internal nuint MessageSize;
+    }
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int lk_last_error_info(ref ErrorInfo info);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern nuint lk_last_error_message([Out] byte[]? buffer, nuint size);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int lk_room_create(out IntPtr room);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -359,6 +380,12 @@ internal static partial class Native
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern nuint lk_local_participant_sid(IntPtr room, [Out] byte[]? buffer, nuint size);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern nuint lk_local_participant_name(IntPtr room, [Out] byte[]? buffer, nuint size);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern nuint lk_local_participant_metadata(IntPtr room, [Out] byte[]? buffer, nuint size);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int lk_room_create_remote_participant_snapshot(RoomHandle room, out IntPtr snapshot);
@@ -415,8 +442,20 @@ internal static partial class Native
     {
         if (status == 0) return;
         // The native error is thread-local: copy it before calling any other native function.
-        var message = Marshal.PtrToStringUTF8(lk_last_error()) ?? "Native LiveKit operation failed";
-        throw new LiveKitException(status, message);
+        var info = new ErrorInfo { StructSize = (nuint)Marshal.SizeOf<ErrorInfo>() };
+        if (lk_last_error_info(ref info) != 0)
+            throw new LiveKitException(status,
+                Marshal.PtrToStringUTF8(lk_last_error()) ?? "Native LiveKit operation failed");
+        var message = "Native LiveKit operation failed";
+        if (info.MessageSize > 0 && info.MessageSize <= int.MaxValue)
+        {
+            var bytes = new byte[(int)info.MessageSize];
+            lk_last_error_message(bytes, (nuint)bytes.Length);
+            var length = Array.IndexOf(bytes, (byte)0);
+            message = System.Text.Encoding.UTF8.GetString(bytes, 0,
+                length < 0 ? bytes.Length : length);
+        }
+        throw new LiveKitException(status, message, info.Domain, info.Code);
     }
 
     internal static string ReadString(IntPtr handle, StringGetter getter)

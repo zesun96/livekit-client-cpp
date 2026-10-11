@@ -9,6 +9,31 @@ public sealed partial class Room
     /// <summary>Completes when the room reaches the connected state. Cancellation only stops waiting.</summary>
     public async Task ConnectAsync(string url, string token,
         CancellationToken cancellationToken = default)
+        => await ConnectAndWaitAsync(() => Connect(url, token), cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <summary>Connects with options and completes when the room reaches the connected state.</summary>
+    public async Task ConnectAsync(string url, string token, ConnectionOptions options,
+        CancellationToken cancellationToken = default)
+        => await ConnectAndWaitAsync(() => Connect(url, token, options), cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <summary>Connects through a token provider and waits for the connected state.</summary>
+    public async Task ConnectWithTokenSourceAsync(
+        Func<TokenFetchRequest, TokenCredentials> provider,
+        ConnectionOptions? options = null, CancellationToken cancellationToken = default)
+        => await ConnectAndWaitAsync(() => ConnectWithTokenSource(provider, options),
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Connects through a token provider with fetch request options.</summary>
+    public async Task ConnectWithTokenSourceAsync(
+        Func<TokenFetchRequest, TokenCredentials> provider,
+        TokenSourceRequestOptions request, ConnectionOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => await ConnectAndWaitAsync(() => ConnectWithTokenSource(provider, request, options),
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task ConnectAndWaitAsync(Action connect, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -19,7 +44,7 @@ public sealed partial class Room
         Disconnected += DisconnectedHandler;
         try
         {
-            Connect(url, token);
+            connect();
             if (IsConnected) completion.TrySetResult();
             await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }

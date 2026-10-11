@@ -9,6 +9,7 @@ using var first = new Room();
 using var second = new Room();
 var dataReceived = NewSignal<DataPacket>();
 var targetedDataReceived = NewSignal<DataPacket>();
+var asyncDataReceived = NewSignal<DataPacket>();
 var textReceived = NewSignal<TextMessage>();
 var targetedTextReceived = NewSignal<TextMessage>();
 var bytesReceived = NewSignal<FileMessage>();
@@ -36,6 +37,7 @@ second.DataReceived += packet => dataReceived.TrySetResult(packet);
 second.DataReceived += packet =>
 {
     if (packet.Topic == "targeted-data") targetedDataReceived.TrySetResult(packet);
+    if (packet.Topic == "async-data") asyncDataReceived.TrySetResult(packet);
 };
 second.TextReceived += message => textReceived.TrySetResult(message);
 second.TextReceived += message =>
@@ -74,10 +76,22 @@ second.RegisterByteStreamHandler("incremental-bytes", value =>
     if (value.Type == StreamEventType.Chunk) byteStreamReceived.TrySetResult(value);
 });
 second.RegisterRpcMethod("echo", request => new RpcReply(request.Payload));
+TokenFetchRequest? observedTokenRequest = null;
 
 try
 {
-    await first.ConnectAsync(url, firstToken).WaitAsync(TimeSpan.FromSeconds(30));
+    await first.ConnectWithTokenSourceAsync(request =>
+    {
+        observedTokenRequest = request;
+        return new TokenCredentials(url, firstToken);
+    }, new TokenSourceRequestOptions
+    {
+        RoomName = "dotnet-request", ParticipantName = "first-request",
+        ParticipantAttributes = new Dictionary<string, string> { ["source"] = "dotnet" },
+    }, new ConnectionOptions
+    {
+        ContinualGatheringPolicy = ContinualGatheringPolicy.GatherContinually,
+    }).WaitAsync(TimeSpan.FromSeconds(30));
     await second.ConnectAsync(url, secondToken).WaitAsync(TimeSpan.FromSeconds(30));
 }
 catch (TimeoutException error)
@@ -88,6 +102,10 @@ catch (TimeoutException error)
 if (!first.IsConnected || !second.IsConnected || first.Sid != second.Sid)
     throw new Exception($"Rooms did not connect to the same LiveKit room: " +
         $"first={first.State}/{first.Sid}, second={second.State}/{second.Sid}");
+if (observedTokenRequest?.RoomName != "dotnet-request" ||
+    observedTokenRequest.ParticipantName != "first-request" ||
+    observedTokenRequest.ParticipantAttributes.GetValueOrDefault("source") != "dotnet")
+    throw new Exception("Token source request options were not preserved");
 if (first.GetLocalParticipant().Permissions?.CanPublish != true)
     throw new Exception("Local participant permissions snapshot was incorrect");
 await firstConnectedState.Task.WaitAsync(TimeSpan.FromSeconds(8));
@@ -114,6 +132,20 @@ var targetedData = await targetedDataReceived.Task.WaitAsync(TimeSpan.FromSecond
 if (Encoding.UTF8.GetString(targetedData.Data) != "targeted-data-probe" ||
     targetedData.ParticipantIdentity != first.LocalIdentity)
     throw new Exception("Targeted data publish options were not preserved");
+
+var asyncPayload = Encoding.UTF8.GetBytes("async-data-probe");
+var asyncDestinations = new[] { second.LocalIdentity };
+var publishTask = first.PublishDataAsync(asyncPayload, new DataPublishRequest
+{
+    Topic = "async-data", DestinationIdentities = asyncDestinations,
+});
+Array.Fill(asyncPayload, (byte)0);
+asyncDestinations[0] = first.LocalIdentity;
+await publishTask.WaitAsync(TimeSpan.FromSeconds(8));
+var asyncPacket = await asyncDataReceived.Task.WaitAsync(TimeSpan.FromSeconds(8));
+if (Encoding.UTF8.GetString(asyncPacket.Data) != "async-data-probe" ||
+    asyncPacket.ParticipantIdentity != first.LocalIdentity)
+    throw new Exception("Async data payload or destinations changed after scheduling");
 
 first.SendText("text-probe", "dotnet");
 var text = await textReceived.Task.WaitAsync(TimeSpan.FromSeconds(8));
@@ -374,6 +406,44 @@ if (first.LastDisconnectReason != DisconnectReason.ClientInitiated)
     throw new Exception("Client disconnect reason was incorrect");
 lock (callbackErrors)
     if (callbackErrors.Count != 0) throw new AggregateException(callbackErrors);
+
+var sharedKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+try
+{
+    var encryptedOptions = new ConnectionOptions
+    {
+        E2ee = new E2eeConnectionOptions
+        {
+            SharedKey = sharedKey, RatchetWindowSize = 16,
+            FailureTolerance = 2, KeyRingSize = 4,
+            KeyDerivation = E2eeKeyDerivation.HkdfSha256,
+        },
+    };
+    using var encryptedFirst = new Room();
+    using var encryptedSecond = new Room();
+    await encryptedFirst.ConnectAsync(url, firstToken, encryptedOptions)
+        .WaitAsync(TimeSpan.FromSeconds(30));
+    await encryptedSecond.ConnectWithTokenSourceAsync(
+        _ => new TokenCredentials(url, secondToken),
+        new TokenSourceRequestOptions(), encryptedOptions)
+        .WaitAsync(TimeSpan.FromSeconds(30));
+    if (!encryptedFirst.IsConnected || !encryptedSecond.IsConnected ||
+        !encryptedFirst.IsE2eeConfigured || !encryptedFirst.IsE2eeEnabled ||
+        !encryptedSecond.IsE2eeConfigured || !encryptedSecond.IsE2eeEnabled)
+        throw new Exception($"E2EE connection options were not applied: " +
+            $"first={encryptedFirst.State}/{encryptedFirst.IsE2eeConfigured}/{encryptedFirst.IsE2eeEnabled}, " +
+            $"second={encryptedSecond.State}/{encryptedSecond.IsE2eeConfigured}/{encryptedSecond.IsE2eeEnabled}");
+    var exportedKey = encryptedFirst.ExportE2eeSharedKey();
+    try
+    {
+        if (exportedKey.Length == 0)
+            throw new Exception("E2EE shared key was not installed");
+    }
+    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(exportedKey); }
+    await encryptedFirst.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(8));
+    await encryptedSecond.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(8));
+}
+finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(sharedKey); }
 Console.WriteLine("Server .NET binding integration passed");
 
 static string Require(string name) => Environment.GetEnvironmentVariable(name)

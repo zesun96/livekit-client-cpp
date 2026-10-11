@@ -18,6 +18,10 @@ $env:LIVEKIT_TOKEN = '<participant token>'
 dotnet run --project pkg/dotnet/examples/RoomEcho/RoomEcho.csproj
 ```
 
+The [example catalog](examples/README.md) covers the same feature areas as the
+Python and Lua examples, including messaging, RPC, streams, DataTrack, E2EE,
+synthetic media, remote media, recording, and physical-device capture.
+
 An offline native smoke test (no server or media device) is available with
 `dotnet run --project pkg/dotnet/tests/OfflineSmoke/OfflineSmoke.csproj` after
 setting `LIVEKIT_CLIENT_CPP_LIBRARY`.
@@ -30,7 +34,8 @@ DataTrack frames and custom schemas, and remote RTC statistics. It does not open
 physical devices.
 
 `Room` owns its native handle and must be disposed. It exposes synchronous and
-task-based asynchronous connection, dynamic token providers, ICE options,
+task-based asynchronous connection (including connection options and dynamic
+token providers), ICE options,
 participant snapshots with permissions, attributes and subscribed track details,
 data messages with optional destinations, chat, text/byte/file transfer,
 incremental inbound text/byte stream handlers, synchronous and asynchronous RPC
@@ -39,6 +44,10 @@ settings. `AudioSource`, `VideoSource`, `LocalTrack`, stream writers, remote
 media readers, DataTrack readers, and `TrackRecorder` are also disposable.
 Destroy writers/readers and tracks when finished; a room disposes its remaining
 local track handles when destroyed.
+
+`LiveKitRuntime.Acquire()` explicitly initializes the native runtime and returns
+a reference-counted lease. Dispose the lease after all SDK objects created under
+it have been disposed. Normal room creation does not require an explicit lease.
 
 All 54 C ABI room callback slots have managed events, including connection and
 participant changes, track publication and subscription, active speakers,
@@ -50,7 +59,7 @@ the native callback is active, then delivered on the .NET thread pool.
 Audio/video/DataTrack frame event queues are capped at 32/8/32 pending deliveries and drop
 new frames when full. Subscribers may run concurrently; subscriber exceptions
 are delivered to `CallbackError`. Native operations throw `LiveKitException`
-with the C status and error message; DataTrack operations throw
+with the C status, error message, and available native error domain/code; DataTrack operations throw
 `DataTrackException`. RPC application/transport errors appear in `RpcResponse`.
 
 Incoming text chunks expose both decoded `Content` and the exact `ContentBytes`;
@@ -88,12 +97,21 @@ Push at least one video frame before publishing an external video track so its
 source has dimensions. Use `LocalTrack.PublishWithFrameMetadata()` to forward
 user timestamps, frame IDs, and user data to remote readers.
 
+`ConnectionOptions.E2ee` configures E2EE for direct-token and dynamic-token
+connections. It exposes shared key, ratchet salt, unencrypted magic bytes,
+ratchet window, failure tolerance, key ring size, and key derivation options.
+Unset tuning values use native defaults. `TokenSourceRequestOptions` supplies
+room, participant, agent, deployment, and attribute hints to a dynamic token
+provider; `TokenFetchRequest` receives them.
+
 `ConnectE2ee` takes a shared key in bytes. Keep this key secret and retain it
 only as long as needed. The caller still owns and should clear its original
 byte array when appropriate. `GetFrameCryptors()` returns detached cryptor
 snapshots for an E2EE configured room.
 
-Data message publishing remains synchronous because the C ABI exposes only
-`lk_room_publish_data`. Some C ABI helper functions, including raw snapshot
-handle cloning and library shutdown, have no direct managed equivalent; the
+`PublishDataAsync` copies the payload and destinations before offloading the
+synchronous C ABI call to a worker thread. Cancellation can stop a queued
+publish, but cannot interrupt one already executing in native code.
+Some C ABI helper functions, including raw snapshot
+handle cloning, have no direct managed equivalent; the
 [binding matrix](../README.md) tracks current coverage.

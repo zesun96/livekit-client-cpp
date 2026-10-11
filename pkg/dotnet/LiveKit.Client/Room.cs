@@ -8,8 +8,18 @@ namespace LiveKit.Client;
 public sealed class LiveKitException : Exception
 {
     public int Status { get; }
+    public int NativeErrorDomain { get; }
+    public int NativeErrorCode { get; }
 
-    public LiveKitException(int status, string message) : base(message) => Status = status;
+    public LiveKitException(int status, string message) : this(status, message, 0, status) { }
+
+    internal LiveKitException(int status, string message, int nativeErrorDomain,
+        int nativeErrorCode) : base(message)
+    {
+        Status = status;
+        NativeErrorDomain = nativeErrorDomain;
+        NativeErrorCode = nativeErrorCode;
+    }
 }
 
 public enum ConnectionState
@@ -174,6 +184,8 @@ public sealed partial class Room : IDisposable
     public string Metadata => GetString(Native.lk_room_metadata);
     public string LocalIdentity => GetString(Native.lk_local_participant_identity);
     public string LocalSid => GetString(Native.lk_local_participant_sid);
+    public string LocalName => GetString(Native.lk_local_participant_name);
+    public string LocalMetadata => GetString(Native.lk_local_participant_metadata);
 
     public void Connect(string url, string token)
     {

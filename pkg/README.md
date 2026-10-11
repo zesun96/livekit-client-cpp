@@ -14,12 +14,12 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Room creation and cleanup | Yes | Yes | Yes | No | Yes |
 | Synchronous room connect and disconnect | Yes | No | Yes | No | Yes |
 | Coroutine asynchronous room connect and disconnect | Yes | Yes | Yes | No | No |
-| Dynamic token source and advanced ICE connection options | Yes | Yes | Partial | No | Yes |
+| Dynamic token source and advanced ICE connection options | Yes | Yes | Yes | No | Yes |
 | Connection state, room SID, name, and metadata getters | Yes | Yes | Yes | No | Yes |
 | Connection and participant callbacks | Yes | Yes | Yes | No | Yes |
 | Receive data messages | Yes | Yes | Yes | No | Yes |
 | Publish data messages synchronously | Yes | No | Yes | No | Yes |
-| Publish data messages asynchronously | Yes | Yes | No | No | No |
+| Publish data messages asynchronously | Yes | Yes | Yes | No | No |
 | Local participant and remote participant snapshots | Yes | Yes | Yes | No | Yes |
 | Local participant metadata and attributes | Yes | Yes | Yes | No | Yes |
 | Remote track subscription and settings | Yes | Yes | Yes | No | Yes |
@@ -27,10 +27,10 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | No | Yes |
 | Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | No | Yes |
 | Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | No | Yes |
-| Text and byte streams, chat, and file transfer | Yes | Yes | Partial | No | Yes |
+| Text and byte streams, chat, and file transfer | Yes | Yes | Yes | No | Yes |
 | DataTrack schema, publishing, and subscription | Yes | Yes | Yes | No | Yes |
 | RPC calls and method handlers | Yes | Yes | Yes | No | Yes |
-| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Partial | No | Yes |
+| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Yes | No | Yes |
 | Media devices and remote recording | Yes | Yes | Yes | No | Yes |
 | Logging, tracing, and RTC statistics | Yes | Yes | Yes | No | Yes |
 
