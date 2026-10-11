@@ -5,10 +5,11 @@ import ctypes as C
 import os
 import unittest
 
-from livekit.rtc import ConnectionState, LiveKitError, Room
+from livekit.rtc import ConnectionState, LiveKitError, Room, StreamEventType
 from livekit.rtc._native import (
-    ChatMessage, DataReceived, ParticipantInfo, RoomCallbacks,
-    TrackPublicationInfo, TRACK_EVENT, _CALLBACK_NAMES,
+    Attribute, ByteStreamEvent, ChatMessage, DataReceived, FileReceived, ParticipantInfo,
+    RoomCallbacks, TextReceived, TextStreamEvent, TrackPublicationInfo,
+    TRACK_EVENT, _CALLBACK_NAMES,
 )
 
 
@@ -81,6 +82,84 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertEqual(received[0][0].name, "camera")
         self.assertEqual(received[0][1].identity, "peer")
+
+    async def test_completed_stream_events_copy_content_and_metadata(self):
+        self.room._loop = asyncio.get_running_loop()
+        texts, files = [], []
+        self.room.on("text_received", texts.append)
+        self.room.on("file_received", files.append)
+        attributes = (Attribute * 1)(Attribute(b"key", b"value"))
+        attachments = (C.c_char_p * 1)(b"stream-2")
+        message = C.create_string_buffer(b"hello")
+        text = TextReceived(
+            b"stream-1", C.cast(message, C.c_char_p), b"topic", b"peer",
+            b"reply", 123, attachments, 1, attributes, 1,
+        )
+        self.room._on_text(None, None, C.pointer(text))
+        payload = C.create_string_buffer(b"a\x00b")
+        received = FileReceived(
+            C.cast(payload, C.c_void_p), 3, b"stream-3", b"file.bin",
+            b"application/octet-stream", b"topic", b"peer", attributes, 1, 456,
+        )
+        self.room._on_bytes("file_received", C.pointer(received))
+        message[0], payload[0] = b"x", b"x"
+        await asyncio.sleep(0)
+        self.assertEqual(texts[0].text, "hello")
+        self.assertEqual(texts[0].attached_stream_ids, ("stream-2",))
+        self.assertEqual(texts[0].attributes, {"key": "value"})
+        self.assertEqual(files[0].data, b"a\x00b")
+
+    async def test_incremental_text_handler_and_queue_limit(self):
+        self.room._loop = asyncio.get_running_loop()
+        received = []
+        self.room.register_text_stream_handler("topic", received.append)
+        content = C.create_string_buffer(b"hi")
+        event = TextStreamEvent(
+            1, b"stream-1", b"text/plain", b"topic", b"peer",
+            C.cast(content, C.c_void_p), 2, 0, 1, 10, b"",
+            None, 0, 123, b"", None, 0,
+        )
+        self.room._on_text_stream(None, None, C.pointer(event))
+        content[0] = b"x"
+        await asyncio.sleep(0)
+        self.assertEqual(received[0].content, "hi")
+        self.assertEqual(received[0].type, StreamEventType.CHUNK)
+        self.room.unregister_text_stream_handler("topic")
+        for _ in range(1025):
+            self.room._post("no_listener")
+        self.assertEqual(self.room.dropped_events, 1)
+
+    async def test_incremental_byte_handler_copies_binary_chunk(self):
+        self.room._loop = asyncio.get_running_loop()
+        received = []
+        self.room.register_byte_stream_handler("assets", received.append)
+        content = C.create_string_buffer(b"a\x00b")
+        event = ByteStreamEvent(
+            1, b"stream-1", b"asset.bin", b"application/octet-stream",
+            b"assets", b"peer", C.cast(content, C.c_void_p), 3,
+            0, 0, 0, b"", None, 0, 123,
+        )
+        self.room._on_byte_stream(None, None, C.pointer(event))
+        content[0] = b"x"
+        await asyncio.sleep(0)
+        self.assertEqual(received[0].content, b"a\x00b")
+        self.assertIsNone(received[0].total_size)
+        self.room.unregister_byte_stream_handler("assets")
+
+    async def test_text_stream_decodes_across_chunk_boundaries(self):
+        self.room._loop = asyncio.get_running_loop()
+        received = []
+        self.room.on("text_stream_event", received.append)
+        for index, chunk in enumerate((b"\xe4", b"\xb8\xad")):
+            content = C.create_string_buffer(chunk)
+            event = TextStreamEvent(
+                1, b"stream-1", b"text/plain", b"topic", b"peer",
+                C.cast(content, C.c_void_p), len(chunk), index, 0, 0, b"",
+                None, 0, 123, b"", None, 0,
+            )
+            self.room._on_text_stream(None, None, C.pointer(event))
+        await asyncio.sleep(0)
+        self.assertEqual([event.content for event in received], ["", "中"])
 
 
 class LayoutTests(unittest.TestCase):

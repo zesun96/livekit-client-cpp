@@ -3,6 +3,11 @@
 from .room import (
     ConnectionState,
     ChatMessage,
+    TextMessage,
+    ByteMessage,
+    TextStreamEvent,
+    ByteStreamEvent,
+    StreamEventType,
     DataPacket,
     LiveKitError,
     LocalParticipant,
@@ -18,6 +23,11 @@ from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_s
 __all__ = [
     "ConnectionState",
     "ChatMessage",
+    "TextMessage",
+    "ByteMessage",
+    "TextStreamEvent",
+    "ByteStreamEvent",
+    "StreamEventType",
     "DataPacket",
     "LiveKitError",
     "LocalParticipant",

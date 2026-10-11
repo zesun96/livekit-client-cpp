@@ -124,6 +124,56 @@ class FileSendOptions(C.Structure):
     ]
 
 
+class FileReceived(C.Structure):
+    _fields_ = [
+        ("data", C.c_void_p), ("data_size", C.c_size_t),
+        ("stream_id", C.c_char_p), ("name", C.c_char_p),
+        ("mime_type", C.c_char_p), ("topic", C.c_char_p),
+        ("participant_identity", C.c_char_p),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+        ("timestamp", C.c_int64),
+    ]
+
+
+class TextReceived(C.Structure):
+    _fields_ = [
+        ("stream_id", C.c_char_p), ("text", C.c_char_p),
+        ("topic", C.c_char_p), ("participant_identity", C.c_char_p),
+        ("reply_to_stream_id", C.c_char_p), ("timestamp", C.c_int64),
+        ("attached_stream_ids", C.POINTER(C.c_char_p)),
+        ("attached_stream_id_count", C.c_size_t),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+    ]
+
+
+class TextStreamEvent(C.Structure):
+    _fields_ = [
+        ("type", C.c_int), ("stream_id", C.c_char_p),
+        ("mime_type", C.c_char_p), ("topic", C.c_char_p),
+        ("participant_identity", C.c_char_p),
+        ("content", C.c_void_p), ("content_size", C.c_size_t),
+        ("chunk_index", C.c_uint64), ("has_total_size", C.c_int),
+        ("total_size", C.c_uint64), ("reason", C.c_char_p),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+        ("timestamp", C.c_int64), ("reply_to_stream_id", C.c_char_p),
+        ("attached_stream_ids", C.POINTER(C.c_char_p)),
+        ("attached_stream_id_count", C.c_size_t),
+    ]
+
+
+class ByteStreamEvent(C.Structure):
+    _fields_ = [
+        ("type", C.c_int), ("stream_id", C.c_char_p),
+        ("name", C.c_char_p), ("mime_type", C.c_char_p),
+        ("topic", C.c_char_p), ("participant_identity", C.c_char_p),
+        ("content", C.c_void_p), ("content_size", C.c_size_t),
+        ("chunk_index", C.c_uint64), ("has_total_size", C.c_int),
+        ("total_size", C.c_uint64), ("reason", C.c_char_p),
+        ("attributes", C.POINTER(Attribute)), ("attribute_count", C.c_size_t),
+        ("timestamp", C.c_int64),
+    ]
+
+
 class DataPublishOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("reliable", C.c_int),
@@ -162,6 +212,14 @@ CHAT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(ChatMessage))
 TRACK_EVENT = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p,
     C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo),
+)
+FILE_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(FileReceived))
+TEXT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(TextReceived))
+TEXT_STREAM_HANDLER = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p, C.POINTER(TextStreamEvent)
+)
+BYTE_STREAM_HANDLER = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p, C.POINTER(ByteStreamEvent)
 )
 
 # Keep the complete field order. Native init uses struct_size to version the callback table.
@@ -255,6 +313,12 @@ class Native:
         self._bind("lk_byte_send_options_init", None, C.POINTER(ByteSendOptions))
         self._bind("lk_room_send_file", C.c_int, p, b, C.POINTER(FileSendOptions))
         self._bind("lk_file_send_options_init", None, C.POINTER(FileSendOptions))
+        self._bind("lk_room_register_text_stream_handler", C.c_int, p, b,
+                   TEXT_STREAM_HANDLER, p)
+        self._bind("lk_room_unregister_text_stream_handler", C.c_int, p, b)
+        self._bind("lk_room_register_byte_stream_handler", C.c_int, p, b,
+                   BYTE_STREAM_HANDLER, p)
+        self._bind("lk_room_unregister_byte_stream_handler", C.c_int, p, b)
         self._bind("lk_room_perform_rpc", C.c_int, p, C.POINTER(RpcPerformOptions), C.POINTER(p))
         self._bind("lk_rpc_perform_options_init", None, C.POINTER(RpcPerformOptions))
         self._bind("lk_rpc_result_destroy", None, p)

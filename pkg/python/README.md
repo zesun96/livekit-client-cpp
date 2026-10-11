@@ -57,6 +57,23 @@ available input, output, camera, monitor, and window IDs without opening them.
 and reconnect timeout. Other C ABI capabilities remain available through the
 C++ SDK and are not represented by this initial Python surface.
 
+Incoming completed streams emit `text_received`, `byte_received`, or
+`file_received` with detached `TextMessage` or `ByteMessage` values. For
+incremental streams, register a topic before connecting:
+
+```python
+room.register_text_stream_handler("transcript", lambda event: print(event.content))
+room.register_byte_stream_handler("assets", lambda event: print(len(event.content)))
+```
+
+The handlers receive `TextStreamEvent` and `ByteStreamEvent` values with
+`StreamEventType.OPEN`, `CHUNK`, `CLOSED`, or `FAILED`. The same values are also
+available through `room.on("text_stream_event", ...)` and
+`room.on("byte_stream_event", ...)`. Call `unregister_text_stream_handler` or
+`unregister_byte_stream_handler` to stop a topic. The room's event queue holds
+1024 events and drops the oldest when full; `room.dropped_events` reports the
+count.
+
 The native runtime is initialized once when the first `Room` is created. Do
 not call `lk_shutdown()` while Python rooms may exist. Always close a room
 with `async with` or `await room.aclose()`.

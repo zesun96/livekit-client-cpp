@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import ctypes as C
 import logging
+import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -12,6 +15,10 @@ from typing import Callable
 
 from ._native import (
     DATA_EVENT,
+    FILE_EVENT,
+    TEXT_EVENT,
+    TEXT_STREAM_HANDLER,
+    BYTE_STREAM_HANDLER,
     CHAT_EVENT,
     METADATA_EVENT,
     PARTICIPANT_EVENT,
@@ -127,6 +134,79 @@ class ChatMessage:
     generated: bool = False
 
 
+class StreamEventType(IntEnum):
+    OPEN = 0
+    CHUNK = 1
+    CLOSED = 2
+    FAILED = 3
+
+
+@dataclass(frozen=True)
+class TextMessage:
+    stream_id: str
+    text: str
+    topic: str
+    participant_identity: str
+    reply_to_stream_id: str
+    timestamp: int
+    attached_stream_ids: tuple[str, ...]
+    attributes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ByteMessage:
+    data: bytes
+    stream_id: str
+    name: str
+    mime_type: str
+    topic: str
+    participant_identity: str
+    timestamp: int
+    attributes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class TextStreamEvent:
+    type: StreamEventType
+    stream_id: str
+    mime_type: str
+    topic: str
+    participant_identity: str
+    content: str
+    chunk_index: int
+    total_size: int | None
+    reason: str
+    attributes: dict[str, str]
+    timestamp: int
+    reply_to_stream_id: str
+    attached_stream_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ByteStreamEvent:
+    type: StreamEventType
+    stream_id: str
+    name: str
+    mime_type: str
+    topic: str
+    participant_identity: str
+    content: bytes
+    chunk_index: int
+    total_size: int | None
+    reason: str
+    attributes: dict[str, str]
+    timestamp: int
+
+
+def _attributes(values, count: int) -> dict[str, str]:
+    return {decode(values[index].key): decode(values[index].value)
+            for index in range(count)} if values else {}
+
+
+def _strings(values, count: int) -> tuple[str, ...]:
+    return tuple(decode(values[index]) for index in range(count)) if values else ()
+
+
 class RpcError(LiveKitError):
     def __init__(self, message: str, code: int, data: str = ""):
         super().__init__(message, code)
@@ -203,6 +283,14 @@ class Room:
         self._loop: asyncio.AbstractEventLoop | None = loop
         self._closed = False
         self._listeners: dict[str, list[Callable]] = {}
+        self._stream_handlers: dict[tuple[str, str], Callable] = {}
+        self._text_decoders: dict[str, codecs.IncrementalDecoder] = {}
+        self._text_stream_topics: dict[str, str] = {}
+        self._text_decoder_lock = threading.Lock()
+        self._events: deque[tuple[str, tuple]] = deque()
+        self._events_lock = threading.Lock()
+        self._events_scheduled = False
+        self._dropped_events = 0
         self._callbacks = RoomCallbacks()
         self._callback_refs: list[object] = []
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
@@ -229,8 +317,57 @@ class Room:
         if callback in listeners:
             listeners.remove(callback)
 
+    def _register_stream_handler(self, kind: str, topic: str, handler: Callable) -> None:
+        self._assert_open()
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
+            raise LiveKitError("room is bound to another event loop")
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        key = (kind, topic)
+        if key in self._stream_handlers:
+            raise LiveKitError(f"{kind} stream topic is already registered: {topic}")
+        factory = TEXT_STREAM_HANDLER if kind == "text" else BYTE_STREAM_HANDLER
+        callback = factory(self._on_text_stream if kind == "text" else self._on_byte_stream)
+        fn = getattr(self._native.lib, f"lk_room_register_{kind}_stream_handler")
+        self._native.check(fn(self._handle, utf8(topic), callback, None))
+        self._callback_refs.append(callback)
+        self._stream_handlers[key] = handler
+
+    def register_text_stream_handler(self, topic: str, handler: Callable) -> None:
+        self._register_stream_handler("text", topic, handler)
+
+    def register_byte_stream_handler(self, topic: str, handler: Callable) -> None:
+        self._register_stream_handler("byte", topic, handler)
+
+    def _unregister_stream_handler(self, kind: str, topic: str) -> None:
+        self._assert_open()
+        fn = getattr(self._native.lib, f"lk_room_unregister_{kind}_stream_handler")
+        self._native.check(fn(self._handle, utf8(topic)))
+        self._stream_handlers.pop((kind, topic), None)
+        if kind == "text":
+            with self._text_decoder_lock:
+                for stream_id, stream_topic in tuple(self._text_stream_topics.items()):
+                    if stream_topic == topic:
+                        self._text_decoders.pop(stream_id, None)
+                        self._text_stream_topics.pop(stream_id, None)
+
+    def unregister_text_stream_handler(self, topic: str) -> None:
+        self._unregister_stream_handler("text", topic)
+
+    def unregister_byte_stream_handler(self, topic: str) -> None:
+        self._unregister_stream_handler("byte", topic)
+
     def _emit(self, event: str, *args) -> None:
-        for callback in tuple(self._listeners.get(event, ())):
+        callbacks = list(self._listeners.get(event, ()))
+        if event in ("text_stream_event", "byte_stream_event"):
+            kind = "text" if event == "text_stream_event" else "byte"
+            handler = self._stream_handlers.get((kind, args[0].topic))
+            if handler is not None:
+                callbacks.append(handler)
+        for callback in callbacks:
             try:
                 result = callback(*args)
                 if asyncio.iscoroutine(result):
@@ -242,10 +379,38 @@ class Room:
         loop = self._loop
         if self._closed or loop is None or loop.is_closed():
             return
+        with self._events_lock:
+            if self._closed:
+                return
+            if len(self._events) == 1024:
+                self._events.popleft()
+                self._dropped_events += 1
+            self._events.append((event, args))
+            if self._events_scheduled:
+                return
+            self._events_scheduled = True
         try:
-            loop.call_soon_threadsafe(self._emit, event, *args)
+            loop.call_soon_threadsafe(self._drain_events)
         except RuntimeError:
-            pass
+            with self._events_lock:
+                self._events.clear()
+                self._events_scheduled = False
+
+    def _drain_events(self) -> None:
+        for _ in range(256):
+            with self._events_lock:
+                if not self._events:
+                    self._events_scheduled = False
+                    return
+                event, args = self._events.popleft()
+            if not self._closed:
+                self._emit(event, *args)
+        self._loop.call_soon(self._drain_events)
+
+    @property
+    def dropped_events(self) -> int:
+        with self._events_lock:
+            return self._dropped_events
 
     def _assert_open(self) -> None:
         if self._closed:
@@ -276,6 +441,11 @@ class Room:
                        lambda _user, _room, value:
                        self._post("room_metadata_changed", decode(value)))
         self._callback("on_chat_message_received", CHAT_EVENT, self._on_chat)
+        self._callback("on_text_received", TEXT_EVENT, self._on_text)
+        self._callback("on_file_received", FILE_EVENT,
+                       lambda user, room, value: self._on_bytes("file_received", value))
+        self._callback("on_byte_received", FILE_EVENT,
+                       lambda user, room, value: self._on_bytes("byte_received", value))
         for event in ("track_published", "track_unpublished", "track_muted",
                       "track_unmuted", "track_subscribed", "track_unsubscribed",
                       "local_track_published", "local_track_unpublished",
@@ -308,6 +478,91 @@ class Room:
             participant_identity=decode(value.participant_identity),
             edit_timestamp=value.edit_timestamp if value.has_edit_timestamp else None,
             deleted=bool(value.deleted), generated=bool(value.generated),
+        ))
+
+    def _on_text(self, _user, _room, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        self._post("text_received", TextMessage(
+            stream_id=decode(value.stream_id), text=decode(value.text),
+            topic=decode(value.topic),
+            participant_identity=decode(value.participant_identity),
+            reply_to_stream_id=decode(value.reply_to_stream_id),
+            timestamp=value.timestamp,
+            attached_stream_ids=_strings(
+                value.attached_stream_ids, value.attached_stream_id_count
+            ),
+            attributes=_attributes(value.attributes, value.attribute_count),
+        ))
+
+    def _on_bytes(self, event: str, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        self._post(event, ByteMessage(
+            data=C.string_at(value.data, value.data_size) if value.data_size else b"",
+            stream_id=decode(value.stream_id), name=decode(value.name),
+            mime_type=decode(value.mime_type), topic=decode(value.topic),
+            participant_identity=decode(value.participant_identity),
+            timestamp=value.timestamp,
+            attributes=_attributes(value.attributes, value.attribute_count),
+        ))
+
+    def _on_text_stream(self, _user, _room, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        content = C.string_at(value.content, value.content_size) if value.content_size else b""
+        stream_id = decode(value.stream_id)
+        topic = decode(value.topic)
+        with self._text_decoder_lock:
+            self._text_stream_topics[stream_id] = topic
+            if value.type == StreamEventType.OPEN:
+                self._text_decoders[stream_id] = codecs.getincrementaldecoder("utf-8")(
+                    errors="replace"
+                )
+            decoder = self._text_decoders.setdefault(
+                stream_id, codecs.getincrementaldecoder("utf-8")(errors="replace")
+            )
+            decoded_content = decoder.decode(
+                content, final=value.type in (StreamEventType.CLOSED, StreamEventType.FAILED)
+            )
+            if value.type in (StreamEventType.CLOSED, StreamEventType.FAILED):
+                self._text_decoders.pop(stream_id, None)
+                self._text_stream_topics.pop(stream_id, None)
+        self._post("text_stream_event", TextStreamEvent(
+            type=StreamEventType(value.type), stream_id=stream_id,
+            mime_type=decode(value.mime_type), topic=topic,
+            participant_identity=decode(value.participant_identity),
+            content=decoded_content,
+            chunk_index=value.chunk_index,
+            total_size=value.total_size if value.has_total_size else None,
+            reason=decode(value.reason),
+            attributes=_attributes(value.attributes, value.attribute_count),
+            timestamp=value.timestamp,
+            reply_to_stream_id=decode(value.reply_to_stream_id),
+            attached_stream_ids=_strings(
+                value.attached_stream_ids, value.attached_stream_id_count
+            ),
+        ))
+
+    def _on_byte_stream(self, _user, _room, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        self._post("byte_stream_event", ByteStreamEvent(
+            type=StreamEventType(value.type), stream_id=decode(value.stream_id),
+            name=decode(value.name), mime_type=decode(value.mime_type),
+            topic=decode(value.topic),
+            participant_identity=decode(value.participant_identity),
+            content=C.string_at(value.content, value.content_size)
+            if value.content_size else b"",
+            chunk_index=value.chunk_index,
+            total_size=value.total_size if value.has_total_size else None,
+            reason=decode(value.reason),
+            attributes=_attributes(value.attributes, value.attribute_count),
+            timestamp=value.timestamp,
         ))
 
     async def _run(self, fn, *args) -> None:
@@ -600,6 +855,8 @@ class Room:
                 self._executor.shutdown(wait=True)
                 self._handle = C.c_void_p()
                 self._callback_refs.clear()
+                self._text_decoders.clear()
+                self._text_stream_topics.clear()
 
     async def __aenter__(self) -> Room:
         return self
