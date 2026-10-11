@@ -14,6 +14,7 @@ from ._native import (
     MicrophoneProcessingStatsRaw, ScreenCaptureOptionsRaw,
     SystemAudioCaptureOptionsRaw, VideoFrameMetadataRaw, VideoFrameRaw,
     VideoFrameInputRaw, VideoPlaneRaw,
+    VideoEncodingRaw, FrameMetadataFeaturesRaw,
     VideoSourceOptionsRaw, native, utf8,
 )
 
@@ -52,6 +53,58 @@ class VideoPlane:
     offset: int
     size: int
     stride: int
+
+
+class VideoDegradationPreference(IntEnum):
+    MAINTAIN_FRAMERATE = 0
+    MAINTAIN_RESOLUTION = 1
+    BALANCED = 2
+    DISABLED = 3
+
+
+class VideoCodec(IntEnum):
+    VP8 = 0
+    H264 = 1
+    VP9 = 2
+    AV1 = 3
+
+
+class BackupCodecPolicy(IntEnum):
+    PREFER_REGRESSION = 0
+    SIMULCAST = 1
+    REGRESSION = 2
+
+
+@dataclass(frozen=True)
+class VideoEncoding:
+    max_bitrate: int = 0
+    max_framerate: float = 0.0
+
+    def _raw(self, lib) -> VideoEncodingRaw:
+        if not 0 <= self.max_bitrate <= 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("max_bitrate is out of range")
+        if self.max_framerate < 0:
+            raise ValueError("max_framerate must be nonnegative")
+        raw = VideoEncodingRaw()
+        lib.lk_video_encoding_init(C.byref(raw))
+        raw.max_bitrate = self.max_bitrate
+        raw.max_framerate = self.max_framerate
+        return raw
+
+
+@dataclass(frozen=True)
+class FrameMetadataFeatures:
+    user_timestamp: bool = False
+    frame_id: bool = False
+    user_data: bool = False
+
+    def _raw(self, lib) -> FrameMetadataFeaturesRaw:
+        raw = FrameMetadataFeaturesRaw()
+        lib.lk_frame_metadata_features_init(C.byref(raw))
+        raw.user_timestamp = int(self.user_timestamp)
+        raw.frame_id = int(self.frame_id)
+        raw.user_data = int(self.user_data)
+        return raw
 
 
 @dataclass(frozen=True)
@@ -118,9 +171,15 @@ class TrackPublishOptions:
     red: bool = True
     simulcast: bool = True
     stream: str = ""
-    video_codec: int | None = None
+    video_codec: VideoCodec | None = None
     scalability_mode: str = "L3T3_KEY"
     preconnect_buffer: bool = False
+    backup_video_codec: VideoCodec | None = None
+    backup_codec_policy: BackupCodecPolicy = BackupCodecPolicy.PREFER_REGRESSION
+    video_encoding: VideoEncoding | None = None
+    backup_video_encoding: VideoEncoding | None = None
+    frame_metadata_features: FrameMetadataFeatures | None = None
+    degradation_preference: VideoDegradationPreference | None = None
 
     def _native(self, lib) -> TrackPublishOptionsRaw:
         raw = TrackPublishOptionsRaw()
@@ -134,6 +193,19 @@ class TrackPublishOptions:
             raw.video_codec = int(self.video_codec)
         raw.scalability_mode = utf8(self.scalability_mode)
         raw.preconnect_buffer = int(self.preconnect_buffer)
+        if self.backup_video_codec is not None:
+            raw.backup_video_codec_enabled = 1
+            raw.backup_video_codec = int(self.backup_video_codec)
+        raw.backup_codec_policy = int(self.backup_codec_policy)
+        if self.video_encoding is not None:
+            raw.video_encoding = self.video_encoding._raw(lib)
+        if self.backup_video_encoding is not None:
+            raw.backup_video_encoding = self.backup_video_encoding._raw(lib)
+        if self.frame_metadata_features is not None:
+            raw.frame_metadata_features = self.frame_metadata_features._raw(lib)
+        if self.degradation_preference is not None:
+            raw.has_degradation_preference = 1
+            raw.degradation_preference = int(self.degradation_preference)
         return raw
 
 
@@ -653,6 +725,45 @@ class LocalTrack:
         raw = (options or TrackPublishOptions())._native(self._room._native.lib)
         await self._room._run(self._room._native.lib.lk_local_track_publish,
                               self._room._handle, self._handle, C.byref(raw))
+
+    async def publish_screen_share_video(
+        self, options: TrackPublishOptions | None = None,
+    ) -> None:
+        self._assert_open()
+        raw = (options or TrackPublishOptions())._native(self._room._native.lib)
+        await self._room._run(
+            self._room._native.lib.lk_local_track_publish_screen_share_video,
+            self._room._handle, self._handle, C.byref(raw),
+        )
+
+    async def publish_screen_share_audio(
+        self, options: TrackPublishOptions | None = None,
+    ) -> None:
+        self._assert_open()
+        raw = (options or TrackPublishOptions())._native(self._room._native.lib)
+        await self._room._run(
+            self._room._native.lib.lk_local_track_publish_screen_share_audio,
+            self._room._handle, self._handle, C.byref(raw),
+        )
+
+    async def update_video_encoding(
+        self, encoding: VideoEncoding, *, backup_codec: bool = False,
+    ) -> None:
+        self._assert_open()
+        raw = encoding._raw(self._room._native.lib)
+        await self._room._run(
+            self._room._native.lib.lk_local_video_track_update_encoding,
+            self._handle, C.byref(raw), int(backup_codec),
+        )
+
+    async def update_degradation_preference(
+        self, preference: VideoDegradationPreference,
+    ) -> None:
+        self._assert_open()
+        await self._room._run(
+            self._room._native.lib.lk_local_video_track_update_degradation_preference,
+            self._handle, int(VideoDegradationPreference(preference)),
+        )
 
     async def unpublish(self, *, stop_on_unpublish: bool = False) -> None:
         self._assert_open()

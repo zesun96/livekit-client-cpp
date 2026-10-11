@@ -834,6 +834,9 @@ class Native:
         self._bind("lk_video_frame_input_init", None, C.POINTER(VideoFrameInputRaw))
         self._bind("lk_video_frame_metadata_init", None,
                    C.POINTER(VideoFrameMetadataRaw))
+        self._bind("lk_video_encoding_init", None, C.POINTER(VideoEncodingRaw))
+        self._bind("lk_frame_metadata_features_init", None,
+                   C.POINTER(FrameMetadataFeaturesRaw))
         self._bind("lk_video_source_capture_frame", C.c_int, p,
                    C.POINTER(VideoFrameInputRaw))
         for kind, id_field in (("camera", "device_id"), ("screen", "source_id")):
@@ -847,6 +850,13 @@ class Native:
         self._bind("lk_room_create_audio_track", C.c_int, p, b, p, C.POINTER(p))
         self._bind("lk_room_create_video_track", C.c_int, p, b, p, C.POINTER(p))
         self._bind("lk_local_track_publish", C.c_int, p, p, C.POINTER(TrackPublishOptionsRaw))
+        self._bind("lk_local_track_publish_screen_share_video", C.c_int, p, p,
+                   C.POINTER(TrackPublishOptionsRaw))
+        self._bind("lk_local_track_publish_screen_share_audio", C.c_int, p, p,
+                   C.POINTER(TrackPublishOptionsRaw))
+        self._bind("lk_local_video_track_update_encoding", C.c_int, p,
+                   C.POINTER(VideoEncodingRaw), C.c_int)
+        self._bind("lk_local_video_track_update_degradation_preference", C.c_int, p, C.c_int)
         self._bind("lk_local_track_unpublish", C.c_int, p, C.c_int)
         self._bind("lk_local_track_set_muted", C.c_int, p, C.c_int)
         self._bind("lk_local_track_destroy", C.c_int, p)

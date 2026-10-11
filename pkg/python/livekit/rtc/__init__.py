@@ -29,8 +29,9 @@ from .diagnostics import (
 )
 from .media import (
     AudioFrame, AudioSource, LocalTrack, MicrophoneProcessingStats,
-    RemoteMediaStream, TrackPublishOptions,
+    RemoteMediaStream, TrackPublishOptions, FrameMetadataFeatures, BackupCodecPolicy,
     TrackSource, VideoBufferType, VideoFrame, VideoPlane, VideoRotation, VideoSource,
+    VideoCodec, VideoDegradationPreference, VideoEncoding,
 )
 from .data_track import (
     DataTrackError, DataTrackFrame, DataTrackFrameEncoding, DataTrackPublication,
@@ -118,6 +119,11 @@ __all__ = [
     "RemoteMediaStream",
     "LocalTrack",
     "TrackPublishOptions",
+    "FrameMetadataFeatures",
+    "BackupCodecPolicy",
+    "VideoCodec",
+    "VideoDegradationPreference",
+    "VideoEncoding",
     "TrackSource",
     "DataTrackError",
     "DataTrackFrame",

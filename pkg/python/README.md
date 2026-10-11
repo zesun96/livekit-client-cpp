@@ -153,6 +153,10 @@ and channel count. `capture_i420` accepts tightly packed I420; `capture_frame`
 also accepts RGBA, RGB24, NV12, and other native video buffer formats with
 optional plane layout, rotation, and frame metadata. Explicit source closure
 releases native memory; a source cannot close while a track still uses it.
+`TrackPublishOptions` supports primary and backup video encoding, backup
+codec, frame metadata features, and degradation preference. Published video
+tracks can update encoding and degradation preference. Screen share tracks
+also provide `publish_screen_share_video` and `publish_screen_share_audio`.
 For a subscribed remote track, use `await room.create_audio_stream(identity, sid)`
 or `await room.create_video_stream(identity, sid)` to obtain a bounded reader.
 `await stream.read(timeout_ms=1000)` returns a detached `AudioFrame` or

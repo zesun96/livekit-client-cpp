@@ -7,7 +7,8 @@ import unittest
 
 from livekit.rtc import (
     AudioFrame, AudioSource, LiveKitError, Room, VideoBufferType,
-    VideoPlane, VideoRotation, VideoSource,
+    VideoPlane, VideoRotation, VideoSource, VideoEncoding,
+    VideoDegradationPreference, FrameMetadataFeatures, TrackPublishOptions,
 )
 from livekit.rtc._native import (
     AudioFrameRaw, ParticipantInfo, TrackPublicationInfo, VideoFrameMetadataRaw,
@@ -17,6 +18,21 @@ from livekit.rtc._native import (
 
 @unittest.skipUnless(os.environ.get("LIVEKIT_CLIENT_CPP_LIBRARY"), "native library is not set")
 class ExternalMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_publish_option_struct(self):
+        from livekit.rtc._native import native
+        raw = TrackPublishOptions(
+            backup_video_codec=2,
+            video_encoding=VideoEncoding(max_bitrate=1_500_000, max_framerate=30),
+            frame_metadata_features=FrameMetadataFeatures(frame_id=True),
+            degradation_preference=VideoDegradationPreference.MAINTAIN_RESOLUTION,
+        )._native(native().lib)
+        self.assertEqual(raw.video_encoding.max_bitrate, 1_500_000)
+        self.assertEqual(raw.backup_video_codec_enabled, 1)
+        self.assertEqual(raw.frame_metadata_features.frame_id, 1)
+        self.assertEqual(raw.degradation_preference, 1)
+        with self.assertRaises(ValueError):
+            VideoEncoding(max_bitrate=-1)._raw(native().lib)
+
     async def test_audio_source_capture_and_disconnected_track_error(self):
         source = AudioSource(sample_rate=48000, num_channels=1, queue_size_ms=100)
         try:
