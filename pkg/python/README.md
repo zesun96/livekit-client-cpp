@@ -1,0 +1,70 @@
+# livekit-client Python binding
+
+This Python 3.10+ package uses the shared `livekit-client-cpp` C ABI. Its public
+import is `from livekit import rtc`, matching the official Python RTC SDK where
+the underlying C++ SDK supports the same behavior. It requires the native
+`livekitclient` shared library; no Python extension compilation is needed.
+
+```powershell
+python -m pip install -e pkg/python
+$env:LIVEKIT_CLIENT_CPP_LIBRARY = 'C:\path\to\livekitclient.dll'
+```
+
+The Windows loader must also find `websockets.dll` and the other native
+dependencies. Set `LIVEKIT_CLIENT_CPP_LIBRARY` to the full path of the SDK DLL,
+or put the SDK library on the platform's library search path.
+
+```python
+import asyncio
+import os
+from livekit import rtc
+
+async def main():
+    async with rtc.Room() as room:
+        @room.on("participant_connected")
+        def joined(participant):
+            print(participant.identity)
+
+        @room.on("data_received")
+        def received(packet):
+            print(packet.participant_identity, packet.topic, packet.data)
+
+        await room.connect(os.environ["LIVEKIT_URL"], os.environ["LIVEKIT_TOKEN"])
+        await room.local_participant.publish_data(b"hello", topic="greeting")
+        await asyncio.sleep(5)
+
+asyncio.run(main())
+```
+
+`connect`, `disconnect`, `publish_data`, `publish_dtmf`, chat, one-shot text,
+byte, and file streams, local name/metadata/attribute updates, and `perform_rpc` are
+awaitable. The binding serializes these blocking
+native calls on one room worker. Callbacks are copied and dispatched on the
+Python event loop. Register event handlers before `connect`; `on` also accepts
+`room.on("event", callback)`. Supported events are `connected`, `disconnected`,
+`reconnecting`, `reconnected`, `connection_state_changed`, `disconnect_reason`,
+`participant_connected`, `participant_disconnected`, `data_received`,
+`room_metadata_changed`, `chat_message_received`, `token_refreshed`, and `room_eos`.
+
+`room.remote_participants` gives detached participant snapshots, including
+attributes and track publications, keyed by identity. Track events deliver
+detached publication and participant values. `set_remote_track_subscribed`
+and `update_remote_track_settings` control received tracks. Room and local
+participant string properties are live getters.
+Use `rtc.list_media_devices()` and `rtc.list_screen_sources()` to enumerate
+available input, output, camera, monitor, and window IDs without opening them.
+`RoomOptions` covers auto subscribe, adaptive stream, dynacast, join retries,
+and reconnect timeout. Other C ABI capabilities remain available through the
+C++ SDK and are not represented by this initial Python surface.
+
+The native runtime is initialized once when the first `Room` is created. Do
+not call `lk_shutdown()` while Python rooms may exist. Always close a room
+with `async with` or `await room.aclose()`.
+
+## Offline checks
+
+```powershell
+$env:PYTHONPATH = 'pkg/python'
+$env:LIVEKIT_CLIENT_CPP_LIBRARY = 'C:\path\to\livekitclient.dll'
+python -m unittest discover -s pkg/python/tests -v
+```

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "livekit-client-cpp"
+version = "0.6.0"
+description = "Python binding for the livekit-client-cpp C ABI"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["livekit*"]
+namespaces = true
