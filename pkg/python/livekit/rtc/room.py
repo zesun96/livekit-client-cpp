@@ -13,6 +13,9 @@ from ._native import (
     DATA_EVENT,
     DATA_TRACK_EVENT,
     DATA_TRACK_FRAME_EVENT,
+    AUDIO_FRAME_EVENT,
+    VIDEO_FRAME_EVENT,
+    VIDEO_FRAME_METADATA_EVENT,
     FILE_EVENT,
     TEXT_EVENT,
     TEXT_STREAM_HANDLER,
@@ -32,6 +35,7 @@ from ._native import (
     FileSendOptions,
     Attribute,
     DataTrackSnapshotInfoRaw,
+    MediaStreamOptionsRaw,
     AudioPlaybackStatsRaw,
     LiveKitError,
     RoomCallbacks,
@@ -69,7 +73,10 @@ from ._events import EventDispatcher
 from ._connection import connection_options, subscription_permissions
 from ._token_source import TokenSourceBridge, fetch_options_raw
 from ._rpc import RpcHandlerBridge
-from .media import AudioSource, LocalTrack, TrackPublishOptions, VideoSource
+from .media import (
+    AudioFrame, AudioSource, LocalTrack, RemoteMediaStream, TrackPublishOptions,
+    VideoFrame, VideoSource,
+)
 from .data_track import (
     DataTrackFrame, DataTrackPublication, DataTrackPublishOptions, DataTrackReader,
     DataTrackSchema, DataTrackSchemaEncoding, DataTrackSchemaId,
@@ -217,6 +224,7 @@ class Room:
         self._local_tracks: set[LocalTrack] = set()
         self._local_data_tracks: set[LocalDataTrack] = set()
         self._data_track_readers: set[DataTrackReader] = set()
+        self._media_streams: set[RemoteMediaStream] = set()
         self._native.lib.lk_room_callbacks_init(C.byref(self._callbacks))
         self._install_callbacks()
         try:
@@ -353,6 +361,10 @@ class Room:
                            if track and participant else None)
         self._callback("on_data_track_frame", DATA_TRACK_FRAME_EVENT,
                        self._on_data_track_frame)
+        self._callback("on_audio_frame", AUDIO_FRAME_EVENT, self._on_audio_frame)
+        self._callback("on_video_frame", VIDEO_FRAME_EVENT, self._on_video_frame)
+        self._callback("on_video_frame_with_metadata", VIDEO_FRAME_METADATA_EVENT,
+                       self._on_video_frame_with_metadata)
         self._callback("on_encryption_state_changed", ENCRYPTION_EVENT,
                        lambda _user, _room, value:
                        self._post("encryption_state_changed",
@@ -415,6 +427,28 @@ class Room:
                        C.string_at(value.data, value.data_size) if value.data_size else b"",
                        value.user_timestamp if value.has_user_timestamp else None,
                    ))
+
+    def _on_audio_frame(self, _user, _room, track, participant, frame) -> None:
+        if track and participant and frame:
+            self._post("audio_frame", TrackPublication.from_native(track.contents),
+                       Participant.from_native(participant.contents),
+                       AudioFrame.from_native(frame.contents))
+
+    def _on_video_frame(self, _user, _room, track, participant, frame) -> None:
+        if track and participant and frame:
+            self._post("video_frame", TrackPublication.from_native(track.contents),
+                       Participant.from_native(participant.contents),
+                       VideoFrame.from_native(frame.contents))
+
+    def _on_video_frame_with_metadata(
+        self, _user, _room, track, participant, frame, metadata,
+    ) -> None:
+        if track and participant and frame:
+            self._post("video_frame_with_metadata",
+                       TrackPublication.from_native(track.contents),
+                       Participant.from_native(participant.contents),
+                       VideoFrame.from_native(frame.contents,
+                                              metadata.contents if metadata else None))
 
     def _on_chat(self, _user, _room, received) -> None:
         if not received:
@@ -669,6 +703,41 @@ class Room:
                     self._handle, utf8(participant_identity), utf8(track_sid), C.byref(raw)
                 ))
         await self._run_callable(call)
+
+    async def create_audio_stream(
+        self, participant_identity: str, track_sid: str, *, capacity: int = 16,
+    ) -> RemoteMediaStream:
+        return await self._create_media_stream(
+            "audio", participant_identity, track_sid, capacity
+        )
+
+    async def create_video_stream(
+        self, participant_identity: str, track_sid: str, *, capacity: int = 16,
+    ) -> RemoteMediaStream:
+        return await self._create_media_stream(
+            "video", participant_identity, track_sid, capacity
+        )
+
+    async def _create_media_stream(
+        self, kind: str, participant_identity: str, track_sid: str, capacity: int,
+    ) -> RemoteMediaStream:
+        if capacity <= 0:
+            raise ValueError("media stream capacity must be positive")
+        raw = MediaStreamOptionsRaw()
+        self._native.lib.lk_media_stream_options_init(C.byref(raw))
+        raw.capacity = capacity
+
+        def call():
+            handle = C.c_void_p()
+            fn = getattr(self._native.lib, f"lk_room_create_{kind}_stream")
+            self._native.check(fn(
+                self._handle, utf8(participant_identity), utf8(track_sid),
+                C.byref(raw), C.byref(handle),
+            ))
+            stream = RemoteMediaStream(self, kind, handle)
+            self._media_streams.add(stream)
+            return stream
+        return await self._run_callable(call)
 
     async def publish_dtmf(self, code: int, digit: str) -> None:
         await self._run(self._native.lib.lk_room_publish_dtmf,
@@ -1016,6 +1085,8 @@ class Room:
     def _destroy_native(self) -> None:
         for reader in tuple(self._data_track_readers):
             reader.close()
+        for stream in tuple(self._media_streams):
+            stream.close()
         self._native.lib.lk_room_destroy(self._handle)
         for track in tuple(self._local_tracks):
             if track._handle:

@@ -132,8 +132,91 @@ class AudioSourceOptionsRaw(C.Structure):
     ]
 
 
+class MicrophoneCaptureOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("device_id", C.c_char_p),
+        ("queue_size_ms", C.c_uint32), ("echo_cancellation", C.c_int),
+        ("auto_gain_control", C.c_int), ("noise_suppression", C.c_int),
+    ]
+
+
+class SystemAudioCaptureOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("device_id", C.c_char_p),
+        ("queue_size_ms", C.c_uint32),
+    ]
+
+
+class MicrophoneProcessingStatsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t),
+        ("capture_frames_processed", C.c_uint64),
+        ("render_frames_processed", C.c_uint64),
+        ("capture_processing_errors", C.c_uint64),
+        ("render_processing_errors", C.c_uint64),
+        ("frames_dropped", C.c_uint64),
+        ("echo_cancellation_enabled", C.c_int),
+        ("echo_return_loss_available", C.c_int),
+        ("echo_return_loss_db", C.c_double),
+        ("echo_return_loss_enhancement_available", C.c_int),
+        ("echo_return_loss_enhancement_db", C.c_double),
+        ("residual_echo_likelihood_available", C.c_int),
+        ("residual_echo_likelihood", C.c_double),
+        ("residual_echo_likelihood_recent_max_available", C.c_int),
+        ("residual_echo_likelihood_recent_max", C.c_double),
+        ("delay_median_available", C.c_int), ("delay_median_ms", C.c_int32),
+        ("delay_standard_deviation_available", C.c_int),
+        ("delay_standard_deviation_ms", C.c_int32),
+        ("delay_available", C.c_int), ("delay_ms", C.c_int32),
+    ]
+
+
 class VideoSourceOptionsRaw(C.Structure):
     _fields_ = [("struct_size", C.c_size_t), ("is_screencast", C.c_int)]
+
+
+class CameraCaptureOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("device_id", C.c_char_p),
+        ("width", C.c_uint32), ("height", C.c_uint32),
+        ("frames_per_second", C.c_uint32),
+    ]
+
+
+class ScreenCaptureOptionsRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("source_id", C.c_char_p),
+        ("frames_per_second", C.c_uint32), ("include_cursor", C.c_int),
+    ]
+
+
+class MediaStreamOptionsRaw(C.Structure):
+    _fields_ = [("struct_size", C.c_size_t), ("capacity", C.c_size_t)]
+
+
+class AudioFrameRaw(C.Structure):
+    _fields_ = [
+        ("data", C.c_void_p), ("sample_count", C.c_size_t),
+        ("sample_rate", C.c_uint32), ("num_channels", C.c_uint32),
+        ("samples_per_channel", C.c_uint32),
+    ]
+
+
+class VideoFrameRaw(C.Structure):
+    _fields_ = [
+        ("data", C.c_void_p), ("data_size", C.c_size_t),
+        ("width", C.c_uint32), ("height", C.c_uint32),
+        ("timestamp_us", C.c_int64),
+    ]
+
+
+class VideoFrameMetadataRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("has_user_timestamp_us", C.c_int),
+        ("user_timestamp_us", C.c_uint64), ("has_frame_id", C.c_int),
+        ("frame_id", C.c_uint32), ("has_user_data", C.c_int),
+        ("user_data", C.c_void_p), ("user_data_size", C.c_size_t),
+    ]
 
 
 class VideoEncodingRaw(C.Structure):
@@ -431,6 +514,21 @@ DATA_TRACK_FRAME_EVENT = C.CFUNCTYPE(
     C.POINTER(DataTrackInfoRaw), C.POINTER(ParticipantInfo),
     C.POINTER(DataTrackFrameViewRaw),
 )
+AUDIO_FRAME_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo),
+    C.POINTER(AudioFrameRaw),
+)
+VIDEO_FRAME_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo),
+    C.POINTER(VideoFrameRaw),
+)
+VIDEO_FRAME_METADATA_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo),
+    C.POINTER(VideoFrameRaw), C.POINTER(VideoFrameMetadataRaw),
+)
 FILE_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(FileReceived))
 TEXT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(TextReceived))
 TEXT_STREAM_HANDLER = C.CFUNCTYPE(
@@ -538,7 +636,15 @@ class Native:
         self._bind("lk_room_audio_playback_stats", C.c_int, p,
                    C.POINTER(AudioPlaybackStatsRaw))
         self._bind("lk_audio_source_options_init", None, C.POINTER(AudioSourceOptionsRaw))
+        self._bind("lk_microphone_capture_options_init", None,
+                   C.POINTER(MicrophoneCaptureOptionsRaw))
+        self._bind("lk_system_audio_capture_options_init", None,
+                   C.POINTER(SystemAudioCaptureOptionsRaw))
+        self._bind("lk_microphone_processing_stats_init", None,
+                   C.POINTER(MicrophoneProcessingStatsRaw))
         self._bind("lk_video_source_options_init", None, C.POINTER(VideoSourceOptionsRaw))
+        self._bind("lk_camera_capture_options_init", None, C.POINTER(CameraCaptureOptionsRaw))
+        self._bind("lk_screen_capture_options_init", None, C.POINTER(ScreenCaptureOptionsRaw))
         self._bind("lk_track_publish_options_init", None, C.POINTER(TrackPublishOptionsRaw))
         self._bind("lk_audio_source_create", C.c_int, C.POINTER(AudioSourceOptionsRaw), C.POINTER(p))
         self._bind("lk_audio_source_destroy", C.c_int, p)
@@ -546,12 +652,45 @@ class Native:
         self._bind("lk_audio_source_queued_duration_ms", C.c_int, p, C.POINTER(C.c_uint32))
         self._bind("lk_audio_source_clear_queue", C.c_int, p)
         self._bind("lk_audio_source_wait_for_playout", C.c_int, p, C.c_uint32)
+        self._bind("lk_audio_source_create_microphone", C.c_int,
+                   C.POINTER(MicrophoneCaptureOptionsRaw), C.POINTER(p))
+        self._bind("lk_audio_source_create_system_audio", C.c_int,
+                   C.POINTER(SystemAudioCaptureOptionsRaw), C.POINTER(p))
+        for kind in ("microphone", "system_audio"):
+            prefix = "lk_audio_source_" + kind
+            self._bind(prefix + "_start", C.c_int, p)
+            self._bind(prefix + "_stop", C.c_int, p)
+            self._bind(prefix + "_is_capturing", C.c_int, p)
+            self._bind(prefix + "_device_id", s, p, b, s)
+            self._bind(prefix + "_switch_device", C.c_int, p, b)
+        self._bind("lk_audio_source_microphone_set_muted", C.c_int, p, C.c_int)
+        self._bind("lk_audio_source_microphone_is_muted", C.c_int, p)
+        self._bind("lk_audio_source_microphone_set_volume", C.c_int, p, C.c_float)
+        self._bind("lk_audio_source_microphone_volume", C.c_float, p)
+        self._bind("lk_audio_source_microphone_set_processing_options", C.c_int, p,
+                   C.POINTER(AudioSourceOptionsRaw))
+        self._bind("lk_audio_source_microphone_processing_options", C.c_int, p,
+                   C.POINTER(AudioSourceOptionsRaw))
+        self._bind("lk_audio_source_microphone_processing_stats", C.c_int, p,
+                   C.POINTER(MicrophoneProcessingStatsRaw))
         self._bind("lk_video_source_create", C.c_int, C.POINTER(VideoSourceOptionsRaw), C.POINTER(p))
+        self._bind("lk_video_source_create_camera", C.c_int,
+                   C.POINTER(CameraCaptureOptionsRaw), C.POINTER(p))
+        self._bind("lk_video_source_create_screen", C.c_int,
+                   C.POINTER(ScreenCaptureOptionsRaw), C.POINTER(p))
         self._bind("lk_video_source_destroy", C.c_int, p)
         self._bind("lk_video_source_dimensions", C.c_int, p,
                    C.POINTER(C.c_uint32), C.POINTER(C.c_uint32))
         self._bind("lk_video_source_capture_i420", C.c_int, p, p, s,
                    C.c_uint32, C.c_uint32, C.c_int64)
+        for kind, id_field in (("camera", "device_id"), ("screen", "source_id")):
+            prefix = "lk_video_source_" + kind
+            self._bind(prefix + "_start", C.c_int, p)
+            self._bind(prefix + "_stop", C.c_int, p)
+            self._bind(prefix + "_is_capturing", C.c_int, p)
+            self._bind(prefix + "_" + id_field, s, p, b, s)
+            self._bind(prefix + "_switch_" + ("device" if kind == "camera" else "source"),
+                       C.c_int, p, b)
         self._bind("lk_room_create_audio_track", C.c_int, p, b, p, C.POINTER(p))
         self._bind("lk_room_create_video_track", C.c_int, p, b, p, C.POINTER(p))
         self._bind("lk_local_track_publish", C.c_int, p, p, C.POINTER(TrackPublishOptionsRaw))
@@ -559,6 +698,19 @@ class Native:
         self._bind("lk_local_track_set_muted", C.c_int, p, C.c_int)
         self._bind("lk_local_track_destroy", C.c_int, p)
         self._bind("lk_room_republish_all_tracks", C.c_int, p)
+        self._bind("lk_media_stream_options_init", None, C.POINTER(MediaStreamOptionsRaw))
+        for kind, frame in (("audio", AudioFrameRaw), ("video", VideoFrameRaw)):
+            self._bind(f"lk_room_create_{kind}_stream", C.c_int, p, b, b,
+                       C.POINTER(MediaStreamOptionsRaw), C.POINTER(p))
+            self._bind(f"lk_{kind}_stream_destroy", None, p)
+            self._bind(f"lk_{kind}_stream_close", None, p)
+            self._bind(f"lk_{kind}_stream_is_closed", C.c_int, p)
+            self._bind(f"lk_{kind}_stream_dropped_frames", s, p)
+            self._bind(f"lk_{kind}_stream_read_for", C.c_int, p, C.c_uint32, C.POINTER(p))
+            self._bind(f"lk_owned_{kind}_frame_destroy", None, p)
+            self._bind(f"lk_owned_{kind}_frame_data", C.c_int, p, C.POINTER(frame))
+        self._bind("lk_owned_video_frame_metadata", C.c_int, p,
+                   C.POINTER(VideoFrameMetadataRaw))
         self._bind("lk_data_track_schema_id_init", None, C.POINTER(DataTrackSchemaIdRaw))
         self._bind("lk_data_track_publish_options_init", None,
                    C.POINTER(DataTrackPublishOptionsRaw))

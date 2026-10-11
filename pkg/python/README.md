@@ -149,6 +149,20 @@ finally:
 Audio input is signed 16-bit interleaved PCM at the source's configured rate
 and channel count. Video input is tightly packed I420. Explicit source closure
 releases native memory; a source cannot close while a track still uses it.
+For a subscribed remote track, use `await room.create_audio_stream(identity, sid)`
+or `await room.create_video_stream(identity, sid)` to obtain a bounded reader.
+`await stream.read(timeout_ms=1000)` returns a detached `AudioFrame` or
+`VideoFrame`, or `None` on timeout/closure. Call `stream.close()` when done.
+The `audio_frame`, `video_frame`, and `video_frame_with_metadata` room events
+carry detached track, participant, and frame values. Video metadata includes
+optional user timestamp, frame ID, and user bytes.
+Device-backed sources use the same track API: create them with
+`AudioSource.from_microphone(...)`, `AudioSource.from_system_audio(...)`,
+`VideoSource.from_camera(...)`, or `VideoSource.from_screen(...)`, then call
+`await source.start_capture()` and `await source.stop_capture()` as needed.
+Sources expose capture status, current device or screen ID, and switching.
+Microphone sources also expose mute, volume, processing options, and processing
+statistics. Device constructors open the selected physical device.
 
 DataTrack schemas, publishers, remote snapshots, and bounded pull readers are
 available after connecting. Schema definitions and frames use `bytes`:

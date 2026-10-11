@@ -19,7 +19,11 @@ from .room import (
     __version__,
 )
 from .media_devices import MediaDevice, ScreenSource, list_media_devices, list_screen_sources
-from .media import AudioSource, VideoSource, LocalTrack, TrackPublishOptions, TrackSource
+from .media import (
+    AudioFrame, AudioSource, LocalTrack, MicrophoneProcessingStats,
+    RemoteMediaStream, TrackPublishOptions,
+    TrackSource, VideoFrame, VideoSource,
+)
 from .data_track import (
     DataTrackError, DataTrackFrame, DataTrackFrameEncoding, DataTrackPublication,
     DataTrackPublishOptions, DataTrackReader, DataTrackSchema, DataTrackSchemaEncoding,
@@ -71,7 +75,11 @@ __all__ = [
     "__version__",
     "MediaDevice",
     "AudioSource",
+    "AudioFrame",
+    "MicrophoneProcessingStats",
     "VideoSource",
+    "VideoFrame",
+    "RemoteMediaStream",
     "LocalTrack",
     "TrackPublishOptions",
     "TrackSource",
