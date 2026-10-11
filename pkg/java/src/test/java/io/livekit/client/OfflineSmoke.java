@@ -38,6 +38,18 @@ public final class OfflineSmoke {
                  VideoSource video = new VideoSource(false)) {
                 audio.capture(new short[480]);
                 video.captureI420(new byte[6], 2, 2, 0);
+                try {
+                    room.createAudioTrack("offline audio", audio);
+                    throw new AssertionError("Disconnected audio track creation was accepted");
+                } catch (LiveKitException expected) {
+                    // Failed creation must release the source reference.
+                }
+                try {
+                    room.createVideoTrack("offline video", video);
+                    throw new AssertionError("Disconnected video track creation was accepted");
+                } catch (LiveKitException expected) {
+                    // Failed creation must release the source reference.
+                }
             }
         }
         System.out.println("Java JNI offline smoke passed");
