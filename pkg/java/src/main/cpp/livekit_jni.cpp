@@ -421,6 +421,113 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connect(JNIEnv* env, jclass
 	std::string u = bytes(env, url), t = bytes(env, token);
 	fail(env, lk_room_connect(handle(ptr)->room, u.c_str(), t.c_str()));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* env, jclass,
+                                                                        jlong ptr, jbyteArray url,
+                                                                        jbyteArray token,
+                                                                        jobject config) {
+	std::string u = bytes(env, url), t = bytes(env, token);
+	lk_room_connect_options_t options;
+	lk_room_connect_options_init(&options);
+	jclass cls = env->GetObjectClass(config);
+	auto boolean = [env, config, cls](const char* name) {
+		return env->CallBooleanMethod(config, env->GetMethodID(cls, name, "()Z")) == JNI_TRUE;
+	};
+	auto integer = [env, config, cls](const char* name) {
+		return env->CallIntMethod(config, env->GetMethodID(cls, name, "()I"));
+	};
+	options.auto_subscribe = boolean("autoSubscribe") ? 1 : 0;
+	options.adaptive_stream = boolean("adaptiveStream") ? 1 : 0;
+	options.dynacast = boolean("dynacast") ? 1 : 0;
+	options.join_retries = static_cast<uint32_t>(integer("joinRetries"));
+	options.reconnect_timeout_ms = static_cast<uint32_t>(integer("reconnectTimeoutMs"));
+	options.ice_transport_type = static_cast<lk_ice_transport_type_t>(integer("iceTransportType"));
+	options.continual_gathering_policy =
+	    static_cast<lk_continual_gathering_policy_t>(integer("continualGatheringPolicy"));
+	struct OwnedIce {
+		std::vector<std::string> urls;
+		std::vector<const char*> url_pointers;
+		std::string username;
+		std::string password;
+	};
+	std::vector<OwnedIce> owned;
+	std::vector<lk_ice_server_t> servers;
+	jmethodID get_ice = env->GetMethodID(cls, "iceServers", "()[Lio/livekit/client/IceServer;");
+	jobjectArray ice = static_cast<jobjectArray>(env->CallObjectMethod(config, get_ice));
+	jsize count = env->GetArrayLength(ice);
+	owned.reserve(static_cast<size_t>(count));
+	servers.resize(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		jobject server = env->GetObjectArrayElement(ice, i);
+		jclass server_cls = env->GetObjectClass(server);
+		jmethodID get_urls = env->GetMethodID(server_cls, "urls", "()[Ljava/lang/String;");
+		jobjectArray urls = static_cast<jobjectArray>(env->CallObjectMethod(server, get_urls));
+		OwnedIce item;
+		for (jsize j = 0; j < env->GetArrayLength(urls); ++j) {
+			jstring value = static_cast<jstring>(env->GetObjectArrayElement(urls, j));
+			item.urls.push_back(java_string_bytes(env, value));
+			env->DeleteLocalRef(value);
+		}
+		jstring username = static_cast<jstring>(env->CallObjectMethod(
+		    server, env->GetMethodID(server_cls, "username", "()Ljava/lang/String;")));
+		jstring password = static_cast<jstring>(env->CallObjectMethod(
+		    server, env->GetMethodID(server_cls, "password", "()Ljava/lang/String;")));
+		item.username = java_string_bytes(env, username);
+		item.password = java_string_bytes(env, password);
+		owned.push_back(std::move(item));
+		env->DeleteLocalRef(username);
+		env->DeleteLocalRef(password);
+		env->DeleteLocalRef(urls);
+		env->DeleteLocalRef(server_cls);
+		env->DeleteLocalRef(server);
+	}
+	for (jsize i = 0; i < count; ++i) {
+		auto& item = owned[static_cast<size_t>(i)];
+		for (const auto& value : item.urls)
+			item.url_pointers.push_back(value.c_str());
+		auto& raw = servers[static_cast<size_t>(i)];
+		lk_ice_server_init(&raw);
+		raw.urls = item.url_pointers.data();
+		raw.url_count = item.url_pointers.size();
+		raw.username = item.username.c_str();
+		raw.password = item.password.c_str();
+	}
+	options.ice_servers = servers.data();
+	options.ice_server_count = servers.size();
+	std::string key, salt;
+	lk_e2ee_options_t e2ee;
+	lk_e2ee_options_init(&e2ee);
+	jmethodID get_e2ee = env->GetMethodID(cls, "e2ee", "()Lio/livekit/client/E2eeOptions;");
+	jobject encryption = env->CallObjectMethod(config, get_e2ee);
+	if (encryption != nullptr) {
+		jclass e2ee_cls = env->GetObjectClass(encryption);
+		jbyteArray raw_key = static_cast<jbyteArray>(
+		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "sharedKey", "()[B")));
+		jbyteArray raw_salt = static_cast<jbyteArray>(
+		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "ratchetSalt", "()[B")));
+		key = bytes(env, raw_key);
+		salt = bytes(env, raw_salt);
+		e2ee.enabled = env->CallBooleanMethod(
+		                   encryption, env->GetMethodID(e2ee_cls, "enabled", "()Z")) == JNI_TRUE
+		                   ? 1
+		                   : 0;
+		e2ee.key_derivation = static_cast<lk_e2ee_key_derivation_t>(
+		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "keyDerivation", "()I")));
+		e2ee.shared_key = reinterpret_cast<const uint8_t*>(key.data());
+		e2ee.shared_key_size = key.size();
+		e2ee.ratchet_salt = reinterpret_cast<const uint8_t*>(salt.data());
+		e2ee.ratchet_salt_size = salt.size();
+		options.e2ee_options = &e2ee;
+		env->DeleteLocalRef(raw_key);
+		env->DeleteLocalRef(raw_salt);
+		env->DeleteLocalRef(e2ee_cls);
+		env->DeleteLocalRef(encryption);
+	}
+	env->DeleteLocalRef(ice);
+	env->DeleteLocalRef(cls);
+	if (env->ExceptionCheck())
+		return;
+	fail(env, lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), &options));
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_disconnect(JNIEnv* env, jclass, jlong ptr) {
 	fail(env, lk_room_disconnect(handle(ptr)->room));
 }
@@ -768,6 +875,45 @@ JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_trackStats(JNIEnv* en
 	return getter(env,
 	              [track](char* p, size_t n) { return lk_local_track_rtc_stats(track, p, n); });
 }
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_mediaDevices(JNIEnv* env, jclass) {
+	lk_media_device_list_t* devices = nullptr;
+	lk_status_t status = lk_media_device_list_create(&devices);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/MediaDevice");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;IZ)V");
+	size_t count = lk_media_device_list_count(devices);
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
+	for (size_t i = 0; i < count; ++i) {
+		lk_media_device_info_t info{};
+		info.struct_size = sizeof(info);
+		status = lk_media_device_list_info(devices, i, &info);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			break;
+		}
+		auto read = [env, devices, i](auto fn) {
+			jbyteArray raw =
+			    getter(env, [devices, i, fn](char* p, size_t n) { return fn(devices, i, p, n); });
+			std::string v = bytes(env, raw);
+			env->DeleteLocalRef(raw);
+			return string(env, v.c_str());
+		};
+		jstring id = read(lk_media_device_list_id);
+		jstring label = read(lk_media_device_list_label);
+		jobject item = env->NewObject(cls, ctor, id, label, static_cast<jint>(info.kind),
+		                              info.is_default ? JNI_TRUE : JNI_FALSE);
+		env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		env->DeleteLocalRef(item);
+		env->DeleteLocalRef(id);
+		env->DeleteLocalRef(label);
+	}
+	env->DeleteLocalRef(cls);
+	lk_media_device_list_destroy(devices);
+	return result;
+}
 JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_screenSources(JNIEnv* env, jclass) {
 	lk_screen_source_list_t* sources = nullptr;
 	lk_status_t status = lk_screen_source_list_create(&sources);
@@ -809,5 +955,154 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_screenSources(JNIEn
 	env->DeleteLocalRef(cls);
 	lk_screen_source_list_destroy(sources);
 	return result;
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_publishDataTrack(JNIEnv* env, jclass,
+                                                                       jlong room, jbyteArray name,
+                                                                       jint frameEncoding) {
+	std::string name_value = bytes(env, name);
+	lk_data_track_publish_options_t options;
+	lk_data_track_publish_options_init(&options);
+	options.name = name_value.c_str();
+	options.has_frame_encoding = frameEncoding != LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED;
+	options.frame_encoding = static_cast<lk_data_track_frame_encoding_t>(frameEncoding);
+	lk_local_data_track_t* track = nullptr;
+	auto status = lk_room_publish_data_track(handle(room)->room, &options, &track);
+	if (status != LK_DATA_TRACK_ERROR_NONE) {
+		fail(env, static_cast<lk_status_t>(status));
+		return 0;
+	}
+	return reinterpret_cast<jlong>(track);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_pushDataTrack(JNIEnv* env, jclass, jlong ptr,
+                                                                   jbyteArray data,
+                                                                   jboolean hasTimestamp,
+                                                                   jlong timestamp) {
+	std::string payload = bytes(env, data);
+	auto status = lk_local_data_track_try_push(reinterpret_cast<lk_local_data_track_t*>(ptr),
+	                                           reinterpret_cast<const uint8_t*>(payload.data()),
+	                                           payload.size(), hasTimestamp == JNI_TRUE ? 1 : 0,
+	                                           static_cast<uint64_t>(timestamp));
+	fail(env, static_cast<lk_status_t>(status));
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_dataTrackSid(JNIEnv* env, jclass,
+                                                                        jlong ptr) {
+	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
+	return getter(env, [track](char* p, size_t n) { return lk_local_data_track_sid(track, p, n); });
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_unpublishDataTrack(JNIEnv* env, jclass,
+                                                                        jlong ptr) {
+	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
+	if (lk_local_data_track_is_published(track))
+		fail(env, static_cast<lk_status_t>(lk_local_data_track_unpublish(track)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyDataTrack(JNIEnv* env, jclass,
+                                                                      jlong ptr) {
+	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
+	if (lk_local_data_track_is_published(track)) {
+		auto status = lk_local_data_track_unpublish(track);
+		if (status != LK_DATA_TRACK_ERROR_NONE && status != LK_DATA_TRACK_ERROR_DISCONNECTED) {
+			fail(env, static_cast<lk_status_t>(status));
+			return;
+		}
+	}
+	fail(env, static_cast<lk_status_t>(lk_local_data_track_destroy(track)));
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_subscribeDataTrack(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
+    jint bufferCapacity) {
+	std::string identity = bytes(env, participantIdentity);
+	std::string sid = bytes(env, trackSid);
+	lk_data_track_subscription_options_t options;
+	lk_data_track_subscription_options_init(&options);
+	options.buffer_capacity = static_cast<size_t>(bufferCapacity);
+	lk_data_track_reader_t* reader = nullptr;
+	auto status = lk_room_subscribe_data_track(handle(room)->room, identity.c_str(), sid.c_str(),
+	                                           &options, &reader);
+	if (status != LK_DATA_TRACK_ERROR_NONE) {
+		fail(env, static_cast<lk_status_t>(status));
+		return 0;
+	}
+	return reinterpret_cast<jlong>(reader);
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JNIEnv* env, jclass,
+                                                                              jlong room) {
+	lk_remote_data_track_list_t* snapshot = nullptr;
+	auto status = lk_room_create_remote_data_track_snapshot(handle(room)->room, &snapshot);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/RemoteDataTrack");
+	jmethodID ctor = env->GetMethodID(
+	    cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IZ)V");
+	const size_t count = lk_remote_data_track_list_count(snapshot);
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
+	for (size_t i = 0; i < count; ++i) {
+		const lk_remote_data_track_snapshot_t* track = nullptr;
+		status = lk_remote_data_track_list_at(snapshot, i, &track);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			break;
+		}
+		lk_data_track_snapshot_info_t info;
+		lk_data_track_snapshot_info_init(&info);
+		status = lk_remote_data_track_snapshot_info(track, &info);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			break;
+		}
+		auto read = [env, track](auto fn) {
+			jbyteArray raw =
+			    getter(env, [track, fn](char* p, size_t n) { return fn(track, p, n); });
+			std::string value = bytes(env, raw);
+			env->DeleteLocalRef(raw);
+			return string(env, value.c_str());
+		};
+		jstring identity = read(lk_remote_data_track_snapshot_publisher_identity);
+		jstring sid = read(lk_remote_data_track_snapshot_sid);
+		jstring name = read(lk_remote_data_track_snapshot_name);
+		jobject item =
+		    env->NewObject(cls, ctor, identity, sid, name,
+		                   info.has_frame_encoding ? static_cast<jint>(info.frame_encoding) : 0,
+		                   info.is_published ? JNI_TRUE : JNI_FALSE);
+		env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		env->DeleteLocalRef(item);
+		env->DeleteLocalRef(identity);
+		env->DeleteLocalRef(sid);
+		env->DeleteLocalRef(name);
+	}
+	env->DeleteLocalRef(cls);
+	lk_remote_data_track_list_destroy(snapshot);
+	return result;
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_readDataTrack(JNIEnv* env, jclass,
+                                                                      jlong ptr, jint timeoutMs) {
+	auto* reader = reinterpret_cast<lk_data_track_reader_t*>(ptr);
+	lk_data_track_frame_t* frame = nullptr;
+	auto status = lk_data_track_reader_read_for(reader, static_cast<uint32_t>(timeoutMs), &frame);
+	if (status == LK_DATA_TRACK_READ_EMPTY || status == LK_DATA_TRACK_READ_CLOSED)
+		return nullptr;
+	if (status != LK_DATA_TRACK_READ_FRAME) {
+		fail(env, static_cast<lk_status_t>(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT));
+		return nullptr;
+	}
+	const size_t size = lk_data_track_frame_data(frame, nullptr, 0);
+	std::vector<uint8_t> payload(size);
+	if (size != 0)
+		lk_data_track_frame_data(frame, payload.data(), size);
+	jbyteArray data = array(env, payload.data(), size);
+	jclass cls = env->FindClass("io/livekit/client/DataTrackFrame");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "([BJZ)V");
+	jobject result = env->NewObject(
+	    cls, ctor, data, static_cast<jlong>(lk_data_track_frame_user_timestamp(frame)),
+	    lk_data_track_frame_has_user_timestamp(frame) ? JNI_TRUE : JNI_FALSE);
+	env->DeleteLocalRef(data);
+	env->DeleteLocalRef(cls);
+	lk_data_track_frame_destroy(frame);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyDataTrackReader(JNIEnv*, jclass,
+                                                                            jlong ptr) {
+	lk_data_track_reader_destroy(reinterpret_cast<lk_data_track_reader_t*>(ptr));
 }
 }

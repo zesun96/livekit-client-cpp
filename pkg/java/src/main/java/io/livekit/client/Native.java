@@ -21,6 +21,7 @@ final class Native {
     static native long create(Room room);
     static native void destroy(long handle);
     static native void connect(long handle, byte[] url, byte[] token);
+    static native void connectWithOptions(long handle, byte[] url, byte[] token, ConnectionOptions options);
     static native void disconnect(long handle);
     static native int state(long handle);
     static native int disconnectReason(long handle);
@@ -56,5 +57,16 @@ final class Native {
     static native void destroyTrack(long track);
     static native void muteTrack(long track, boolean muted);
     static native byte[] trackStats(long track);
+    static native MediaDevice[] mediaDevices();
     static native ScreenSource[] screenSources();
+    static native long publishDataTrack(long room, byte[] name, int frameEncoding);
+    static native void pushDataTrack(long track, byte[] data, boolean hasTimestamp, long timestamp);
+    static native byte[] dataTrackSid(long track);
+    static native void unpublishDataTrack(long track);
+    static native void destroyDataTrack(long track);
+    static native long subscribeDataTrack(long room, byte[] participantIdentity, byte[] trackSid,
+                                          int bufferCapacity);
+    static native RemoteDataTrack[] remoteDataTracks(long room);
+    static native DataTrackFrame readDataTrack(long reader, int timeoutMs);
+    static native void destroyDataTrackReader(long reader);
 }

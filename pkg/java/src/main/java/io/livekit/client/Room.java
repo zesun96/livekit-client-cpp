@@ -30,6 +30,8 @@ public final class Room implements AutoCloseable {
 
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
     private final List<LocalTrack> tracks = new CopyOnWriteArrayList<>();
+    private final List<LocalDataTrack> dataTracks = new CopyOnWriteArrayList<>();
+    private final List<DataTrackReader> dataTrackReaders = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
     private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
     private long handle;
@@ -57,6 +59,37 @@ public final class Room implements AutoCloseable {
 
     void useHandle(LongConsumer operation) { withHandle(h -> { operation.accept(h); return null; }); }
     void removeTrack(LocalTrack track) { tracks.remove(track); }
+    void removeDataTrack(LocalDataTrack track) { dataTracks.remove(track); }
+    void removeDataTrackReader(DataTrackReader reader) { dataTrackReaders.remove(reader); }
+
+    public LocalDataTrack publishDataTrack(String name, int frameEncoding) {
+        Objects.requireNonNull(name);
+        if (name.isEmpty()) throw new IllegalArgumentException("DataTrack name is empty");
+        if (frameEncoding < 0 || frameEncoding > 7)
+            throw new IllegalArgumentException("Unsupported DataTrack frame encoding");
+        return withHandle(h -> {
+            LocalDataTrack track = new LocalDataTrack(this,
+                Native.publishDataTrack(h, Native.utf8(name), frameEncoding));
+            dataTracks.add(track);
+            return track;
+        });
+    }
+
+    public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
+                                               int bufferCapacity) {
+        if (bufferCapacity < 1) throw new IllegalArgumentException("Invalid buffer capacity");
+        return withHandle(h -> {
+            DataTrackReader reader = new DataTrackReader(this, Native.subscribeDataTrack(h,
+                Native.utf8(Objects.requireNonNull(participantIdentity)),
+                Native.utf8(Objects.requireNonNull(trackSid)), bufferCapacity));
+            dataTrackReaders.add(reader);
+            return reader;
+        });
+    }
+
+    public List<RemoteDataTrack> remoteDataTracks() {
+        return withHandle(h -> List.of(Native.remoteDataTracks(h)));
+    }
 
     public LocalTrack createAudioTrack(String label, AudioSource source) {
         Objects.requireNonNull(source).retain();
@@ -84,6 +117,16 @@ public final class Room implements AutoCloseable {
 
     public void connect(String url, String token) {
         useHandle(h -> Native.connect(h, Native.utf8(Objects.requireNonNull(url)), Native.utf8(Objects.requireNonNull(token))));
+    }
+
+    public void connect(String url, String token, ConnectionOptions options) {
+        Objects.requireNonNull(options);
+        useHandle(h -> Native.connectWithOptions(h, Native.utf8(Objects.requireNonNull(url)),
+            Native.utf8(Objects.requireNonNull(token)), options));
+    }
+
+    public CompletableFuture<Void> connectAsync(String url, String token, ConnectionOptions options) {
+        return CompletableFuture.runAsync(() -> connect(url, token, options));
     }
 
     public CompletableFuture<Void> connectAsync(String url, String token) {
@@ -239,6 +282,8 @@ public final class Room implements AutoCloseable {
             if (interrupted) Thread.currentThread().interrupt();
         }
         try {
+            for (DataTrackReader reader : dataTrackReaders) reader.close();
+            for (LocalDataTrack track : dataTracks) track.close();
             for (LocalTrack track : tracks) track.close();
             long old = handle;
             handle = 0;

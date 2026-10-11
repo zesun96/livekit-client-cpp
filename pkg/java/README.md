@@ -4,6 +4,12 @@ This Java 17 binding calls the stable C ABI in `include/livekit/capi/livekit.h` 
 bridge. Build a shared `livekitclient` first, then build the bridge. The Java library itself has no
 third-party dependencies.
 
+On Windows, build `livekitclient.dll` with `-DLKC_MSVC_RUNTIME=static`. Some Java distributions
+ship an older `msvcp140.dll` beside `java.exe`; a dynamically linked SDK can load that runtime and
+crash while enumerating media devices. The static runtime build avoids that process-wide DLL
+collision. Use the matching static-runtime libwebrtc and dependency packages when configuring the
+SDK.
+
 ```powershell
 cmake -S pkg/java -B out/build/java-binding -G "Visual Studio 17 2022" -A x64 `
   -DLIVEKIT_CLIENT_CPP_LIBRARY="C:/path/to/livekitclient.lib"
@@ -24,9 +30,16 @@ and should return promptly. Blocking operations have `CompletableFuture` alterna
 binding currently covers room lifecycle and state, local participant identity and profile,
 remote participant identity snapshots, data messages, basic text/byte/file sending and receiving,
 chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
-and video sources, local tracks, local RTC stats JSON, and screen-source enumeration. Advanced
-connection options, physical device capture, remote media streams, incremental streams, DataTrack,
-recording, and diagnostics are not yet exposed. The native C and C++ APIs provide those features.
+and video sources, local tracks, local RTC stats JSON, device and screen-source enumeration,
+connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
+snapshots, and bounded readers. Dynamic token sources, physical device capture, remote media
+streams, incremental streams, DataTrack schemas, recording, and diagnostics are not yet exposed.
+The native C and C++ APIs provide those features.
+
+DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
+unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
+`Room.subscribeDataTrack`. Close the returned reader and local publisher when done. A reader
+returns `null` when its timeout expires or the track closes.
 
 ```java
 try (Room room = new Room()) {
