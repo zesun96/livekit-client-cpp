@@ -14,6 +14,10 @@ The Windows loader must also find `websockets.dll` and the other native
 dependencies. Set `LIVEKIT_CLIENT_CPP_LIBRARY` to the full path of the SDK DLL,
 or put the SDK library on the platform's library search path.
 
+Runnable examples are in [`examples`](examples/README.md). The Windows local
+smoke script starts a temporary LiveKit server and verifies two Python peers
+with synthetic media. It does not open a microphone or camera.
+
 ```python
 import asyncio
 import os
