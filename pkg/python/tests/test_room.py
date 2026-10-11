@@ -248,6 +248,8 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
         ), b"secret\x00key")
         self.assertEqual(raw.e2ee_options.contents.key_derivation, 1)
         self.assertFalse(self.room.e2ee.is_configured)
+        with self.assertRaises(LiveKitError):
+            await self.room.e2ee.remove_participant_keys("peer")
         with self.assertRaisesRegex(LiveKitError, "not configured"):
             await self.room.e2ee.set_shared_key(b"key")
         with self.assertRaisesRegex(LiveKitError, "not configured"):

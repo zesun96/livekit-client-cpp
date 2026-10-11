@@ -24,11 +24,11 @@ and Zig bindings have no implementation yet.
 | External audio/video tracks, frame push, and remote frame streams | Yes | Yes | No | No |
 | Audio/video frame events with bounded queues and video metadata | Yes | Yes | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | Yes | No | No |
-| Text and byte streams, chat, and file transfer | Yes | Partial | No | No |
-| DataTrack schema, publishing, and subscription | Yes | Partial | No | No |
+| Text and byte streams, chat, and file transfer | Yes | Yes | No | No |
+| DataTrack schema, publishing, and subscription | Yes | Yes | No | No |
 | RPC calls and method handlers | Yes | Yes | No | No |
-| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Partial | No | No |
-| Media devices and remote recording | Yes | Partial | No | No |
+| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | No | No |
+| Media devices and remote recording | Yes | Yes | No | No |
 | Logging, tracing, and RTC statistics | Yes | Yes | No | No |
 
 Lua covers one-shot and incremental outgoing streams, writer progress and completion events,

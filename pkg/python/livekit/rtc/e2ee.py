@@ -223,6 +223,12 @@ class E2EEManager:
             self._room._handle, utf8(participant_identity), _index(key_index),
         )
 
+    async def remove_participant_keys(self, participant_identity: str) -> None:
+        await self._room._run(
+            self._room._native.lib.lk_room_e2ee_remove_participant_keys,
+            self._room._handle, utf8(participant_identity),
+        )
+
     async def clear_keys(self) -> None:
         await self._room._run(
             self._room._native.lib.lk_room_e2ee_clear_keys, self._room._handle
