@@ -169,6 +169,7 @@ source build and an installed package.
 | --- | --- | --- |
 | Lua | Room lifecycle, connection and participant events, data messages, and synchronous or coroutine-based connection and data operations | [Lua binding](pkg/lua/README.md) |
 | Python 3.10+ | Async room and participant APIs, media publishing and capture, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Python binding](pkg/python/README.md) |
+| .NET 8 / C# | Room and participant APIs, async connection and data publishing, media, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [.NET binding](pkg/dotnet/README.md) |
 | Zig 0.18 dev | Complete C ABI access, with owned handles for common room, media, stream, RPC, E2EE, and DataTrack operations | [Zig binding](pkg/zig/README.md) |
 
 The Python package uses the same stable C ABI and imports as `from livekit import rtc`.
@@ -176,6 +177,11 @@ Install it with `python -m pip install -e pkg/python`, then point
 `LIVEKIT_CLIENT_CPP_LIBRARY` to the built `livekitclient.dll` and make its native
 dependencies available to the Windows loader. See the [Python examples](pkg/python/examples/README.md)
 for standalone programs and a local-server smoke test using two Python participants.
+
+The .NET 8 package uses the stable C ABI through P/Invoke. Build the
+`LiveKit.Client` project in `pkg/dotnet`, set `LIVEKIT_CLIENT_CPP_LIBRARY` to the
+matching shared library, and see the [.NET examples](pkg/dotnet/examples/README.md)
+for runnable feature scenarios and a local-server smoke test.
 
 The Zig package translates the C ABI header during `zig build` and links the shared
 `livekitclient` library. Run `zig build test example` from `pkg/zig` to run its
