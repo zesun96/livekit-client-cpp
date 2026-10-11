@@ -13,7 +13,7 @@ and Zig bindings have no implementation yet.
 | Coroutine asynchronous room connect and disconnect | Yes | Yes | No | No |
 | Dynamic token source and advanced ICE connection options | Yes | Yes | No | No |
 | Connection state, room SID, name, and metadata getters | Yes | Yes | No | No |
-| Connection and participant callbacks | Yes | Partial | No | No |
+| Connection and participant callbacks | Yes | Yes | No | No |
 | Receive data messages | Yes | Yes | No | No |
 | Publish data messages synchronously | Yes | No | No | No |
 | Publish data messages asynchronously | Yes | Yes | No | No |

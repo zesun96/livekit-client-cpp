@@ -31,6 +31,9 @@ from ._native import (
     PARTICIPANT_PERMISSIONS_EVENT,
     BUFFER_STATUS_EVENT,
     SIP_DTMF_EVENT,
+    TRANSCRIPTION_EVENT,
+    METRICS_EVENT,
+    SUBSCRIBED_QUALITY_EVENT,
     PARTICIPANT_EVENT,
     REASON_EVENT,
     ROOM_EVENT,
@@ -68,6 +71,9 @@ from ._models import (
     RoomSnapshot,
     DataChannelBufferStatus,
     SipDtmf,
+    Transcription, TranscriptionSegment,
+    MetricTimestamp, MetricSample, TimeSeriesMetric, EventMetric, Metrics,
+    SubscribedQuality, SubscribedCodec, SubscribedQualityUpdate,
     ConnectionState,
     DataPacket,
     Participant,
@@ -425,6 +431,11 @@ class Room:
                            code=value.contents.code, digit=decode(value.contents.digit),
                            participant_identity=decode(value.contents.participant_identity),
                        )) if value else None)
+        self._callback("on_transcription_received", TRANSCRIPTION_EVENT,
+                       self._on_transcription)
+        self._callback("on_metrics_received", METRICS_EVENT, self._on_metrics)
+        self._callback("on_subscribed_quality_update", SUBSCRIBED_QUALITY_EVENT,
+                       self._on_subscribed_quality)
         self._callback("on_data_received", DATA_EVENT, self._on_data)
         self._callback("on_connection_state_changed", STATE_EVENT,
                        lambda _user, _room, state:
@@ -491,6 +502,84 @@ class Room:
                                       Participant.from_native(participant.contents),
                                       convert(value))
                            if track and participant else None)
+
+    def _on_transcription(self, _user, _room, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        segments = tuple(TranscriptionSegment(
+            id=decode(item.id), text=decode(item.text), language=decode(item.language),
+            start_time=item.start_time, end_time=item.end_time,
+            is_final=bool(item.is_final),
+            first_received_time=item.first_received_time,
+            last_received_time=item.last_received_time,
+        ) for item in (value.segments[index] for index in range(value.segment_count)))
+        self._post("transcription_received", Transcription(
+            participant_identity=decode(value.transcribed_participant_identity),
+            track_id=decode(value.track_id), segments=segments,
+        ))
+
+    def _on_metrics(self, _user, _room, received) -> None:
+        if not received:
+            return
+        value = received.contents
+        timestamp = lambda raw: MetricTimestamp.from_native(raw)
+        series = []
+        for index in range(value.time_series_count):
+            item = value.time_series[index]
+            samples = tuple(MetricSample(
+                timestamp_ms=sample.timestamp_ms,
+                normalized_timestamp=(timestamp(sample.normalized_timestamp)
+                    if sample.has_normalized_timestamp else None),
+                value=sample.value,
+            ) for sample in (item.samples[i] for i in range(item.sample_count)))
+            series.append(TimeSeriesMetric(
+                label=item.label, participant_identity=item.participant_identity,
+                track_sid=item.track_sid, rid=item.rid, samples=samples,
+            ))
+        events = []
+        for index in range(value.event_count):
+            item = value.events[index]
+            events.append(EventMetric(
+                label=item.label, participant_identity=item.participant_identity,
+                track_sid=item.track_sid, rid=item.rid,
+                start_timestamp_ms=item.start_timestamp_ms,
+                end_timestamp_ms=item.end_timestamp_ms if item.has_end_timestamp_ms else None,
+                normalized_start_timestamp=(timestamp(item.normalized_start_timestamp)
+                    if item.has_normalized_start_timestamp else None),
+                normalized_end_timestamp=(timestamp(item.normalized_end_timestamp)
+                    if item.has_normalized_end_timestamp else None),
+                metadata=decode(item.metadata),
+            ))
+        self._post("metrics_received", Metrics(
+            timestamp_ms=value.timestamp_ms,
+            normalized_timestamp=(timestamp(value.normalized_timestamp)
+                if value.has_normalized_timestamp else None),
+            string_data=_strings(value.string_data, value.string_data_count),
+            time_series=tuple(series), events=tuple(events),
+            participant_identity=decode(value.participant_identity),
+        ))
+
+    def _on_subscribed_quality(self, _user, _room, track, participant, update) -> None:
+        if not track or not participant or not update:
+            return
+        value = update.contents
+        def qualities(items, count):
+            return tuple(SubscribedQuality(items[index].quality, bool(items[index].enabled))
+                         for index in range(count))
+        codecs = tuple(SubscribedCodec(
+            codec=decode(value.codecs[index].codec),
+            qualities=qualities(value.codecs[index].qualities,
+                                value.codecs[index].quality_count),
+        ) for index in range(value.codec_count))
+        self._post("subscribed_quality_update",
+                   TrackPublication.from_native(track.contents),
+                   Participant.from_native(participant.contents),
+                   SubscribedQualityUpdate(
+                       track_sid=decode(value.track_sid),
+                       qualities=qualities(value.qualities, value.quality_count),
+                       codecs=codecs,
+                   ))
 
     def _on_data(self, _user, _room, received) -> None:
         if not received:

@@ -182,6 +182,93 @@ class SipDtmf:
 
 
 @dataclass(frozen=True)
+class TranscriptionSegment:
+    id: str
+    text: str
+    language: str
+    start_time: int
+    end_time: int
+    is_final: bool
+    first_received_time: int
+    last_received_time: int
+
+
+@dataclass(frozen=True)
+class Transcription:
+    participant_identity: str
+    track_id: str
+    segments: tuple[TranscriptionSegment, ...]
+
+
+@dataclass(frozen=True)
+class MetricTimestamp:
+    seconds: int
+    nanos: int
+
+    @classmethod
+    def from_native(cls, value) -> MetricTimestamp:
+        return cls(value.seconds, value.nanos)
+
+
+@dataclass(frozen=True)
+class MetricSample:
+    timestamp_ms: int
+    normalized_timestamp: MetricTimestamp | None
+    value: float
+
+
+@dataclass(frozen=True)
+class TimeSeriesMetric:
+    label: int
+    participant_identity: int
+    track_sid: int
+    rid: int
+    samples: tuple[MetricSample, ...]
+
+
+@dataclass(frozen=True)
+class EventMetric:
+    label: int
+    participant_identity: int
+    track_sid: int
+    rid: int
+    start_timestamp_ms: int
+    end_timestamp_ms: int | None
+    normalized_start_timestamp: MetricTimestamp | None
+    normalized_end_timestamp: MetricTimestamp | None
+    metadata: str
+
+
+@dataclass(frozen=True)
+class Metrics:
+    timestamp_ms: int
+    normalized_timestamp: MetricTimestamp | None
+    string_data: tuple[str, ...]
+    time_series: tuple[TimeSeriesMetric, ...]
+    events: tuple[EventMetric, ...]
+    participant_identity: str
+
+
+@dataclass(frozen=True)
+class SubscribedQuality:
+    quality: int
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class SubscribedCodec:
+    codec: str
+    qualities: tuple[SubscribedQuality, ...]
+
+
+@dataclass(frozen=True)
+class SubscribedQualityUpdate:
+    track_sid: str
+    qualities: tuple[SubscribedQuality, ...]
+    codecs: tuple[SubscribedCodec, ...]
+
+
+@dataclass(frozen=True)
 class Participant:
     sid: str
     identity: str

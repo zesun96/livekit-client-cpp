@@ -97,6 +97,92 @@ class SipDtmfRaw(C.Structure):
     ]
 
 
+class TranscriptionSegmentRaw(C.Structure):
+    _fields_ = [
+        ("id", C.c_char_p), ("text", C.c_char_p), ("language", C.c_char_p),
+        ("start_time", C.c_uint64), ("end_time", C.c_uint64),
+        ("is_final", C.c_int), ("first_received_time", C.c_int64),
+        ("last_received_time", C.c_int64),
+    ]
+
+
+class TranscriptionReceivedRaw(C.Structure):
+    _fields_ = [
+        ("transcribed_participant_identity", C.c_char_p),
+        ("track_id", C.c_char_p),
+        ("segments", C.POINTER(TranscriptionSegmentRaw)),
+        ("segment_count", C.c_size_t),
+    ]
+
+
+class MetricTimestampRaw(C.Structure):
+    _fields_ = [("seconds", C.c_int64), ("nanos", C.c_int32)]
+
+
+class MetricSampleRaw(C.Structure):
+    _fields_ = [
+        ("timestamp_ms", C.c_int64), ("has_normalized_timestamp", C.c_int),
+        ("normalized_timestamp", MetricTimestampRaw), ("value", C.c_float),
+    ]
+
+
+class TimeSeriesMetricRaw(C.Structure):
+    _fields_ = [
+        ("label", C.c_uint32), ("participant_identity", C.c_uint32),
+        ("track_sid", C.c_uint32), ("rid", C.c_uint32),
+        ("samples", C.POINTER(MetricSampleRaw)), ("sample_count", C.c_size_t),
+    ]
+
+
+class EventMetricRaw(C.Structure):
+    _fields_ = [
+        ("label", C.c_uint32), ("participant_identity", C.c_uint32),
+        ("track_sid", C.c_uint32), ("rid", C.c_uint32),
+        ("start_timestamp_ms", C.c_int64),
+        ("has_end_timestamp_ms", C.c_int), ("end_timestamp_ms", C.c_int64),
+        ("has_normalized_start_timestamp", C.c_int),
+        ("normalized_start_timestamp", MetricTimestampRaw),
+        ("has_normalized_end_timestamp", C.c_int),
+        ("normalized_end_timestamp", MetricTimestampRaw),
+        ("metadata", C.c_char_p),
+    ]
+
+
+class MetricsReceivedRaw(C.Structure):
+    _fields_ = [
+        ("timestamp_ms", C.c_int64), ("has_normalized_timestamp", C.c_int),
+        ("normalized_timestamp", MetricTimestampRaw),
+        ("string_data", C.POINTER(C.c_char_p)),
+        ("string_data_count", C.c_size_t),
+        ("time_series", C.POINTER(TimeSeriesMetricRaw)),
+        ("time_series_count", C.c_size_t),
+        ("events", C.POINTER(EventMetricRaw)), ("event_count", C.c_size_t),
+        ("participant_identity", C.c_char_p),
+    ]
+
+
+class SubscribedQualityRaw(C.Structure):
+    _fields_ = [("quality", C.c_int), ("enabled", C.c_int)]
+
+
+class SubscribedCodecRaw(C.Structure):
+    _fields_ = [
+        ("codec", C.c_char_p),
+        ("qualities", C.POINTER(SubscribedQualityRaw)),
+        ("quality_count", C.c_size_t),
+    ]
+
+
+class SubscribedQualityUpdateRaw(C.Structure):
+    _fields_ = [
+        ("track_sid", C.c_char_p),
+        ("qualities", C.POINTER(SubscribedQualityRaw)),
+        ("quality_count", C.c_size_t),
+        ("codecs", C.POINTER(SubscribedCodecRaw)),
+        ("codec_count", C.c_size_t),
+    ]
+
+
 class TrackPublicationInfo(C.Structure):
     _fields_ = [
         ("sid", C.c_char_p), ("name", C.c_char_p), ("mime_type", C.c_char_p),
@@ -696,6 +782,14 @@ PARTICIPANT_PERMISSIONS_EVENT = C.CFUNCTYPE(
 BUFFER_STATUS_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
                                  C.POINTER(DataChannelBufferStatusRaw))
 SIP_DTMF_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(SipDtmfRaw))
+TRANSCRIPTION_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                                 C.POINTER(TranscriptionReceivedRaw))
+METRICS_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                           C.POINTER(MetricsReceivedRaw))
+SUBSCRIBED_QUALITY_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p, C.POINTER(TrackPublicationInfo),
+    C.POINTER(ParticipantInfo), C.POINTER(SubscribedQualityUpdateRaw),
+)
 CHAT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(ChatMessage))
 TRACK_EVENT = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p,
