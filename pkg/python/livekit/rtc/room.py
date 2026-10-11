@@ -1455,7 +1455,8 @@ class Room:
             reader.close()
         for stream in tuple(self._media_streams):
             stream.close()
-        self._native.lib.lk_room_destroy(self._handle)
+        if self._native.lib.lk_room_is_connected(self._handle):
+            self._native.check(self._native.lib.lk_room_disconnect(self._handle))
         for track in tuple(self._local_tracks):
             if track._handle:
                 self._native.check(self._native.lib.lk_local_track_destroy(track._handle))
@@ -1467,6 +1468,7 @@ class Room:
                     self._native.lib.lk_local_data_track_destroy(track._handle))
                 track._handle = C.c_void_p()
         self._local_data_tracks.clear()
+        self._native.lib.lk_room_destroy(self._handle)
 
     def _finish_close(self, _future: asyncio.Future) -> None:
         self._executor.shutdown(wait=False)
