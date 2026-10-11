@@ -270,6 +270,24 @@ class VideoFrameMetadataRaw(C.Structure):
     ]
 
 
+class VideoPlaneRaw(C.Structure):
+    _fields_ = [
+        ("offset", C.c_size_t), ("size", C.c_size_t),
+        ("stride", C.c_uint32),
+    ]
+
+
+class VideoFrameInputRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("data", C.c_void_p),
+        ("data_size", C.c_size_t), ("width", C.c_uint32),
+        ("height", C.c_uint32), ("timestamp_us", C.c_int64),
+        ("rotation", C.c_int), ("format", C.c_int),
+        ("planes", C.POINTER(VideoPlaneRaw)), ("plane_count", C.c_size_t),
+        ("metadata", C.POINTER(VideoFrameMetadataRaw)),
+    ]
+
+
 class VideoEncodingRaw(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("max_bitrate", C.c_uint64),
@@ -813,6 +831,11 @@ class Native:
                    C.POINTER(C.c_uint32), C.POINTER(C.c_uint32))
         self._bind("lk_video_source_capture_i420", C.c_int, p, p, s,
                    C.c_uint32, C.c_uint32, C.c_int64)
+        self._bind("lk_video_frame_input_init", None, C.POINTER(VideoFrameInputRaw))
+        self._bind("lk_video_frame_metadata_init", None,
+                   C.POINTER(VideoFrameMetadataRaw))
+        self._bind("lk_video_source_capture_frame", C.c_int, p,
+                   C.POINTER(VideoFrameInputRaw))
         for kind, id_field in (("camera", "device_id"), ("screen", "source_id")):
             prefix = "lk_video_source_" + kind
             self._bind(prefix + "_start", C.c_int, p)

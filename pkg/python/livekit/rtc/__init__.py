@@ -30,7 +30,7 @@ from .diagnostics import (
 from .media import (
     AudioFrame, AudioSource, LocalTrack, MicrophoneProcessingStats,
     RemoteMediaStream, TrackPublishOptions,
-    TrackSource, VideoFrame, VideoSource,
+    TrackSource, VideoBufferType, VideoFrame, VideoPlane, VideoRotation, VideoSource,
 )
 from .data_track import (
     DataTrackError, DataTrackFrame, DataTrackFrameEncoding, DataTrackPublication,
@@ -112,6 +112,9 @@ __all__ = [
     "MicrophoneProcessingStats",
     "VideoSource",
     "VideoFrame",
+    "VideoBufferType",
+    "VideoPlane",
+    "VideoRotation",
     "RemoteMediaStream",
     "LocalTrack",
     "TrackPublishOptions",

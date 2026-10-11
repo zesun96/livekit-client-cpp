@@ -13,6 +13,7 @@ from ._native import (
     CameraCaptureOptionsRaw, MicrophoneCaptureOptionsRaw,
     MicrophoneProcessingStatsRaw, ScreenCaptureOptionsRaw,
     SystemAudioCaptureOptionsRaw, VideoFrameMetadataRaw, VideoFrameRaw,
+    VideoFrameInputRaw, VideoPlaneRaw,
     VideoSourceOptionsRaw, native, utf8,
 )
 
@@ -23,6 +24,34 @@ class TrackSource(IntEnum):
     MICROPHONE = 2
     SCREEN_SHARE = 3
     SCREEN_SHARE_AUDIO = 4
+
+
+class VideoBufferType(IntEnum):
+    RGBA = 0
+    ABGR = 1
+    ARGB = 2
+    BGRA = 3
+    RGB24 = 4
+    I420 = 5
+    I420A = 6
+    I422 = 7
+    I444 = 8
+    I010 = 9
+    NV12 = 10
+
+
+class VideoRotation(IntEnum):
+    R0 = 0
+    R90 = 90
+    R180 = 180
+    R270 = 270
+
+
+@dataclass(frozen=True)
+class VideoPlane:
+    offset: int
+    size: int
+    stride: int
 
 
 @dataclass(frozen=True)
@@ -511,6 +540,75 @@ class VideoSource:
                     self._handle, C.cast(buffer, C.c_void_p), len(data),
                     width, height, timestamp_us,
                 ))
+        await asyncio.to_thread(capture)
+
+    async def capture_frame(
+        self, data: bytes, width: int, height: int, *,
+        format: VideoBufferType = VideoBufferType.I420,
+        rotation: VideoRotation = VideoRotation.R0,
+        timestamp_us: int = 0, planes: tuple[VideoPlane, ...] | list[VideoPlane] = (),
+        user_timestamp_us: int | None = None, frame_id: int | None = None,
+        user_data: bytes | None = None,
+    ) -> None:
+        """Push a video frame with optional plane layout and metadata."""
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("video data must be nonempty bytes")
+        if not (0 < width <= 0xFFFFFFFF and 0 < height <= 0xFFFFFFFF):
+            raise ValueError("video dimensions are out of range")
+        if not -0x8000000000000000 <= timestamp_us <= 0x7FFFFFFFFFFFFFFF:
+            raise ValueError("timestamp_us is out of range")
+        format = VideoBufferType(format)
+        rotation = VideoRotation(rotation)
+        if user_timestamp_us is not None and not 0 <= user_timestamp_us <= 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("user_timestamp_us is out of range")
+        if frame_id is not None and not 0 <= frame_id <= 0xFFFFFFFF:
+            raise ValueError("frame_id is out of range")
+        if user_data is not None and not isinstance(user_data, bytes):
+            raise TypeError("user_data must be bytes")
+        for plane in planes:
+            if (plane.offset < 0 or plane.size <= 0 or
+                    plane.offset + plane.size > len(data) or
+                    not 0 < plane.stride <= 0xFFFFFFFF):
+                raise ValueError("video plane is out of bounds")
+
+        def capture():
+            with self._lock:
+                self._assert_open()
+                lib = self._native.lib
+                frame = VideoFrameInputRaw()
+                lib.lk_video_frame_input_init(C.byref(frame))
+                pixels = C.create_string_buffer(data)
+                frame.data = C.cast(pixels, C.c_void_p)
+                frame.data_size = len(data)
+                frame.width, frame.height = width, height
+                frame.format, frame.rotation = int(format), int(rotation)
+                frame.timestamp_us = timestamp_us
+                plane_values = (VideoPlaneRaw * len(planes))(
+                    *(VideoPlaneRaw(p.offset, p.size, p.stride) for p in planes)
+                )
+                frame.planes = plane_values
+                frame.plane_count = len(planes)
+                metadata = VideoFrameMetadataRaw()
+                metadata_bytes = None
+                if (user_timestamp_us is not None or frame_id is not None or
+                        user_data is not None):
+                    lib.lk_video_frame_metadata_init(C.byref(metadata))
+                    if user_timestamp_us is not None:
+                        metadata.has_user_timestamp_us = 1
+                        metadata.user_timestamp_us = user_timestamp_us
+                    if frame_id is not None:
+                        metadata.has_frame_id = 1
+                        metadata.frame_id = frame_id
+                    if user_data is not None:
+                        metadata.has_user_data = 1
+                        metadata_bytes = C.create_string_buffer(user_data)
+                        metadata.user_data = C.cast(metadata_bytes, C.c_void_p)
+                        metadata.user_data_size = len(user_data)
+                    frame.metadata = C.pointer(metadata)
+                self._native.check(lib.lk_video_source_capture_frame(
+                    self._handle, C.byref(frame)
+                ))
+
         await asyncio.to_thread(capture)
 
     @property

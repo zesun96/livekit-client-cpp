@@ -5,7 +5,10 @@ import ctypes as C
 import os
 import unittest
 
-from livekit.rtc import AudioFrame, AudioSource, LiveKitError, Room, VideoSource
+from livekit.rtc import (
+    AudioFrame, AudioSource, LiveKitError, Room, VideoBufferType,
+    VideoPlane, VideoRotation, VideoSource,
+)
 from livekit.rtc._native import (
     AudioFrameRaw, ParticipantInfo, TrackPublicationInfo, VideoFrameMetadataRaw,
     VideoFrameRaw,
@@ -32,6 +35,12 @@ class ExternalMediaTests(unittest.IsolatedAsyncioTestCase):
         source = VideoSource()
         try:
             await source.capture_i420(bytes(2 * 2 * 3 // 2), 2, 2)
+            await source.capture_frame(
+                bytes(2 * 2 * 4), 2, 2, format=VideoBufferType.RGBA,
+                rotation=VideoRotation.R90,
+                planes=[VideoPlane(0, 16, 8)], user_timestamp_us=12,
+                frame_id=3, user_data=b"metadata",
+            )
             self.assertEqual(source.dimensions, (2, 2))
             async with Room() as room:
                 with self.assertRaisesRegex(LiveKitError, "failed to create video track"):

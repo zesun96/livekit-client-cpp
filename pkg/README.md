@@ -21,7 +21,7 @@ and Zig bindings have no implementation yet.
 | Local participant metadata and attributes | Yes | Yes | No | No |
 | Remote track subscription and settings | Yes | Yes | No | No |
 | Track subscription permissions and feedback events | Yes | Yes | No | No |
-| External audio/video tracks, frame push, and remote frame streams | Yes | Partial | No | No |
+| External audio/video tracks, frame push, and remote frame streams | Yes | Yes | No | No |
 | Audio/video frame events with bounded queues and video metadata | Yes | Yes | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | Yes | No | No |
 | Text and byte streams, chat, and file transfer | Yes | Partial | No | No |
