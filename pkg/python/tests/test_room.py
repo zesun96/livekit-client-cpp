@@ -44,7 +44,7 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received[0].participant_identity, "peer")
 
     async def test_close_is_idempotent(self):
-        await self.room.aclose()
+        await asyncio.gather(self.room.aclose(), self.room.aclose())
         await self.room.aclose()
         with self.assertRaisesRegex(LiveKitError, "closed"):
             await self.room.disconnect()

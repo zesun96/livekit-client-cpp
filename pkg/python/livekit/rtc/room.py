@@ -282,6 +282,7 @@ class Room:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="livekit-room")
         self._loop: asyncio.AbstractEventLoop | None = loop
         self._closed = False
+        self._close_future: asyncio.Future | None = None
         self._listeners: dict[str, list[Callable]] = {}
         self._stream_handlers: dict[tuple[str, str], Callable] = {}
         self._text_decoders: dict[str, codecs.IncrementalDecoder] = {}
@@ -565,7 +566,7 @@ class Room:
             timestamp=value.timestamp,
         ))
 
-    async def _run(self, fn, *args) -> None:
+    async def _run_callable(self, call):
         if self._closed:
             raise LiveKitError("room is closed")
         loop = asyncio.get_running_loop()
@@ -574,10 +575,13 @@ class Room:
         elif self._loop is not loop:
             raise LiveKitError("room is bound to another event loop")
 
+        return await loop.run_in_executor(self._executor, call)
+
+    async def _run(self, fn, *args) -> None:
         def call():
             self._native.check(fn(*args))
 
-        await loop.run_in_executor(self._executor, call)
+        await self._run_callable(call)
 
     async def connect(self, url: str, token: str, options: RoomOptions | None = None) -> None:
         options = options or RoomOptions()
@@ -704,20 +708,26 @@ class Room:
         raw.method = utf8(method)
         raw.payload = utf8(payload)
         raw.response_timeout_ms = response_timeout_ms
-        result = C.c_void_p()
-        await self._run(self._native.lib.lk_room_perform_rpc,
-                        self._handle, C.byref(raw), C.byref(result))
-        try:
+        def call() -> str:
             lib = self._native.lib
-            if not lib.lk_rpc_result_ok(result):
-                raise RpcError(
-                    self._native.string("lk_rpc_result_error_message", result),
-                    lib.lk_rpc_result_error_code(result),
-                    self._native.string("lk_rpc_result_error_data", result),
-                )
-            return self._native.string("lk_rpc_result_payload", result)
-        finally:
-            self._native.lib.lk_rpc_result_destroy(result)
+            result = C.c_void_p()
+            status = lib.lk_room_perform_rpc(
+                self._handle, C.byref(raw), C.byref(result)
+            )
+            try:
+                self._native.check(status)
+                if not lib.lk_rpc_result_ok(result):
+                    raise RpcError(
+                        self._native.string("lk_rpc_result_error_message", result),
+                        lib.lk_rpc_result_error_code(result),
+                        self._native.string("lk_rpc_result_error_data", result),
+                    )
+                return self._native.string("lk_rpc_result_payload", result)
+            finally:
+                if result:
+                    lib.lk_rpc_result_destroy(result)
+
+        return await self._run_callable(call)
 
     async def set_remote_track_subscribed(
         self, participant_sid: str, track_sid: str, subscribed: bool,
@@ -836,27 +846,34 @@ class Room:
             lib.lk_remote_participant_list_destroy(snapshot)
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
         loop = asyncio.get_running_loop()
         if self._loop is not None and self._loop is not loop:
             raise LiveKitError("room is bound to another event loop")
-        self._closed = True
-        destroyed = loop.run_in_executor(
-            self._executor, self._native.lib.lk_room_destroy, self._handle
-        )
+        if self._loop is None:
+            self._loop = loop
+        if self._close_future is None:
+            self._closed = True
+            self._close_future = loop.run_in_executor(
+                self._executor, self._native.lib.lk_room_destroy, self._handle
+            )
+            self._close_future.add_done_callback(self._finish_close)
         try:
-            await asyncio.shield(destroyed)
+            await asyncio.shield(self._close_future)
         except asyncio.CancelledError:
-            await asyncio.shield(destroyed)
+            await asyncio.shield(self._close_future)
             raise
-        finally:
-            if destroyed.done():
-                self._executor.shutdown(wait=True)
-                self._handle = C.c_void_p()
-                self._callback_refs.clear()
-                self._text_decoders.clear()
-                self._text_stream_topics.clear()
+
+    def _finish_close(self, _future: asyncio.Future) -> None:
+        self._executor.shutdown(wait=False)
+        self._handle = C.c_void_p()
+        self._callback_refs.clear()
+        self._stream_handlers.clear()
+        with self._events_lock:
+            self._events.clear()
+            self._events_scheduled = False
+        with self._text_decoder_lock:
+            self._text_decoders.clear()
+            self._text_stream_topics.clear()
 
     async def __aenter__(self) -> Room:
         return self
