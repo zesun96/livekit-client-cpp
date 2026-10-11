@@ -74,6 +74,29 @@ class ParticipantPermissionsRaw(C.Structure):
     ]
 
 
+class RoomSnapshotRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("sid", C.c_char_p),
+        ("name", C.c_char_p), ("metadata", C.c_char_p),
+        ("is_recording", C.c_int),
+    ]
+
+
+class DataChannelBufferStatusRaw(C.Structure):
+    _fields_ = [
+        ("reliable", C.c_int), ("buffered_amount", C.c_uint64),
+        ("high_water_mark", C.c_uint64), ("low_water_mark", C.c_uint64),
+        ("backpressured", C.c_int),
+    ]
+
+
+class SipDtmfRaw(C.Structure):
+    _fields_ = [
+        ("code", C.c_uint32), ("digit", C.c_char_p),
+        ("participant_identity", C.c_char_p),
+    ]
+
+
 class TrackPublicationInfo(C.Structure):
     _fields_ = [
         ("sid", C.c_char_p), ("name", C.c_char_p), ("mime_type", C.c_char_p),
@@ -653,6 +676,26 @@ DATA_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(DataReceived))
 STATE_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_int)
 REASON_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_int)
 METADATA_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_char_p)
+ROOM_SNAPSHOT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                                 C.POINTER(RoomSnapshotRaw))
+ROOM_SID_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_char_p, C.c_char_p)
+PARTICIPANT_LIST_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                                    C.POINTER(ParticipantInfo), C.c_size_t)
+QUALITY_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.c_int,
+                            C.POINTER(ParticipantInfo))
+PARTICIPANT_STRING_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                                      C.c_char_p, C.POINTER(ParticipantInfo))
+PARTICIPANT_ATTRIBUTES_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p, C.POINTER(Attribute), C.c_size_t,
+    C.POINTER(ParticipantInfo),
+)
+PARTICIPANT_PERMISSIONS_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p, C.POINTER(ParticipantPermissionsRaw),
+    C.POINTER(ParticipantPermissionsRaw), C.POINTER(ParticipantInfo),
+)
+BUFFER_STATUS_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p,
+                                 C.POINTER(DataChannelBufferStatusRaw))
+SIP_DTMF_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(SipDtmfRaw))
 CHAT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(ChatMessage))
 TRACK_EVENT = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p,

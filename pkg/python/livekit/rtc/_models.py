@@ -141,6 +141,45 @@ class ParticipantPermissions:
     can_subscribe_metrics: bool
     can_manage_agent_session: bool
 
+    @classmethod
+    def from_native(cls, value) -> ParticipantPermissions:
+        return cls(
+            can_subscribe=bool(value.can_subscribe),
+            can_publish=bool(value.can_publish),
+            can_publish_data=bool(value.can_publish_data),
+            can_publish_sources=tuple(value.can_publish_sources[index]
+                for index in range(value.can_publish_source_count)),
+            hidden=bool(value.hidden), recorder=bool(value.recorder),
+            can_update_metadata=bool(value.can_update_metadata),
+            agent=bool(value.agent),
+            can_subscribe_metrics=bool(value.can_subscribe_metrics),
+            can_manage_agent_session=bool(value.can_manage_agent_session),
+        )
+
+
+@dataclass(frozen=True)
+class RoomSnapshot:
+    sid: str
+    name: str
+    metadata: str
+    is_recording: bool
+
+
+@dataclass(frozen=True)
+class DataChannelBufferStatus:
+    reliable: bool
+    buffered_amount: int
+    high_water_mark: int
+    low_water_mark: int
+    backpressured: bool
+
+
+@dataclass(frozen=True)
+class SipDtmf:
+    code: int
+    digit: str
+    participant_identity: str
+
 
 @dataclass(frozen=True)
 class Participant:

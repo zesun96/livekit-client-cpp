@@ -22,6 +22,15 @@ from ._native import (
     BYTE_STREAM_HANDLER,
     CHAT_EVENT,
     METADATA_EVENT,
+    ROOM_SNAPSHOT_EVENT,
+    ROOM_SID_EVENT,
+    PARTICIPANT_LIST_EVENT,
+    QUALITY_EVENT,
+    PARTICIPANT_STRING_EVENT,
+    PARTICIPANT_ATTRIBUTES_EVENT,
+    PARTICIPANT_PERMISSIONS_EVENT,
+    BUFFER_STATUS_EVENT,
+    SIP_DTMF_EVENT,
     PARTICIPANT_EVENT,
     REASON_EVENT,
     ROOM_EVENT,
@@ -56,6 +65,9 @@ from ._models import (
     ByteMessage,
     ByteStreamEvent,
     ChatMessage,
+    RoomSnapshot,
+    DataChannelBufferStatus,
+    SipDtmf,
     ConnectionState,
     DataPacket,
     Participant,
@@ -353,6 +365,66 @@ class Room:
                            lambda _user, _room, info, name=event:
                            self._post(name, Participant.from_native(info.contents))
                            if info else None)
+        for event in ("active_speakers_changed", "participants_updated"):
+            self._callback("on_" + event, PARTICIPANT_LIST_EVENT,
+                           lambda _user, _room, values, count, name=event:
+                           self._post(name, tuple(Participant.from_native(values[index])
+                                                  for index in range(count))))
+        self._callback("on_connection_quality_changed", QUALITY_EVENT,
+                       lambda _user, _room, quality, participant:
+                       self._post("connection_quality_changed", quality,
+                                  Participant.from_native(participant.contents))
+                       if participant else None)
+        self._callback("on_participant_metadata_changed", PARTICIPANT_STRING_EVENT,
+                       lambda _user, _room, previous, participant:
+                       self._post("participant_metadata_changed", decode(previous),
+                                  Participant.from_native(participant.contents))
+                       if participant else None)
+        self._callback("on_participant_name_changed", PARTICIPANT_STRING_EVENT,
+                       lambda _user, _room, name, participant:
+                       self._post("participant_name_changed", decode(name),
+                                  Participant.from_native(participant.contents))
+                       if participant else None)
+        self._callback("on_participant_attributes_changed", PARTICIPANT_ATTRIBUTES_EVENT,
+                       lambda _user, _room, attrs, count, participant:
+                       self._post("participant_attributes_changed", _attributes(attrs, count),
+                                  Participant.from_native(participant.contents))
+                       if participant else None)
+        self._callback("on_participant_permissions_changed", PARTICIPANT_PERMISSIONS_EVENT,
+                       lambda _user, _room, previous, current, participant:
+                       self._post("participant_permissions_changed",
+                                  ParticipantPermissions.from_native(previous.contents),
+                                  ParticipantPermissions.from_native(current.contents),
+                                  Participant.from_native(participant.contents))
+                       if previous and current and participant else None)
+        self._callback("on_room_sid_changed", ROOM_SID_EVENT,
+                       lambda _user, _room, previous, sid:
+                       self._post("room_sid_changed", decode(previous), decode(sid)))
+        for event in ("room_updated", "room_moved"):
+            self._callback("on_" + event, ROOM_SNAPSHOT_EVENT,
+                           lambda _user, _room, value, name=event:
+                           self._post(name, RoomSnapshot(
+                               sid=decode(value.contents.sid),
+                               name=decode(value.contents.name),
+                               metadata=decode(value.contents.metadata),
+                               is_recording=bool(value.contents.is_recording),
+                           )) if value else None)
+        self._callback("on_data_channel_buffer_status_changed", BUFFER_STATUS_EVENT,
+                       lambda _user, _room, value:
+                       self._post("data_channel_buffer_status_changed",
+                                  DataChannelBufferStatus(
+                                      reliable=bool(value.contents.reliable),
+                                      buffered_amount=value.contents.buffered_amount,
+                                      high_water_mark=value.contents.high_water_mark,
+                                      low_water_mark=value.contents.low_water_mark,
+                                      backpressured=bool(value.contents.backpressured),
+                                  )) if value else None)
+        self._callback("on_sip_dtmf_received", SIP_DTMF_EVENT,
+                       lambda _user, _room, value:
+                       self._post("sip_dtmf_received", SipDtmf(
+                           code=value.contents.code, digit=decode(value.contents.digit),
+                           participant_identity=decode(value.contents.participant_identity),
+                       )) if value else None)
         self._callback("on_data_received", DATA_EVENT, self._on_data)
         self._callback("on_connection_state_changed", STATE_EVENT,
                        lambda _user, _room, state:
@@ -1089,18 +1161,7 @@ class Room:
         self._native.check(getattr(lib, prefix + "permissions")(
             handle, C.byref(permissions)
         ))
-        permission_value = ParticipantPermissions(
-            can_subscribe=bool(permissions.can_subscribe),
-            can_publish=bool(permissions.can_publish),
-            can_publish_data=bool(permissions.can_publish_data),
-            can_publish_sources=tuple(permissions.can_publish_sources[index]
-                for index in range(permissions.can_publish_source_count)),
-            hidden=bool(permissions.hidden), recorder=bool(permissions.recorder),
-            can_update_metadata=bool(permissions.can_update_metadata),
-            agent=bool(permissions.agent),
-            can_subscribe_metrics=bool(permissions.can_subscribe_metrics),
-            can_manage_agent_session=bool(permissions.can_manage_agent_session),
-        )
+        permission_value = ParticipantPermissions.from_native(permissions)
         attributes = {}
         count = getattr(lib, prefix + "attribute_count")(handle)
         for index in range(count):

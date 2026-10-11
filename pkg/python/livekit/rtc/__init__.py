@@ -47,6 +47,7 @@ from .e2ee import (
 )
 from ._models import (
     AudioPlaybackStats,
+    RoomSnapshot, DataChannelBufferStatus, SipDtmf,
     ContinualGatheringPolicy, IceServer, IceTransportType,
     ParticipantTrackPermission, ReconnectContext, ReconnectReason, RtcConfiguration,
     ParticipantPermissions,
@@ -98,6 +99,9 @@ __all__ = [
     "TokenSourceFetchOptions",
     "TokenSourceResponse",
     "AudioPlaybackStats",
+    "RoomSnapshot",
+    "DataChannelBufferStatus",
+    "SipDtmf",
     "RtcConfiguration",
     "IceServer",
     "IceTransportType",
