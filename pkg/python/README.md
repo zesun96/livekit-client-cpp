@@ -45,6 +45,10 @@ Python event loop. Register event handlers before `connect`; `on` also accepts
 `reconnecting`, `reconnected`, `connection_state_changed`, `disconnect_reason`,
 `participant_connected`, `participant_disconnected`, `data_received`,
 `room_metadata_changed`, `chat_message_received`, `token_refreshed`, and `room_eos`.
+Track subscription feedback events are `track_subscription_permission_changed`,
+`track_subscription_failed`, `track_stream_state_changed`, and
+`track_subscription_status_changed`. Each supplies detached track and
+participant values followed by a boolean or enum status.
 
 `room.remote_participants` gives detached participant snapshots, including
 attributes and track publications, keyed by identity. Track events deliver
@@ -54,8 +58,31 @@ participant string properties are live getters.
 Use `rtc.list_media_devices()` and `rtc.list_screen_sources()` to enumerate
 available input, output, camera, monitor, and window IDs without opening them.
 `RoomOptions` covers auto subscribe, adaptive stream, dynacast, join retries,
-reconnect timeout, and E2EE configuration. Other C ABI capabilities remain
+reconnect timeout, ICE servers, ICE transport policy, a synchronous reconnect
+policy, and E2EE configuration. Other C ABI capabilities remain
 available through the C++ SDK and are not represented by this Python surface.
+
+```python
+options = rtc.RoomOptions(
+    rtc_config=rtc.RtcConfiguration(
+        ice_servers=[rtc.IceServer(["turn:relay.example:3478"], "user", "password")],
+        ice_transport_type=rtc.IceTransportType.RELAY,
+    ),
+    reconnect_policy=lambda context: 500 if context.retry_count < 5 else None,
+)
+await room.connect(url, token, options)
+await room.local_participant.set_track_subscription_permissions(
+    allow_all_participants=False,
+    participant_permissions=[rtc.ParticipantTrackPermission(
+        participant_identity="viewer", allowed_track_sids=["TR_track_sid"]
+    )],
+)
+```
+
+The reconnect policy runs on the native recovery thread. Return a delay in
+milliseconds to retry, or `None` to stop. Keep it short and synchronous; the
+binding stops recovery if it raises or returns an invalid delay. Subscription
+permissions can also be updated through `room.set_track_subscription_permissions`.
 
 For E2EE, pass `E2EEOptions` through `RoomOptions.encryption` (or its `e2ee`
 alias). Peers need the same key and compatible key derivation settings. Use
@@ -93,7 +120,8 @@ with `async with` or `await room.aclose()`.
 ## Package layout
 
 `room.py` owns room lifecycle and native operations. `_native.py` defines the
-versioned C ABI structures and function signatures. `_models.py` contains
+versioned C ABI structures and function signatures. `_connection.py` owns
+borrowed connection and subscription option buffers. `_models.py` contains
 detached public values, `_events.py` dispatches callbacks through a bounded
 queue, `e2ee.py` owns encryption options and key control, and
 `media_devices.py` handles read-only device enumeration. Raw callback memory

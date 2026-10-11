@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Callable
 
 from ._native import LiveKitError, ParticipantInfo, TrackPublicationInfo, decode
 from .e2ee import E2EEOptions
@@ -18,6 +19,72 @@ class ConnectionState(IntEnum):
     RECONNECTING = 5
 
 
+class ContinualGatheringPolicy(IntEnum):
+    GATHER_ONCE = 0
+    GATHER_CONTINUALLY = 1
+
+
+class IceTransportType(IntEnum):
+    NONE = 0
+    RELAY = 1
+    NO_HOST = 2
+    ALL = 3
+
+
+class ReconnectReason(IntEnum):
+    UNKNOWN = 0
+    SIGNAL_DISCONNECTED = 1
+    MEDIA_FAILURE = 2
+
+
+class SubscriptionError(IntEnum):
+    UNKNOWN = 0
+    CODEC_UNSUPPORTED = 1
+    TRACK_NOT_FOUND = 2
+
+
+class TrackStreamState(IntEnum):
+    UNKNOWN = 0
+    ACTIVE = 1
+    PAUSED = 2
+
+
+class TrackSubscriptionStatus(IntEnum):
+    UNSUBSCRIBED = 0
+    DESIRED = 1
+    SUBSCRIBED = 2
+
+
+@dataclass(frozen=True)
+class IceServer:
+    urls: tuple[str, ...] | list[str]
+    username: str = ""
+    password: str = ""
+
+
+@dataclass(frozen=True)
+class RtcConfiguration:
+    ice_servers: tuple[IceServer, ...] | list[IceServer] = ()
+    continual_gathering_policy: ContinualGatheringPolicy = ContinualGatheringPolicy.GATHER_CONTINUALLY
+    ice_transport_type: IceTransportType = IceTransportType.ALL
+
+
+@dataclass(frozen=True)
+class ReconnectContext:
+    retry_count: int
+    elapsed_ms: int
+    reason: ReconnectReason
+    server_url: str
+
+
+@dataclass(frozen=True)
+class ParticipantTrackPermission:
+    participant_sid: str = ""
+    participant_identity: str = ""
+    allow_all: bool = False
+    allowed_track_sids: tuple[str, ...] | list[str] = ()
+
+
 @dataclass(frozen=True)
 class RoomOptions:
     auto_subscribe: bool = True
@@ -25,6 +92,8 @@ class RoomOptions:
     dynacast: bool = False
     join_retries: int | None = None
     reconnect_timeout_ms: int | None = None
+    rtc_config: RtcConfiguration | None = None
+    reconnect_policy: Callable[[ReconnectContext], int | None] | None = None
     e2ee: E2EEOptions | None = None
     encryption: E2EEOptions | None = None
 

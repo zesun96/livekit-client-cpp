@@ -22,6 +22,7 @@ from ._native import (
     ROOM_EVENT,
     STATE_EVENT,
     TRACK_EVENT,
+    TRACK_FEEDBACK_EVENT,
     ENCRYPTION_EVENT,
     DataPublishOptions,
     TextSendOptions,
@@ -30,7 +31,6 @@ from ._native import (
     Attribute,
     LiveKitError,
     RoomCallbacks,
-    RoomConnectOptions,
     RemoteTrackPublicationInfo,
     RemoteTrackSettings,
     RpcPerformOptions,
@@ -45,16 +45,21 @@ from ._models import (
     ConnectionState,
     DataPacket,
     Participant,
+    ParticipantTrackPermission,
     RoomOptions,
     RpcError,
     StreamEventType,
+    SubscriptionError,
     TextMessage,
     TextStreamEvent,
     TrackPublication,
+    TrackStreamState,
+    TrackSubscriptionStatus,
     copy_attributes as _attributes,
     copy_strings as _strings,
 )
 from ._events import EventDispatcher
+from ._connection import connection_options, subscription_permissions
 from .e2ee import E2EEManager, EncryptionState
 
 __version__ = "0.6.0"
@@ -103,6 +108,14 @@ class LocalParticipant:
         await self._room._run(
             self._room._native.lib.lk_local_participant_set_attributes,
             self._room._handle, raw, len(attributes),
+        )
+
+    async def set_track_subscription_permissions(
+        self, *, allow_all_participants: bool,
+        participant_permissions: list[ParticipantTrackPermission] | None = None,
+    ) -> None:
+        await self._room.set_track_subscription_permissions(
+            allow_all_participants, participant_permissions
         )
 
     async def publish_data(
@@ -256,6 +269,25 @@ class Room:
                                       TrackPublication.from_native(track.contents),
                                       Participant.from_native(participant.contents))
                            if track and participant else None)
+        for event, convert in (
+            ("track_subscription_permission_changed", bool),
+            ("track_subscription_failed", lambda value: SubscriptionError(
+                value) if value in SubscriptionError._value2member_map_
+                else SubscriptionError.UNKNOWN),
+            ("track_stream_state_changed", lambda value: TrackStreamState(
+                value) if value in TrackStreamState._value2member_map_
+                else TrackStreamState.UNKNOWN),
+            ("track_subscription_status_changed", lambda value: TrackSubscriptionStatus(
+                value) if value in TrackSubscriptionStatus._value2member_map_ else value),
+        ):
+            self._callback("on_" + event, TRACK_FEEDBACK_EVENT,
+                           lambda _user, _room, track, participant, value,
+                           name=event, convert=convert:
+                           self._post(name,
+                                      TrackPublication.from_native(track.contents),
+                                      Participant.from_native(participant.contents),
+                                      convert(value))
+                           if track and participant else None)
 
     def _on_data(self, _user, _room, received) -> None:
         if not received:
@@ -384,18 +416,9 @@ class Room:
 
     async def connect(self, url: str, token: str, options: RoomOptions | None = None) -> None:
         options = options or RoomOptions()
-        raw = RoomConnectOptions()
-        self._native.lib.lk_room_connect_options_init(C.byref(raw))
-        raw.auto_subscribe = int(options.auto_subscribe)
-        raw.adaptive_stream = int(options.adaptive_stream)
-        raw.dynacast = int(options.dynacast)
-        if options.join_retries is not None:
-            raw.join_retries = options.join_retries
-        if options.reconnect_timeout_ms is not None:
-            raw.reconnect_timeout_ms = options.reconnect_timeout_ms
-        encryption = options.encryption or options.e2ee
-        if encryption is not None:
-            raw.e2ee_options = C.pointer(encryption._native(self._native.lib))
+        raw, callback = connection_options(self._native.lib, options)
+        if callback is not None:
+            self._callback_refs.append(callback)
         await self._run(self._native.lib.lk_room_connect_with_options,
                         self._handle, utf8(url), utf8(token), C.byref(raw))
 
@@ -536,6 +559,17 @@ class Room:
     ) -> None:
         await self._run(self._native.lib.lk_room_set_remote_track_subscribed,
                         self._handle, utf8(participant_sid), utf8(track_sid), int(subscribed))
+
+    async def set_track_subscription_permissions(
+        self, all_participants_allowed: bool,
+        participant_permissions: list[ParticipantTrackPermission] | None = None,
+    ) -> None:
+        permissions = subscription_permissions(
+            self._native.lib, participant_permissions or []
+        )
+        await self._run(self._native.lib.lk_room_set_track_subscription_permissions,
+                        self._handle, int(all_participants_allowed),
+                        permissions, len(permissions))
 
     async def update_remote_track_settings(
         self, participant_sid: str, track_sid: str, *, enabled: bool = True,

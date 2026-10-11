@@ -23,6 +23,11 @@ from .e2ee import (
     E2EEManager, E2EEOptions, EncryptionState, FrameCryptor,
     FrameCryptorDirection, KeyDerivation,
 )
+from ._models import (
+    ContinualGatheringPolicy, IceServer, IceTransportType,
+    ParticipantTrackPermission, ReconnectContext, ReconnectReason, RtcConfiguration,
+    SubscriptionError, TrackStreamState, TrackSubscriptionStatus,
+)
 
 __all__ = [
     "ConnectionState",
@@ -39,6 +44,16 @@ __all__ = [
     "TrackPublication",
     "Room",
     "RoomOptions",
+    "RtcConfiguration",
+    "IceServer",
+    "IceTransportType",
+    "ContinualGatheringPolicy",
+    "ReconnectContext",
+    "ReconnectReason",
+    "ParticipantTrackPermission",
+    "SubscriptionError",
+    "TrackStreamState",
+    "TrackSubscriptionStatus",
     "RpcError",
     "__version__",
     "MediaDevice",

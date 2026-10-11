@@ -7,12 +7,15 @@ import unittest
 
 from livekit.rtc import (
     ConnectionState, E2EEOptions, EncryptionState, FrameCryptorDirection, KeyDerivation,
-    LiveKitError, Room, RoomOptions, StreamEventType,
+    IceServer, LiveKitError, ParticipantTrackPermission, Room, RoomOptions,
+    RtcConfiguration, StreamEventType, SubscriptionError, TrackStreamState,
+    TrackSubscriptionStatus,
 )
 from livekit.rtc._native import (
     Attribute, ByteStreamEvent, ChatMessage, DataReceived, FileReceived, ParticipantInfo,
     RoomCallbacks, RoomConnectOptions, TextReceived, TextStreamEvent, TrackPublicationInfo,
-    EncryptionStateRaw, ENCRYPTION_EVENT, TRACK_EVENT, _CALLBACK_NAMES,
+    EncryptionStateRaw, ENCRYPTION_EVENT, TRACK_EVENT, TRACK_FEEDBACK_EVENT,
+    _CALLBACK_NAMES,
 )
 
 
@@ -31,6 +34,25 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.room.remote_participants, {})
         with self.assertRaisesRegex(LiveKitError, "URL, and token"):
             await self.room.connect("", "")
+
+    async def test_connection_options_and_permission_validation(self):
+        with self.assertRaisesRegex(LiveKitError, "URL, and token"):
+            await self.room.connect("", "", RoomOptions(
+                rtc_config=RtcConfiguration(ice_servers=[IceServer(["stun:example.test"])]),
+                reconnect_policy=lambda context: 100,
+            ))
+        with self.assertRaisesRegex(ValueError, "SID or identity"):
+            await self.room.local_participant.set_track_subscription_permissions(
+                allow_all_participants=False,
+                participant_permissions=[ParticipantTrackPermission()],
+            )
+        await self.room.local_participant.set_track_subscription_permissions(
+            allow_all_participants=False,
+            participant_permissions=[ParticipantTrackPermission(
+                participant_identity="viewer", allowed_track_sids=["TR_test"],
+            )],
+        )
+        await self.room.set_track_subscription_permissions(True)
 
     async def test_binary_data_callback_copies_borrowed_buffer(self):
         self.room._loop = asyncio.get_running_loop()
@@ -85,6 +107,34 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertEqual(received[0][0].name, "camera")
         self.assertEqual(received[0][1].identity, "peer")
+
+    async def test_track_subscription_feedback_copies_borrowed_values(self):
+        self.room._loop = asyncio.get_running_loop()
+        received = []
+        cases = (
+            ("track_subscription_permission_changed", 1, True),
+            ("track_subscription_failed", 2, SubscriptionError.TRACK_NOT_FOUND),
+            ("track_stream_state_changed", 1, TrackStreamState.ACTIVE),
+            ("track_subscription_status_changed", 2, TrackSubscriptionStatus.SUBSCRIBED),
+        )
+        for name, value, expected in cases:
+            self.room.on(name, lambda track, person, result, event=name:
+                         received.append((event, track, person, result)))
+            track_name = C.create_string_buffer(b"camera")
+            track = TrackPublicationInfo(
+                b"TR_1", C.cast(track_name, C.c_char_p), b"video/VP8",
+                1, 1, 640, 480, 0, 0, 1,
+            )
+            participant = ParticipantInfo(b"PA_1", b"peer", b"Peer", b"", 0, 0, 0, 0)
+            callback = TRACK_FEEDBACK_EVENT(getattr(self.room._callbacks, "on_" + name))
+            callback(None, self.room._handle, C.pointer(track), C.pointer(participant), value)
+            track_name[0] = b"x"
+            await asyncio.sleep(0)
+            actual = received[-1]
+            self.assertEqual(actual[0], name)
+            self.assertEqual(actual[1].name, "camera")
+            self.assertEqual(actual[2].identity, "peer")
+            self.assertEqual(actual[3], expected)
 
     async def test_completed_stream_events_copy_content_and_metadata(self):
         self.room._loop = asyncio.get_running_loop()

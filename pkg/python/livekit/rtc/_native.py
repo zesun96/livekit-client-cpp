@@ -211,12 +211,42 @@ class FrameCryptorInfoRaw(C.Structure):
     ]
 
 
+class IceServerRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("urls", C.POINTER(C.c_char_p)),
+        ("url_count", C.c_size_t), ("username", C.c_char_p),
+        ("password", C.c_char_p),
+    ]
+
+
+class ReconnectContextRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("retry_count", C.c_uint32),
+        ("elapsed_ms", C.c_uint64), ("reason", C.c_int),
+        ("server_url", C.c_char_p),
+    ]
+
+
+RECONNECT_POLICY = C.CFUNCTYPE(
+    C.c_int, C.c_void_p, C.POINTER(ReconnectContextRaw), C.POINTER(C.c_uint32)
+)
+
+
+class ParticipantTrackPermissionRaw(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("participant_sid", C.c_char_p),
+        ("participant_identity", C.c_char_p), ("allow_all", C.c_int),
+        ("allowed_track_sids", C.POINTER(C.c_char_p)),
+        ("allowed_track_sid_count", C.c_size_t),
+    ]
+
+
 class RoomConnectOptions(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("auto_subscribe", C.c_int),
         ("adaptive_stream", C.c_int), ("dynacast", C.c_int),
         ("join_retries", C.c_uint32), ("reconnect_timeout_ms", C.c_uint32),
-        ("ice_servers", C.c_void_p), ("ice_server_count", C.c_size_t),
+        ("ice_servers", C.POINTER(IceServerRaw)), ("ice_server_count", C.c_size_t),
         ("continual_gathering_policy", C.c_int), ("ice_transport_type", C.c_int),
         ("reconnect_policy", C.c_void_p), ("reconnect_policy_user_data", C.c_void_p),
         ("e2ee_options", C.POINTER(E2EEOptionsRaw)),
@@ -241,6 +271,10 @@ CHAT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(ChatMessage))
 TRACK_EVENT = C.CFUNCTYPE(
     None, C.c_void_p, C.c_void_p,
     C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo),
+)
+TRACK_FEEDBACK_EVENT = C.CFUNCTYPE(
+    None, C.c_void_p, C.c_void_p,
+    C.POINTER(TrackPublicationInfo), C.POINTER(ParticipantInfo), C.c_int,
 )
 FILE_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(FileReceived))
 TEXT_EVENT = C.CFUNCTYPE(None, C.c_void_p, C.c_void_p, C.POINTER(TextReceived))
@@ -326,6 +360,7 @@ class Native:
         self._bind("lk_room_set_callbacks", C.c_int, p, C.POINTER(RoomCallbacks))
         self._bind("lk_room_connect_with_options", C.c_int, p, b, b, C.POINTER(RoomConnectOptions))
         self._bind("lk_room_connect_options_init", None, C.POINTER(RoomConnectOptions))
+        self._bind("lk_ice_server_init", None, C.POINTER(IceServerRaw))
         self._bind("lk_e2ee_options_init", None, C.POINTER(E2EEOptionsRaw))
         self._bind("lk_room_disconnect", C.c_int, p)
         self._bind("lk_room_state", C.c_int, p)
@@ -421,6 +456,10 @@ class Native:
         self._bind("lk_room_set_remote_track_subscribed", C.c_int, p, b, b, C.c_int)
         self._bind("lk_room_update_remote_track_settings", C.c_int, p, b, b,
                    C.POINTER(RemoteTrackSettings))
+        self._bind("lk_participant_track_permission_init", None,
+                   C.POINTER(ParticipantTrackPermissionRaw))
+        self._bind("lk_room_set_track_subscription_permissions", C.c_int, p,
+                   C.c_int, C.POINTER(ParticipantTrackPermissionRaw), s)
         for prefix, info in (("lk_media_device_list", MediaDeviceInfo),
                              ("lk_screen_source_list", ScreenSourceInfo)):
             self._bind(prefix + "_create", C.c_int, C.POINTER(p))

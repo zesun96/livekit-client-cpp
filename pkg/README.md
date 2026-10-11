@@ -11,7 +11,7 @@ and Zig bindings have no implementation yet.
 | Room creation and cleanup | Yes | Yes | No | No |
 | Synchronous room connect and disconnect | Yes | No | No | No |
 | Coroutine asynchronous room connect and disconnect | Yes | Yes | No | No |
-| Dynamic token source and advanced ICE connection options | Yes | No | No | No |
+| Dynamic token source and advanced ICE connection options | Yes | Partial | No | No |
 | Connection state, room SID, name, and metadata getters | Yes | Yes | No | No |
 | Connection and participant callbacks | Yes | Partial | No | No |
 | Receive data messages | Yes | Yes | No | No |
@@ -20,7 +20,7 @@ and Zig bindings have no implementation yet.
 | Local participant and remote participant snapshots | Yes | Partial | No | No |
 | Local participant metadata and attributes | Yes | Yes | No | No |
 | Remote track subscription and settings | Yes | Yes | No | No |
-| Track subscription permissions and feedback events | Yes | No | No | No |
+| Track subscription permissions and feedback events | Yes | Yes | No | No |
 | External audio/video tracks, frame push, and remote frame streams | Yes | No | No | No |
 | Audio/video frame events with bounded queues and video metadata | Yes | No | No | No |
 | Microphone, system audio, camera, and screen device capture | Yes | No | No | No |
