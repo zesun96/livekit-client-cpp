@@ -9,6 +9,9 @@ public final class OfflineSmoke {
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
             if (room.isRecording()) throw new AssertionError("New room is recording");
+            AudioPlaybackStats playback = room.audioPlaybackStats();
+            if (playback.queuedFrames() != 0 || playback.playedFrames() != 0)
+                throw new AssertionError("New room has playback frames");
             if (room.remoteParticipants().size() != 0) throw new AssertionError("Unexpected participant");
             if (!room.remoteTrackPublications().isEmpty()) throw new AssertionError("Unexpected track");
             if (!room.remoteDataTracks().isEmpty()) throw new AssertionError("Unexpected DataTrack");

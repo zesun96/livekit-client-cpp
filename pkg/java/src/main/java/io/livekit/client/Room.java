@@ -208,6 +208,20 @@ public final class Room implements AutoCloseable {
     public int state() { return withHandle(Native::state); }
     public int disconnectReason() { return withHandle(Native::disconnectReason); }
     public boolean isConnected() { return withHandle(Native::connected); }
+    public AudioPlaybackStats audioPlaybackStats() { return withHandle(Native::audioPlaybackStats); }
+    public String audioOutputDevice() { return withHandle(h -> Native.string(Native.audioOutputDevice(h))); }
+    public void setAudioOutputDevice(String deviceId) {
+        useHandle(h -> Native.setAudioOutputDevice(h, Native.utf8(Objects.requireNonNull(deviceId))));
+    }
+    public float speakerVolume() { return withHandle(Native::speakerVolume); }
+    public void setSpeakerVolume(float volume) {
+        if (!Float.isFinite(volume) || volume < 0 || volume > 1)
+            throw new IllegalArgumentException("Volume must be between 0 and 1");
+        useHandle(h -> Native.setSpeakerVolume(h, volume));
+    }
+    public boolean speakerMuted() { return withHandle(Native::speakerMuted); }
+    public void setSpeakerMuted(boolean muted) { useHandle(h -> Native.setSpeakerMuted(h, muted)); }
+    public void republishAllTracks() { useHandle(Native::republishAllTracks); }
     public boolean isRecording() { return withHandle(Native::isRecording); }
     public String sid() { return withHandle(h -> Native.string(Native.roomString(h, 0))); }
     public String name() { return withHandle(h -> Native.string(Native.roomString(h, 1))); }

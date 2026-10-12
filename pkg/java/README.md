@@ -34,6 +34,7 @@ chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
 remote track snapshots and bounded audio/video stream readers,
 local RTC stats JSON, device and screen-source enumeration,
+speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
 snapshots, bounded readers, and remote track recording. Dynamic token sources, incremental
 streams, DataTrack schemas, and diagnostics are not yet exposed.

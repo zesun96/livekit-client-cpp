@@ -26,6 +26,14 @@ final class Native {
     static native int state(long handle);
     static native int disconnectReason(long handle);
     static native boolean connected(long handle);
+    static native AudioPlaybackStats audioPlaybackStats(long handle);
+    static native void setAudioOutputDevice(long handle, byte[] deviceId);
+    static native byte[] audioOutputDevice(long handle);
+    static native void setSpeakerVolume(long handle, float volume);
+    static native float speakerVolume(long handle);
+    static native void setSpeakerMuted(long handle, boolean muted);
+    static native boolean speakerMuted(long handle);
+    static native void republishAllTracks(long handle);
     static native byte[] roomString(long handle, int field);
     static native byte[] localString(long handle, int field);
     static native void setLocalString(long handle, int field, byte[] value);

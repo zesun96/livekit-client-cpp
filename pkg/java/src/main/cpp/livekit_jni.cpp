@@ -540,6 +540,55 @@ JNIEXPORT jint JNICALL Java_io_livekit_client_Native_disconnectReason(JNIEnv*, j
 JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_connected(JNIEnv*, jclass, jlong ptr) {
 	return lk_room_is_connected(handle(ptr)->room) ? JNI_TRUE : JNI_FALSE;
 }
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_audioPlaybackStats(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	lk_audio_playback_stats_t stats;
+	lk_audio_playback_stats_init(&stats);
+	auto status = lk_room_audio_playback_stats(handle(ptr)->room, &stats);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/AudioPlaybackStats");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(JJJJIII)V");
+	jobject result = env->NewObject(
+	    cls, ctor, static_cast<jlong>(stats.queued_frames), static_cast<jlong>(stats.played_frames),
+	    static_cast<jlong>(stats.dropped_frames), static_cast<jlong>(stats.underrun_frames),
+	    static_cast<jint>(stats.buffered_duration_ms), static_cast<jint>(stats.device_latency_ms),
+	    static_cast<jint>(stats.estimated_delay_ms));
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setAudioOutputDevice(JNIEnv* env, jclass,
+                                                                          jlong ptr,
+                                                                          jbyteArray deviceId) {
+	std::string id = bytes(env, deviceId);
+	fail(env, lk_room_set_audio_output_device(handle(ptr)->room, id.c_str()));
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_audioOutputDevice(JNIEnv* env, jclass,
+                                                                             jlong ptr) {
+	auto* room = handle(ptr)->room;
+	return getter(env,
+	              [room](char* p, size_t n) { return lk_room_audio_output_device(room, p, n); });
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setSpeakerVolume(JNIEnv* env, jclass,
+                                                                      jlong ptr, jfloat volume) {
+	fail(env, lk_room_set_speaker_volume(handle(ptr)->room, volume));
+}
+JNIEXPORT jfloat JNICALL Java_io_livekit_client_Native_speakerVolume(JNIEnv*, jclass, jlong ptr) {
+	return lk_room_speaker_volume(handle(ptr)->room);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setSpeakerMuted(JNIEnv* env, jclass, jlong ptr,
+                                                                     jboolean muted) {
+	fail(env, lk_room_set_speaker_muted(handle(ptr)->room, muted ? 1 : 0));
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_speakerMuted(JNIEnv*, jclass, jlong ptr) {
+	return lk_room_speaker_is_muted(handle(ptr)->room) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_republishAllTracks(JNIEnv* env, jclass,
+                                                                        jlong ptr) {
+	fail(env, lk_room_republish_all_tracks(handle(ptr)->room));
+}
 JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_roomString(JNIEnv* env, jclass,
                                                                       jlong ptr, jint field) {
 	lk_room_t* room = handle(ptr)->room;
