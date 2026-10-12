@@ -62,6 +62,18 @@ public final class OfflineSmoke {
             incoming.clear();
             if (!"".equals(attributes.get().get("removed")))
                 throw new AssertionError("Participant attribute changes were not copied");
+            java.util.concurrent.atomic.AtomicReference<java.util.List<Participant>> speakers =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onActiveSpeakersChanged(java.util.List<Participant> value) {
+                    speakers.set(value);
+                }
+            });
+            Participant[] incomingSpeakers = {new Participant("sid", "remote", "name", "")};
+            room.onNativeParticipantList(0, incomingSpeakers);
+            incomingSpeakers[0] = null;
+            if (!"remote".equals(speakers.get().get(0).identity()))
+                throw new AssertionError("Speaker list was not copied");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");

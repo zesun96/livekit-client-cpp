@@ -48,6 +48,8 @@ operations from inside the callback. A thrown exception or empty credentials fai
 changes as well as remote track lifecycle events.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
+Connection quality, active speaker, and participant-list updates are available through
+`Room.Listener`; speaker and participant lists are immutable snapshots.
 Track subscription feedback includes permission, failure, stream state, and subscription status;
 integer values match the corresponding `lk_*` enums in `include/livekit/capi/livekit.h`.
 

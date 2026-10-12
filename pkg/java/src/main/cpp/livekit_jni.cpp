@@ -276,6 +276,35 @@ void participant_change_event(RoomHandle* h, int kind, const lk_participant_info
 	});
 }
 
+void participant_list_event(RoomHandle* h, int kind, const lk_participant_info_t* values,
+                            size_t count) {
+	if (count > static_cast<size_t>(INT32_MAX) || (count != 0 && values == nullptr))
+		return;
+	deliver(h, [h, kind, values, count](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jobjectArray items =
+		    env->NewObjectArray(static_cast<jsize>(count), h->participant_class, nullptr);
+		for (size_t i = 0; items != nullptr && i < count && !env->ExceptionCheck(); ++i) {
+			jobject value = participant(env, h, &values[i]);
+			if (!env->ExceptionCheck())
+				env->SetObjectArrayElement(items, static_cast<jsize>(i), value);
+			if (value != nullptr)
+				env->DeleteLocalRef(value);
+		}
+		if (items != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeParticipantList",
+			                                            "(I[Lio/livekit/client/Participant;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), items);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void text_event(RoomHandle* h, const lk_text_received_t* value) {
 	if (value == nullptr)
 		return;
@@ -774,6 +803,18 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	                                                 const lk_participant_info_t* who) {
 		participant_change_event(static_cast<RoomHandle*>(p), 2, who, nullptr, changes, count);
 	};
+	callbacks.on_connection_quality_changed =
+	    [](void* p, lk_room_t*, lk_connection_quality_t quality, const lk_participant_info_t* who) {
+		    event(static_cast<RoomHandle*>(p), 11, static_cast<int>(quality), who);
+	    };
+	callbacks.on_active_speakers_changed = [](void* p, lk_room_t*,
+	                                          const lk_participant_info_t* speakers, size_t count) {
+		participant_list_event(static_cast<RoomHandle*>(p), 0, speakers, count);
+	};
+	callbacks.on_participants_updated =
+	    [](void* p, lk_room_t*, const lk_participant_info_t* participants, size_t count) {
+		    participant_list_event(static_cast<RoomHandle*>(p), 1, participants, count);
+	    };
 	callbacks.on_track_published = [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
 	                                  const lk_participant_info_t* who) {
 		track_event(static_cast<RoomHandle*>(p), 0, track, who);

@@ -31,6 +31,9 @@ public final class Room implements AutoCloseable {
         default void onParticipantNameChanged(Participant participant, String name) {}
         default void onParticipantAttributesChanged(Participant participant,
                                                     Map<String, String> changes) {}
+        default void onConnectionQualityChanged(Participant participant, int quality) {}
+        default void onActiveSpeakersChanged(List<Participant> speakers) {}
+        default void onParticipantsUpdated(List<Participant> participants) {}
         default void onTrackPublished(RemoteTrackPublication track) {}
         default void onTrackUnpublished(RemoteTrackPublication track) {}
         default void onTrackMuted(RemoteTrackPublication track) {}
@@ -456,6 +459,7 @@ public final class Room implements AutoCloseable {
                 case 8 -> listener.onRecordingStatusChanged(value != 0);
                 case 9 -> listener.onTokenRefreshed();
                 case 10 -> listener.onRoomEos();
+                case 11 -> listener.onConnectionQualityChanged(participant, value);
                 default -> throw new AssertionError(event);
             }
         });
@@ -479,6 +483,17 @@ public final class Room implements AutoCloseable {
                 case 0 -> listener.onParticipantMetadataChanged(participant, detail);
                 case 1 -> listener.onParticipantNameChanged(participant, detail);
                 case 2 -> listener.onParticipantAttributesChanged(participant, copied);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeParticipantList(int kind, Participant[] participants) {
+        List<Participant> copied = List.of(participants.clone());
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onActiveSpeakersChanged(copied);
+                case 1 -> listener.onParticipantsUpdated(copied);
                 default -> throw new AssertionError(kind);
             }
         });
