@@ -29,6 +29,8 @@ final class Native {
     static native byte[] roomString(long handle, int field);
     static native byte[] localString(long handle, int field);
     static native void setLocalString(long handle, int field, byte[] value);
+    static native void setLocalAttributes(long handle, byte[][] keys, byte[][] values);
+    static native boolean isRecording(long handle);
     static native void publishData(long handle, byte[] data, byte[] topic, boolean reliable, byte[][] destinations);
     static native void sendText(long handle, byte[] text);
     static native void sendBytes(long handle, byte[] data);

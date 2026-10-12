@@ -581,6 +581,37 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_setLocalString(JNIEnv* env,
 	fail(env, field == 0 ? lk_local_participant_set_name(room, v.c_str())
 	                     : lk_local_participant_set_metadata(room, v.c_str()));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setLocalAttributes(JNIEnv* env, jclass,
+                                                                        jlong ptr,
+                                                                        jobjectArray keys,
+                                                                        jobjectArray values) {
+	const jsize count = env->GetArrayLength(keys);
+	if (count != env->GetArrayLength(values)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Attribute keys and values have different lengths");
+		return;
+	}
+	std::vector<std::string> names, contents;
+	names.reserve(static_cast<size_t>(count));
+	contents.reserve(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		jbyteArray key = static_cast<jbyteArray>(env->GetObjectArrayElement(keys, i));
+		jbyteArray value = static_cast<jbyteArray>(env->GetObjectArrayElement(values, i));
+		names.push_back(bytes(env, key));
+		contents.push_back(bytes(env, value));
+		env->DeleteLocalRef(key);
+		env->DeleteLocalRef(value);
+	}
+	std::vector<lk_attribute_t> attributes(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i)
+		attributes[static_cast<size_t>(i)] = {names[static_cast<size_t>(i)].c_str(),
+		                                      contents[static_cast<size_t>(i)].c_str()};
+	fail(env, lk_local_participant_set_attributes(handle(ptr)->room, attributes.data(),
+	                                              attributes.size()));
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_isRecording(JNIEnv*, jclass, jlong ptr) {
+	return lk_room_is_recording(handle(ptr)->room) ? JNI_TRUE : JNI_FALSE;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishData(JNIEnv* env, jclass, jlong ptr,
                                                                  jbyteArray data, jbyteArray topic,
                                                                  jboolean reliable,

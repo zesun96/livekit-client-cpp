@@ -28,6 +28,7 @@ The public API is `io.livekit.client.Room`. It owns the native room and must be 
 listeners before connecting. Listeners run on native SDK callback threads, receive copied data,
 and should return promptly. Blocking operations have `CompletableFuture` alternatives. The
 binding currently covers room lifecycle and state, local participant identity and profile,
+local participant attributes and recording state,
 remote participant identity snapshots, data messages, basic text/byte/file sending and receiving,
 chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, local tracks, remote track snapshots and bounded audio/video stream readers,

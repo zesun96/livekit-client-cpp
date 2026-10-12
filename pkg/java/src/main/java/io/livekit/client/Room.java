@@ -1,6 +1,7 @@
 package io.livekit.client;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -207,6 +208,7 @@ public final class Room implements AutoCloseable {
     public int state() { return withHandle(Native::state); }
     public int disconnectReason() { return withHandle(Native::disconnectReason); }
     public boolean isConnected() { return withHandle(Native::connected); }
+    public boolean isRecording() { return withHandle(Native::isRecording); }
     public String sid() { return withHandle(h -> Native.string(Native.roomString(h, 0))); }
     public String name() { return withHandle(h -> Native.string(Native.roomString(h, 1))); }
     public String metadata() { return withHandle(h -> Native.string(Native.roomString(h, 2))); }
@@ -216,6 +218,17 @@ public final class Room implements AutoCloseable {
     public String localMetadata() { return withHandle(h -> Native.string(Native.localString(h, 3))); }
     public void setLocalName(String name) { useHandle(h -> Native.setLocalString(h, 0, Native.utf8(name))); }
     public void setLocalMetadata(String metadata) { useHandle(h -> Native.setLocalString(h, 1, Native.utf8(metadata))); }
+    public void setLocalAttributes(Map<String, String> attributes) {
+        Map<String, String> snapshot = Map.copyOf(Objects.requireNonNull(attributes));
+        byte[][] keys = new byte[snapshot.size()][];
+        byte[][] values = new byte[snapshot.size()][];
+        int index = 0;
+        for (var entry : snapshot.entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        useHandle(h -> Native.setLocalAttributes(h, keys, values));
+    }
 
     public void publishData(byte[] data, String topic, boolean reliable, String... destinations) {
         byte[][] encoded = new byte[destinations.length][];

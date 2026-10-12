@@ -8,10 +8,16 @@ public final class OfflineSmoke {
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
+            if (room.isRecording()) throw new AssertionError("New room is recording");
             if (room.remoteParticipants().size() != 0) throw new AssertionError("Unexpected participant");
             if (!room.remoteTrackPublications().isEmpty()) throw new AssertionError("Unexpected track");
             if (!room.remoteDataTracks().isEmpty()) throw new AssertionError("Unexpected DataTrack");
             if (room.state() != 3) throw new AssertionError("New room is not disconnected");
+            try {
+                room.setLocalAttributes(java.util.Map.of("offline", "test"));
+            } catch (LiveKitException expected) {
+                // Some SDK builds require a connected participant before updating attributes.
+            }
             ConnectionOptions options = new ConnectionOptions(true, false, false, 3, 15_000,
                 new IceServer[] { new IceServer(new String[] { "stun:example.invalid:3478" }, "u", "p") },
                 3, 1, new E2eeOptions(new byte[32], new byte[16]));
