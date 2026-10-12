@@ -36,8 +36,9 @@ remote track snapshots and bounded audio/video stream readers,
 local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
-snapshots, bounded readers, and remote track recording. Dynamic token sources, incremental
-streams, DataTrack schemas, and diagnostics are not yet exposed.
+snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
+Dynamic token sources, incoming incremental stream handlers, DataTrack schemas, and tracing are
+not yet exposed.
 The native C and C++ APIs provide those features.
 
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
@@ -51,6 +52,10 @@ when done. A read returns `null` on timeout or when the remote track closes. Fra
 into Java arrays; `droppedFrames()` reports frames discarded by the bounded native queue.
 Use `startTrackRecording` with the same identity and SID to write a remote track to a file. Call
 `stop()` before reading the file, then close the recorder.
+
+Use `Room.streamText` or `Room.streamBytes` for outgoing incremental streams. Write chunks with
+the returned writer and close it to complete the stream, or call `cancel(reason)` to abandon it.
+Closing the room cancels any remaining writers.
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by

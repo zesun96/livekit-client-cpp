@@ -36,6 +36,8 @@ public final class Room implements AutoCloseable {
     private final List<AudioStream> audioStreams = new CopyOnWriteArrayList<>();
     private final List<VideoStream> videoStreams = new CopyOnWriteArrayList<>();
     private final List<TrackRecorder> recorders = new CopyOnWriteArrayList<>();
+    private final List<TextStreamWriter> textWriters = new CopyOnWriteArrayList<>();
+    private final List<ByteStreamWriter> byteWriters = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
     private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
     private long handle;
@@ -68,6 +70,37 @@ public final class Room implements AutoCloseable {
     void removeAudioStream(AudioStream stream) { audioStreams.remove(stream); }
     void removeVideoStream(VideoStream stream) { videoStreams.remove(stream); }
     void removeTrackRecorder(TrackRecorder recorder) { recorders.remove(recorder); }
+    void removeTextStreamWriter(TextStreamWriter writer) { textWriters.remove(writer); }
+    void removeByteStreamWriter(ByteStreamWriter writer) { byteWriters.remove(writer); }
+
+    private static byte[][] encodeDestinations(String[] destinations) {
+        Objects.requireNonNull(destinations);
+        byte[][] encoded = new byte[destinations.length][];
+        for (int i = 0; i < destinations.length; i++)
+            encoded[i] = Native.utf8(Objects.requireNonNull(destinations[i]));
+        return encoded;
+    }
+
+    public TextStreamWriter streamText(String topic, String... destinations) {
+        byte[][] encoded = encodeDestinations(destinations);
+        return withHandle(h -> {
+            TextStreamWriter writer = new TextStreamWriter(this, Native.createStreamWriter(h,
+                true, Native.utf8(topic), null, null, encoded));
+            textWriters.add(writer);
+            return writer;
+        });
+    }
+
+    public ByteStreamWriter streamBytes(String topic, String mimeType, String name,
+                                        String... destinations) {
+        byte[][] encoded = encodeDestinations(destinations);
+        return withHandle(h -> {
+            ByteStreamWriter writer = new ByteStreamWriter(this, Native.createStreamWriter(h,
+                false, Native.utf8(topic), Native.utf8(mimeType), Native.utf8(name), encoded));
+            byteWriters.add(writer);
+            return writer;
+        });
+    }
 
     public TrackRecorder startTrackRecording(String participantIdentity, String trackSid,
                                              String outputPath, int queueCapacity) {
@@ -371,6 +404,8 @@ public final class Room implements AutoCloseable {
             if (interrupted) Thread.currentThread().interrupt();
         }
         try {
+            for (TextStreamWriter writer : textWriters) writer.abortOnRoomClose();
+            for (ByteStreamWriter writer : byteWriters) writer.abortOnRoomClose();
             for (TrackRecorder recorder : recorders) recorder.close();
             for (AudioStream stream : audioStreams) stream.close();
             for (VideoStream stream : videoStreams) stream.close();

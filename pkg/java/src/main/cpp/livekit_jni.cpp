@@ -703,6 +703,98 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendFile(JNIEnv* env, jclas
 	std::string v = bytes(env, value);
 	fail(env, lk_room_send_file(handle(ptr)->room, v.c_str(), nullptr));
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createStreamWriter(
+    JNIEnv* env, jclass, jlong room, jboolean text, jbyteArray topic, jbyteArray mimeType,
+    jbyteArray name, jobjectArray destinations) {
+	std::string topic_value = bytes(env, topic), mime = bytes(env, mimeType);
+	std::string name_value = bytes(env, name);
+	std::vector<std::string> identities;
+	for (jsize i = 0; i < env->GetArrayLength(destinations); ++i) {
+		jbyteArray value = static_cast<jbyteArray>(env->GetObjectArrayElement(destinations, i));
+		identities.push_back(bytes(env, value));
+		env->DeleteLocalRef(value);
+	}
+	std::vector<const char*> pointers;
+	for (const auto& identity : identities)
+		pointers.push_back(identity.c_str());
+	if (text == JNI_TRUE) {
+		lk_stream_text_options_t options;
+		lk_stream_text_options_init(&options);
+		if (topic != nullptr)
+			options.topic = topic_value.c_str();
+		options.destination_identities = pointers.data();
+		options.destination_identity_count = pointers.size();
+		lk_text_stream_writer_t* writer = nullptr;
+		auto status = lk_room_stream_text(handle(room)->room, &options, &writer);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			return 0;
+		}
+		return reinterpret_cast<jlong>(writer);
+	}
+	lk_stream_bytes_options_t options;
+	lk_stream_bytes_options_init(&options);
+	if (topic != nullptr)
+		options.topic = topic_value.c_str();
+	if (mimeType != nullptr)
+		options.mime_type = mime.c_str();
+	if (name != nullptr)
+		options.name = name_value.c_str();
+	options.destination_identities = pointers.data();
+	options.destination_identity_count = pointers.size();
+	lk_byte_stream_writer_t* writer = nullptr;
+	auto status = lk_room_stream_bytes(handle(room)->room, &options, &writer);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(writer);
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_streamWriterId(JNIEnv* env, jclass,
+                                                                          jlong ptr,
+                                                                          jboolean text) {
+	if (text == JNI_TRUE) {
+		auto* writer = reinterpret_cast<lk_text_stream_writer_t*>(ptr);
+		return getter(
+		    env, [writer](char* p, size_t n) { return lk_text_stream_writer_id(writer, p, n); });
+	}
+	auto* writer = reinterpret_cast<lk_byte_stream_writer_t*>(ptr);
+	return getter(env,
+	              [writer](char* p, size_t n) { return lk_byte_stream_writer_id(writer, p, n); });
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_writeStream(JNIEnv* env, jclass, jlong ptr,
+                                                                 jboolean text, jbyteArray data) {
+	std::string payload = bytes(env, data);
+	fail(env, text == JNI_TRUE
+	              ? lk_text_stream_writer_write(reinterpret_cast<lk_text_stream_writer_t*>(ptr),
+	                                            payload.data(), payload.size())
+	              : lk_byte_stream_writer_write(reinterpret_cast<lk_byte_stream_writer_t*>(ptr),
+	                                            reinterpret_cast<const uint8_t*>(payload.data()),
+	                                            payload.size()));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_closeStreamWriter(JNIEnv* env, jclass,
+                                                                       jlong ptr, jboolean text) {
+	fail(env, text == JNI_TRUE
+	              ? lk_text_stream_writer_close(reinterpret_cast<lk_text_stream_writer_t*>(ptr))
+	              : lk_byte_stream_writer_close(reinterpret_cast<lk_byte_stream_writer_t*>(ptr)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_cancelStream(JNIEnv* env, jclass, jlong ptr,
+                                                                  jboolean text,
+                                                                  jbyteArray reason) {
+	std::string value = bytes(env, reason);
+	fail(env, text == JNI_TRUE
+	              ? lk_text_stream_writer_cancel(reinterpret_cast<lk_text_stream_writer_t*>(ptr),
+	                                             value.c_str())
+	              : lk_byte_stream_writer_cancel(reinterpret_cast<lk_byte_stream_writer_t*>(ptr),
+	                                             value.c_str()));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyStreamWriter(JNIEnv*, jclass, jlong ptr,
+                                                                         jboolean text) {
+	if (text == JNI_TRUE)
+		lk_text_stream_writer_destroy(reinterpret_cast<lk_text_stream_writer_t*>(ptr));
+	else
+		lk_byte_stream_writer_destroy(reinterpret_cast<lk_byte_stream_writer_t*>(ptr));
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendDtmf(JNIEnv* env, jclass, jlong ptr,
                                                               jint code, jbyteArray digit) {
 	std::string v = bytes(env, digit);

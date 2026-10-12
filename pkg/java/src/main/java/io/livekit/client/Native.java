@@ -43,6 +43,13 @@ final class Native {
     static native void sendText(long handle, byte[] text);
     static native void sendBytes(long handle, byte[] data);
     static native void sendFile(long handle, byte[] path);
+    static native long createStreamWriter(long room, boolean text, byte[] topic, byte[] mimeType,
+                                          byte[] name, byte[][] destinations);
+    static native byte[] streamWriterId(long writer, boolean text);
+    static native void writeStream(long writer, boolean text, byte[] data);
+    static native void closeStreamWriter(long writer, boolean text);
+    static native void cancelStream(long writer, boolean text, byte[] reason);
+    static native void destroyStreamWriter(long writer, boolean text);
     static native void sendDtmf(long handle, int code, byte[] digit);
     static native String sendChat(long handle, byte[] message);
     static native Participant[] remoteParticipants(long handle);

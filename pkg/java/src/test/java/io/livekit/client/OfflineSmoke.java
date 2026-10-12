@@ -48,6 +48,18 @@ public final class OfflineSmoke {
             } catch (LiveKitException expected) {
                 // Recording needs a remote track.
             }
+            try (TextStreamWriter writer = room.streamText("offline")) {
+                if (writer.id().isEmpty()) throw new AssertionError("Text stream has no ID");
+                writer.cancel("offline");
+            } catch (LiveKitException expected) {
+                // A disconnected participant may reject opening the stream.
+            }
+            try (ByteStreamWriter writer = room.streamBytes("offline", "application/octet-stream", "test")) {
+                if (writer.id().isEmpty()) throw new AssertionError("Byte stream has no ID");
+                writer.cancel("offline");
+            } catch (LiveKitException expected) {
+                // A disconnected participant may reject opening the stream.
+            }
             try {
                 room.createVideoStream("remote", "TR_offline", 4);
                 throw new AssertionError("Unavailable video stream was accepted");
