@@ -46,6 +46,8 @@ Its callback can run on the native recovery thread; return promptly and avoid bl
 operations from inside the callback. A thrown exception or empty credentials fails that fetch.
 `Room.Listener` reports room metadata, SID, recording status, token refresh, and end of session
 changes as well as remote track lifecycle events.
+Participant metadata, name, and attribute change callbacks include copied participant data;
+an empty attribute value means that key was removed.
 Track subscription feedback includes permission, failure, stream state, and subscription status;
 integer values match the corresponding `lk_*` enums in `include/livekit/capi/livekit.h`.
 

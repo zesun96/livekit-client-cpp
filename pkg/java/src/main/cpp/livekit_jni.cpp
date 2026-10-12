@@ -229,6 +229,53 @@ void room_string_event(RoomHandle* h, int kind, const char* previous, const char
 	});
 }
 
+void participant_change_event(RoomHandle* h, int kind, const lk_participant_info_t* who,
+                              const char* detail, const lk_attribute_t* changes = nullptr,
+                              size_t change_count = 0) {
+	deliver(h, [h, kind, who, detail, changes, change_count](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jobject value = participant(env, h, who);
+		jstring text = env->ExceptionCheck() ? nullptr : string(env, detail);
+		jclass map_class = env->ExceptionCheck() ? nullptr : env->FindClass("java/util/HashMap");
+		jmethodID map_ctor =
+		    map_class == nullptr ? nullptr : env->GetMethodID(map_class, "<init>", "()V");
+		jobject attributes = map_ctor == nullptr ? nullptr : env->NewObject(map_class, map_ctor);
+		jmethodID put =
+		    attributes == nullptr
+		        ? nullptr
+		        : env->GetMethodID(map_class, "put",
+		                           "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+		if (put != nullptr && changes != nullptr) {
+			for (size_t i = 0; i < change_count && !env->ExceptionCheck(); ++i) {
+				jstring key = string(env, changes[i].key);
+				jstring item = env->ExceptionCheck() ? nullptr : string(env, changes[i].value);
+				if (!env->ExceptionCheck()) {
+					jobject old = env->CallObjectMethod(attributes, put, key, item);
+					if (old != nullptr)
+						env->DeleteLocalRef(old);
+				}
+				env->DeleteLocalRef(key);
+				if (item != nullptr)
+					env->DeleteLocalRef(item);
+			}
+		}
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(owner, "onNativeParticipantChange",
+			                           "(ILio/livekit/client/Participant;Ljava/lang/String;"
+			                           "Ljava/util/Map;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), value, text,
+				                    attributes);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void text_event(RoomHandle* h, const lk_text_received_t* value) {
 	if (value == nullptr)
 		return;
@@ -713,6 +760,19 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_participant_disconnected = [](void* p, lk_room_t*,
 	                                           const lk_participant_info_t* v) {
 		event(static_cast<RoomHandle*>(p), 6, 0, v);
+	};
+	callbacks.on_participant_metadata_changed = [](void* p, lk_room_t*, const char* previous,
+	                                               const lk_participant_info_t* who) {
+		participant_change_event(static_cast<RoomHandle*>(p), 0, who, previous);
+	};
+	callbacks.on_participant_name_changed = [](void* p, lk_room_t*, const char* name,
+	                                           const lk_participant_info_t* who) {
+		participant_change_event(static_cast<RoomHandle*>(p), 1, who, name);
+	};
+	callbacks.on_participant_attributes_changed = [](void* p, lk_room_t*,
+	                                                 const lk_attribute_t* changes, size_t count,
+	                                                 const lk_participant_info_t* who) {
+		participant_change_event(static_cast<RoomHandle*>(p), 2, who, nullptr, changes, count);
 	};
 	callbacks.on_track_published = [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
 	                                  const lk_participant_info_t* who) {

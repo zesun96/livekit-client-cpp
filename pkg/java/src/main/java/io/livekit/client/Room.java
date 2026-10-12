@@ -27,6 +27,10 @@ public final class Room implements AutoCloseable {
         default void onRoomEos() {}
         default void onParticipantConnected(Participant participant) {}
         default void onParticipantDisconnected(Participant participant) {}
+        default void onParticipantMetadataChanged(Participant participant, String previousMetadata) {}
+        default void onParticipantNameChanged(Participant participant, String name) {}
+        default void onParticipantAttributesChanged(Participant participant,
+                                                    Map<String, String> changes) {}
         default void onTrackPublished(RemoteTrackPublication track) {}
         default void onTrackUnpublished(RemoteTrackPublication track) {}
         default void onTrackMuted(RemoteTrackPublication track) {}
@@ -462,6 +466,19 @@ public final class Room implements AutoCloseable {
             switch (kind) {
                 case 0 -> listener.onRoomMetadataChanged(current);
                 case 1 -> listener.onRoomSidChanged(previous, current);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeParticipantChange(int kind, Participant participant, String detail,
+                                   Map<String, String> changes) {
+        Map<String, String> copied = changes == null ? Map.of() : Map.copyOf(changes);
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onParticipantMetadataChanged(participant, detail);
+                case 1 -> listener.onParticipantNameChanged(participant, detail);
+                case 2 -> listener.onParticipantAttributesChanged(participant, copied);
                 default -> throw new AssertionError(kind);
             }
         });

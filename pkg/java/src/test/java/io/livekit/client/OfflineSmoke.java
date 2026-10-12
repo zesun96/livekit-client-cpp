@@ -47,6 +47,21 @@ public final class OfflineSmoke {
             });
             room.onNativeRoomString(1, "old", "new");
             if (!"new".equals(roomSid.get())) throw new AssertionError("Room SID listener failed");
+            java.util.concurrent.atomic.AtomicReference<java.util.Map<String, String>> attributes =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onParticipantAttributesChanged(Participant participant,
+                                                                       java.util.Map<String, String> changes) {
+                    attributes.set(changes);
+                }
+            });
+            java.util.Map<String, String> incoming = new java.util.HashMap<>();
+            incoming.put("removed", "");
+            room.onNativeParticipantChange(2, new Participant("sid", "remote", "name", ""),
+                "", incoming);
+            incoming.clear();
+            if (!"".equals(attributes.get().get("removed")))
+                throw new AssertionError("Participant attribute changes were not copied");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
