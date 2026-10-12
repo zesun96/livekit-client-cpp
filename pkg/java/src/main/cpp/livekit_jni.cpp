@@ -1341,4 +1341,55 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteTrackPublicat
 	}
 	return result;
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_startTrackRecording(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
+    jbyteArray outputPath, jint queueCapacity) {
+	std::string identity = bytes(env, participantIdentity), sid = bytes(env, trackSid);
+	std::string path = bytes(env, outputPath);
+	lk_track_recorder_options_t options;
+	lk_track_recorder_options_init(&options);
+	options.output_path = path.c_str();
+	options.queue_capacity = static_cast<size_t>(queueCapacity);
+	lk_track_recorder_t* recorder = nullptr;
+	auto status = lk_room_start_track_recording(handle(room)->room, identity.c_str(), sid.c_str(),
+	                                            &options, &recorder);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(recorder);
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_trackRecorderStats(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	lk_track_recorder_stats_t stats;
+	lk_track_recorder_stats_init(&stats);
+	auto status = lk_track_recorder_get_stats(reinterpret_cast<lk_track_recorder_t*>(ptr), &stats);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/TrackRecorderStats");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(IJJJ)V");
+	jobject result = env->NewObject(
+	    cls, ctor, static_cast<jint>(stats.state), static_cast<jlong>(stats.frames_written),
+	    static_cast<jlong>(stats.bytes_written), static_cast<jlong>(stats.frames_dropped));
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_trackRecorderString(JNIEnv* env, jclass,
+                                                                               jlong ptr,
+                                                                               jboolean error) {
+	auto* recorder = reinterpret_cast<lk_track_recorder_t*>(ptr);
+	return getter(env, [recorder, error](char* p, size_t n) {
+		return error ? lk_track_recorder_error(recorder, p, n)
+		             : lk_track_recorder_output_path(recorder, p, n);
+	});
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_stopTrackRecorder(JNIEnv*, jclass, jlong ptr) {
+	lk_track_recorder_stop(reinterpret_cast<lk_track_recorder_t*>(ptr));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyTrackRecorder(JNIEnv*, jclass,
+                                                                          jlong ptr) {
+	lk_track_recorder_destroy(reinterpret_cast<lk_track_recorder_t*>(ptr));
+}
 }

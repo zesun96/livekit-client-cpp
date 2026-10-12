@@ -34,6 +34,12 @@ public final class OfflineSmoke {
                 // The remote track is absent in an offline room.
             }
             try {
+                room.startTrackRecording("remote", "TR_offline", "offline.wav");
+                throw new AssertionError("Unavailable remote recording was accepted");
+            } catch (LiveKitException expected) {
+                // Recording needs a remote track.
+            }
+            try {
                 room.createVideoStream("remote", "TR_offline", 4);
                 throw new AssertionError("Unavailable video stream was accepted");
             } catch (LiveKitException expected) {

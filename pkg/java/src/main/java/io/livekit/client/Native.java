@@ -78,4 +78,10 @@ final class Native {
     static native void destroyAudioStream(long stream);
     static native void destroyVideoStream(long stream);
     static native RemoteTrackPublication[] remoteTrackPublications(long room);
+    static native long startTrackRecording(long room, byte[] participantIdentity, byte[] trackSid,
+                                           byte[] outputPath, int queueCapacity);
+    static native TrackRecorderStats trackRecorderStats(long recorder);
+    static native byte[] trackRecorderString(long recorder, boolean error);
+    static native void stopTrackRecorder(long recorder);
+    static native void destroyTrackRecorder(long recorder);
 }

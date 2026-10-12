@@ -33,14 +33,16 @@ chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls
 and video sources, local tracks, remote track snapshots and bounded audio/video stream readers,
 local RTC stats JSON, device and screen-source enumeration,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
-snapshots, and bounded readers. Dynamic token sources, physical device capture, incremental
-streams, DataTrack schemas, recording, and diagnostics are not yet exposed.
+snapshots, bounded readers, and remote track recording. Dynamic token sources, physical device
+capture, incremental streams, DataTrack schemas, and diagnostics are not yet exposed.
 The native C and C++ APIs provide those features.
 
 Use `Room.remoteTrackPublications()` to find a participant identity and track SID, then call
 `createAudioStream` or `createVideoStream`. Read with `readFor(timeoutMs)` and close the stream
 when done. A read returns `null` on timeout or when the remote track closes. Frames are copied
 into Java arrays; `droppedFrames()` reports frames discarded by the bounded native queue.
+Use `startTrackRecording` with the same identity and SID to write a remote track to a file. Call
+`stop()` before reading the file, then close the recorder.
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
