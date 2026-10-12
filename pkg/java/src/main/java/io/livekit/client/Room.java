@@ -57,6 +57,11 @@ public final class Room implements AutoCloseable {
         default void onSipDtmfReceived(SipDtmf event) {}
         default void onDataChannelBufferStatusChanged(DataChannelBufferStatus status) {}
         default void onEncryptionStateChanged(EncryptionState state) {}
+        default void onDataTrackPublished(DataTrackPublication track) {}
+        default void onDataTrackUnpublished(DataTrackPublication track) {}
+        default void onLocalDataTrackPublished(DataTrackPublication track) {}
+        default void onLocalDataTrackUnpublished(DataTrackPublication track) {}
+        default void onDataTrackFrame(DataTrackPublication track, DataTrackFrame frame) {}
     }
 
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
@@ -542,6 +547,31 @@ public final class Room implements AutoCloseable {
             switch (kind) {
                 case 0 -> listener.onRoomUpdated(snapshot);
                 case 1 -> listener.onRoomMoved(snapshot);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeDataTrack(int kind, String participantIdentity, int publisherHandle,
+                           String sid, String name, boolean usesE2ee, boolean hasFrameEncoding,
+                           int frameEncoding, String customFrameEncoding, boolean hasSchema,
+                           String schemaName, int schemaEncoding, String customSchemaEncoding,
+                           byte[] frameData, boolean hasUserTimestamp, long userTimestamp) {
+        DataTrackPublication track = new DataTrackPublication(participantIdentity, publisherHandle,
+            sid, name, usesE2ee, hasFrameEncoding, frameEncoding, customFrameEncoding,
+            hasSchema, schemaName, schemaEncoding, customSchemaEncoding);
+        if (kind == 4) {
+            DataTrackFrame frame = new DataTrackFrame(Objects.requireNonNull(frameData).clone(),
+                userTimestamp, hasUserTimestamp);
+            dispatch(listener -> listener.onDataTrackFrame(track, frame));
+            return;
+        }
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onDataTrackPublished(track);
+                case 1 -> listener.onDataTrackUnpublished(track);
+                case 2 -> listener.onLocalDataTrackPublished(track);
+                case 3 -> listener.onLocalDataTrackUnpublished(track);
                 default -> throw new AssertionError(kind);
             }
         });

@@ -326,6 +326,52 @@ void encryption_event(RoomHandle* h, const lk_encryption_state_t* value) {
 	});
 }
 
+void data_track_event(RoomHandle* h, int kind, const lk_data_track_info_t* track,
+                      const lk_participant_info_t* who,
+                      const lk_data_track_frame_view_t* frame = nullptr) {
+	if (track == nullptr ||
+	    (frame != nullptr && (frame->data_size > static_cast<size_t>(INT32_MAX) ||
+	                          (frame->data_size != 0 && frame->data == nullptr))))
+		return;
+	deliver(h, [h, kind, track, who, frame](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jstring identity = string(env, who == nullptr ? nullptr : who->identity);
+		jstring sid = env->ExceptionCheck() ? nullptr : string(env, track->sid);
+		jstring name = env->ExceptionCheck() ? nullptr : string(env, track->name);
+		jstring frame_encoding =
+		    env->ExceptionCheck() ? nullptr : string(env, track->custom_frame_encoding);
+		jstring schema_name = env->ExceptionCheck() ? nullptr : string(env, track->schema_name);
+		jstring schema_encoding =
+		    env->ExceptionCheck() ? nullptr : string(env, track->custom_schema_encoding);
+		jbyteArray data = frame == nullptr || env->ExceptionCheck()
+		                      ? nullptr
+		                      : array(env, frame->data, frame->data_size);
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(
+			              owner, "onNativeDataTrack",
+			              "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;ZZI"
+			              "Ljava/lang/String;ZLjava/lang/String;ILjava/lang/String;[BZJ)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(
+				    h->owner, callback, static_cast<jint>(kind), identity,
+				    static_cast<jint>(track->publisher_handle), sid, name,
+				    track->uses_e2ee ? JNI_TRUE : JNI_FALSE,
+				    track->has_frame_encoding ? JNI_TRUE : JNI_FALSE,
+				    static_cast<jint>(track->frame_encoding), frame_encoding,
+				    track->has_schema ? JNI_TRUE : JNI_FALSE, schema_name,
+				    static_cast<jint>(track->schema_encoding), schema_encoding, data,
+				    frame != nullptr && frame->has_user_timestamp ? JNI_TRUE : JNI_FALSE,
+				    frame == nullptr ? 0 : bounded_long(frame->user_timestamp));
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void participant_change_event(RoomHandle* h, int kind, const lk_participant_info_t* who,
                               const char* detail, const lk_attribute_t* changes = nullptr,
                               size_t change_count = 0) {
@@ -989,6 +1035,29 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_encryption_state_changed = [](void* p, lk_room_t*,
 	                                           const lk_encryption_state_t* value) {
 		encryption_event(static_cast<RoomHandle*>(p), value);
+	};
+	callbacks.on_data_track_published = [](void* p, lk_room_t*, const lk_data_track_info_t* track,
+	                                       const lk_participant_info_t* who) {
+		data_track_event(static_cast<RoomHandle*>(p), 0, track, who);
+	};
+	callbacks.on_data_track_unpublished = [](void* p, lk_room_t*, const lk_data_track_info_t* track,
+	                                         const lk_participant_info_t* who) {
+		data_track_event(static_cast<RoomHandle*>(p), 1, track, who);
+	};
+	callbacks.on_local_data_track_published = [](void* p, lk_room_t*,
+	                                             const lk_data_track_info_t* track,
+	                                             const lk_participant_info_t* who) {
+		data_track_event(static_cast<RoomHandle*>(p), 2, track, who);
+	};
+	callbacks.on_local_data_track_unpublished = [](void* p, lk_room_t*,
+	                                               const lk_data_track_info_t* track,
+	                                               const lk_participant_info_t* who) {
+		data_track_event(static_cast<RoomHandle*>(p), 3, track, who);
+	};
+	callbacks.on_data_track_frame = [](void* p, lk_room_t*, const lk_data_track_info_t* track,
+	                                   const lk_participant_info_t* who,
+	                                   const lk_data_track_frame_view_t* frame) {
+		data_track_event(static_cast<RoomHandle*>(p), 4, track, who, frame);
 	};
 	status = lk_room_set_callbacks(h->room, &callbacks);
 	if (status != LK_STATUS_OK) {

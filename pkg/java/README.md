@@ -53,6 +53,8 @@ Connection quality, active speaker, and participant-list updates are available t
 `Room.Listener`; speaker and participant lists are immutable snapshots.
 `Room.Listener` also reports SIP DTMF, data channel backpressure, and E2EE cryptor state.
 Room update and move callbacks provide a detached `RoomSnapshot`.
+DataTrack publish and unpublish callbacks include detached schema and encoding metadata;
+`onDataTrackFrame` supplies copied frame bytes and optional user timestamps.
 Track subscription feedback includes permission, failure, stream state, and subscription status;
 integer values match the corresponding `lk_*` enums in `include/livekit/capi/livekit.h`.
 

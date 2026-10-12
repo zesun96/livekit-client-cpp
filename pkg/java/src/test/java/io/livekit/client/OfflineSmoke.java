@@ -107,6 +107,28 @@ public final class OfflineSmoke {
             room.onNativeRoomSnapshot(1, "room-sid", "new-room", "metadata", true);
             if (!"new-room".equals(moved.get().name()) || !moved.get().recording())
                 throw new AssertionError("Room move snapshot was lost");
+            java.util.concurrent.atomic.AtomicReference<DataTrackPublication> dataTrack =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<DataTrackFrame> dataFrame =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onDataTrackPublished(DataTrackPublication track) {
+                    dataTrack.set(track);
+                }
+                @Override public void onDataTrackFrame(DataTrackPublication track,
+                                                       DataTrackFrame frame) {
+                    dataFrame.set(frame);
+                }
+            });
+            room.onNativeDataTrack(0, "remote", 1, "dt-1", "telemetry", false, true,
+                2, "", true, "schema", 1, "", null, false, 0);
+            byte[] incomingFrame = {1, 2, 3};
+            room.onNativeDataTrack(4, "remote", 1, "dt-1", "telemetry", false, true,
+                2, "", true, "schema", 1, "", incomingFrame, true, 123);
+            incomingFrame[0] = 9;
+            if (!"schema".equals(dataTrack.get().schemaName()) ||
+                dataFrame.get().data()[0] != 1 || dataFrame.get().userTimestamp() != 123)
+                throw new AssertionError("DataTrack event was not copied");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
