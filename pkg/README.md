@@ -28,7 +28,7 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Track subscription permissions and feedback events | Yes | Yes | Yes | No | No | Yes |
 | External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Partial | No | Yes |
 | Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Partial | No | Yes |
-| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | No | No | Yes |
+| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Partial | No | Yes |
 | Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Partial | No | Yes |
 | DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Partial | No | Yes |
 | RPC calls and method handlers | Yes | Yes | Yes | Yes | No | Yes |

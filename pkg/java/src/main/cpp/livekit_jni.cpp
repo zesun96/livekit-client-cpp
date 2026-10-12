@@ -826,6 +826,94 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createAudioSource(JNIEnv* 
 	}
 	return reinterpret_cast<jlong>(source);
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createDeviceAudioSource(
+    JNIEnv* env, jclass, jint kind, jbyteArray deviceId, jint queueMs, jboolean echoCancellation,
+    jboolean autoGainControl, jboolean noiseSuppression) {
+	std::string id = bytes(env, deviceId);
+	lk_audio_source_t* source = nullptr;
+	lk_status_t status;
+	if (kind == 1) {
+		lk_microphone_capture_options_t options;
+		lk_microphone_capture_options_init(&options);
+		options.device_id = deviceId == nullptr ? nullptr : id.c_str();
+		options.queue_size_ms = static_cast<uint32_t>(queueMs);
+		options.echo_cancellation = echoCancellation ? 1 : 0;
+		options.auto_gain_control = autoGainControl ? 1 : 0;
+		options.noise_suppression = noiseSuppression ? 1 : 0;
+		status = lk_audio_source_create_microphone(&options, &source);
+	} else if (kind == 2) {
+		lk_system_audio_capture_options_t options;
+		lk_system_audio_capture_options_init(&options);
+		options.device_id = deviceId == nullptr ? nullptr : id.c_str();
+		options.queue_size_ms = static_cast<uint32_t>(queueMs);
+		status = lk_audio_source_create_system_audio(&options, &source);
+	} else {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Invalid audio capture kind");
+		return 0;
+	}
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(source);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_controlDeviceAudioSource(JNIEnv* env, jclass,
+                                                                              jlong ptr, jint kind,
+                                                                              jint command,
+                                                                              jbyteArray deviceId) {
+	auto* source = reinterpret_cast<lk_audio_source_t*>(ptr);
+	std::string id = bytes(env, deviceId);
+	lk_status_t status;
+	if (kind == 1) {
+		status = command == 0   ? lk_audio_source_microphone_start(source)
+		         : command == 1 ? lk_audio_source_microphone_stop(source)
+		                        : lk_audio_source_microphone_switch_device(source, id.c_str());
+	} else {
+		status = command == 0   ? lk_audio_source_system_audio_start(source)
+		         : command == 1 ? lk_audio_source_system_audio_stop(source)
+		                        : lk_audio_source_system_audio_switch_device(source, id.c_str());
+	}
+	fail(env, status);
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_deviceAudioSourceCapturing(JNIEnv*, jclass,
+                                                                                    jlong ptr,
+                                                                                    jint kind) {
+	auto* source = reinterpret_cast<lk_audio_source_t*>(ptr);
+	return (kind == 1 ? lk_audio_source_microphone_is_capturing(source)
+	                  : lk_audio_source_system_audio_is_capturing(source))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_deviceAudioSourceId(JNIEnv* env, jclass,
+                                                                               jlong ptr,
+                                                                               jint kind) {
+	auto* source = reinterpret_cast<lk_audio_source_t*>(ptr);
+	return getter(env, [source, kind](char* p, size_t n) {
+		return kind == 1 ? lk_audio_source_microphone_device_id(source, p, n)
+		                 : lk_audio_source_system_audio_device_id(source, p, n);
+	});
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setMicrophoneMuted(JNIEnv* env, jclass,
+                                                                        jlong ptr, jboolean muted) {
+	fail(env, lk_audio_source_microphone_set_muted(reinterpret_cast<lk_audio_source_t*>(ptr),
+	                                               muted ? 1 : 0));
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_microphoneMuted(JNIEnv*, jclass,
+                                                                         jlong ptr) {
+	return lk_audio_source_microphone_is_muted(reinterpret_cast<lk_audio_source_t*>(ptr))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setMicrophoneVolume(JNIEnv* env, jclass,
+                                                                         jlong ptr, jfloat volume) {
+	fail(env,
+	     lk_audio_source_microphone_set_volume(reinterpret_cast<lk_audio_source_t*>(ptr), volume));
+}
+JNIEXPORT jfloat JNICALL Java_io_livekit_client_Native_microphoneVolume(JNIEnv*, jclass,
+                                                                        jlong ptr) {
+	return lk_audio_source_microphone_volume(reinterpret_cast<lk_audio_source_t*>(ptr));
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyAudioSource(JNIEnv* env, jclass,
                                                                         jlong ptr) {
 	fail(env, lk_audio_source_destroy(reinterpret_cast<lk_audio_source_t*>(ptr)));
@@ -851,6 +939,74 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createVideoSource(JNIEnv* 
 		return 0;
 	}
 	return reinterpret_cast<jlong>(source);
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createDeviceVideoSource(
+    JNIEnv* env, jclass, jint kind, jbyteArray deviceId, jint width, jint height,
+    jint framesPerSecond, jboolean includeCursor) {
+	std::string id = bytes(env, deviceId);
+	lk_video_source_t* source = nullptr;
+	lk_status_t status;
+	if (kind == 1) {
+		lk_camera_capture_options_t options;
+		lk_camera_capture_options_init(&options);
+		options.device_id = deviceId == nullptr ? nullptr : id.c_str();
+		options.width = static_cast<uint32_t>(width);
+		options.height = static_cast<uint32_t>(height);
+		options.frames_per_second = static_cast<uint32_t>(framesPerSecond);
+		status = lk_video_source_create_camera(&options, &source);
+	} else if (kind == 2) {
+		lk_screen_capture_options_t options;
+		lk_screen_capture_options_init(&options);
+		options.source_id = id.c_str();
+		options.frames_per_second = static_cast<uint32_t>(framesPerSecond);
+		options.include_cursor = includeCursor ? 1 : 0;
+		status = lk_video_source_create_screen(&options, &source);
+	} else {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Invalid video capture kind");
+		return 0;
+	}
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(source);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_controlDeviceVideoSource(JNIEnv* env, jclass,
+                                                                              jlong ptr, jint kind,
+                                                                              jint command,
+                                                                              jbyteArray deviceId) {
+	auto* source = reinterpret_cast<lk_video_source_t*>(ptr);
+	std::string id = bytes(env, deviceId);
+	lk_status_t status;
+	if (kind == 1) {
+		status = command == 0   ? lk_video_source_camera_start(source)
+		         : command == 1 ? lk_video_source_camera_stop(source)
+		                        : lk_video_source_camera_switch_device(source, id.c_str());
+	} else {
+		status = command == 0   ? lk_video_source_screen_start(source)
+		         : command == 1 ? lk_video_source_screen_stop(source)
+		                        : lk_video_source_screen_switch_source(source, id.c_str());
+	}
+	fail(env, status);
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_deviceVideoSourceCapturing(JNIEnv*, jclass,
+                                                                                    jlong ptr,
+                                                                                    jint kind) {
+	auto* source = reinterpret_cast<lk_video_source_t*>(ptr);
+	return (kind == 1 ? lk_video_source_camera_is_capturing(source)
+	                  : lk_video_source_screen_is_capturing(source))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_deviceVideoSourceId(JNIEnv* env, jclass,
+                                                                               jlong ptr,
+                                                                               jint kind) {
+	auto* source = reinterpret_cast<lk_video_source_t*>(ptr);
+	return getter(env, [source, kind](char* p, size_t n) {
+		return kind == 1 ? lk_video_source_camera_device_id(source, p, n)
+		                 : lk_video_source_screen_source_id(source, p, n);
+	});
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyVideoSource(JNIEnv* env, jclass,
                                                                         jlong ptr) {
@@ -888,6 +1044,17 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishTrack(JNIEnv* env, j
 	options.source = static_cast<lk_track_source_t>(source);
 	fail(env, lk_local_track_publish(handle(room)->room, reinterpret_cast<lk_local_track_t*>(track),
 	                                 &options));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishScreenShareTrack(JNIEnv* env, jclass,
+                                                                             jlong room,
+                                                                             jlong track,
+                                                                             jboolean video) {
+	lk_track_publish_options_t options;
+	lk_track_publish_options_init(&options);
+	auto* native = reinterpret_cast<lk_local_track_t*>(track);
+	fail(env,
+	     video ? lk_local_track_publish_screen_share_video(handle(room)->room, native, &options)
+	           : lk_local_track_publish_screen_share_audio(handle(room)->room, native, &options));
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_unpublishTrack(JNIEnv* env, jclass,
                                                                     jlong ptr) {

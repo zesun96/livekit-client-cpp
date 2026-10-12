@@ -64,6 +64,14 @@ public final class OfflineSmoke {
                 audio.capture(new short[480]);
                 video.captureI420(new byte[6], 2, 2, 0);
                 try {
+                    audio.startCapture();
+                    throw new AssertionError("Synthetic audio source started device capture");
+                } catch (IllegalStateException expected) { }
+                try {
+                    video.startCapture();
+                    throw new AssertionError("Synthetic video source started device capture");
+                } catch (IllegalStateException expected) { }
+                try {
                     room.createAudioTrack("offline audio", audio);
                     throw new AssertionError("Disconnected audio track creation was accepted");
                 } catch (LiveKitException expected) {
@@ -76,6 +84,14 @@ public final class OfflineSmoke {
                     // Failed creation must release the source reference.
                 }
             }
+            try {
+                AudioSource.createMicrophone(null, 1, true, true, true);
+                throw new AssertionError("Invalid microphone queue was accepted");
+            } catch (IllegalArgumentException expected) { }
+            try {
+                VideoSource.createScreen("", 15, true);
+                throw new AssertionError("Empty screen source was accepted");
+            } catch (IllegalArgumentException expected) { }
         }
         System.out.println("Java JNI offline smoke passed");
     }

@@ -19,6 +19,12 @@ public final class LocalTrack implements AutoCloseable {
         published = true;
     }
 
+    public synchronized void publishScreenShare() {
+        if (handle == 0) throw new IllegalStateException("Track is closed");
+        room.useHandle(h -> Native.publishScreenShareTrack(h, handle, source instanceof VideoSource));
+        published = true;
+    }
+
     public synchronized void unpublish() {
         if (published) { Native.unpublishTrack(handle); published = false; }
     }

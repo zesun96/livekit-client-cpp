@@ -31,12 +31,18 @@ binding currently covers room lifecycle and state, local participant identity an
 local participant attributes and recording state,
 remote participant identity snapshots, data messages, basic text/byte/file sending and receiving,
 chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
-and video sources, local tracks, remote track snapshots and bounded audio/video stream readers,
+and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
+remote track snapshots and bounded audio/video stream readers,
 local RTC stats JSON, device and screen-source enumeration,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
-snapshots, bounded readers, and remote track recording. Dynamic token sources, physical device
-capture, incremental streams, DataTrack schemas, and diagnostics are not yet exposed.
+snapshots, bounded readers, and remote track recording. Dynamic token sources, incremental
+streams, DataTrack schemas, and diagnostics are not yet exposed.
 The native C and C++ APIs provide those features.
+
+`AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
+`VideoSource.createScreen` open host devices when called. Start or stop capture with the source's
+`startCapture()` and `stopCapture()` methods. Use `LocalTrack.publishScreenShare()` for screen
+video and system audio. Hardware capture has not been exercised by the offline smoke test.
 
 Use `Room.remoteTrackPublications()` to find a participant identity and track SID, then call
 `createAudioStream` or `createVideoStream`. Read with `readFor(timeoutMs)` and close the stream

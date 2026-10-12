@@ -48,13 +48,29 @@ final class Native {
     static native byte[] exportSharedKey(long handle, int index);
     static native void ratchetSharedKey(long handle, int index);
     static native long createAudioSource(int sampleRate, int channels, int queueMs);
+    static native long createDeviceAudioSource(int kind, byte[] deviceId, int queueMs,
+                                               boolean echoCancellation, boolean autoGainControl,
+                                               boolean noiseSuppression);
+    static native void controlDeviceAudioSource(long source, int kind, int command, byte[] deviceId);
+    static native boolean deviceAudioSourceCapturing(long source, int kind);
+    static native byte[] deviceAudioSourceId(long source, int kind);
+    static native void setMicrophoneMuted(long source, boolean muted);
+    static native boolean microphoneMuted(long source);
+    static native void setMicrophoneVolume(long source, float volume);
+    static native float microphoneVolume(long source);
     static native void destroyAudioSource(long source);
     static native void captureAudio(long source, short[] samples, int samplesPerChannel);
     static native long createVideoSource(boolean screencast);
+    static native long createDeviceVideoSource(int kind, byte[] deviceId, int width, int height,
+                                               int framesPerSecond, boolean includeCursor);
+    static native void controlDeviceVideoSource(long source, int kind, int command, byte[] deviceId);
+    static native boolean deviceVideoSourceCapturing(long source, int kind);
+    static native byte[] deviceVideoSourceId(long source, int kind);
     static native void destroyVideoSource(long source);
     static native void captureI420(long source, byte[] data, int width, int height, long timestampUs);
     static native long createTrack(long room, byte[] label, long source, boolean video);
     static native void publishTrack(long room, long track, int source);
+    static native void publishScreenShareTrack(long room, long track, boolean video);
     static native void unpublishTrack(long track);
     static native void destroyTrack(long track);
     static native void muteTrack(long track, boolean muted);
