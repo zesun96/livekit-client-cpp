@@ -2,10 +2,12 @@
 
 #include <livekit/capi/livekit.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -226,6 +228,76 @@ void room_string_event(RoomHandle* h, int kind, const char* previous, const char
 		env->DeleteLocalRef(cls);
 		env->DeleteLocalRef(old_value);
 		env->DeleteLocalRef(new_value);
+	});
+}
+
+jlong bounded_long(uint64_t value) {
+	return static_cast<jlong>(
+	    std::min(value, static_cast<uint64_t>(std::numeric_limits<jlong>::max())));
+}
+
+void sip_dtmf_event(RoomHandle* h, const lk_sip_dtmf_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(16) != JNI_OK)
+			return;
+		jstring digit = string(env, value->digit);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeSipDtmf",
+			                                            "(JLjava/lang/String;Ljava/lang/String;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, static_cast<jlong>(value->code), digit,
+				                    identity);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
+void data_channel_event(RoomHandle* h, const lk_data_channel_buffer_status_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		jclass owner = env->GetObjectClass(h->owner);
+		if (owner == nullptr)
+			return;
+		jmethodID callback = env->GetMethodID(owner, "onNativeDataChannelBufferStatus", "(ZJJJZ)V");
+		if (callback != nullptr)
+			env->CallVoidMethod(
+			    h->owner, callback, value->reliable ? JNI_TRUE : JNI_FALSE,
+			    bounded_long(value->buffered_amount), bounded_long(value->high_water_mark),
+			    bounded_long(value->low_water_mark), value->backpressured ? JNI_TRUE : JNI_FALSE);
+		env->DeleteLocalRef(owner);
+	});
+}
+
+void encryption_event(RoomHandle* h, const lk_encryption_state_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(16) != JNI_OK)
+			return;
+		jstring track = string(env, value->track_id);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr ? nullptr
+			                     : env->GetMethodID(owner, "onNativeEncryptionState",
+			                                        "(Ljava/lang/String;Ljava/lang/String;IIZJI)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(
+				    h->owner, callback, track, identity, static_cast<jint>(value->kind),
+				    static_cast<jint>(value->direction), value->enabled ? JNI_TRUE : JNI_FALSE,
+				    bounded_long(value->key_index), static_cast<jint>(value->state));
+		}
+		env->PopLocalFrame(nullptr);
 	});
 }
 
@@ -875,6 +947,17 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	};
 	callbacks.on_chat_message_received = [](void* p, lk_room_t*, const lk_chat_message_t* v) {
 		chat_event(static_cast<RoomHandle*>(p), v);
+	};
+	callbacks.on_sip_dtmf_received = [](void* p, lk_room_t*, const lk_sip_dtmf_t* value) {
+		sip_dtmf_event(static_cast<RoomHandle*>(p), value);
+	};
+	callbacks.on_data_channel_buffer_status_changed =
+	    [](void* p, lk_room_t*, const lk_data_channel_buffer_status_t* value) {
+		    data_channel_event(static_cast<RoomHandle*>(p), value);
+	    };
+	callbacks.on_encryption_state_changed = [](void* p, lk_room_t*,
+	                                           const lk_encryption_state_t* value) {
+		encryption_event(static_cast<RoomHandle*>(p), value);
 	};
 	status = lk_room_set_callbacks(h->room, &callbacks);
 	if (status != LK_STATUS_OK) {

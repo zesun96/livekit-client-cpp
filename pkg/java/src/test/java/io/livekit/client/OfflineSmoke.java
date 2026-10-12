@@ -78,6 +78,27 @@ public final class OfflineSmoke {
             incomingSpeakers[0] = null;
             if (!"remote".equals(speakers.get().get(0).identity()))
                 throw new AssertionError("Speaker list was not copied");
+            java.util.concurrent.atomic.AtomicReference<SipDtmf> dtmf =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<DataChannelBufferStatus> buffer =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<EncryptionState> cryptor =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onSipDtmfReceived(SipDtmf value) { dtmf.set(value); }
+                @Override public void onDataChannelBufferStatusChanged(DataChannelBufferStatus value) {
+                    buffer.set(value);
+                }
+                @Override public void onEncryptionStateChanged(EncryptionState value) {
+                    cryptor.set(value);
+                }
+            });
+            room.onNativeSipDtmf(5, "5", "caller");
+            room.onNativeDataChannelBufferStatus(true, 20, 100, 10, false);
+            room.onNativeEncryptionState("track", "remote", 1, 0, true, 2, 3);
+            if (dtmf.get().code() != 5 || buffer.get().bufferedAmount() != 20 ||
+                cryptor.get().keyIndex() != 2)
+                throw new AssertionError("Room status listener failed");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");

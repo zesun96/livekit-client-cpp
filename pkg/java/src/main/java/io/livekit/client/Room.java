@@ -52,6 +52,9 @@ public final class Room implements AutoCloseable {
         default void onTextStreamEvent(TextStreamEvent event) {}
         default void onByteStreamEvent(ByteStreamEvent event) {}
         default void onChatMessageReceived(ChatMessage message) {}
+        default void onSipDtmfReceived(SipDtmf event) {}
+        default void onDataChannelBufferStatusChanged(DataChannelBufferStatus status) {}
+        default void onEncryptionStateChanged(EncryptionState state) {}
     }
 
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
@@ -508,6 +511,26 @@ public final class Room implements AutoCloseable {
                 default -> throw new AssertionError(kind);
             }
         });
+    }
+
+    void onNativeSipDtmf(long code, String digit, String participantIdentity) {
+        SipDtmf event = new SipDtmf(code, digit, participantIdentity);
+        dispatch(listener -> listener.onSipDtmfReceived(event));
+    }
+
+    void onNativeDataChannelBufferStatus(boolean reliable, long bufferedAmount,
+                                         long highWaterMark, long lowWaterMark,
+                                         boolean backpressured) {
+        DataChannelBufferStatus status = new DataChannelBufferStatus(reliable, bufferedAmount,
+            highWaterMark, lowWaterMark, backpressured);
+        dispatch(listener -> listener.onDataChannelBufferStatusChanged(status));
+    }
+
+    void onNativeEncryptionState(String trackId, String participantIdentity, int kind,
+                                 int direction, boolean enabled, long keyIndex, int state) {
+        EncryptionState value = new EncryptionState(trackId, participantIdentity, kind,
+            direction, enabled, keyIndex, state);
+        dispatch(listener -> listener.onEncryptionStateChanged(value));
     }
 
     private void dispatch(Consumer<Listener> delivery) {
