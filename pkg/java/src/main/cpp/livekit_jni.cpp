@@ -24,6 +24,8 @@ struct RoomHandle {
 	jclass text_class = nullptr;
 	jclass byte_class = nullptr;
 	jclass chat_class = nullptr;
+	jclass text_stream_class = nullptr;
+	jclass byte_stream_class = nullptr;
 	std::vector<std::unique_ptr<RpcContext>> rpc_contexts;
 };
 
@@ -50,6 +52,10 @@ void release_classes(JNIEnv* env, RoomHandle* h) {
 		env->DeleteGlobalRef(h->byte_class);
 	if (h->chat_class)
 		env->DeleteGlobalRef(h->chat_class);
+	if (h->text_stream_class)
+		env->DeleteGlobalRef(h->text_stream_class);
+	if (h->byte_stream_class)
+		env->DeleteGlobalRef(h->byte_stream_class);
 }
 
 void fail(JNIEnv* env, lk_status_t status) {
@@ -284,6 +290,71 @@ void chat_event(RoomHandle* h, const lk_chat_message_t* value) {
 	});
 }
 
+void text_stream_event(RoomHandle* h, const lk_text_stream_event_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		jclass cls = h->text_stream_class;
+		jmethodID ctor = env->GetMethodID(cls, "<init>",
+		                                  "(ILjava/lang/String;Ljava/lang/String;"
+		                                  "Ljava/lang/String;[BJLjava/lang/String;)V");
+		jstring id = string(env, value->stream_id);
+		jstring topic = string(env, value->topic);
+		jstring identity = string(env, value->participant_identity);
+		jbyteArray content = array(env, value->content, value->content_size);
+		jstring reason = string(env, value->reason);
+		jobject event =
+		    env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity, content,
+		                   static_cast<jlong>(value->chunk_index), reason);
+		jclass owner = env->GetObjectClass(h->owner);
+		jmethodID callback =
+		    env->GetMethodID(owner, "onNativeTextStream", "(Lio/livekit/client/TextStreamEvent;)V");
+		env->CallVoidMethod(h->owner, callback, event);
+		env->DeleteLocalRef(owner);
+		env->DeleteLocalRef(event);
+		env->DeleteLocalRef(id);
+		env->DeleteLocalRef(topic);
+		env->DeleteLocalRef(identity);
+		env->DeleteLocalRef(content);
+		env->DeleteLocalRef(reason);
+	});
+}
+
+void byte_stream_event(RoomHandle* h, const lk_byte_stream_event_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		jclass cls = h->byte_stream_class;
+		jmethodID ctor = env->GetMethodID(cls, "<init>",
+		                                  "(ILjava/lang/String;Ljava/lang/String;"
+		                                  "Ljava/lang/String;Ljava/lang/String;"
+		                                  "Ljava/lang/String;[BJLjava/lang/String;)V");
+		jstring id = string(env, value->stream_id);
+		jstring topic = string(env, value->topic);
+		jstring identity = string(env, value->participant_identity);
+		jstring name = string(env, value->name);
+		jstring mime = string(env, value->mime_type);
+		jbyteArray content = array(env, value->content, value->content_size);
+		jstring reason = string(env, value->reason);
+		jobject event =
+		    env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity, name,
+		                   mime, content, static_cast<jlong>(value->chunk_index), reason);
+		jclass owner = env->GetObjectClass(h->owner);
+		jmethodID callback =
+		    env->GetMethodID(owner, "onNativeByteStream", "(Lio/livekit/client/ByteStreamEvent;)V");
+		env->CallVoidMethod(h->owner, callback, event);
+		env->DeleteLocalRef(owner);
+		env->DeleteLocalRef(event);
+		env->DeleteLocalRef(id);
+		env->DeleteLocalRef(topic);
+		env->DeleteLocalRef(identity);
+		env->DeleteLocalRef(name);
+		env->DeleteLocalRef(mime);
+		env->DeleteLocalRef(content);
+		env->DeleteLocalRef(reason);
+	});
+}
+
 lk_rpc_handler_result_t rpc_handler(void* user_data, const lk_rpc_invocation_t* invocation) {
 	auto* context = static_cast<RpcContext*>(user_data);
 	auto* h = context->room;
@@ -351,8 +422,11 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	h->text_class = global_class(env, "io/livekit/client/TextMessage");
 	h->byte_class = global_class(env, "io/livekit/client/ByteMessage");
 	h->chat_class = global_class(env, "io/livekit/client/ChatMessage");
+	h->text_stream_class = global_class(env, "io/livekit/client/TextStreamEvent");
+	h->byte_stream_class = global_class(env, "io/livekit/client/ByteStreamEvent");
 	if (env->ExceptionCheck() || !h->owner || !h->participant_class || !h->packet_class ||
-	    !h->text_class || !h->byte_class || !h->chat_class) {
+	    !h->text_class || !h->byte_class || !h->chat_class || !h->text_stream_class ||
+	    !h->byte_stream_class) {
 		release_classes(env, h.get());
 		if (h->owner)
 			env->DeleteGlobalRef(h->owner);
@@ -794,6 +868,36 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyStreamWriter(JNIEnv*
 		lk_text_stream_writer_destroy(reinterpret_cast<lk_text_stream_writer_t*>(ptr));
 	else
 		lk_byte_stream_writer_destroy(reinterpret_cast<lk_byte_stream_writer_t*>(ptr));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_registerStreamHandler(JNIEnv* env, jclass,
+                                                                           jlong ptr, jboolean text,
+                                                                           jbyteArray topic) {
+	auto* h = handle(ptr);
+	std::string name = bytes(env, topic);
+	if (text == JNI_TRUE) {
+		fail(env, lk_room_register_text_stream_handler(
+		              h->room, name.c_str(),
+		              [](void* context, lk_room_t*, const lk_text_stream_event_t* event) {
+			              text_stream_event(static_cast<RoomHandle*>(context), event);
+		              },
+		              h));
+	} else {
+		fail(env, lk_room_register_byte_stream_handler(
+		              h->room, name.c_str(),
+		              [](void* context, lk_room_t*, const lk_byte_stream_event_t* event) {
+			              byte_stream_event(static_cast<RoomHandle*>(context), event);
+		              },
+		              h));
+	}
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_unregisterStreamHandler(JNIEnv* env, jclass,
+                                                                             jlong ptr,
+                                                                             jboolean text,
+                                                                             jbyteArray topic) {
+	std::string name = bytes(env, topic);
+	fail(env, text == JNI_TRUE
+	              ? lk_room_unregister_text_stream_handler(handle(ptr)->room, name.c_str())
+	              : lk_room_unregister_byte_stream_handler(handle(ptr)->room, name.c_str()));
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendDtmf(JNIEnv* env, jclass, jlong ptr,
                                                               jint code, jbyteArray digit) {

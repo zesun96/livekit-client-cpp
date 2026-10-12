@@ -50,6 +50,8 @@ final class Native {
     static native void closeStreamWriter(long writer, boolean text);
     static native void cancelStream(long writer, boolean text, byte[] reason);
     static native void destroyStreamWriter(long writer, boolean text);
+    static native void registerStreamHandler(long room, boolean text, byte[] topic);
+    static native void unregisterStreamHandler(long room, boolean text, byte[] topic);
     static native void sendDtmf(long handle, int code, byte[] digit);
     static native String sendChat(long handle, byte[] message);
     static native Participant[] remoteParticipants(long handle);

@@ -74,6 +74,10 @@ public final class OfflineSmoke {
             }
             room.registerRpcMethod("echo", invocation -> invocation.payload());
             room.unregisterRpcMethod("echo");
+            room.registerTextStreamHandler("offline-text");
+            room.unregisterTextStreamHandler("offline-text");
+            room.registerByteStreamHandler("offline-bytes");
+            room.unregisterByteStreamHandler("offline-bytes");
             try (AudioSource audio = new AudioSource(48_000, 1, 1_000);
                  VideoSource video = new VideoSource(false)) {
                 audio.capture(new short[480]);

@@ -26,6 +26,8 @@ public final class Room implements AutoCloseable {
         default void onTextReceived(TextMessage message) {}
         default void onBytesReceived(ByteMessage message) {}
         default void onFileReceived(ByteMessage message) {}
+        default void onTextStreamEvent(TextStreamEvent event) {}
+        default void onByteStreamEvent(ByteStreamEvent event) {}
         default void onChatMessageReceived(ChatMessage message) {}
     }
 
@@ -100,6 +102,22 @@ public final class Room implements AutoCloseable {
             byteWriters.add(writer);
             return writer;
         });
+    }
+
+    public void registerTextStreamHandler(String topic) {
+        useHandle(h -> Native.registerStreamHandler(h, true, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void unregisterTextStreamHandler(String topic) {
+        useHandle(h -> Native.unregisterStreamHandler(h, true, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void registerByteStreamHandler(String topic) {
+        useHandle(h -> Native.registerStreamHandler(h, false, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void unregisterByteStreamHandler(String topic) {
+        useHandle(h -> Native.unregisterStreamHandler(h, false, Native.utf8(Objects.requireNonNull(topic))));
     }
 
     public TrackRecorder startTrackRecording(String participantIdentity, String trackSid,
@@ -378,6 +396,14 @@ public final class Room implements AutoCloseable {
             if (file) listener.onFileReceived(message);
             else listener.onBytesReceived(message);
         });
+    }
+
+    private void onNativeTextStream(TextStreamEvent event) {
+        dispatch(listener -> listener.onTextStreamEvent(event));
+    }
+
+    private void onNativeByteStream(ByteStreamEvent event) {
+        dispatch(listener -> listener.onByteStreamEvent(event));
     }
 
     private void onNativeChat(ChatMessage message) {

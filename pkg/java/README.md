@@ -37,8 +37,8 @@ local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
 snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
-Dynamic token sources, incoming incremental stream handlers, DataTrack schemas, and tracing are
-not yet exposed.
+Incoming incremental text/byte events can be registered by topic. Dynamic token sources,
+DataTrack schemas, and tracing are not yet exposed.
 The native C and C++ APIs provide those features.
 
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
@@ -56,6 +56,9 @@ Use `startTrackRecording` with the same identity and SID to write a remote track
 Use `Room.streamText` or `Room.streamBytes` for outgoing incremental streams. Write chunks with
 the returned writer and close it to complete the stream, or call `cancel(reason)` to abandon it.
 Closing the room cancels any remaining writers.
+Register an incoming topic with `registerTextStreamHandler` or `registerByteStreamHandler` and
+receive copied open, chunk, closed, and failed events through `Room.Listener`. Unregister the
+topic when it is no longer needed.
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
