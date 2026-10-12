@@ -18,10 +18,17 @@ final class Native {
     static String string(byte[] value) { return value == null ? "" : new String(value, StandardCharsets.UTF_8); }
 
     static native String version();
+    static native LogOptions logOptions();
+    static native void setLogOptions(int liveKitLevel, int webRtcLevel, int webSocketLevel);
+    static native void setTraceOptions(boolean enabled, long categoryMask);
+    static native TraceOptions traceOptions();
+    static native void startTraceJson(byte[] path);
+    static native void stopTrace();
     static native long create(Room room);
     static native void destroy(long handle);
     static native void connect(long handle, byte[] url, byte[] token);
     static native void connectWithOptions(long handle, byte[] url, byte[] token, ConnectionOptions options);
+    static native void connectWithTokenSource(long handle);
     static native void disconnect(long handle);
     static native int state(long handle);
     static native int disconnectReason(long handle);

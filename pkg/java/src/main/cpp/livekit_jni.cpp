@@ -2,6 +2,7 @@
 
 #include <livekit/capi/livekit.h>
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -26,6 +27,7 @@ struct RoomHandle {
 	jclass chat_class = nullptr;
 	jclass text_stream_class = nullptr;
 	jclass byte_stream_class = nullptr;
+	jclass token_request_class = nullptr;
 	std::vector<std::unique_ptr<RpcContext>> rpc_contexts;
 };
 
@@ -56,6 +58,8 @@ void release_classes(JNIEnv* env, RoomHandle* h) {
 		env->DeleteGlobalRef(h->text_stream_class);
 	if (h->byte_stream_class)
 		env->DeleteGlobalRef(h->byte_stream_class);
+	if (h->token_request_class)
+		env->DeleteGlobalRef(h->token_request_class);
 }
 
 void fail(JNIEnv* env, lk_status_t status) {
@@ -355,6 +359,144 @@ void byte_stream_event(RoomHandle* h, const lk_byte_stream_event_t* value) {
 	});
 }
 
+lk_status_t token_source_callback(void* user_data, const lk_token_source_fetch_options_t* options,
+                                  int force_refresh, lk_token_source_response_t* response) {
+	auto* h = static_cast<RoomHandle*>(user_data);
+	JNIEnv* env = nullptr;
+	bool attached = false;
+	jint env_status = h->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+	if (env_status == JNI_EDETACHED) {
+		if (h->vm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK)
+			return LK_STATUS_EXCEPTION;
+		attached = true;
+	} else if (env_status != JNI_OK)
+		return LK_STATUS_EXCEPTION;
+	if (env->PushLocalFrame(32) != JNI_OK) {
+		if (env->ExceptionCheck())
+			env->ExceptionClear();
+		if (attached)
+			h->vm->DetachCurrentThread();
+		return LK_STATUS_OPERATION_FAILED;
+	}
+	auto abort = [&] {
+		if (env->ExceptionCheck())
+			env->ExceptionClear();
+		env->PopLocalFrame(nullptr);
+		if (attached)
+			h->vm->DetachCurrentThread();
+		return LK_STATUS_OPERATION_FAILED;
+	};
+	jclass map_class = env->FindClass("java/util/HashMap");
+	if (map_class == nullptr)
+		return abort();
+	jmethodID map_ctor = env->GetMethodID(map_class, "<init>", "()V");
+	if (map_ctor == nullptr)
+		return abort();
+	jobject attributes = env->NewObject(map_class, map_ctor);
+	if (attributes == nullptr || env->ExceptionCheck())
+		return abort();
+	jmethodID put = env->GetMethodID(map_class, "put",
+	                                 "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+	if (put == nullptr)
+		return abort();
+	if (options != nullptr) {
+		for (size_t i = 0; i < options->participant_attribute_count; ++i) {
+			jstring key = string(env, options->participant_attributes[i].key);
+			jstring value = string(env, options->participant_attributes[i].value);
+			if (env->ExceptionCheck())
+				return abort();
+			jobject old = env->CallObjectMethod(attributes, put, key, value);
+			if (env->ExceptionCheck())
+				return abort();
+			if (old != nullptr)
+				env->DeleteLocalRef(old);
+			env->DeleteLocalRef(key);
+			env->DeleteLocalRef(value);
+		}
+	}
+	std::array<jstring, 7> fields{string(env, options ? options->room_name : nullptr),
+	                              string(env, options ? options->participant_name : nullptr),
+	                              string(env, options ? options->participant_identity : nullptr),
+	                              string(env, options ? options->participant_metadata : nullptr),
+	                              string(env, options ? options->agent_name : nullptr),
+	                              string(env, options ? options->agent_metadata : nullptr),
+	                              string(env, options ? options->deployment : nullptr)};
+	if (env->ExceptionCheck())
+		return abort();
+	jmethodID ctor = env->GetMethodID(
+	    h->token_request_class, "<init>",
+	    "(ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+	    "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;)V");
+	if (ctor == nullptr)
+		return abort();
+	jobject request = env->NewObject(
+	    h->token_request_class, ctor, force_refresh ? JNI_TRUE : JNI_FALSE, fields[0], fields[1],
+	    fields[2], fields[3], fields[4], fields[5], fields[6], attributes);
+	if (request == nullptr || env->ExceptionCheck())
+		return abort();
+	jclass owner = env->GetObjectClass(h->owner);
+	if (owner == nullptr)
+		return abort();
+	jmethodID callback = env->GetMethodID(
+	    owner, "onNativeTokenFetch",
+	    "(Lio/livekit/client/TokenFetchRequest;)Lio/livekit/client/TokenCredentials;");
+	if (callback == nullptr)
+		return abort();
+	jobject credentials = env->CallObjectMethod(h->owner, callback, request);
+	thread_local std::string url, token;
+	url.clear();
+	token.clear();
+	bool failed = env->ExceptionCheck() || credentials == nullptr;
+	if (!failed) {
+		jclass cls = env->GetObjectClass(credentials);
+		jstring server = nullptr;
+		jstring participant = nullptr;
+		if (cls != nullptr && !env->ExceptionCheck()) {
+			jmethodID get_server = env->GetMethodID(cls, "serverUrl", "()Ljava/lang/String;");
+			jmethodID get_token =
+			    get_server != nullptr && !env->ExceptionCheck()
+			        ? env->GetMethodID(cls, "participantToken", "()Ljava/lang/String;")
+			        : nullptr;
+			if (get_token != nullptr && !env->ExceptionCheck()) {
+				server = static_cast<jstring>(env->CallObjectMethod(credentials, get_server));
+				if (!env->ExceptionCheck())
+					participant =
+					    static_cast<jstring>(env->CallObjectMethod(credentials, get_token));
+			}
+		}
+		if (!env->ExceptionCheck()) {
+			url = java_string_bytes(env, server);
+			if (!env->ExceptionCheck())
+				token = java_string_bytes(env, participant);
+		}
+		if (server != nullptr)
+			env->DeleteLocalRef(server);
+		if (participant != nullptr)
+			env->DeleteLocalRef(participant);
+		if (cls != nullptr)
+			env->DeleteLocalRef(cls);
+		failed = env->ExceptionCheck() || url.empty() || token.empty();
+	}
+	if (failed && env->ExceptionCheck())
+		env->ExceptionClear();
+	if (credentials != nullptr)
+		env->DeleteLocalRef(credentials);
+	env->DeleteLocalRef(owner);
+	env->DeleteLocalRef(request);
+	for (jstring field : fields)
+		env->DeleteLocalRef(field);
+	env->DeleteLocalRef(attributes);
+	env->DeleteLocalRef(map_class);
+	if (!failed) {
+		response->server_url = url.c_str();
+		response->participant_token = token.c_str();
+	}
+	env->PopLocalFrame(nullptr);
+	if (attached)
+		h->vm->DetachCurrentThread();
+	return failed ? LK_STATUS_OPERATION_FAILED : LK_STATUS_OK;
+}
+
 lk_rpc_handler_result_t rpc_handler(void* user_data, const lk_rpc_invocation_t* invocation) {
 	auto* context = static_cast<RpcContext*>(user_data);
 	auto* h = context->room;
@@ -407,6 +549,65 @@ JNIEXPORT jstring JNICALL Java_io_livekit_client_Native_version(JNIEnv* env, jcl
 	env->DeleteLocalRef(value);
 	return string(env, result.c_str());
 }
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_logOptions(JNIEnv* env, jclass) {
+	lk_log_options_t options;
+	lk_log_options_init(&options);
+	auto status = lk_log_get_options(&options);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/LogOptions");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(III)V");
+	jobject result = env->NewObject(cls, ctor, static_cast<jint>(options.livekit_level),
+	                                static_cast<jint>(options.webrtc_level),
+	                                static_cast<jint>(options.websocket_level));
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setLogOptions(JNIEnv* env, jclass,
+                                                                   jint liveKitLevel,
+                                                                   jint webRtcLevel,
+                                                                   jint webSocketLevel) {
+	lk_log_options_t options;
+	lk_log_options_init(&options);
+	options.livekit_level = static_cast<lk_log_level_t>(liveKitLevel);
+	options.webrtc_level = static_cast<lk_log_level_t>(webRtcLevel);
+	options.websocket_level = static_cast<lk_log_level_t>(webSocketLevel);
+	fail(env, lk_log_set_options(&options));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTraceOptions(JNIEnv* env, jclass,
+                                                                     jboolean enabled,
+                                                                     jlong categoryMask) {
+	lk_trace_options_t options;
+	lk_trace_options_init(&options);
+	options.enabled = enabled ? 1 : 0;
+	options.category_mask = static_cast<uint64_t>(categoryMask);
+	fail(env, lk_trace_set_options(&options));
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_traceOptions(JNIEnv* env, jclass) {
+	lk_trace_options_t options;
+	lk_trace_options_init(&options);
+	auto status = lk_trace_get_options(&options);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/TraceOptions");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(ZJ)V");
+	jobject result = env->NewObject(cls, ctor, options.enabled ? JNI_TRUE : JNI_FALSE,
+	                                static_cast<jlong>(options.category_mask));
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_startTraceJson(JNIEnv* env, jclass,
+                                                                    jbyteArray path) {
+	std::string value = bytes(env, path);
+	fail(env, lk_trace_start_json_file(value.c_str()));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_stopTrace(JNIEnv* env, jclass) {
+	fail(env, lk_trace_stop());
+}
 
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass, jobject owner) {
 	auto h = std::make_unique<RoomHandle>();
@@ -424,9 +625,10 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	h->chat_class = global_class(env, "io/livekit/client/ChatMessage");
 	h->text_stream_class = global_class(env, "io/livekit/client/TextStreamEvent");
 	h->byte_stream_class = global_class(env, "io/livekit/client/ByteStreamEvent");
+	h->token_request_class = global_class(env, "io/livekit/client/TokenFetchRequest");
 	if (env->ExceptionCheck() || !h->owner || !h->participant_class || !h->packet_class ||
 	    !h->text_class || !h->byte_class || !h->chat_class || !h->text_stream_class ||
-	    !h->byte_stream_class) {
+	    !h->byte_stream_class || !h->token_request_class) {
 		release_classes(env, h.get());
 		if (h->owner)
 			env->DeleteGlobalRef(h->owner);
@@ -601,6 +803,12 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* 
 	if (env->ExceptionCheck())
 		return;
 	fail(env, lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), &options));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(JNIEnv* env, jclass,
+                                                                            jlong ptr) {
+	auto* h = handle(ptr);
+	fail(env,
+	     lk_room_connect_with_token_source(h->room, token_source_callback, h, nullptr, nullptr));
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_disconnect(JNIEnv* env, jclass, jlong ptr) {
 	fail(env, lk_room_disconnect(handle(ptr)->room));

@@ -4,6 +4,16 @@ package io.livekit.client;
 public final class OfflineSmoke {
     public static void main(String[] args) {
         if (Room.version().isBlank()) throw new AssertionError("Empty SDK version");
+        LogOptions logBefore = Diagnostics.logOptions();
+        Diagnostics.setLogOptions(new LogOptions(2, 3, 3));
+        if (!Diagnostics.logOptions().equals(new LogOptions(2, 3, 3)))
+            throw new AssertionError("Log options did not round-trip");
+        Diagnostics.setLogOptions(logBefore);
+        TraceOptions traceBefore = Diagnostics.traceOptions();
+        Diagnostics.setTraceOptions(true, 1);
+        if (!Diagnostics.traceOptions().equals(new TraceOptions(true, 1)))
+            throw new AssertionError("Trace options did not round-trip");
+        Diagnostics.setTraceOptions(traceBefore.enabled(), traceBefore.categoryMask());
         try (Room room = new Room()) {
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
@@ -29,6 +39,17 @@ public final class OfflineSmoke {
                 throw new AssertionError("Empty URL was accepted");
             } catch (LiveKitException expected) {
                 if (expected.status() != 1) throw expected;
+            }
+            java.util.concurrent.atomic.AtomicBoolean tokenRequested =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            try {
+                room.connectWithTokenSource(request -> {
+                    tokenRequested.set(true);
+                    throw new IllegalStateException("Offline token source");
+                });
+                throw new AssertionError("Failed token source was accepted");
+            } catch (LiveKitException expected) {
+                if (!tokenRequested.get()) throw new AssertionError("Token source was not called");
             }
             try {
                 room.publishDataTrack("offline", 0);

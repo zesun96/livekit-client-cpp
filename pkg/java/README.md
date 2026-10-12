@@ -16,6 +16,7 @@ cmake -S pkg/java -B out/build/java-binding -G "Visual Studio 17 2022" -A x64 `
 cmake --build out/build/java-binding --config Release
 javac -d out/build/java-classes (rg --files pkg/java/src/main/java pkg/java/src/test/java | Where-Object { $_ -like '*.java' })
 $env:LIVEKIT_CLIENT_CPP_LIBRARY = 'C:\path\to\livekitclient.dll'
+$env:Path = "$(Split-Path $env:LIVEKIT_CLIENT_CPP_LIBRARY);$env:Path"
 java -Dlivekit.java.library="C:\path\to\livekitclient_java.dll" -cp out/build/java-classes io.livekit.client.OfflineSmoke
 ```
 
@@ -38,8 +39,10 @@ speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
 snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
 Incoming incremental text/byte events can be registered by topic. DataTrack schemas and custom
-frame encodings are supported. Dynamic token sources and tracing are not yet exposed.
-The native C and C++ APIs provide those features.
+frame encodings are supported. Diagnostics exposes process-wide log levels and JSON tracing.
+`Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.
+Its callback can run on the native recovery thread; return promptly and avoid blocking room
+operations from inside the callback. A thrown exception or empty credentials fails that fetch.
 
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
 `VideoSource.createScreen` open host devices when called. Start or stop capture with the source's
@@ -59,6 +62,10 @@ Closing the room cancels any remaining writers.
 Register an incoming topic with `registerTextStreamHandler` or `registerByteStreamHandler` and
 receive copied open, chunk, closed, and failed events through `Room.Listener`. Unregister the
 topic when it is no longer needed.
+
+`Diagnostics` controls process-wide logging and tracing. Start a JSON trace with
+`startTraceJson(path)` and call `stopTrace()` to flush it. Trace output is written to the given
+path by the native SDK. `traceOptions()` reports the current enabled state and category mask.
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by

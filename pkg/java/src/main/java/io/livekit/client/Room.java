@@ -41,6 +41,8 @@ public final class Room implements AutoCloseable {
     private final List<TextStreamWriter> textWriters = new CopyOnWriteArrayList<>();
     private final List<ByteStreamWriter> byteWriters = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
+    private volatile TokenSource tokenSource;
+    private boolean tokenConnectPending;
     private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
     private long handle;
     private int activeCalls;
@@ -270,6 +272,37 @@ public final class Room implements AutoCloseable {
             Native.utf8(Objects.requireNonNull(token)), options));
     }
 
+    @FunctionalInterface public interface TokenSource {
+        TokenCredentials fetch(TokenFetchRequest request);
+    }
+
+    public void connectWithTokenSource(TokenSource source) {
+        Objects.requireNonNull(source);
+        TokenSource previous;
+        synchronized (this) {
+            if (tokenConnectPending) throw new IllegalStateException("Token source connection is in progress");
+            tokenConnectPending = true;
+            previous = tokenSource;
+            tokenSource = source;
+        }
+        try { useHandle(Native::connectWithTokenSource); }
+        catch (RuntimeException failure) { tokenSource = previous; throw failure; }
+        finally { synchronized (this) { tokenConnectPending = false; } }
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source));
+    }
+
+    private TokenCredentials onNativeTokenFetch(TokenFetchRequest request) {
+        TokenSource source = tokenSource;
+        if (source == null) throw new IllegalStateException("Token source is unavailable");
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try { return Objects.requireNonNull(source.fetch(request)); }
+        finally { inCallback.set(previous); }
+    }
+
     public CompletableFuture<Void> connectAsync(String url, String token, ConnectionOptions options) {
         return CompletableFuture.runAsync(() -> connect(url, token, options));
     }
@@ -282,7 +315,10 @@ public final class Room implements AutoCloseable {
         return CompletableFuture.runAsync(() -> connect(url, token), executor);
     }
 
-    public void disconnect() { useHandle(Native::disconnect); }
+    public void disconnect() {
+        useHandle(Native::disconnect);
+        tokenSource = null;
+    }
     public CompletableFuture<Void> disconnectAsync() {
         return CompletableFuture.runAsync(this::disconnect);
     }
@@ -473,6 +509,7 @@ public final class Room implements AutoCloseable {
             handle = 0;
             Native.destroy(old);
             rpcHandlers.clear();
+            tokenSource = null;
         } finally {
             synchronized (this) { closing = false; notifyAll(); }
         }
