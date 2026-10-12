@@ -312,10 +312,10 @@ void chat_event(RoomHandle* h, const lk_chat_message_t* value) {
 }
 
 void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* track,
-                 const lk_participant_info_t* who) {
+                 const lk_participant_info_t* who, int value = 0) {
 	if (track == nullptr)
 		return;
-	deliver(h, [h, kind, track, who](JNIEnv* env) {
+	deliver(h, [h, kind, track, who, value](JNIEnv* env) {
 		jclass cls = h->remote_track_class;
 		jmethodID ctor = env->GetMethodID(
 		    cls, "<init>",
@@ -330,8 +330,9 @@ void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* tra
 		                   static_cast<jint>(track->width), static_cast<jint>(track->height));
 		jclass owner = env->GetObjectClass(h->owner);
 		jmethodID callback = env->GetMethodID(owner, "onNativeTrack",
-		                                      "(ILio/livekit/client/RemoteTrackPublication;)V");
-		env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), item);
+		                                      "(ILio/livekit/client/RemoteTrackPublication;I)V");
+		env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), item,
+		                    static_cast<jint>(value));
 		env->DeleteLocalRef(owner);
 		env->DeleteLocalRef(item);
 		env->DeleteLocalRef(identity);
@@ -740,6 +741,25 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	                                     const lk_participant_info_t* who) {
 		track_event(static_cast<RoomHandle*>(p), 5, track, who);
 	};
+	callbacks.on_track_subscription_permission_changed =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who,
+	       int allowed) { track_event(static_cast<RoomHandle*>(p), 6, track, who, allowed); };
+	callbacks.on_track_subscription_failed =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who, lk_subscription_error_t error) {
+		    track_event(static_cast<RoomHandle*>(p), 7, track, who, static_cast<int>(error));
+	    };
+	callbacks.on_track_stream_state_changed =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who, lk_track_stream_state_t state) {
+		    track_event(static_cast<RoomHandle*>(p), 8, track, who, static_cast<int>(state));
+	    };
+	callbacks.on_track_subscription_status_changed =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who, lk_track_subscription_status_t status) {
+		    track_event(static_cast<RoomHandle*>(p), 9, track, who, static_cast<int>(status));
+	    };
 	callbacks.on_data_received = [](void* p, lk_room_t*, const lk_data_received_t* v) {
 		event(static_cast<RoomHandle*>(p), 7, 0, nullptr, v);
 	};

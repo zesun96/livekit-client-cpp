@@ -24,8 +24,19 @@ public final class OfflineSmoke {
                 }
             });
             room.onNativeTrack(4, new RemoteTrackPublication("remote", "track-1", "mic",
-                "audio/opus", 1, 1, false, 0, 0));
+                "audio/opus", 1, 1, false, 0, 0), 0);
             if (subscribed.get() != 1) throw new AssertionError("Track listener was not called");
+            java.util.concurrent.atomic.AtomicInteger failureCode =
+                new java.util.concurrent.atomic.AtomicInteger(-1);
+            room.addListener(new Room.Listener() {
+                @Override public void onTrackSubscriptionFailed(RemoteTrackPublication track,
+                                                                 int error) {
+                    failureCode.set(error);
+                }
+            });
+            room.onNativeTrack(7, new RemoteTrackPublication("remote", "track-1", "mic",
+                "audio/opus", 1, 1, false, 0, 0), 2);
+            if (failureCode.get() != 2) throw new AssertionError("Subscription failure was lost");
             java.util.concurrent.atomic.AtomicReference<String> roomSid =
                 new java.util.concurrent.atomic.AtomicReference<>();
             room.addListener(new Room.Listener() {

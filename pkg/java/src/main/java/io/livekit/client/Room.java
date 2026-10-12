@@ -33,6 +33,11 @@ public final class Room implements AutoCloseable {
         default void onTrackUnmuted(RemoteTrackPublication track) {}
         default void onTrackSubscribed(RemoteTrackPublication track) {}
         default void onTrackUnsubscribed(RemoteTrackPublication track) {}
+        default void onTrackSubscriptionPermissionChanged(RemoteTrackPublication track,
+                                                          boolean allowed) {}
+        default void onTrackSubscriptionFailed(RemoteTrackPublication track, int error) {}
+        default void onTrackStreamStateChanged(RemoteTrackPublication track, int state) {}
+        default void onTrackSubscriptionStatusChanged(RemoteTrackPublication track, int status) {}
         default void onDataReceived(DataPacket packet) {}
         default void onTextReceived(TextMessage message) {}
         default void onBytesReceived(ByteMessage message) {}
@@ -482,7 +487,7 @@ public final class Room implements AutoCloseable {
         dispatch(listener -> listener.onTextReceived(message));
     }
 
-    void onNativeTrack(int kind, RemoteTrackPublication track) {
+    void onNativeTrack(int kind, RemoteTrackPublication track, int value) {
         dispatch(listener -> {
             switch (kind) {
                 case 0 -> listener.onTrackPublished(track);
@@ -491,6 +496,10 @@ public final class Room implements AutoCloseable {
                 case 3 -> listener.onTrackUnmuted(track);
                 case 4 -> listener.onTrackSubscribed(track);
                 case 5 -> listener.onTrackUnsubscribed(track);
+                case 6 -> listener.onTrackSubscriptionPermissionChanged(track, value != 0);
+                case 7 -> listener.onTrackSubscriptionFailed(track, value);
+                case 8 -> listener.onTrackStreamStateChanged(track, value);
+                case 9 -> listener.onTrackSubscriptionStatusChanged(track, value);
                 default -> throw new AssertionError(kind);
             }
         });
