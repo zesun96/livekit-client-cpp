@@ -1105,4 +1105,240 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyDataTrackReader(JNIE
                                                                             jlong ptr) {
 	lk_data_track_reader_destroy(reinterpret_cast<lk_data_track_reader_t*>(ptr));
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createAudioStream(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
+    jint capacity) {
+	std::string identity = bytes(env, participantIdentity), sid = bytes(env, trackSid);
+	lk_media_stream_options_t options;
+	lk_media_stream_options_init(&options);
+	options.capacity = static_cast<size_t>(capacity);
+	lk_audio_stream_t* stream = nullptr;
+	auto status = lk_room_create_audio_stream(handle(room)->room, identity.c_str(), sid.c_str(),
+	                                          &options, &stream);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(stream);
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createVideoStream(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
+    jint capacity) {
+	std::string identity = bytes(env, participantIdentity), sid = bytes(env, trackSid);
+	lk_media_stream_options_t options;
+	lk_media_stream_options_init(&options);
+	options.capacity = static_cast<size_t>(capacity);
+	lk_video_stream_t* stream = nullptr;
+	auto status = lk_room_create_video_stream(handle(room)->room, identity.c_str(), sid.c_str(),
+	                                          &options, &stream);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return reinterpret_cast<jlong>(stream);
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_readAudioStream(JNIEnv* env, jclass,
+                                                                        jlong ptr, jint timeoutMs) {
+	lk_owned_audio_frame_t* raw = nullptr;
+	auto status = lk_audio_stream_read_for(reinterpret_cast<lk_audio_stream_t*>(ptr),
+	                                       static_cast<uint32_t>(timeoutMs), &raw);
+	if (status == LK_MEDIA_STREAM_READ_EMPTY || status == LK_MEDIA_STREAM_READ_CLOSED)
+		return nullptr;
+	if (status != LK_MEDIA_STREAM_READ_FRAME) {
+		fail(env, LK_STATUS_INVALID_ARGUMENT);
+		return nullptr;
+	}
+	std::unique_ptr<lk_owned_audio_frame_t, decltype(&lk_owned_audio_frame_destroy)> frame(
+	    raw, lk_owned_audio_frame_destroy);
+	lk_audio_frame_t view{};
+	if (auto result = lk_owned_audio_frame_data(frame.get(), &view); result != LK_STATUS_OK) {
+		fail(env, result);
+		return nullptr;
+	}
+	if (view.sample_count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Audio frame is too large");
+		return nullptr;
+	}
+	jshortArray samples = env->NewShortArray(static_cast<jsize>(view.sample_count));
+	if (samples == nullptr)
+		return nullptr;
+	if (view.sample_count != 0)
+		env->SetShortArrayRegion(samples, 0, static_cast<jsize>(view.sample_count), view.data);
+	jclass cls = env->FindClass("io/livekit/client/AudioFrame");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "([SIII)V");
+	jobject result = env->NewObject(cls, ctor, samples, static_cast<jint>(view.sample_rate),
+	                                static_cast<jint>(view.num_channels),
+	                                static_cast<jint>(view.samples_per_channel));
+	env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(samples);
+	return result;
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_readVideoStream(JNIEnv* env, jclass,
+                                                                        jlong ptr, jint timeoutMs) {
+	lk_owned_video_frame_t* raw = nullptr;
+	auto status = lk_video_stream_read_for(reinterpret_cast<lk_video_stream_t*>(ptr),
+	                                       static_cast<uint32_t>(timeoutMs), &raw);
+	if (status == LK_MEDIA_STREAM_READ_EMPTY || status == LK_MEDIA_STREAM_READ_CLOSED)
+		return nullptr;
+	if (status != LK_MEDIA_STREAM_READ_FRAME) {
+		fail(env, LK_STATUS_INVALID_ARGUMENT);
+		return nullptr;
+	}
+	std::unique_ptr<lk_owned_video_frame_t, decltype(&lk_owned_video_frame_destroy)> frame(
+	    raw, lk_owned_video_frame_destroy);
+	lk_video_frame_t view{};
+	if (auto result = lk_owned_video_frame_data(frame.get(), &view); result != LK_STATUS_OK) {
+		fail(env, result);
+		return nullptr;
+	}
+	lk_video_frame_metadata_t metadata;
+	lk_video_frame_metadata_init(&metadata);
+	if (auto result = lk_owned_video_frame_metadata(frame.get(), &metadata);
+	    result != LK_STATUS_OK) {
+		fail(env, result);
+		return nullptr;
+	}
+	if (view.data_size > static_cast<size_t>(INT32_MAX) ||
+	    metadata.user_data_size > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Video frame is too large");
+		return nullptr;
+	}
+	jbyteArray data = array(env, view.data, view.data_size);
+	jbyteArray userData =
+	    metadata.has_user_data ? array(env, metadata.user_data, metadata.user_data_size) : nullptr;
+	jobject userTimestamp = nullptr, frameId = nullptr;
+	if (metadata.has_user_timestamp_us) {
+		jclass number = env->FindClass("java/lang/Long");
+		userTimestamp = env->NewObject(number, env->GetMethodID(number, "<init>", "(J)V"),
+		                               static_cast<jlong>(metadata.user_timestamp_us));
+		env->DeleteLocalRef(number);
+	}
+	if (metadata.has_frame_id) {
+		jclass number = env->FindClass("java/lang/Integer");
+		frameId = env->NewObject(number, env->GetMethodID(number, "<init>", "(I)V"),
+		                         static_cast<jint>(metadata.frame_id));
+		env->DeleteLocalRef(number);
+	}
+	jclass cls = env->FindClass("io/livekit/client/VideoFrame");
+	jmethodID ctor =
+	    env->GetMethodID(cls, "<init>", "([BIIJLjava/lang/Long;Ljava/lang/Integer;[B)V");
+	jobject result = env->NewObject(
+	    cls, ctor, data, static_cast<jint>(view.width), static_cast<jint>(view.height),
+	    static_cast<jlong>(view.timestamp_us), userTimestamp, frameId, userData);
+	env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(data);
+	if (userData)
+		env->DeleteLocalRef(userData);
+	if (userTimestamp)
+		env->DeleteLocalRef(userTimestamp);
+	if (frameId)
+		env->DeleteLocalRef(frameId);
+	return result;
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_audioStreamDroppedFrames(JNIEnv*, jclass,
+                                                                               jlong ptr) {
+	return static_cast<jlong>(
+	    lk_audio_stream_dropped_frames(reinterpret_cast<lk_audio_stream_t*>(ptr)));
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_videoStreamDroppedFrames(JNIEnv*, jclass,
+                                                                               jlong ptr) {
+	return static_cast<jlong>(
+	    lk_video_stream_dropped_frames(reinterpret_cast<lk_video_stream_t*>(ptr)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyAudioStream(JNIEnv*, jclass,
+                                                                        jlong ptr) {
+	lk_audio_stream_destroy(reinterpret_cast<lk_audio_stream_t*>(ptr));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyVideoStream(JNIEnv*, jclass,
+                                                                        jlong ptr) {
+	lk_video_stream_destroy(reinterpret_cast<lk_video_stream_t*>(ptr));
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteTrackPublications(JNIEnv* env,
+                                                                                     jclass,
+                                                                                     jlong room) {
+	lk_remote_participant_list_t* raw = nullptr;
+	auto status = lk_room_create_remote_participant_snapshot(handle(room)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_remote_participant_list_t, decltype(&lk_remote_participant_list_destroy)>
+	    snapshot(raw, lk_remote_participant_list_destroy);
+	const size_t participant_count = lk_remote_participant_list_count(snapshot.get());
+	size_t publication_count = 0;
+	for (size_t i = 0; i < participant_count; ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(snapshot.get(), i, &participant);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			return nullptr;
+		}
+		publication_count += lk_remote_participant_snapshot_publication_count(participant);
+	}
+	if (publication_count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Too many remote track publications");
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/RemoteTrackPublication");
+	jmethodID ctor = env->GetMethodID(cls, "<init>",
+	                                  "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+	                                  "Ljava/lang/String;IIZII)V");
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(publication_count), cls, nullptr);
+	jsize output_index = 0;
+	for (size_t i = 0; i < participant_count; ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(snapshot.get(), i, &participant);
+		if (status != LK_STATUS_OK)
+			break;
+		jbyteArray identity_bytes = getter(env, [participant](char* p, size_t n) {
+			return lk_remote_participant_snapshot_identity(participant, p, n);
+		});
+		std::string identity_value = bytes(env, identity_bytes);
+		env->DeleteLocalRef(identity_bytes);
+		jstring identity = string(env, identity_value.c_str());
+		const size_t count = lk_remote_participant_snapshot_publication_count(participant);
+		for (size_t j = 0; j < count; ++j) {
+			const lk_remote_track_publication_snapshot_t* publication = nullptr;
+			status = lk_remote_participant_snapshot_publication_at(participant, j, &publication);
+			if (status != LK_STATUS_OK)
+				break;
+			lk_remote_track_publication_snapshot_info_t info;
+			lk_remote_track_publication_snapshot_info_init(&info);
+			status = lk_remote_track_publication_snapshot_info(publication, &info);
+			if (status != LK_STATUS_OK)
+				break;
+			auto read = [env, publication](auto fn) {
+				jbyteArray raw_value = getter(
+				    env, [publication, fn](char* p, size_t n) { return fn(publication, p, n); });
+				std::string value = bytes(env, raw_value);
+				env->DeleteLocalRef(raw_value);
+				return string(env, value.c_str());
+			};
+			jstring sid = read(lk_remote_track_publication_snapshot_sid);
+			jstring name = read(lk_remote_track_publication_snapshot_name);
+			jstring mime = read(lk_remote_track_publication_snapshot_mime_type);
+			jobject item =
+			    env->NewObject(cls, ctor, identity, sid, name, mime, static_cast<jint>(info.kind),
+			                   static_cast<jint>(info.source), info.is_muted ? JNI_TRUE : JNI_FALSE,
+			                   static_cast<jint>(info.width), static_cast<jint>(info.height));
+			env->SetObjectArrayElement(result, output_index++, item);
+			env->DeleteLocalRef(item);
+			env->DeleteLocalRef(sid);
+			env->DeleteLocalRef(name);
+			env->DeleteLocalRef(mime);
+		}
+		env->DeleteLocalRef(identity);
+		if (status != LK_STATUS_OK)
+			break;
+	}
+	env->DeleteLocalRef(cls);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	return result;
+}
 }

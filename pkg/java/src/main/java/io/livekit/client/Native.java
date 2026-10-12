@@ -69,4 +69,13 @@ final class Native {
     static native RemoteDataTrack[] remoteDataTracks(long room);
     static native DataTrackFrame readDataTrack(long reader, int timeoutMs);
     static native void destroyDataTrackReader(long reader);
+    static native long createAudioStream(long room, byte[] participantIdentity, byte[] trackSid, int capacity);
+    static native long createVideoStream(long room, byte[] participantIdentity, byte[] trackSid, int capacity);
+    static native AudioFrame readAudioStream(long stream, int timeoutMs);
+    static native VideoFrame readVideoStream(long stream, int timeoutMs);
+    static native long audioStreamDroppedFrames(long stream);
+    static native long videoStreamDroppedFrames(long stream);
+    static native void destroyAudioStream(long stream);
+    static native void destroyVideoStream(long stream);
+    static native RemoteTrackPublication[] remoteTrackPublications(long room);
 }

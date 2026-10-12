@@ -9,6 +9,7 @@ public final class OfflineSmoke {
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
             if (room.remoteParticipants().size() != 0) throw new AssertionError("Unexpected participant");
+            if (!room.remoteTrackPublications().isEmpty()) throw new AssertionError("Unexpected track");
             if (!room.remoteDataTracks().isEmpty()) throw new AssertionError("Unexpected DataTrack");
             if (room.state() != 3) throw new AssertionError("New room is not disconnected");
             ConnectionOptions options = new ConnectionOptions(true, false, false, 3, 15_000,
@@ -25,6 +26,18 @@ public final class OfflineSmoke {
                 throw new AssertionError("Disconnected DataTrack publish was accepted");
             } catch (LiveKitException expected) {
                 if (expected.status() != 6) throw expected;
+            }
+            try {
+                room.createAudioStream("remote", "TR_offline", 4);
+                throw new AssertionError("Unavailable audio stream was accepted");
+            } catch (LiveKitException expected) {
+                // The remote track is absent in an offline room.
+            }
+            try {
+                room.createVideoStream("remote", "TR_offline", 4);
+                throw new AssertionError("Unavailable video stream was accepted");
+            } catch (LiveKitException expected) {
+                // The remote track is absent in an offline room.
             }
             try {
                 room.subscribeDataTrack("remote", "DT_offline", 8);

@@ -6,7 +6,7 @@ capability, `Partial` means some related APIs are available, and `No` means it d
 exposes the complete C ABI as low-level declarations, with owned-handle wrappers for common
 room, media, stream, RPC, snapshot, E2EE, and DataTrack operations.
 Swift has no implementation yet. The [Java binding](java/README.md) currently covers room,
-messaging, RPC calls, shared-key E2EE, and synthetic local media. The
+messaging, RPC calls, shared-key E2EE, synthetic local media, and bounded remote media streams. The
 [.NET binding](dotnet/README.md) covers
 room, media, data, stream, RPC, device, recording, and diagnostic operations.
 
@@ -27,7 +27,7 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Remote track subscription and settings | Yes | Yes | Yes | Partial | No | Yes |
 | Track subscription permissions and feedback events | Yes | Yes | Yes | No | No | Yes |
 | External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Partial | No | Yes |
-| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | No | No | Yes |
+| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Partial | No | Yes |
 | Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | No | No | Yes |
 | Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Partial | No | Yes |
 | DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Partial | No | Yes |

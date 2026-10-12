@@ -32,6 +32,8 @@ public final class Room implements AutoCloseable {
     private final List<LocalTrack> tracks = new CopyOnWriteArrayList<>();
     private final List<LocalDataTrack> dataTracks = new CopyOnWriteArrayList<>();
     private final List<DataTrackReader> dataTrackReaders = new CopyOnWriteArrayList<>();
+    private final List<AudioStream> audioStreams = new CopyOnWriteArrayList<>();
+    private final List<VideoStream> videoStreams = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
     private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
     private long handle;
@@ -61,6 +63,44 @@ public final class Room implements AutoCloseable {
     void removeTrack(LocalTrack track) { tracks.remove(track); }
     void removeDataTrack(LocalDataTrack track) { dataTracks.remove(track); }
     void removeDataTrackReader(DataTrackReader reader) { dataTrackReaders.remove(reader); }
+    void removeAudioStream(AudioStream stream) { audioStreams.remove(stream); }
+    void removeVideoStream(VideoStream stream) { videoStreams.remove(stream); }
+
+    public AudioStream createAudioStream(String participantIdentity, String trackSid, int capacity) {
+        if (capacity < 1) throw new IllegalArgumentException("Invalid audio stream capacity");
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        return withHandle(h -> {
+            AudioStream stream = new AudioStream(this, Native.createAudioStream(h,
+                Native.utf8(participantIdentity), Native.utf8(trackSid), capacity));
+            audioStreams.add(stream);
+            return stream;
+        });
+    }
+
+    public AudioStream createAudioStream(String participantIdentity, String trackSid) {
+        return createAudioStream(participantIdentity, trackSid, 64);
+    }
+
+    public VideoStream createVideoStream(String participantIdentity, String trackSid, int capacity) {
+        if (capacity < 1) throw new IllegalArgumentException("Invalid video stream capacity");
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        return withHandle(h -> {
+            VideoStream stream = new VideoStream(this, Native.createVideoStream(h,
+                Native.utf8(participantIdentity), Native.utf8(trackSid), capacity));
+            videoStreams.add(stream);
+            return stream;
+        });
+    }
+
+    public VideoStream createVideoStream(String participantIdentity, String trackSid) {
+        return createVideoStream(participantIdentity, trackSid, 8);
+    }
+
+    public List<RemoteTrackPublication> remoteTrackPublications() {
+        return withHandle(h -> List.of(Native.remoteTrackPublications(h)));
+    }
 
     public LocalDataTrack publishDataTrack(String name, int frameEncoding) {
         Objects.requireNonNull(name);
@@ -282,6 +322,8 @@ public final class Room implements AutoCloseable {
             if (interrupted) Thread.currentThread().interrupt();
         }
         try {
+            for (AudioStream stream : audioStreams) stream.close();
+            for (VideoStream stream : videoStreams) stream.close();
             for (DataTrackReader reader : dataTrackReaders) reader.close();
             for (LocalDataTrack track : dataTracks) track.close();
             for (LocalTrack track : tracks) track.close();
