@@ -25,6 +25,8 @@ public final class Room implements AutoCloseable {
         default void onRecordingStatusChanged(boolean recording) {}
         default void onTokenRefreshed() {}
         default void onRoomEos() {}
+        default void onRoomUpdated(RoomSnapshot snapshot) {}
+        default void onRoomMoved(RoomSnapshot snapshot) {}
         default void onParticipantConnected(Participant participant) {}
         default void onParticipantDisconnected(Participant participant) {}
         default void onParticipantMetadataChanged(Participant participant, String previousMetadata) {}
@@ -531,6 +533,18 @@ public final class Room implements AutoCloseable {
         EncryptionState value = new EncryptionState(trackId, participantIdentity, kind,
             direction, enabled, keyIndex, state);
         dispatch(listener -> listener.onEncryptionStateChanged(value));
+    }
+
+    void onNativeRoomSnapshot(int kind, String sid, String name, String metadata,
+                              boolean recording) {
+        RoomSnapshot snapshot = new RoomSnapshot(sid, name, metadata, recording);
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onRoomUpdated(snapshot);
+                case 1 -> listener.onRoomMoved(snapshot);
+                default -> throw new AssertionError(kind);
+            }
+        });
     }
 
     private void dispatch(Consumer<Listener> delivery) {

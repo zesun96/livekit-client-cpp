@@ -99,6 +99,14 @@ public final class OfflineSmoke {
             if (dtmf.get().code() != 5 || buffer.get().bufferedAmount() != 20 ||
                 cryptor.get().keyIndex() != 2)
                 throw new AssertionError("Room status listener failed");
+            java.util.concurrent.atomic.AtomicReference<RoomSnapshot> moved =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onRoomMoved(RoomSnapshot snapshot) { moved.set(snapshot); }
+            });
+            room.onNativeRoomSnapshot(1, "room-sid", "new-room", "metadata", true);
+            if (!"new-room".equals(moved.get().name()) || !moved.get().recording())
+                throw new AssertionError("Room move snapshot was lost");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");

@@ -231,6 +231,31 @@ void room_string_event(RoomHandle* h, int kind, const char* previous, const char
 	});
 }
 
+void room_snapshot_event(RoomHandle* h, int kind, const lk_room_snapshot_t* value) {
+	if (value == nullptr)
+		return;
+	deliver(h, [h, kind, value](JNIEnv* env) {
+		if (env->PushLocalFrame(16) != JNI_OK)
+			return;
+		jstring sid = string(env, value->sid);
+		jstring name = env->ExceptionCheck() ? nullptr : string(env, value->name);
+		jstring metadata = env->ExceptionCheck() ? nullptr : string(env, value->metadata);
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(
+			              owner, "onNativeRoomSnapshot",
+			              "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), sid, name,
+				                    metadata, value->is_recording ? JNI_TRUE : JNI_FALSE);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 jlong bounded_long(uint64_t value) {
 	return static_cast<jlong>(
 	    std::min(value, static_cast<uint64_t>(std::numeric_limits<jlong>::max())));
@@ -855,6 +880,12 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	};
 	callbacks.on_token_refreshed = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 9); };
 	callbacks.on_room_eos = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 10); };
+	callbacks.on_room_updated = [](void* p, lk_room_t*, const lk_room_snapshot_t* value) {
+		room_snapshot_event(static_cast<RoomHandle*>(p), 0, value);
+	};
+	callbacks.on_room_moved = [](void* p, lk_room_t*, const lk_room_snapshot_t* value) {
+		room_snapshot_event(static_cast<RoomHandle*>(p), 1, value);
+	};
 	callbacks.on_participant_connected = [](void* p, lk_room_t*, const lk_participant_info_t* v) {
 		event(static_cast<RoomHandle*>(p), 5, 0, v);
 	};
