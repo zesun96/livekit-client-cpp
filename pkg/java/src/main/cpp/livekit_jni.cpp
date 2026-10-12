@@ -1646,6 +1646,88 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_updateRemoteTrackSettings(
 	fail(env,
 	     lk_room_update_remote_track_settings(handle(ptr)->room, p.c_str(), t.c_str(), &settings));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTrackSubscriptionPermissions(
+    JNIEnv* env, jclass, jlong ptr, jboolean allowAll, jobjectArray permissions) {
+	if (permissions == nullptr)
+		return;
+	jclass cls = env->FindClass("io/livekit/client/ParticipantTrackPermission");
+	if (cls == nullptr)
+		return;
+	jmethodID get_sid = env->GetMethodID(cls, "participantSid", "()Ljava/lang/String;");
+	if (get_sid == nullptr)
+		return;
+	jmethodID get_identity = env->GetMethodID(cls, "participantIdentity", "()Ljava/lang/String;");
+	if (get_identity == nullptr)
+		return;
+	jmethodID get_allow_all = env->GetMethodID(cls, "allowAll", "()Z");
+	if (get_allow_all == nullptr)
+		return;
+	jmethodID get_tracks = env->GetMethodID(cls, "allowedTrackSids", "()[Ljava/lang/String;");
+	if (get_tracks == nullptr)
+		return;
+	struct OwnedPermission {
+		std::string sid;
+		std::string identity;
+		bool allow_all = false;
+		std::vector<std::string> tracks;
+		std::vector<const char*> track_pointers;
+	};
+	const jsize count = env->GetArrayLength(permissions);
+	std::vector<OwnedPermission> owned(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jobject item = env->GetObjectArrayElement(permissions, i);
+		bool invalid = item == nullptr;
+		if (item != nullptr && !env->ExceptionCheck()) {
+			jstring sid = static_cast<jstring>(env->CallObjectMethod(item, get_sid));
+			jstring identity =
+			    env->ExceptionCheck()
+			        ? nullptr
+			        : static_cast<jstring>(env->CallObjectMethod(item, get_identity));
+			jboolean allowed =
+			    env->ExceptionCheck() ? JNI_FALSE : env->CallBooleanMethod(item, get_allow_all);
+			jobjectArray tracks =
+			    env->ExceptionCheck()
+			        ? nullptr
+			        : static_cast<jobjectArray>(env->CallObjectMethod(item, get_tracks));
+			invalid = tracks == nullptr;
+			if (!env->ExceptionCheck() && tracks != nullptr) {
+				auto& value = owned[static_cast<size_t>(i)];
+				value.sid = java_string_bytes(env, sid);
+				if (!env->ExceptionCheck())
+					value.identity = java_string_bytes(env, identity);
+				value.allow_all = allowed == JNI_TRUE;
+				jsize track_count = env->ExceptionCheck() ? 0 : env->GetArrayLength(tracks);
+				for (jsize j = 0; j < track_count && !env->ExceptionCheck(); ++j) {
+					jstring track = static_cast<jstring>(env->GetObjectArrayElement(tracks, j));
+					if (!env->ExceptionCheck())
+						value.tracks.push_back(java_string_bytes(env, track));
+					env->DeleteLocalRef(track);
+				}
+			}
+		}
+		bool failed = env->ExceptionCheck() || invalid;
+		env->PopLocalFrame(nullptr);
+		if (failed)
+			return;
+	}
+	std::vector<lk_participant_track_permission_t> raw(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		auto& value = owned[static_cast<size_t>(i)];
+		for (const auto& track : value.tracks)
+			value.track_pointers.push_back(track.c_str());
+		auto& permission = raw[static_cast<size_t>(i)];
+		lk_participant_track_permission_init(&permission);
+		permission.participant_sid = value.sid.c_str();
+		permission.participant_identity = value.identity.c_str();
+		permission.allow_all = value.allow_all ? 1 : 0;
+		permission.allowed_track_sids = value.track_pointers.data();
+		permission.allowed_track_sid_count = value.track_pointers.size();
+	}
+	fail(env, lk_room_set_track_subscription_permissions(handle(ptr)->room, allowAll ? 1 : 0,
+	                                                     raw.data(), raw.size()));
+}
 JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_performRpc(JNIEnv* env, jclass, jlong ptr,
                                                                    jbyteArray destination,
                                                                    jbyteArray method,

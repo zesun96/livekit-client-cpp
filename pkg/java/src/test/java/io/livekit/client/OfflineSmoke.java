@@ -150,6 +150,13 @@ public final class OfflineSmoke {
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
+            String[] allowedTrackSids = {"TR_one"};
+            ParticipantTrackPermission permission = new ParticipantTrackPermission("", "viewer",
+                false, allowedTrackSids);
+            allowedTrackSids[0] = "TR_other";
+            if (!"TR_one".equals(permission.allowedTrackSids()[0]))
+                throw new AssertionError("Subscription permission was not copied");
+            room.setTrackSubscriptionPermissions(false, permission);
             try {
                 room.updateRemoteTrackSettings("participant", "track", new RemoteTrackSettings());
                 throw new AssertionError("Disconnected track settings update was accepted");

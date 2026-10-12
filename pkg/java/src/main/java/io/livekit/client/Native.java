@@ -66,6 +66,8 @@ final class Native {
     static native void updateRemoteTrackSettings(long handle, byte[] participantSid,
                                                   byte[] trackSid, boolean enabled, int videoQuality,
                                                   int width, int height, int fps, int priority);
+    static native void setTrackSubscriptionPermissions(long handle, boolean allowAll,
+                                                        ParticipantTrackPermission[] permissions);
     static native RpcResult performRpc(long handle, byte[] destination, byte[] method, byte[] payload, int timeoutMs);
     static native void registerRpc(long handle, byte[] method);
     static native void unregisterRpc(long handle, byte[] method);

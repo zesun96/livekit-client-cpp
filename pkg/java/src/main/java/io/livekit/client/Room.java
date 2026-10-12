@@ -430,6 +430,14 @@ public final class Room implements AutoCloseable {
             settings.width(), settings.height(), settings.fps(), settings.priority()));
     }
 
+    public void setTrackSubscriptionPermissions(boolean allowAll,
+                                                 ParticipantTrackPermission... permissions) {
+        Objects.requireNonNull(permissions);
+        ParticipantTrackPermission[] copied = permissions.clone();
+        for (ParticipantTrackPermission permission : copied) Objects.requireNonNull(permission);
+        useHandle(h -> Native.setTrackSubscriptionPermissions(h, allowAll, copied));
+    }
+
     public RpcResult performRpc(String destination, String method, String payload, int timeoutMs) {
         return withHandle(h -> Native.performRpc(h, Native.utf8(destination), Native.utf8(method), Native.utf8(payload), timeoutMs));
     }
