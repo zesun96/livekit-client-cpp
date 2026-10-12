@@ -189,6 +189,37 @@ public final class Room implements AutoCloseable {
         });
     }
 
+    public LocalDataTrack publishDataTrack(DataTrackPublishOptions options) {
+        Objects.requireNonNull(options);
+        return withHandle(h -> {
+            LocalDataTrack track = new LocalDataTrack(this, Native.publishDataTrackWithOptions(h,
+                Native.utf8(options.name()), options.frameEncoding(),
+                Native.utf8(options.customFrameEncoding()), Native.utf8(options.schemaName()),
+                options.schemaEncoding(), Native.utf8(options.customSchemaEncoding())));
+            dataTracks.add(track);
+            return track;
+        });
+    }
+
+    public void storeDataTrackSchema(DataTrackSchema schema) {
+        Objects.requireNonNull(schema);
+        useHandle(h -> Native.storeDataTrackSchema(h, Native.utf8(schema.name()), schema.encoding(),
+            Native.utf8(schema.customEncoding()), schema.definition()));
+    }
+
+    public DataTrackSchema getDataTrackSchema(String participantIdentity, String name,
+                                               int encoding, String customEncoding) {
+        if (name == null || name.isEmpty() || encoding < 0 || encoding > 8)
+            throw new IllegalArgumentException("Invalid schema ID");
+        if (participantIdentity == null || participantIdentity.isEmpty())
+            throw new IllegalArgumentException("Participant identity is required");
+        if (encoding == 8 && (customEncoding == null || customEncoding.isEmpty()))
+            throw new IllegalArgumentException("Custom schema encoding is required");
+        return withHandle(h -> Native.getDataTrackSchema(h,
+            Native.utf8(participantIdentity), Native.utf8(name),
+            encoding, Native.utf8(customEncoding)));
+    }
+
     public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
                                                int bufferCapacity) {
         if (bufferCapacity < 1) throw new IllegalArgumentException("Invalid buffer capacity");

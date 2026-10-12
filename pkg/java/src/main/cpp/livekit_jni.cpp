@@ -1416,6 +1416,98 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_publishDataTrack(JNIEnv* e
 	}
 	return reinterpret_cast<jlong>(track);
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_publishDataTrackWithOptions(
+    JNIEnv* env, jclass, jlong room, jbyteArray name, jint frameEncoding,
+    jbyteArray customFrameEncoding, jbyteArray schemaName, jint schemaEncoding,
+    jbyteArray customSchemaEncoding) {
+	std::string name_value = bytes(env, name), frame_custom = bytes(env, customFrameEncoding);
+	std::string schema_name = bytes(env, schemaName);
+	std::string schema_custom = bytes(env, customSchemaEncoding);
+	lk_data_track_publish_options_t options;
+	lk_data_track_publish_options_init(&options);
+	options.name = name_value.c_str();
+	options.has_frame_encoding = frameEncoding != LK_DATA_TRACK_FRAME_ENCODING_UNSPECIFIED;
+	options.frame_encoding = static_cast<lk_data_track_frame_encoding_t>(frameEncoding);
+	if (!frame_custom.empty())
+		options.custom_frame_encoding = frame_custom.c_str();
+	options.has_schema = !schema_name.empty();
+	if (options.has_schema) {
+		options.schema.name = schema_name.c_str();
+		options.schema.encoding = static_cast<lk_data_track_schema_encoding_t>(schemaEncoding);
+		if (!schema_custom.empty())
+			options.schema.custom_encoding = schema_custom.c_str();
+	}
+	lk_local_data_track_t* track = nullptr;
+	auto status = lk_room_publish_data_track(handle(room)->room, &options, &track);
+	if (status != LK_DATA_TRACK_ERROR_NONE) {
+		fail(env, static_cast<lk_status_t>(status));
+		return 0;
+	}
+	return reinterpret_cast<jlong>(track);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_storeDataTrackSchema(
+    JNIEnv* env, jclass, jlong room, jbyteArray name, jint encoding, jbyteArray customEncoding,
+    jbyteArray definition) {
+	std::string schema_name = bytes(env, name), custom = bytes(env, customEncoding);
+	std::string payload = bytes(env, definition);
+	lk_data_track_schema_id_t id;
+	lk_data_track_schema_id_init(&id);
+	id.name = schema_name.c_str();
+	id.encoding = static_cast<lk_data_track_schema_encoding_t>(encoding);
+	if (!custom.empty())
+		id.custom_encoding = custom.c_str();
+	auto status = lk_room_store_data_track_schema(
+	    handle(room)->room, &id, reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
+	fail(env, static_cast<lk_status_t>(status));
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_getDataTrackSchema(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray name, jint encoding,
+    jbyteArray customEncoding) {
+	std::string identity = bytes(env, participantIdentity), schema_name = bytes(env, name);
+	std::string custom = bytes(env, customEncoding);
+	lk_data_track_schema_id_t id;
+	lk_data_track_schema_id_init(&id);
+	id.name = schema_name.c_str();
+	id.encoding = static_cast<lk_data_track_schema_encoding_t>(encoding);
+	if (!custom.empty())
+		id.custom_encoding = custom.c_str();
+	lk_data_track_schema_t* raw = nullptr;
+	auto status = lk_room_get_data_track_schema(handle(room)->room, identity.c_str(), &id, &raw);
+	if (status != LK_DATA_TRACK_ERROR_NONE) {
+		fail(env, static_cast<lk_status_t>(status));
+		return nullptr;
+	}
+	std::unique_ptr<lk_data_track_schema_t, decltype(&lk_data_track_schema_destroy)> schema(
+	    raw, lk_data_track_schema_destroy);
+	const size_t size = lk_data_track_schema_definition(schema.get(), nullptr, 0);
+	if (size > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "Schema is too large");
+		return nullptr;
+	}
+	std::vector<uint8_t> definition(size);
+	if (size != 0)
+		lk_data_track_schema_definition(schema.get(), definition.data(), size);
+	jbyteArray data = array(env, definition.data(), size);
+	auto read = [env, &schema](auto fn) {
+		jbyteArray raw_value =
+		    getter(env, [&schema, fn](char* p, size_t n) { return fn(schema.get(), p, n); });
+		std::string value = bytes(env, raw_value);
+		env->DeleteLocalRef(raw_value);
+		return string(env, value.c_str());
+	};
+	jstring result_name = read(lk_data_track_schema_name);
+	jstring result_custom = read(lk_data_track_schema_custom_encoding);
+	jclass cls = env->FindClass("io/livekit/client/DataTrackSchema");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;ILjava/lang/String;[B)V");
+	jobject result = env->NewObject(cls, ctor, result_name,
+	                                static_cast<jint>(lk_data_track_schema_encoding(schema.get())),
+	                                result_custom, data);
+	env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(result_name);
+	env->DeleteLocalRef(result_custom);
+	env->DeleteLocalRef(data);
+	return result;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_pushDataTrack(JNIEnv* env, jclass, jlong ptr,
                                                                    jbyteArray data,
                                                                    jboolean hasTimestamp,

@@ -37,6 +37,18 @@ public final class OfflineSmoke {
                 if (expected.status() != 6) throw expected;
             }
             try {
+                room.publishDataTrack(new DataTrackPublishOptions("offline", 8, "custom",
+                    "schema", 8, "custom-schema"));
+                throw new AssertionError("Disconnected custom DataTrack publish was accepted");
+            } catch (LiveKitException expected) {
+                if (expected.status() != 6) throw expected;
+            }
+            try {
+                room.storeDataTrackSchema(new DataTrackSchema("offline", 7, "", new byte[] { 1 }));
+            } catch (LiveKitException expected) {
+                // Schema storage may require a connected participant.
+            }
+            try {
                 room.createAudioStream("remote", "TR_offline", 4);
                 throw new AssertionError("Unavailable audio stream was accepted");
             } catch (LiveKitException expected) {

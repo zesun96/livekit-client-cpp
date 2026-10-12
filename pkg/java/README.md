@@ -37,8 +37,8 @@ local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
 snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
-Incoming incremental text/byte events can be registered by topic. Dynamic token sources,
-DataTrack schemas, and tracing are not yet exposed.
+Incoming incremental text/byte events can be registered by topic. DataTrack schemas and custom
+frame encodings are supported. Dynamic token sources and tracing are not yet exposed.
 The native C and C++ APIs provide those features.
 
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
@@ -64,6 +64,8 @@ DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C 
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
 `Room.subscribeDataTrack`. Close the returned reader and local publisher when done. A reader
 returns `null` when its timeout expires or the track closes.
+Use `storeDataTrackSchema`, `getDataTrackSchema`, and `DataTrackPublishOptions` to associate
+schemas and custom encodings with published DataTracks.
 
 ```java
 try (Room room = new Room()) {

@@ -95,6 +95,14 @@ final class Native {
     static native MediaDevice[] mediaDevices();
     static native ScreenSource[] screenSources();
     static native long publishDataTrack(long room, byte[] name, int frameEncoding);
+    static native long publishDataTrackWithOptions(long room, byte[] name, int frameEncoding,
+                                                   byte[] customFrameEncoding, byte[] schemaName,
+                                                   int schemaEncoding, byte[] customSchemaEncoding);
+    static native void storeDataTrackSchema(long room, byte[] name, int encoding,
+                                            byte[] customEncoding, byte[] definition);
+    static native DataTrackSchema getDataTrackSchema(long room, byte[] participantIdentity,
+                                                     byte[] name, int encoding,
+                                                     byte[] customEncoding);
     static native void pushDataTrack(long track, byte[] data, boolean hasTimestamp, long timestamp);
     static native byte[] dataTrackSid(long track);
     static native void unpublishDataTrack(long track);
