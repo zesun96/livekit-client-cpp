@@ -14,6 +14,10 @@ public final class OfflineSmoke {
         if (!Diagnostics.traceOptions().equals(new TraceOptions(true, 1)))
             throw new AssertionError("Trace options did not round-trip");
         Diagnostics.setTraceOptions(traceBefore.enabled(), traceBefore.categoryMask());
+        try {
+            new RemoteTrackSettings(true, 2, 640, 480, 0, 0);
+            throw new AssertionError("Conflicting remote track settings were accepted");
+        } catch (IllegalArgumentException expected) { }
         try (Room room = new Room()) {
             java.util.concurrent.atomic.AtomicInteger subscribed =
                 new java.util.concurrent.atomic.AtomicInteger();
@@ -77,6 +81,10 @@ public final class OfflineSmoke {
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");
+            try {
+                room.updateRemoteTrackSettings("participant", "track", new RemoteTrackSettings());
+                throw new AssertionError("Disconnected track settings update was accepted");
+            } catch (LiveKitException expected) { }
             if (room.isRecording()) throw new AssertionError("New room is recording");
             AudioPlaybackStats playback = room.audioPlaybackStats();
             if (playback.queuedFrames() != 0 || playback.playedFrames() != 0)

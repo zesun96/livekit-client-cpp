@@ -406,6 +406,17 @@ public final class Room implements AutoCloseable {
         useHandle(h -> Native.setTrackSubscribed(h, Native.utf8(participantSid), Native.utf8(trackSid), subscribed));
     }
 
+    public void updateRemoteTrackSettings(String participantSid, String trackSid,
+                                          RemoteTrackSettings settings) {
+        if (participantSid == null || participantSid.isEmpty() ||
+            trackSid == null || trackSid.isEmpty())
+            throw new IllegalArgumentException("Participant and track SIDs are required");
+        Objects.requireNonNull(settings);
+        useHandle(h -> Native.updateRemoteTrackSettings(h, Native.utf8(participantSid),
+            Native.utf8(trackSid), settings.enabled(), settings.videoQuality(),
+            settings.width(), settings.height(), settings.fps(), settings.priority()));
+    }
+
     public RpcResult performRpc(String destination, String method, String payload, int timeoutMs) {
         return withHandle(h -> Native.performRpc(h, Native.utf8(destination), Native.utf8(method), Native.utf8(payload), timeoutMs));
     }

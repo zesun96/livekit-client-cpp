@@ -63,6 +63,9 @@ final class Native {
     static native String sendChat(long handle, byte[] message);
     static native Participant[] remoteParticipants(long handle);
     static native void setTrackSubscribed(long handle, byte[] participantSid, byte[] trackSid, boolean subscribed);
+    static native void updateRemoteTrackSettings(long handle, byte[] participantSid,
+                                                  byte[] trackSid, boolean enabled, int videoQuality,
+                                                  int width, int height, int fps, int priority);
     static native RpcResult performRpc(long handle, byte[] destination, byte[] method, byte[] payload, int timeoutMs);
     static native void registerRpc(long handle, byte[] method);
     static native void unregisterRpc(long handle, byte[] method);

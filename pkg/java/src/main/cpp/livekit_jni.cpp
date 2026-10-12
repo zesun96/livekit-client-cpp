@@ -1381,6 +1381,23 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTrackSubscribed(JNIEnv* 
 	fail(env, lk_room_set_remote_track_subscribed(handle(ptr)->room, p.c_str(), t.c_str(),
 	                                              subscribed ? 1 : 0));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_updateRemoteTrackSettings(
+    JNIEnv* env, jclass, jlong ptr, jbyteArray participantSid, jbyteArray trackSid,
+    jboolean enabled, jint videoQuality, jint width, jint height, jint fps, jint priority) {
+	std::string p = bytes(env, participantSid), t = bytes(env, trackSid);
+	lk_remote_track_settings_t settings;
+	lk_remote_track_settings_init(&settings);
+	settings.enabled = enabled ? 1 : 0;
+	settings.has_video_quality = videoQuality >= 0 ? 1 : 0;
+	if (settings.has_video_quality)
+		settings.video_quality = static_cast<lk_video_quality_t>(videoQuality);
+	settings.video_width = static_cast<uint32_t>(width);
+	settings.video_height = static_cast<uint32_t>(height);
+	settings.video_fps = static_cast<uint32_t>(fps);
+	settings.priority = static_cast<uint32_t>(priority);
+	fail(env,
+	     lk_room_update_remote_track_settings(handle(ptr)->room, p.c_str(), t.c_str(), &settings));
+}
 JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_performRpc(JNIEnv* env, jclass, jlong ptr,
                                                                    jbyteArray destination,
                                                                    jbyteArray method,
