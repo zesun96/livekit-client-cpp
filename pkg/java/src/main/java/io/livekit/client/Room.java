@@ -22,6 +22,12 @@ public final class Room implements AutoCloseable {
         default void onConnectionStateChanged(int state) {}
         default void onParticipantConnected(Participant participant) {}
         default void onParticipantDisconnected(Participant participant) {}
+        default void onTrackPublished(RemoteTrackPublication track) {}
+        default void onTrackUnpublished(RemoteTrackPublication track) {}
+        default void onTrackMuted(RemoteTrackPublication track) {}
+        default void onTrackUnmuted(RemoteTrackPublication track) {}
+        default void onTrackSubscribed(RemoteTrackPublication track) {}
+        default void onTrackUnsubscribed(RemoteTrackPublication track) {}
         default void onDataReceived(DataPacket packet) {}
         default void onTextReceived(TextMessage message) {}
         default void onBytesReceived(ByteMessage message) {}
@@ -456,6 +462,20 @@ public final class Room implements AutoCloseable {
 
     private void onNativeText(TextMessage message) {
         dispatch(listener -> listener.onTextReceived(message));
+    }
+
+    void onNativeTrack(int kind, RemoteTrackPublication track) {
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onTrackPublished(track);
+                case 1 -> listener.onTrackUnpublished(track);
+                case 2 -> listener.onTrackMuted(track);
+                case 3 -> listener.onTrackUnmuted(track);
+                case 4 -> listener.onTrackSubscribed(track);
+                case 5 -> listener.onTrackUnsubscribed(track);
+                default -> throw new AssertionError(kind);
+            }
+        });
     }
 
     private void onNativeBytes(ByteMessage message, boolean file) {

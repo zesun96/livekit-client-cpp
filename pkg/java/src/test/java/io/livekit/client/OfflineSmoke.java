@@ -15,6 +15,17 @@ public final class OfflineSmoke {
             throw new AssertionError("Trace options did not round-trip");
         Diagnostics.setTraceOptions(traceBefore.enabled(), traceBefore.categoryMask());
         try (Room room = new Room()) {
+            java.util.concurrent.atomic.AtomicInteger subscribed =
+                new java.util.concurrent.atomic.AtomicInteger();
+            room.addListener(new Room.Listener() {
+                @Override public void onTrackSubscribed(RemoteTrackPublication track) {
+                    if (!track.sid().equals("track-1")) throw new AssertionError("Wrong track SID");
+                    subscribed.incrementAndGet();
+                }
+            });
+            room.onNativeTrack(4, new RemoteTrackPublication("remote", "track-1", "mic",
+                "audio/opus", 1, 1, false, 0, 0));
+            if (subscribed.get() != 1) throw new AssertionError("Track listener was not called");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");

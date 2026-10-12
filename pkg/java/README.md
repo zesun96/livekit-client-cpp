@@ -34,6 +34,7 @@ remote participant identity snapshots, data messages, basic text/byte/file sendi
 chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
 remote track snapshots and bounded audio/video stream readers,
+remote track publish, mute, and subscription events,
 local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
