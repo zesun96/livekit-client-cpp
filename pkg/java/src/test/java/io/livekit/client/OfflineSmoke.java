@@ -66,6 +66,24 @@ public final class OfflineSmoke {
             incoming.clear();
             if (!"".equals(attributes.get().get("removed")))
                 throw new AssertionError("Participant attribute changes were not copied");
+            int[] publishSources = {1, 2};
+            ParticipantPermissions updatedPermissions = new ParticipantPermissions(true, true,
+                true, publishSources, false, false, true, false, false, false);
+            publishSources[0] = 9;
+            if (updatedPermissions.canPublishSources()[0] != 1)
+                throw new AssertionError("Permission sources were not copied");
+            java.util.concurrent.atomic.AtomicReference<ParticipantPermissions> permissions =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onParticipantPermissionsChanged(Participant participant,
+                        ParticipantPermissions previous, ParticipantPermissions current) {
+                    permissions.set(current);
+                }
+            });
+            room.onNativePermissionsChanged(new Participant("sid", "remote", "name", ""),
+                null, updatedPermissions);
+            if (permissions.get() != updatedPermissions)
+                throw new AssertionError("Permission listener was not called");
             java.util.concurrent.atomic.AtomicReference<java.util.List<Participant>> speakers =
                 new java.util.concurrent.atomic.AtomicReference<>();
             room.addListener(new Room.Listener() {

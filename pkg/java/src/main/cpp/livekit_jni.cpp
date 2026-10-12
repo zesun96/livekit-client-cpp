@@ -31,6 +31,7 @@ struct RoomHandle {
 	jclass byte_stream_class = nullptr;
 	jclass token_request_class = nullptr;
 	jclass remote_track_class = nullptr;
+	jclass permissions_class = nullptr;
 	std::vector<std::unique_ptr<RpcContext>> rpc_contexts;
 };
 
@@ -65,6 +66,8 @@ void release_classes(JNIEnv* env, RoomHandle* h) {
 		env->DeleteGlobalRef(h->token_request_class);
 	if (h->remote_track_class)
 		env->DeleteGlobalRef(h->remote_track_class);
+	if (h->permissions_class)
+		env->DeleteGlobalRef(h->permissions_class);
 }
 
 void fail(JNIEnv* env, lk_status_t status) {
@@ -161,6 +164,35 @@ jobject participant(JNIEnv* env, RoomHandle* h, const lk_participant_info_t* val
 	env->DeleteLocalRef(name);
 	env->DeleteLocalRef(metadata);
 	return result;
+}
+
+jobject permissions(JNIEnv* env, RoomHandle* h, const lk_participant_permissions_t* value) {
+	if (value == nullptr)
+		return nullptr;
+	if (value->can_publish_source_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->can_publish_source_count != 0 && value->can_publish_sources == nullptr))
+		return nullptr;
+	jintArray sources = env->NewIntArray(static_cast<jsize>(value->can_publish_source_count));
+	if (sources == nullptr)
+		return nullptr;
+	std::vector<jint> copied;
+	copied.reserve(value->can_publish_source_count);
+	for (size_t i = 0; i < value->can_publish_source_count; ++i)
+		copied.push_back(static_cast<jint>(value->can_publish_sources[i]));
+	if (!copied.empty())
+		env->SetIntArrayRegion(sources, 0, static_cast<jsize>(copied.size()), copied.data());
+	if (env->ExceptionCheck())
+		return nullptr;
+	jmethodID ctor = env->GetMethodID(h->permissions_class, "<init>", "(ZZZ[IZZZZZZ)V");
+	if (ctor == nullptr)
+		return nullptr;
+	return env->NewObject(
+	    h->permissions_class, ctor, value->can_subscribe ? JNI_TRUE : JNI_FALSE,
+	    value->can_publish ? JNI_TRUE : JNI_FALSE, value->can_publish_data ? JNI_TRUE : JNI_FALSE,
+	    sources, value->hidden ? JNI_TRUE : JNI_FALSE, value->recorder ? JNI_TRUE : JNI_FALSE,
+	    value->can_update_metadata ? JNI_TRUE : JNI_FALSE, value->agent ? JNI_TRUE : JNI_FALSE,
+	    value->can_subscribe_metrics ? JNI_TRUE : JNI_FALSE,
+	    value->can_manage_agent_session ? JNI_TRUE : JNI_FALSE);
 }
 
 void event(RoomHandle* h, int kind, int value = 0, const lk_participant_info_t* who = nullptr,
@@ -414,6 +446,32 @@ void participant_change_event(RoomHandle* h, int kind, const lk_participant_info
 			if (callback != nullptr)
 				env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), value, text,
 				                    attributes);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
+void permissions_event(RoomHandle* h, const lk_participant_info_t* who,
+                       const lk_participant_permissions_t* before,
+                       const lk_participant_permissions_t* after) {
+	deliver(h, [h, who, before, after](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jobject p = participant(env, h, who);
+		jobject previous = env->ExceptionCheck() ? nullptr : permissions(env, h, before);
+		jobject current = env->ExceptionCheck() ? nullptr : permissions(env, h, after);
+		if (!env->ExceptionCheck() && (before == nullptr || previous != nullptr) &&
+		    (after == nullptr || current != nullptr)) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(
+			              owner, "onNativePermissionsChanged",
+			              "(Lio/livekit/client/Participant;Lio/livekit/client/"
+			              "ParticipantPermissions;Lio/livekit/client/ParticipantPermissions;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, p, previous, current);
 		}
 		env->PopLocalFrame(nullptr);
 	});
@@ -894,9 +952,11 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	h->byte_stream_class = global_class(env, "io/livekit/client/ByteStreamEvent");
 	h->token_request_class = global_class(env, "io/livekit/client/TokenFetchRequest");
 	h->remote_track_class = global_class(env, "io/livekit/client/RemoteTrackPublication");
+	h->permissions_class = global_class(env, "io/livekit/client/ParticipantPermissions");
 	if (env->ExceptionCheck() || !h->owner || !h->participant_class || !h->packet_class ||
 	    !h->text_class || !h->byte_class || !h->chat_class || !h->text_stream_class ||
-	    !h->byte_stream_class || !h->token_request_class || !h->remote_track_class) {
+	    !h->byte_stream_class || !h->token_request_class || !h->remote_track_class ||
+	    !h->permissions_class) {
 		release_classes(env, h.get());
 		if (h->owner)
 			env->DeleteGlobalRef(h->owner);
@@ -952,6 +1012,11 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	                                                 const lk_participant_info_t* who) {
 		participant_change_event(static_cast<RoomHandle*>(p), 2, who, nullptr, changes, count);
 	};
+	callbacks.on_participant_permissions_changed =
+	    [](void* p, lk_room_t*, const lk_participant_permissions_t* previous,
+	       const lk_participant_permissions_t* current, const lk_participant_info_t* who) {
+		    permissions_event(static_cast<RoomHandle*>(p), who, previous, current);
+	    };
 	callbacks.on_connection_quality_changed =
 	    [](void* p, lk_room_t*, lk_connection_quality_t quality, const lk_participant_info_t* who) {
 		    event(static_cast<RoomHandle*>(p), 11, static_cast<int>(quality), who);

@@ -33,6 +33,9 @@ public final class Room implements AutoCloseable {
         default void onParticipantNameChanged(Participant participant, String name) {}
         default void onParticipantAttributesChanged(Participant participant,
                                                     Map<String, String> changes) {}
+        default void onParticipantPermissionsChanged(Participant participant,
+                                                     ParticipantPermissions previous,
+                                                     ParticipantPermissions current) {}
         default void onConnectionQualityChanged(Participant participant, int quality) {}
         default void onActiveSpeakersChanged(List<Participant> speakers) {}
         default void onParticipantsUpdated(List<Participant> participants) {}
@@ -518,6 +521,12 @@ public final class Room implements AutoCloseable {
                 default -> throw new AssertionError(kind);
             }
         });
+    }
+
+    void onNativePermissionsChanged(Participant participant, ParticipantPermissions previous,
+                                    ParticipantPermissions current) {
+        dispatch(listener -> listener.onParticipantPermissionsChanged(participant, previous,
+            current));
     }
 
     void onNativeSipDtmf(long code, String digit, String participantIdentity) {

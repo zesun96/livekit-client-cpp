@@ -49,6 +49,7 @@ operations from inside the callback. A thrown exception or empty credentials fai
 changes as well as remote track lifecycle events.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
+Participant permission change callbacks include detached old and new permission snapshots.
 Connection quality, active speaker, and participant-list updates are available through
 `Room.Listener`; speaker and participant lists are immutable snapshots.
 `Room.Listener` also reports SIP DTMF, data channel backpressure, and E2EE cryptor state.
