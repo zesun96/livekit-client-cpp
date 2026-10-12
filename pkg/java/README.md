@@ -44,6 +44,8 @@ frame encodings are supported. Diagnostics exposes process-wide log levels and J
 `Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.
 Its callback can run on the native recovery thread; return promptly and avoid blocking room
 operations from inside the callback. A thrown exception or empty credentials fails that fetch.
+`Room.Listener` reports room metadata, SID, recording status, token refresh, and end of session
+changes as well as remote track lifecycle events.
 
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
 `VideoSource.createScreen` open host devices when called. Start or stop capture with the source's

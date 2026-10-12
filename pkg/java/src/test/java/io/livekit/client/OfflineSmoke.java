@@ -26,6 +26,16 @@ public final class OfflineSmoke {
             room.onNativeTrack(4, new RemoteTrackPublication("remote", "track-1", "mic",
                 "audio/opus", 1, 1, false, 0, 0));
             if (subscribed.get() != 1) throw new AssertionError("Track listener was not called");
+            java.util.concurrent.atomic.AtomicReference<String> roomSid =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onRoomSidChanged(String previousSid, String sid) {
+                    if (!previousSid.equals("old")) throw new AssertionError("Wrong previous SID");
+                    roomSid.set(sid);
+                }
+            });
+            room.onNativeRoomString(1, "old", "new");
+            if (!"new".equals(roomSid.get())) throw new AssertionError("Room SID listener failed");
             MediaDevices.listDevices();
             MediaDevices.listScreenSources();
             if (room.isConnected()) throw new AssertionError("New room is connected");

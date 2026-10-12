@@ -20,6 +20,11 @@ public final class Room implements AutoCloseable {
         default void onReconnecting() {}
         default void onReconnected() {}
         default void onConnectionStateChanged(int state) {}
+        default void onRoomMetadataChanged(String metadata) {}
+        default void onRoomSidChanged(String previousSid, String sid) {}
+        default void onRecordingStatusChanged(boolean recording) {}
+        default void onTokenRefreshed() {}
+        default void onRoomEos() {}
         default void onParticipantConnected(Participant participant) {}
         default void onParticipantDisconnected(Participant participant) {}
         default void onTrackPublished(RemoteTrackPublication track) {}
@@ -439,7 +444,20 @@ public final class Room implements AutoCloseable {
                 case 5 -> listener.onParticipantConnected(participant);
                 case 6 -> listener.onParticipantDisconnected(participant);
                 case 7 -> listener.onDataReceived(packet);
+                case 8 -> listener.onRecordingStatusChanged(value != 0);
+                case 9 -> listener.onTokenRefreshed();
+                case 10 -> listener.onRoomEos();
                 default -> throw new AssertionError(event);
+            }
+        });
+    }
+
+    void onNativeRoomString(int kind, String previous, String current) {
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onRoomMetadataChanged(current);
+                case 1 -> listener.onRoomSidChanged(previous, current);
+                default -> throw new AssertionError(kind);
             }
         });
     }

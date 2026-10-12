@@ -215,6 +215,20 @@ void deliver(RoomHandle* h, const std::function<void(JNIEnv*)>& invoke) {
 		h->vm->DetachCurrentThread();
 }
 
+void room_string_event(RoomHandle* h, int kind, const char* previous, const char* current) {
+	deliver(h, [h, kind, previous, current](JNIEnv* env) {
+		jstring old_value = string(env, previous);
+		jstring new_value = string(env, current);
+		jclass cls = env->GetObjectClass(h->owner);
+		jmethodID callback =
+		    env->GetMethodID(cls, "onNativeRoomString", "(ILjava/lang/String;Ljava/lang/String;)V");
+		env->CallVoidMethod(h->owner, callback, static_cast<jint>(kind), old_value, new_value);
+		env->DeleteLocalRef(cls);
+		env->DeleteLocalRef(old_value);
+		env->DeleteLocalRef(new_value);
+	});
+}
+
 void text_event(RoomHandle* h, const lk_text_received_t* value) {
 	if (value == nullptr)
 		return;
@@ -681,6 +695,17 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_disconnected_with_reason = [](void* p, lk_room_t*, lk_disconnect_reason_t reason) {
 		event(static_cast<RoomHandle*>(p), 1, static_cast<int>(reason));
 	};
+	callbacks.on_room_metadata_changed = [](void* p, lk_room_t*, const char* metadata) {
+		room_string_event(static_cast<RoomHandle*>(p), 0, nullptr, metadata);
+	};
+	callbacks.on_room_sid_changed = [](void* p, lk_room_t*, const char* previous, const char* sid) {
+		room_string_event(static_cast<RoomHandle*>(p), 1, previous, sid);
+	};
+	callbacks.on_recording_status_changed = [](void* p, lk_room_t*, int recording) {
+		event(static_cast<RoomHandle*>(p), 8, recording);
+	};
+	callbacks.on_token_refreshed = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 9); };
+	callbacks.on_room_eos = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 10); };
 	callbacks.on_participant_connected = [](void* p, lk_room_t*, const lk_participant_info_t* v) {
 		event(static_cast<RoomHandle*>(p), 5, 0, v);
 	};
