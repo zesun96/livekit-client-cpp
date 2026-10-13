@@ -314,6 +314,19 @@ public final class OfflineSmoke {
                 if (!tokenOptionsValid.get())
                     throw new AssertionError("Token fetch options were not forwarded");
             }
+            tokenRequested.set(false);
+            try {
+                room.connectWithTokenSource(request -> {
+                    tokenRequested.set(true);
+                    throw new IllegalStateException("Offline token source with options");
+                }, tokenOptions, new ConnectionOptions(false, true, true, 2, 5000,
+                    new IceServer[] {new IceServer(new String[] {"stun:example.invalid:3478"},
+                        "u", "p")}, 3, 1, new E2eeOptions(new byte[32], new byte[16])));
+                throw new AssertionError("Failed token source with connection options was accepted");
+            } catch (LiveKitException expected) {
+                if (!tokenRequested.get())
+                    throw new AssertionError("Token source with connection options was not called");
+            }
             try {
                 room.publishDataTrack("offline", 0);
                 throw new AssertionError("Disconnected DataTrack publish was accepted");

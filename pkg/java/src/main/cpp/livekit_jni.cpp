@@ -1658,11 +1658,8 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connect(JNIEnv* env, jclass
 	std::string u = bytes(env, url), t = bytes(env, token);
 	fail(env, lk_room_connect(handle(ptr)->room, u.c_str(), t.c_str()));
 }
-JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* env, jclass,
-                                                                        jlong ptr, jbyteArray url,
-                                                                        jbyteArray token,
-                                                                        jobject config) {
-	std::string u = bytes(env, url), t = bytes(env, token);
+void with_connect_options(JNIEnv* env, jobject config,
+                          const std::function<lk_status_t(const lk_room_connect_options_t*)>& connect) {
 	lk_room_connect_options_t options;
 	lk_room_connect_options_init(&options);
 	jclass cls = env->GetObjectClass(config);
@@ -1763,11 +1760,22 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* 
 	env->DeleteLocalRef(cls);
 	if (env->ExceptionCheck())
 		return;
-	fail(env, lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), &options));
+	fail(env, connect(&options));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* env, jclass,
+                                                                        jlong ptr, jbyteArray url,
+                                                                        jbyteArray token,
+                                                                        jobject config) {
+	std::string u = bytes(env, url), t = bytes(env, token);
+	if (env->ExceptionCheck())
+		return;
+	with_connect_options(env, config, [ptr, &u, &t](const lk_room_connect_options_t* options) {
+		return lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), options);
+	});
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(
     JNIEnv* env, jclass, jlong ptr, jobjectArray fields, jobjectArray attributeKeys,
-    jobjectArray attributeValues) {
+    jobjectArray attributeValues, jobject config) {
 	if (fields == nullptr || attributeKeys == nullptr || attributeValues == nullptr ||
 	    env->GetArrayLength(fields) != 7 ||
 	    env->GetArrayLength(attributeKeys) != env->GetArrayLength(attributeValues)) {
@@ -1823,8 +1831,15 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(
 	options.participant_attributes = copied.data();
 	options.participant_attribute_count = copied.size();
 	auto* h = handle(ptr);
-	fail(env,
-	     lk_room_connect_with_token_source(h->room, token_source_callback, h, &options, nullptr));
+	if (config == nullptr) {
+		fail(env, lk_room_connect_with_token_source(h->room, token_source_callback, h, &options,
+		                                            nullptr));
+		return;
+	}
+	with_connect_options(env, config, [h, &options](const lk_room_connect_options_t* connect) {
+		return lk_room_connect_with_token_source_and_options(h->room, token_source_callback, h,
+		                                                     &options, connect);
+	});
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_disconnect(JNIEnv* env, jclass, jlong ptr) {
 	fail(env, lk_room_disconnect(handle(ptr)->room));

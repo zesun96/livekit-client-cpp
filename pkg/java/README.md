@@ -45,6 +45,8 @@ frame encodings are supported. Diagnostics exposes process-wide log levels and J
 `Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.
 Pass `TokenFetchOptions` to supply room, participant, agent, deployment, and attribute fields
 to the provider on initial connection and refresh.
+An optional `ConnectionOptions` argument applies ICE, subscription, retry, and E2EE settings to
+token-source connections as it does to ordinary connections.
 Its callback can run on the native recovery thread; return promptly and avoid blocking room
 operations from inside the callback. A thrown exception or empty credentials fails that fetch.
 `Room.Listener` reports room metadata, SID, recording status, token refresh, end of session,
