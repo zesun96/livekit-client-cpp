@@ -47,8 +47,9 @@ Pass `TokenFetchOptions` to supply room, participant, agent, deployment, and att
 to the provider on initial connection and refresh.
 Its callback can run on the native recovery thread; return promptly and avoid blocking room
 operations from inside the callback. A thrown exception or empty credentials fails that fetch.
-`Room.Listener` reports room metadata, SID, recording status, token refresh, and end of session
-changes as well as remote track lifecycle events.
+`Room.Listener` reports room metadata, SID, recording status, token refresh, end of session,
+transcription segments with their timing and finality, participant changes, and remote track
+lifecycle events.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
 Participant permission change callbacks include detached old and new permission snapshots.

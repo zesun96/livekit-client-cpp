@@ -57,6 +57,7 @@ public final class Room implements AutoCloseable {
         default void onTextStreamEvent(TextStreamEvent event) {}
         default void onByteStreamEvent(ByteStreamEvent event) {}
         default void onChatMessageReceived(ChatMessage message) {}
+        default void onTranscriptionReceived(TranscriptionMessage message) {}
         default void onSipDtmfReceived(SipDtmf event) {}
         default void onDataChannelBufferStatusChanged(DataChannelBufferStatus status) {}
         default void onEncryptionStateChanged(EncryptionState state) {}
@@ -672,6 +673,13 @@ public final class Room implements AutoCloseable {
 
     private void onNativeChat(ChatMessage message) {
         dispatch(listener -> listener.onChatMessageReceived(message));
+    }
+
+    void onNativeTranscription(String participantIdentity, String trackId,
+                               TranscriptionSegment[] segments) {
+        TranscriptionMessage message = new TranscriptionMessage(participantIdentity, trackId,
+            List.of(segments.clone()));
+        dispatch(listener -> listener.onTranscriptionReceived(message));
     }
 
     @Override public void close() {

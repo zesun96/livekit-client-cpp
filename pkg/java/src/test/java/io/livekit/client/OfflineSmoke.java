@@ -125,6 +125,19 @@ public final class OfflineSmoke {
             room.onNativeRoomSnapshot(1, "room-sid", "new-room", "metadata", true);
             if (!"new-room".equals(moved.get().name()) || !moved.get().recording())
                 throw new AssertionError("Room move snapshot was lost");
+            java.util.concurrent.atomic.AtomicReference<TranscriptionMessage> transcription =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onTranscriptionReceived(TranscriptionMessage message) {
+                    transcription.set(message);
+                }
+            });
+            TranscriptionSegment[] segments = {new TranscriptionSegment("segment", "hello",
+                "en", 1, 2, true, 3, 4)};
+            room.onNativeTranscription("remote", "track", segments);
+            segments[0] = null;
+            if (!"hello".equals(transcription.get().segments().get(0).text()))
+                throw new AssertionError("Transcription segment was not retained");
             java.util.concurrent.atomic.AtomicReference<DataTrackPublication> dataTrack =
                 new java.util.concurrent.atomic.AtomicReference<>();
             java.util.concurrent.atomic.AtomicReference<DataTrackFrame> dataFrame =

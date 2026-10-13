@@ -588,6 +588,65 @@ void chat_event(RoomHandle* h, const lk_chat_message_t* value) {
 	});
 }
 
+void transcription_event(RoomHandle* h, const lk_transcription_received_t* value) {
+	if (value == nullptr || value->segment_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->segment_count != 0 && value->segments == nullptr))
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(24) != JNI_OK)
+			return;
+		jclass segment_class = env->FindClass("io/livekit/client/TranscriptionSegment");
+		jmethodID constructor =
+		    segment_class == nullptr
+		        ? nullptr
+		        : env->GetMethodID(
+		              segment_class, "<init>",
+		              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZJJ)V");
+		jobjectArray segments = constructor == nullptr
+		                            ? nullptr
+		                            : env->NewObjectArray(static_cast<jsize>(value->segment_count),
+		                                                  segment_class, nullptr);
+		for (size_t i = 0;
+		     segments != nullptr && i < value->segment_count && !env->ExceptionCheck(); ++i) {
+			const auto& source = value->segments[i];
+			jstring id = string(env, source.id);
+			jstring body = env->ExceptionCheck() ? nullptr : string(env, source.text);
+			jstring language = env->ExceptionCheck() ? nullptr : string(env, source.language);
+			if (!env->ExceptionCheck()) {
+				jobject item = env->NewObject(
+				    segment_class, constructor, id, body, language, bounded_long(source.start_time),
+				    bounded_long(source.end_time), source.is_final ? JNI_TRUE : JNI_FALSE,
+				    static_cast<jlong>(source.first_received_time),
+				    static_cast<jlong>(source.last_received_time));
+				if (item != nullptr && !env->ExceptionCheck())
+					env->SetObjectArrayElement(segments, static_cast<jsize>(i), item);
+				if (item != nullptr)
+					env->DeleteLocalRef(item);
+			}
+			if (id != nullptr)
+				env->DeleteLocalRef(id);
+			if (body != nullptr)
+				env->DeleteLocalRef(body);
+			if (language != nullptr)
+				env->DeleteLocalRef(language);
+		}
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->transcribed_participant_identity);
+		jstring track = env->ExceptionCheck() ? nullptr : string(env, value->track_id);
+		if (!env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr ? nullptr
+			                     : env->GetMethodID(owner, "onNativeTranscription",
+			                                        "(Ljava/lang/String;Ljava/lang/String;"
+			                                        "[Lio/livekit/client/TranscriptionSegment;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, identity, track, segments);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* track,
                  const lk_participant_info_t* who, int value = 0) {
 	if (track == nullptr)
@@ -1089,6 +1148,10 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	};
 	callbacks.on_chat_message_received = [](void* p, lk_room_t*, const lk_chat_message_t* v) {
 		chat_event(static_cast<RoomHandle*>(p), v);
+	};
+	callbacks.on_transcription_received = [](void* p, lk_room_t*,
+	                                         const lk_transcription_received_t* value) {
+		transcription_event(static_cast<RoomHandle*>(p), value);
 	};
 	callbacks.on_sip_dtmf_received = [](void* p, lk_room_t*, const lk_sip_dtmf_t* value) {
 		sip_dtmf_event(static_cast<RoomHandle*>(p), value);
