@@ -31,7 +31,7 @@ and should return promptly. Blocking operations have `CompletableFuture` alterna
 binding currently covers room lifecycle and state, local participant identity and profile,
 local participant attributes and recording state,
 remote participant identity snapshots, data messages, basic text/byte/file sending and receiving,
-chat, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
+chat sending and editing, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
 remote track snapshots and bounded audio/video stream readers,
 remote track publish, mute, and subscription events,
@@ -100,6 +100,11 @@ Use `startTrackRecording` with the same identity and SID to write a remote track
 Use `Room.streamText` or `Room.streamBytes` for outgoing incremental streams. Write chunks with
 the returned writer and close it to complete the stream, or call `cancel(reason)` to abandon it.
 Closing the room cancels any remaining writers.
+The `StreamWriterOptions` overloads set destinations, attributes, stream ID, total size, chunk
+size, and compression. Text streams can also set a reply ID, attached stream IDs, update flag,
+and version. The shorter overloads retain the default 15,000 byte chunk size.
+`sendChatMessage` returns the message ID and original timestamp; pass that value to
+`editChatMessage` to edit it later. `sendChat` still returns just the ID.
 Register an incoming topic with `registerTextStreamHandler` or `registerByteStreamHandler` and
 receive copied open, chunk, closed, and failed events through `Room.Listener`. Unregister the
 topic when it is no longer needed.

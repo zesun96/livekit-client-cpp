@@ -56,7 +56,36 @@ public final class OfflineSmoke {
         byteChunk.content()[0] = 9;
         if (byteChunk.content()[0] != 1)
             throw new AssertionError("Stream frame bytes escaped their snapshot");
+        java.util.List<String> streamDestinations = new java.util.ArrayList<>();
+        streamDestinations.add("peer");
+        java.util.Map<String, String> streamAttributes = new java.util.HashMap<>();
+        streamAttributes.put("language", "en");
+        StreamWriterOptions streamOptions = new StreamWriterOptions("topic", null, null,
+            streamDestinations, streamAttributes, "reply", java.util.List.of("attachment"),
+            "stream-1", 100L, 1024, true, true, 2);
+        streamDestinations.clear();
+        streamAttributes.clear();
+        if (!streamOptions.destinations().equals(java.util.List.of("peer")) ||
+            !"en".equals(streamOptions.attributes().get("language")))
+            throw new AssertionError("Stream writer options were not copied");
+        try {
+            new StreamWriterOptions("topic", null, null, java.util.List.of(), java.util.Map.of(),
+                null, java.util.List.of(), null, -1L, 1024, false, false, 0);
+            throw new AssertionError("Negative stream size was accepted");
+        } catch (IllegalArgumentException expected) { }
         try (Room room = new Room()) {
+            try {
+                room.streamText(streamOptions);
+                throw new AssertionError("Disconnected text stream was accepted");
+            } catch (LiveKitException expected) { }
+            try {
+                room.sendChatMessage("offline");
+                throw new AssertionError("Disconnected chat send was accepted");
+            } catch (LiveKitException expected) { }
+            try {
+                room.editChatMessage(new SentChatMessage("message-1", 123), "edit");
+                throw new AssertionError("Disconnected chat edit was accepted");
+            } catch (LiveKitException expected) { }
             if (room.e2eeConfigured() || room.dataKeyIndex() != 0)
                 throw new AssertionError("Unconfigured E2EE state is incorrect");
             try {

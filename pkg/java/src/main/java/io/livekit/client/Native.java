@@ -53,8 +53,11 @@ final class Native {
     static native void sendText(long handle, byte[] text);
     static native void sendBytes(long handle, byte[] data);
     static native void sendFile(long handle, byte[] path);
-    static native long createStreamWriter(long room, boolean text, byte[] topic, byte[] mimeType,
-                                          byte[] name, byte[][] destinations);
+    static native long createStreamWriter(long room, boolean text, byte[][] fields,
+                                          byte[][] destinations, byte[][] attributeKeys,
+                                          byte[][] attributeValues, byte[][] attachedStreamIds,
+                                          long totalSize, boolean hasTotalSize, int chunkSize,
+                                          boolean compress, boolean update, int version);
     static native byte[] streamWriterId(long writer, boolean text);
     static native void writeStream(long writer, boolean text, byte[] data);
     static native void closeStreamWriter(long writer, boolean text);
@@ -63,7 +66,9 @@ final class Native {
     static native void registerStreamHandler(long room, boolean text, byte[] topic);
     static native void unregisterStreamHandler(long room, boolean text, byte[] topic);
     static native void sendDtmf(long handle, int code, byte[] digit);
-    static native String sendChat(long handle, byte[] message);
+    static native SentChatMessage sendChatMessage(long handle, byte[] message);
+    static native void editChat(long handle, byte[] messageId, long originalTimestamp,
+                                byte[] message);
     static native Participant[] remoteParticipants(long handle);
     static native void setTrackSubscribed(long handle, byte[] participantSid, byte[] trackSid, boolean subscribed);
     static native void updateRemoteTrackSettings(long handle, byte[] participantSid,

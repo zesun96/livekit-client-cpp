@@ -153,10 +153,14 @@ public final class Room implements AutoCloseable {
     }
 
     public TextStreamWriter streamText(String topic, String... destinations) {
-        byte[][] encoded = encodeDestinations(destinations);
+        return streamText(new StreamWriterOptions(topic, null, null, List.of(destinations),
+            java.util.Map.of(), null, List.of(), null, null, 15000, false, false, 0));
+    }
+
+    public TextStreamWriter streamText(StreamWriterOptions options) {
+        Objects.requireNonNull(options);
         return withHandle(h -> {
-            TextStreamWriter writer = new TextStreamWriter(this, Native.createStreamWriter(h,
-                true, Native.utf8(topic), null, null, encoded));
+            TextStreamWriter writer = new TextStreamWriter(this, createStreamWriter(h, true, options));
             textWriters.add(writer);
             return writer;
         });
@@ -164,13 +168,39 @@ public final class Room implements AutoCloseable {
 
     public ByteStreamWriter streamBytes(String topic, String mimeType, String name,
                                         String... destinations) {
-        byte[][] encoded = encodeDestinations(destinations);
+        return streamBytes(new StreamWriterOptions(topic, mimeType, name, List.of(destinations),
+            java.util.Map.of(), null, List.of(), null, null, 15000, false, false, 0));
+    }
+
+    public ByteStreamWriter streamBytes(StreamWriterOptions options) {
+        Objects.requireNonNull(options);
+        if (options.replyToStreamId() != null || !options.attachedStreamIds().isEmpty() ||
+            options.update() || options.version() != 0)
+            throw new IllegalArgumentException("Text stream options cannot be used for byte streams");
         return withHandle(h -> {
-            ByteStreamWriter writer = new ByteStreamWriter(this, Native.createStreamWriter(h,
-                false, Native.utf8(topic), Native.utf8(mimeType), Native.utf8(name), encoded));
+            ByteStreamWriter writer = new ByteStreamWriter(this, createStreamWriter(h, false, options));
             byteWriters.add(writer);
             return writer;
         });
+    }
+
+    private static long createStreamWriter(long handle, boolean text, StreamWriterOptions options) {
+        var attributes = options.attributes();
+        byte[][] keys = new byte[attributes.size()][];
+        byte[][] values = new byte[attributes.size()][];
+        int index = 0;
+        for (var entry : attributes.entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        return Native.createStreamWriter(handle, text, new byte[][] {
+                Native.utf8(options.topic()), Native.utf8(options.mimeType()),
+                Native.utf8(options.name()), Native.utf8(options.replyToStreamId()),
+                Native.utf8(options.streamId()) },
+            encodeDestinations(options.destinations().toArray(String[]::new)), keys, values,
+            encodeDestinations(options.attachedStreamIds().toArray(String[]::new)),
+            options.totalSize() == null ? 0 : options.totalSize(), options.totalSize() != null,
+            options.chunkSize(), options.compress(), options.update(), options.version());
     }
 
     public void registerTextStreamHandler(String topic) {
@@ -515,7 +545,20 @@ public final class Room implements AutoCloseable {
     public void sendBytes(byte[] data) { useHandle(h -> Native.sendBytes(h, Objects.requireNonNull(data))); }
     public void sendFile(String path) { useHandle(h -> Native.sendFile(h, Native.utf8(Objects.requireNonNull(path)))); }
     public void publishDtmf(int code, String digit) { useHandle(h -> Native.sendDtmf(h, code, Native.utf8(digit))); }
-    public String sendChat(String message) { return withHandle(h -> Native.sendChat(h, Native.utf8(Objects.requireNonNull(message)))); }
+    public String sendChat(String message) { return sendChatMessage(message).id(); }
+    public SentChatMessage sendChatMessage(String message) {
+        return withHandle(h -> Native.sendChatMessage(h, Native.utf8(Objects.requireNonNull(message))));
+    }
+    public void editChatMessage(SentChatMessage original, String message) {
+        Objects.requireNonNull(original);
+        editChatMessage(original.id(), original.timestamp(), message);
+    }
+    public void editChatMessage(String messageId, long originalTimestamp, String message) {
+        if (Objects.requireNonNull(messageId).isEmpty())
+            throw new IllegalArgumentException("Message ID is empty");
+        useHandle(h -> Native.editChat(h, Native.utf8(messageId), originalTimestamp,
+            Native.utf8(Objects.requireNonNull(message))));
+    }
     public List<Participant> remoteParticipants() { return withHandle(h -> List.of(Native.remoteParticipants(h))); }
 
     public void setTrackSubscribed(String participantSid, String trackSid, boolean subscribed) {

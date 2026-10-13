@@ -2256,26 +2256,72 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendFile(JNIEnv* env, jclas
 	fail(env, lk_room_send_file(handle(ptr)->room, v.c_str(), nullptr));
 }
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createStreamWriter(
-    JNIEnv* env, jclass, jlong room, jboolean text, jbyteArray topic, jbyteArray mimeType,
-    jbyteArray name, jobjectArray destinations) {
-	std::string topic_value = bytes(env, topic), mime = bytes(env, mimeType);
-	std::string name_value = bytes(env, name);
-	std::vector<std::string> identities;
-	for (jsize i = 0; i < env->GetArrayLength(destinations); ++i) {
-		jbyteArray value = static_cast<jbyteArray>(env->GetObjectArrayElement(destinations, i));
-		identities.push_back(bytes(env, value));
-		env->DeleteLocalRef(value);
+    JNIEnv* env, jclass, jlong room, jboolean text, jobjectArray fields, jobjectArray destinations,
+    jobjectArray attributeKeys, jobjectArray attributeValues, jobjectArray attachedStreamIds,
+    jlong totalSize, jboolean hasTotalSize, jint chunkSize, jboolean compress, jboolean update,
+    jint version) {
+	if (fields == nullptr || env->GetArrayLength(fields) != 5 || destinations == nullptr ||
+	    attributeKeys == nullptr || attributeValues == nullptr || attachedStreamIds == nullptr ||
+	    env->GetArrayLength(attributeKeys) != env->GetArrayLength(attributeValues)) {
+		fail(env, LK_STATUS_INVALID_ARGUMENT);
+		return 0;
 	}
-	std::vector<const char*> pointers;
-	for (const auto& identity : identities)
-		pointers.push_back(identity.c_str());
+	auto read = [env](jobjectArray values) {
+		std::vector<std::string> result;
+		for (jsize i = 0; i < env->GetArrayLength(values); ++i) {
+			auto* value = static_cast<jbyteArray>(env->GetObjectArrayElement(values, i));
+			result.push_back(bytes(env, value));
+			if (value != nullptr)
+				env->DeleteLocalRef(value);
+		}
+		return result;
+	};
+	auto pointers = [](const std::vector<std::string>& values) {
+		std::vector<const char*> result;
+		for (const auto& value : values)
+			result.push_back(value.c_str());
+		return result;
+	};
+	auto field_values = read(fields);
+	auto identities = read(destinations);
+	auto destination_pointers = pointers(identities);
+	auto attached_ids = read(attachedStreamIds);
+	auto attached_pointers = pointers(attached_ids);
+	auto keys = read(attributeKeys);
+	auto values = read(attributeValues);
+	std::vector<lk_attribute_t> attributes;
+	for (size_t i = 0; i < keys.size(); ++i)
+		attributes.push_back({keys[i].c_str(), values[i].c_str()});
+	auto optional_field = [&](jsize index) {
+		auto* value = env->GetObjectArrayElement(fields, index);
+		bool present = value != nullptr;
+		if (value != nullptr)
+			env->DeleteLocalRef(value);
+		return present ? field_values[static_cast<size_t>(index)].c_str() : nullptr;
+	};
+	const char* topic = optional_field(0);
+	const char* mime_type = optional_field(1);
+	const char* name = optional_field(2);
+	const char* reply_to = optional_field(3);
+	const char* stream_id = optional_field(4);
 	if (text == JNI_TRUE) {
 		lk_stream_text_options_t options;
 		lk_stream_text_options_init(&options);
-		if (topic != nullptr)
-			options.topic = topic_value.c_str();
-		options.destination_identities = pointers.data();
-		options.destination_identity_count = pointers.size();
+		options.topic = topic;
+		options.destination_identities = destination_pointers.data();
+		options.destination_identity_count = destination_pointers.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.reply_to_stream_id = reply_to;
+		options.attached_stream_ids = attached_pointers.data();
+		options.attached_stream_id_count = attached_pointers.size();
+		options.stream_id = stream_id;
+		options.has_total_size = hasTotalSize == JNI_TRUE;
+		options.total_size = static_cast<uint64_t>(totalSize);
+		options.chunk_size = static_cast<size_t>(chunkSize);
+		options.compress = compress == JNI_TRUE;
+		options.update = update == JNI_TRUE;
+		options.version = version;
 		lk_text_stream_writer_t* writer = nullptr;
 		auto status = lk_room_stream_text(handle(room)->room, &options, &writer);
 		if (status != LK_STATUS_OK) {
@@ -2286,14 +2332,20 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createStreamWriter(
 	}
 	lk_stream_bytes_options_t options;
 	lk_stream_bytes_options_init(&options);
-	if (topic != nullptr)
-		options.topic = topic_value.c_str();
-	if (mimeType != nullptr)
-		options.mime_type = mime.c_str();
+	options.topic = topic;
+	if (mime_type != nullptr)
+		options.mime_type = mime_type;
 	if (name != nullptr)
-		options.name = name_value.c_str();
-	options.destination_identities = pointers.data();
-	options.destination_identity_count = pointers.size();
+		options.name = name;
+	options.destination_identities = destination_pointers.data();
+	options.destination_identity_count = destination_pointers.size();
+	options.attributes = attributes.data();
+	options.attribute_count = attributes.size();
+	options.stream_id = stream_id;
+	options.has_total_size = hasTotalSize == JNI_TRUE;
+	options.total_size = static_cast<uint64_t>(totalSize);
+	options.chunk_size = static_cast<size_t>(chunkSize);
+	options.compress = compress == JNI_TRUE;
 	lk_byte_stream_writer_t* writer = nullptr;
 	auto status = lk_room_stream_bytes(handle(room)->room, &options, &writer);
 	if (status != LK_STATUS_OK) {
@@ -2382,8 +2434,9 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendDtmf(JNIEnv* env, jclas
 	std::string v = bytes(env, digit);
 	fail(env, lk_room_publish_dtmf(handle(ptr)->room, static_cast<uint32_t>(code), v.c_str()));
 }
-JNIEXPORT jstring JNICALL Java_io_livekit_client_Native_sendChat(JNIEnv* env, jclass, jlong ptr,
-                                                                 jbyteArray message) {
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_sendChatMessage(JNIEnv* env, jclass,
+                                                                        jlong ptr,
+                                                                        jbyteArray message) {
 	std::string v = bytes(env, message);
 	char id[256] = {};
 	int64_t timestamp = 0;
@@ -2393,7 +2446,22 @@ JNIEXPORT jstring JNICALL Java_io_livekit_client_Native_sendChat(JNIEnv* env, jc
 		fail(env, status);
 		return nullptr;
 	}
-	return string(env, id);
+	jclass cls = env->FindClass("io/livekit/client/SentChatMessage");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;J)V");
+	jstring message_id = string(env, id);
+	jobject result = env->NewObject(cls, ctor, message_id, static_cast<jlong>(timestamp));
+	env->DeleteLocalRef(message_id);
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_editChat(JNIEnv* env, jclass, jlong ptr,
+                                                              jbyteArray messageId,
+                                                              jlong originalTimestamp,
+                                                              jbyteArray message) {
+	std::string id = bytes(env, messageId);
+	std::string value = bytes(env, message);
+	fail(env, lk_room_edit_chat_message(handle(ptr)->room, id.c_str(), originalTimestamp,
+	                                    value.c_str()));
 }
 JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteParticipants(JNIEnv* env, jclass,
                                                                                 jlong ptr) {
