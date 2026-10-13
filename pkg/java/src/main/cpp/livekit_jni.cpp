@@ -2466,6 +2466,39 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_setDataKeyIndex(JNIEnv* env
                                                                      jlong index) {
 	fail(env, lk_room_e2ee_set_data_key_index(handle(ptr)->room, static_cast<size_t>(index)));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setFrameCryptorEnabled(
+    JNIEnv* env, jclass, jlong ptr, jbyteArray trackId, jint direction, jboolean enabled) {
+	std::string track = bytes(env, trackId);
+	if (!env->ExceptionCheck())
+		fail(env, lk_room_e2ee_set_frame_cryptor_enabled(
+		              handle(ptr)->room, track.c_str(),
+		              static_cast<lk_frame_cryptor_direction_t>(direction), enabled ? 1 : 0));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setFrameCryptorKeyIndex(
+    JNIEnv* env, jclass, jlong ptr, jbyteArray trackId, jint direction, jlong index) {
+	std::string track = bytes(env, trackId);
+	if (!env->ExceptionCheck())
+		fail(env,
+		     lk_room_e2ee_set_frame_cryptor_key_index(
+		         handle(ptr)->room, track.c_str(),
+		         static_cast<lk_frame_cryptor_direction_t>(direction), static_cast<size_t>(index)));
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_setParticipantE2eeEnabled(JNIEnv* env, jclass,
+                                                                                jlong ptr,
+                                                                                jbyteArray identity,
+                                                                                jboolean enabled) {
+	std::string who = bytes(env, identity);
+	if (env->ExceptionCheck())
+		return 0;
+	size_t updated = 0;
+	lk_status_t status = lk_room_e2ee_set_participant_enabled(handle(ptr)->room, who.c_str(),
+	                                                          enabled ? 1 : 0, &updated);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return bounded_long(updated);
+}
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createAudioSource(JNIEnv* env, jclass,
                                                                         jint sampleRate,
                                                                         jint channels,

@@ -588,6 +588,24 @@ public final class Room implements AutoCloseable {
         if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
         useHandle(h -> Native.setDataKeyIndex(h, index));
     }
+    private static int cryptorDirection(int direction) {
+        if (direction < 0 || direction > 1)
+            throw new IllegalArgumentException("Invalid frame cryptor direction");
+        return direction;
+    }
+    public void setFrameCryptorEnabled(String trackId, int direction, boolean enabled) {
+        useHandle(h -> Native.setFrameCryptorEnabled(h,
+            Native.utf8(Objects.requireNonNull(trackId)), cryptorDirection(direction), enabled));
+    }
+    public void setFrameCryptorKeyIndex(String trackId, int direction, long index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        useHandle(h -> Native.setFrameCryptorKeyIndex(h,
+            Native.utf8(Objects.requireNonNull(trackId)), cryptorDirection(direction), index));
+    }
+    public long setParticipantE2eeEnabled(String identity, boolean enabled) {
+        return withHandle(h -> Native.setParticipantE2eeEnabled(h,
+            Native.utf8(Objects.requireNonNull(identity)), enabled));
+    }
 
     private void onNativeEvent(int event, int value, Participant participant, DataPacket packet) {
         dispatch(listener -> {
