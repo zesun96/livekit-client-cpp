@@ -93,6 +93,7 @@ public final class Room implements AutoCloseable {
     private final List<ByteStreamWriter> byteWriters = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
     private volatile TokenSource tokenSource;
+    private volatile ReconnectPolicy reconnectPolicy;
     private boolean tokenConnectPending;
     private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
     private long handle;
@@ -329,13 +330,20 @@ public final class Room implements AutoCloseable {
     }
 
     public void connect(String url, String token) {
-        useHandle(h -> Native.connect(h, Native.utf8(Objects.requireNonNull(url)), Native.utf8(Objects.requireNonNull(token))));
+        ReconnectPolicy previous = reconnectPolicy;
+        reconnectPolicy = null;
+        try { useHandle(h -> Native.connect(h, Native.utf8(Objects.requireNonNull(url)),
+            Native.utf8(Objects.requireNonNull(token)))); }
+        catch (RuntimeException failure) { reconnectPolicy = previous; throw failure; }
     }
 
     public void connect(String url, String token, ConnectionOptions options) {
         Objects.requireNonNull(options);
-        useHandle(h -> Native.connectWithOptions(h, Native.utf8(Objects.requireNonNull(url)),
-            Native.utf8(Objects.requireNonNull(token)), options));
+        ReconnectPolicy previous = reconnectPolicy;
+        reconnectPolicy = options.reconnectPolicy();
+        try { useHandle(h -> Native.connectWithOptions(h, Native.utf8(Objects.requireNonNull(url)),
+            Native.utf8(Objects.requireNonNull(token)), options)); }
+        catch (RuntimeException failure) { reconnectPolicy = previous; throw failure; }
     }
 
     @FunctionalInterface public interface TokenSource {
@@ -372,15 +380,22 @@ public final class Room implements AutoCloseable {
             values[index++] = Native.utf8(entry.getValue());
         }
         TokenSource previous;
+        ReconnectPolicy previousPolicy;
         synchronized (this) {
             if (tokenConnectPending) throw new IllegalStateException("Token source connection is in progress");
             tokenConnectPending = true;
             previous = tokenSource;
+            previousPolicy = reconnectPolicy;
             tokenSource = source;
+            reconnectPolicy = connectionOptions == null ? null : connectionOptions.reconnectPolicy();
         }
         try { useHandle(h -> Native.connectWithTokenSource(h, fields, keys, values,
             connectionOptions)); }
-        catch (RuntimeException failure) { tokenSource = previous; throw failure; }
+        catch (RuntimeException failure) {
+            tokenSource = previous;
+            reconnectPolicy = previousPolicy;
+            throw failure;
+        }
         finally { synchronized (this) { tokenConnectPending = false; } }
     }
 
@@ -412,6 +427,19 @@ public final class Room implements AutoCloseable {
         inCallback.set(true);
         try { return Objects.requireNonNull(source.fetch(request)); }
         finally { inCallback.set(previous); }
+    }
+
+    private Long onNativeReconnectPolicy(ReconnectContext context) {
+        ReconnectPolicy policy = reconnectPolicy;
+        if (policy == null) return null;
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try {
+            Long delay = policy.nextDelayMs(context);
+            if (delay != null && (delay < 0 || delay > 0xffff_ffffL))
+                throw new IllegalArgumentException("Reconnect delay is outside uint32 range");
+            return delay;
+        } finally { inCallback.set(previous); }
     }
 
     public CompletableFuture<Void> connectAsync(String url, String token, ConnectionOptions options) {
@@ -870,6 +898,7 @@ public final class Room implements AutoCloseable {
             Native.destroy(old);
             rpcHandlers.clear();
             tokenSource = null;
+            reconnectPolicy = null;
             frameListeners.clear();
         } finally {
             synchronized (this) { closing = false; notifyAll(); }

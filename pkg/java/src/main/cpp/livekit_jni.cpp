@@ -1147,6 +1147,61 @@ void byte_stream_event(RoomHandle* h, const lk_byte_stream_event_t* value) {
 	});
 }
 
+int reconnect_policy_callback(void* user_data, const lk_reconnect_context_t* context,
+                              uint32_t* retry_delay_ms) {
+	if (context == nullptr || retry_delay_ms == nullptr)
+		return 0;
+	auto* h = static_cast<RoomHandle*>(user_data);
+	JNIEnv* env = nullptr;
+	bool attached = false;
+	if (h->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+		if (h->vm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK)
+			return 0;
+		attached = true;
+	}
+	bool retry = false;
+	if (env->PushLocalFrame(16) == JNI_OK) {
+		jclass cls = env->FindClass("io/livekit/client/ReconnectContext");
+		jmethodID ctor =
+		    cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(JJILjava/lang/String;)V");
+		jstring url = env->ExceptionCheck() ? nullptr : string(env, context->server_url);
+		jobject value = env->ExceptionCheck()
+		                    ? nullptr
+		                    : env->NewObject(cls, ctor, static_cast<jlong>(context->retry_count),
+		                                     bounded_long(context->elapsed_ms),
+		                                     static_cast<jint>(context->reason), url);
+		jclass owner = env->ExceptionCheck() ? nullptr : env->GetObjectClass(h->owner);
+		jmethodID callback = owner == nullptr
+		                         ? nullptr
+		                         : env->GetMethodID(owner, "onNativeReconnectPolicy",
+		                                            "(Lio/livekit/client/ReconnectContext;)"
+		                                            "Ljava/lang/Long;");
+		jobject delay =
+		    callback == nullptr ? nullptr : env->CallObjectMethod(h->owner, callback, value);
+		if (!env->ExceptionCheck() && delay != nullptr) {
+			jclass number = env->FindClass("java/lang/Long");
+			jmethodID as_long =
+			    number == nullptr ? nullptr : env->GetMethodID(number, "longValue", "()J");
+			if (as_long != nullptr) {
+				jlong milliseconds = env->CallLongMethod(delay, as_long);
+				if (!env->ExceptionCheck() && milliseconds >= 0 &&
+				    static_cast<uint64_t>(milliseconds) <= UINT32_MAX) {
+					*retry_delay_ms = static_cast<uint32_t>(milliseconds);
+					retry = true;
+				}
+			}
+		}
+		if (env->ExceptionCheck())
+			env->ExceptionClear();
+		env->PopLocalFrame(nullptr);
+	} else if (env->ExceptionCheck()) {
+		env->ExceptionClear();
+	}
+	if (attached)
+		h->vm->DetachCurrentThread();
+	return retry ? 1 : 0;
+}
+
 lk_status_t token_source_callback(void* user_data, const lk_token_source_fetch_options_t* options,
                                   int force_refresh, lk_token_source_response_t* response) {
 	auto* h = static_cast<RoomHandle*>(user_data);
@@ -1658,7 +1713,7 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connect(JNIEnv* env, jclass
 	std::string u = bytes(env, url), t = bytes(env, token);
 	fail(env, lk_room_connect(handle(ptr)->room, u.c_str(), t.c_str()));
 }
-void with_connect_options(JNIEnv* env, jobject config,
+void with_connect_options(JNIEnv* env, RoomHandle* h, jobject config,
                           const std::function<lk_status_t(const lk_room_connect_options_t*)>& connect) {
 	lk_room_connect_options_t options;
 	lk_room_connect_options_init(&options);
@@ -1677,6 +1732,19 @@ void with_connect_options(JNIEnv* env, jobject config,
 	options.ice_transport_type = static_cast<lk_ice_transport_type_t>(integer("iceTransportType"));
 	options.continual_gathering_policy =
 	    static_cast<lk_continual_gathering_policy_t>(integer("continualGatheringPolicy"));
+	jmethodID get_policy =
+	    env->GetMethodID(cls, "reconnectPolicy", "()Lio/livekit/client/ReconnectPolicy;");
+	jobject policy = get_policy == nullptr ? nullptr : env->CallObjectMethod(config, get_policy);
+	if (policy != nullptr && !env->ExceptionCheck()) {
+		options.reconnect_policy = reconnect_policy_callback;
+		options.reconnect_policy_user_data = h;
+	}
+	if (policy != nullptr)
+		env->DeleteLocalRef(policy);
+	if (env->ExceptionCheck()) {
+		env->DeleteLocalRef(cls);
+		return;
+	}
 	struct OwnedIce {
 		std::vector<std::string> urls;
 		std::vector<const char*> url_pointers;
@@ -1781,7 +1849,8 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* 
 	std::string u = bytes(env, url), t = bytes(env, token);
 	if (env->ExceptionCheck())
 		return;
-	with_connect_options(env, config, [ptr, &u, &t](const lk_room_connect_options_t* options) {
+	with_connect_options(env, handle(ptr), config,
+	                     [ptr, &u, &t](const lk_room_connect_options_t* options) {
 		return lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), options);
 	});
 }
@@ -1848,7 +1917,7 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(
 		                                            nullptr));
 		return;
 	}
-	with_connect_options(env, config, [h, &options](const lk_room_connect_options_t* connect) {
+	with_connect_options(env, h, config, [h, &options](const lk_room_connect_options_t* connect) {
 		return lk_room_connect_with_token_source_and_options(h->room, token_source_callback, h,
 		                                                     &options, connect);
 	});

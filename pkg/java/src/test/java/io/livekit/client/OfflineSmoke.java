@@ -310,7 +310,10 @@ public final class OfflineSmoke {
             }
             ConnectionOptions options = new ConnectionOptions(true, false, false, 3, 15_000,
                 new IceServer[] { new IceServer(new String[] { "stun:example.invalid:3478" }, "u", "p") },
-                3, 1, detailedE2ee);
+                3, 1, detailedE2ee, context -> 100L);
+            if (options.reconnectPolicy().nextDelayMs(new ReconnectContext(1, 1000, 0,
+                "wss://example.invalid")) != 100L)
+                throw new AssertionError("Reconnect policy was not retained");
             try {
                 room.connect("", "", options);
                 throw new AssertionError("Empty URL was accepted");
