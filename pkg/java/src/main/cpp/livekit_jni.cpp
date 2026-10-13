@@ -762,6 +762,196 @@ void quality_event(RoomHandle* h, const lk_track_publication_info_t* track,
 	});
 }
 
+jobject metric_timestamp(JNIEnv* env, jclass cls, jmethodID constructor,
+                         const lk_metric_timestamp_t& value) {
+	return env->NewObject(cls, constructor, static_cast<jlong>(value.seconds),
+	                      static_cast<jint>(value.nanos));
+}
+
+void metrics_event(RoomHandle* h, const lk_metrics_received_t* value) {
+	if (value == nullptr || value->string_data_count > static_cast<size_t>(INT32_MAX) ||
+	    value->time_series_count > static_cast<size_t>(INT32_MAX) ||
+	    value->event_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->string_data_count != 0 && value->string_data == nullptr) ||
+	    (value->time_series_count != 0 && value->time_series == nullptr) ||
+	    (value->event_count != 0 && value->events == nullptr))
+		return;
+	for (size_t i = 0; i < value->time_series_count; ++i)
+		if (value->time_series[i].sample_count > static_cast<size_t>(INT32_MAX) ||
+		    (value->time_series[i].sample_count != 0 && value->time_series[i].samples == nullptr))
+			return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(64) != JNI_OK)
+			return;
+		jclass timestamp_class = env->FindClass("io/livekit/client/MetricTimestamp");
+		jclass sample_class =
+		    env->ExceptionCheck() ? nullptr : env->FindClass("io/livekit/client/MetricSample");
+		jclass series_class =
+		    env->ExceptionCheck() ? nullptr : env->FindClass("io/livekit/client/TimeSeriesMetric");
+		jclass event_class =
+		    env->ExceptionCheck() ? nullptr : env->FindClass("io/livekit/client/EventMetric");
+		jclass message_class =
+		    env->ExceptionCheck() ? nullptr : env->FindClass("io/livekit/client/MetricsMessage");
+		jclass string_class = env->ExceptionCheck() ? nullptr : env->FindClass("java/lang/String");
+		jclass long_class = env->ExceptionCheck() ? nullptr : env->FindClass("java/lang/Long");
+		jclass arrays_class = env->ExceptionCheck() ? nullptr : env->FindClass("java/util/Arrays");
+		if (env->ExceptionCheck()) {
+			env->PopLocalFrame(nullptr);
+			return;
+		}
+		jmethodID timestamp_ctor = env->GetMethodID(timestamp_class, "<init>", "(JI)V");
+		jmethodID sample_ctor =
+		    env->GetMethodID(sample_class, "<init>", "(JLio/livekit/client/MetricTimestamp;F)V");
+		jmethodID series_ctor = env->GetMethodID(series_class, "<init>", "(JJJJLjava/util/List;)V");
+		jmethodID event_ctor =
+		    env->GetMethodID(event_class, "<init>",
+		                     "(JJJJJLjava/lang/Long;Lio/livekit/client/MetricTimestamp;Lio/livekit/"
+		                     "client/MetricTimestamp;Ljava/lang/String;)V");
+		jmethodID message_ctor =
+		    env->GetMethodID(message_class, "<init>",
+		                     "(JLio/livekit/client/MetricTimestamp;Ljava/lang/String;Ljava/util/"
+		                     "List;Ljava/util/List;Ljava/util/List;)V");
+		jmethodID long_ctor = env->GetMethodID(long_class, "<init>", "(J)V");
+		jmethodID as_list =
+		    env->GetStaticMethodID(arrays_class, "asList", "([Ljava/lang/Object;)Ljava/util/List;");
+		if (env->ExceptionCheck()) {
+			env->PopLocalFrame(nullptr);
+			return;
+		}
+		jobjectArray strings = env->NewObjectArray(static_cast<jsize>(value->string_data_count),
+		                                           string_class, nullptr);
+		for (size_t i = 0;
+		     strings != nullptr && i < value->string_data_count && !env->ExceptionCheck(); ++i) {
+			jstring item = string(env, value->string_data[i]);
+			if (!env->ExceptionCheck())
+				env->SetObjectArrayElement(strings, static_cast<jsize>(i), item);
+			if (item != nullptr)
+				env->DeleteLocalRef(item);
+		}
+		jobjectArray series =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObjectArray(static_cast<jsize>(value->time_series_count), series_class,
+		                              nullptr);
+		for (size_t i = 0;
+		     series != nullptr && i < value->time_series_count && !env->ExceptionCheck(); ++i) {
+			const auto& source = value->time_series[i];
+			jobjectArray samples =
+			    env->NewObjectArray(static_cast<jsize>(source.sample_count), sample_class, nullptr);
+			for (size_t j = 0;
+			     samples != nullptr && j < source.sample_count && !env->ExceptionCheck(); ++j) {
+				const auto& sample = source.samples[j];
+				jobject normalized = sample.has_normalized_timestamp
+				                         ? metric_timestamp(env, timestamp_class, timestamp_ctor,
+				                                            sample.normalized_timestamp)
+				                         : nullptr;
+				jobject item = env->ExceptionCheck()
+				                   ? nullptr
+				                   : env->NewObject(sample_class, sample_ctor,
+				                                    static_cast<jlong>(sample.timestamp_ms),
+				                                    normalized, static_cast<jfloat>(sample.value));
+				if (item != nullptr && !env->ExceptionCheck())
+					env->SetObjectArrayElement(samples, static_cast<jsize>(j), item);
+				if (item != nullptr)
+					env->DeleteLocalRef(item);
+				if (normalized != nullptr)
+					env->DeleteLocalRef(normalized);
+			}
+			jobject list = env->ExceptionCheck()
+			                   ? nullptr
+			                   : env->CallStaticObjectMethod(arrays_class, as_list, samples);
+			jobject item =
+			    env->ExceptionCheck()
+			        ? nullptr
+			        : env->NewObject(series_class, series_ctor, static_cast<jlong>(source.label),
+			                         static_cast<jlong>(source.participant_identity),
+			                         static_cast<jlong>(source.track_sid),
+			                         static_cast<jlong>(source.rid), list);
+			if (item != nullptr && !env->ExceptionCheck())
+				env->SetObjectArrayElement(series, static_cast<jsize>(i), item);
+			if (item != nullptr)
+				env->DeleteLocalRef(item);
+			if (list != nullptr)
+				env->DeleteLocalRef(list);
+			if (samples != nullptr)
+				env->DeleteLocalRef(samples);
+		}
+		jobjectArray events =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObjectArray(static_cast<jsize>(value->event_count), event_class, nullptr);
+		for (size_t i = 0; events != nullptr && i < value->event_count && !env->ExceptionCheck();
+		     ++i) {
+			const auto& source = value->events[i];
+			jobject end = source.has_end_timestamp_ms
+			                  ? env->NewObject(long_class, long_ctor,
+			                                   static_cast<jlong>(source.end_timestamp_ms))
+			                  : nullptr;
+			jobject start_normalized =
+			    env->ExceptionCheck() || !source.has_normalized_start_timestamp
+			        ? nullptr
+			        : metric_timestamp(env, timestamp_class, timestamp_ctor,
+			                           source.normalized_start_timestamp);
+			jobject end_normalized = env->ExceptionCheck() || !source.has_normalized_end_timestamp
+			                             ? nullptr
+			                             : metric_timestamp(env, timestamp_class, timestamp_ctor,
+			                                                source.normalized_end_timestamp);
+			jstring metadata = env->ExceptionCheck() ? nullptr : string(env, source.metadata);
+			jobject item =
+			    env->ExceptionCheck()
+			        ? nullptr
+			        : env->NewObject(event_class, event_ctor, static_cast<jlong>(source.label),
+			                         static_cast<jlong>(source.participant_identity),
+			                         static_cast<jlong>(source.track_sid),
+			                         static_cast<jlong>(source.rid),
+			                         static_cast<jlong>(source.start_timestamp_ms), end,
+			                         start_normalized, end_normalized, metadata);
+			if (item != nullptr && !env->ExceptionCheck())
+				env->SetObjectArrayElement(events, static_cast<jsize>(i), item);
+			if (item != nullptr)
+				env->DeleteLocalRef(item);
+			if (end != nullptr)
+				env->DeleteLocalRef(end);
+			if (start_normalized != nullptr)
+				env->DeleteLocalRef(start_normalized);
+			if (end_normalized != nullptr)
+				env->DeleteLocalRef(end_normalized);
+			if (metadata != nullptr)
+				env->DeleteLocalRef(metadata);
+		}
+		jobject normalized = env->ExceptionCheck() || !value->has_normalized_timestamp
+		                         ? nullptr
+		                         : metric_timestamp(env, timestamp_class, timestamp_ctor,
+		                                            value->normalized_timestamp);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		jobject string_list = env->ExceptionCheck()
+		                          ? nullptr
+		                          : env->CallStaticObjectMethod(arrays_class, as_list, strings);
+		jobject series_list = env->ExceptionCheck()
+		                          ? nullptr
+		                          : env->CallStaticObjectMethod(arrays_class, as_list, series);
+		jobject event_list = env->ExceptionCheck()
+		                         ? nullptr
+		                         : env->CallStaticObjectMethod(arrays_class, as_list, events);
+		jobject message = env->ExceptionCheck()
+		                      ? nullptr
+		                      : env->NewObject(message_class, message_ctor,
+		                                       static_cast<jlong>(value->timestamp_ms), normalized,
+		                                       identity, string_list, series_list, event_list);
+		if (message != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeMetrics",
+			                                            "(Lio/livekit/client/MetricsMessage;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, message);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* track,
                  const lk_participant_info_t* who, int value = 0) {
 	if (track == nullptr)
@@ -1287,6 +1477,9 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_transcription_received = [](void* p, lk_room_t*,
 	                                         const lk_transcription_received_t* value) {
 		transcription_event(static_cast<RoomHandle*>(p), value);
+	};
+	callbacks.on_metrics_received = [](void* p, lk_room_t*, const lk_metrics_received_t* value) {
+		metrics_event(static_cast<RoomHandle*>(p), value);
 	};
 	callbacks.on_sip_dtmf_received = [](void* p, lk_room_t*, const lk_sip_dtmf_t* value) {
 		sip_dtmf_event(static_cast<RoomHandle*>(p), value);

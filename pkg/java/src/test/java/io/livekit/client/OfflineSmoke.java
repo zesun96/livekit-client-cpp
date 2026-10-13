@@ -182,6 +182,24 @@ public final class OfflineSmoke {
             segments[0] = null;
             if (!"hello".equals(transcription.get().segments().get(0).text()))
                 throw new AssertionError("Transcription segment was not retained");
+            java.util.concurrent.atomic.AtomicReference<MetricsMessage> metrics =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onMetricsReceived(MetricsMessage message) {
+                    metrics.set(message);
+                }
+            });
+            java.util.List<MetricSample> samples = new java.util.ArrayList<>();
+            samples.add(new MetricSample(10, new MetricTimestamp(1, 2), 0.5f));
+            MetricsMessage metricMessage = new MetricsMessage(10, null, "remote",
+                java.util.List.of("latency"),
+                java.util.List.of(new TimeSeriesMetric(0, 0, 0, 0, samples)),
+                java.util.List.of(new EventMetric(0, 0, 0, 0, 10, null, null, null, "ok")));
+            room.onNativeMetrics(metricMessage);
+            samples.clear();
+            if (metrics.get().timeSeries().get(0).samples().size() != 1 ||
+                !"ok".equals(metrics.get().events().get(0).metadata()))
+                throw new AssertionError("Metrics event was lost or mutated");
             java.util.concurrent.atomic.AtomicReference<DataTrackPublication> dataTrack =
                 new java.util.concurrent.atomic.AtomicReference<>();
             java.util.concurrent.atomic.AtomicReference<DataTrackFrame> dataFrame =

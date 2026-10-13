@@ -53,6 +53,8 @@ lifecycle events.
 Local track publication, unpublication, and subscription callbacks carry detached publication
 snapshots.
 Subscribed quality updates include copied per-codec quality lists.
+Metrics callbacks provide time series, event samples, normalized timestamps, and string-table
+indexes.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
 Participant permission change callbacks include detached old and new permission snapshots.
