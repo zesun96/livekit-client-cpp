@@ -30,6 +30,31 @@ public final class OfflineSmoke {
             room.onNativeTrack(4, new RemoteTrackPublication("remote", "track-1", "mic",
                 "audio/opus", 1, 1, false, 0, 0), 0);
             if (subscribed.get() != 1) throw new AssertionError("Track listener was not called");
+            java.util.concurrent.atomic.AtomicReference<LocalTrackPublication> localTrack =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicInteger localUnpublished =
+                new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger localSubscribed =
+                new java.util.concurrent.atomic.AtomicInteger();
+            room.addListener(new Room.Listener() {
+                @Override public void onLocalTrackPublished(LocalTrackPublication track) {
+                    localTrack.set(track);
+                }
+                @Override public void onLocalTrackUnpublished(LocalTrackPublication track) {
+                    localUnpublished.incrementAndGet();
+                }
+                @Override public void onLocalTrackSubscribed(LocalTrackPublication track) {
+                    localSubscribed.incrementAndGet();
+                }
+            });
+            RemoteTrackPublication localSnapshot = new RemoteTrackPublication("local", "local-1",
+                "mic", "audio/opus", 1, 1, false, 0, 0);
+            room.onNativeTrack(10, localSnapshot, 0);
+            room.onNativeTrack(11, localSnapshot, 0);
+            room.onNativeTrack(12, localSnapshot, 0);
+            if (!"local-1".equals(localTrack.get().sid()) || localUnpublished.get() != 1 ||
+                localSubscribed.get() != 1)
+                throw new AssertionError("Local track lifecycle event was lost");
             java.util.concurrent.atomic.AtomicInteger failureCode =
                 new java.util.concurrent.atomic.AtomicInteger(-1);
             room.addListener(new Room.Listener() {

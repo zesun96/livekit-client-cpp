@@ -50,6 +50,8 @@ operations from inside the callback. A thrown exception or empty credentials fai
 `Room.Listener` reports room metadata, SID, recording status, token refresh, end of session,
 transcription segments with their timing and finality, participant changes, and remote track
 lifecycle events.
+Local track publication, unpublication, and subscription callbacks carry detached publication
+snapshots.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
 Participant permission change callbacks include detached old and new permission snapshots.

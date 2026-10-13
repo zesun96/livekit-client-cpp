@@ -1134,6 +1134,21 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	       const lk_participant_info_t* who, lk_track_subscription_status_t status) {
 		    track_event(static_cast<RoomHandle*>(p), 9, track, who, static_cast<int>(status));
 	    };
+	callbacks.on_local_track_published = [](void* p, lk_room_t*,
+	                                        const lk_track_publication_info_t* track,
+	                                        const lk_participant_info_t* who) {
+		track_event(static_cast<RoomHandle*>(p), 10, track, who);
+	};
+	callbacks.on_local_track_unpublished = [](void* p, lk_room_t*,
+	                                          const lk_track_publication_info_t* track,
+	                                          const lk_participant_info_t* who) {
+		track_event(static_cast<RoomHandle*>(p), 11, track, who);
+	};
+	callbacks.on_local_track_subscribed = [](void* p, lk_room_t*,
+	                                         const lk_track_publication_info_t* track,
+	                                         const lk_participant_info_t* who) {
+		track_event(static_cast<RoomHandle*>(p), 12, track, who);
+	};
 	callbacks.on_data_received = [](void* p, lk_room_t*, const lk_data_received_t* v) {
 		event(static_cast<RoomHandle*>(p), 7, 0, nullptr, v);
 	};
