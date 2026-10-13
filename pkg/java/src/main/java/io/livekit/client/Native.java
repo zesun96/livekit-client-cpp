@@ -63,6 +63,8 @@ final class Native {
                                           long totalSize, boolean hasTotalSize, int chunkSize,
                                           boolean compress, boolean update, int version);
     static native byte[] streamWriterId(long writer, boolean text);
+    static native boolean streamWriterClosed(long writer, boolean text);
+    static native StreamWriterInfo streamWriterInfo(long writer, boolean text);
     static native void writeStream(long writer, boolean text, byte[] data);
     static native void closeStreamWriter(long writer, boolean text);
     static native void cancelStream(long writer, boolean text, byte[] reason);

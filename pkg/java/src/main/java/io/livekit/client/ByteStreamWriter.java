@@ -14,6 +14,15 @@ public final class ByteStreamWriter implements AutoCloseable {
         return Native.string(Native.streamWriterId(handle, false));
     }
 
+    public synchronized boolean isClosed() {
+        return handle == 0 || Native.streamWriterClosed(handle, false);
+    }
+
+    public synchronized StreamWriterInfo info() {
+        if (handle == 0) throw new IllegalStateException("Byte stream is closed");
+        return Native.streamWriterInfo(handle, false);
+    }
+
     public synchronized void write(byte[] data) {
         if (handle == 0) throw new IllegalStateException("Byte stream is closed");
         Native.writeStream(handle, false, Objects.requireNonNull(data));

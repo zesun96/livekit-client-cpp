@@ -76,7 +76,17 @@ public final class OfflineSmoke {
         DataSendOptions sendOptions = new DataSendOptions("topic", null, null,
             java.util.List.of("peer"), java.util.Map.of("language", "en"), "reply",
             java.util.List.of("attachment"), 1024, true);
+        java.util.Map<String, String> writerAttributes = new java.util.HashMap<>();
+        writerAttributes.put("language", "en");
+        StreamWriterInfo writerInfo = new StreamWriterInfo(1, "stream", "text/plain", "topic",
+            "local", "", "reply", 100L, 123, writerAttributes, java.util.List.of("file"));
+        writerAttributes.clear();
+        if (!"en".equals(writerInfo.attributes().get("language")))
+            throw new AssertionError("Writer metadata was not copied");
         try (Room room = new Room()) {
+            if (!new TextStreamWriter(room, 0).isClosed() ||
+                !new ByteStreamWriter(room, 0).isClosed())
+                throw new AssertionError("Closed writer state is incorrect");
             Participant localParticipant = room.localParticipant();
             if (!localParticipant.local() || localParticipant.speaking() ||
                 !room.remoteParticipants().isEmpty())

@@ -104,6 +104,7 @@ Closing the room cancels any remaining writers.
 The `StreamWriterOptions` overloads set destinations, attributes, stream ID, total size, chunk
 size, and compression. Text streams can also set a reply ID, attached stream IDs, update flag,
 and version. The shorter overloads retain the default 15,000 byte chunk size.
+Writer `info()` returns a detached metadata snapshot and `isClosed()` reports its current state.
 The `DataSendOptions` overloads of `sendText`, `sendBytes`, and `sendFile` expose destinations,
 attributes, chunk size, and compression. Text sends also support replies and attachments;
 byte sends support MIME type and name; file sends support MIME type.

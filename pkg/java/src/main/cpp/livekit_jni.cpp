@@ -2466,6 +2466,107 @@ JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_streamWriterId(JNIEnv
 	return getter(env,
 	              [writer](char* p, size_t n) { return lk_byte_stream_writer_id(writer, p, n); });
 }
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_streamWriterClosed(JNIEnv*, jclass,
+                                                                            jlong ptr,
+                                                                            jboolean text) {
+	return (text == JNI_TRUE
+	            ? lk_text_stream_writer_is_closed(reinterpret_cast<lk_text_stream_writer_t*>(ptr))
+	            : lk_byte_stream_writer_is_closed(reinterpret_cast<lk_byte_stream_writer_t*>(ptr)))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_streamWriterInfo(JNIEnv* env, jclass,
+                                                                         jlong ptr, jboolean text) {
+	lk_data_stream_writer_info_snapshot_t* raw = nullptr;
+	lk_status_t status = text == JNI_TRUE
+	                         ? lk_text_stream_writer_create_info_snapshot(
+	                               reinterpret_cast<lk_text_stream_writer_t*>(ptr), &raw)
+	                         : lk_byte_stream_writer_create_info_snapshot(
+	                               reinterpret_cast<lk_byte_stream_writer_t*>(ptr), &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_data_stream_writer_info_snapshot_t,
+	                decltype(&lk_data_stream_writer_info_snapshot_destroy)>
+	    snapshot(raw, lk_data_stream_writer_info_snapshot_destroy);
+	lk_data_stream_writer_info_t info;
+	lk_data_stream_writer_info_init(&info);
+	status = lk_data_stream_writer_info_snapshot_info(snapshot.get(), &info);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	if (info.attribute_count > static_cast<size_t>(INT32_MAX) ||
+	    info.attached_stream_id_count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Too much stream metadata");
+		return nullptr;
+	}
+	auto read = [env, &snapshot](auto fn) {
+		return getter(
+		    env, [&snapshot, fn](char* out, size_t size) { return fn(snapshot.get(), out, size); });
+	};
+	auto indexed = [env, &snapshot](auto fn, size_t index) {
+		jbyteArray raw_value = getter(env, [&snapshot, fn, index](char* out, size_t size) {
+			return fn(snapshot.get(), index, out, size);
+		});
+		std::string value = bytes(env, raw_value);
+		env->DeleteLocalRef(raw_value);
+		return value;
+	};
+	std::vector<std::string> keys, values, attached;
+	keys.reserve(info.attribute_count);
+	values.reserve(info.attribute_count);
+	attached.reserve(info.attached_stream_id_count);
+	for (size_t i = 0; i < info.attribute_count; ++i) {
+		keys.push_back(indexed(lk_data_stream_writer_info_snapshot_attribute_key, i));
+		values.push_back(indexed(lk_data_stream_writer_info_snapshot_attribute_value, i));
+	}
+	for (size_t i = 0; i < info.attached_stream_id_count; ++i)
+		attached.push_back(indexed(lk_data_stream_writer_info_snapshot_attached_stream_id, i));
+	std::vector<lk_attribute_t> attributes;
+	for (size_t i = 0; i < keys.size(); ++i)
+		attributes.push_back({keys[i].c_str(), values[i].c_str()});
+	std::vector<const char*> attachment_pointers;
+	for (const auto& item : attached)
+		attachment_pointers.push_back(item.c_str());
+	jobject attribute_values = attribute_map(env, attributes.data(), attributes.size());
+	jobject attachments =
+	    stream_attachments(env, attachment_pointers.data(), attachment_pointers.size());
+	jbyteArray raw_id = read(lk_data_stream_writer_info_snapshot_stream_id);
+	jbyteArray raw_mime = read(lk_data_stream_writer_info_snapshot_mime_type);
+	jbyteArray raw_topic = read(lk_data_stream_writer_info_snapshot_topic);
+	jbyteArray raw_identity = read(lk_data_stream_writer_info_snapshot_participant_identity);
+	jbyteArray raw_name = read(lk_data_stream_writer_info_snapshot_name);
+	jbyteArray raw_reply = read(lk_data_stream_writer_info_snapshot_reply_to_stream_id);
+	jstring id = string(env, bytes(env, raw_id).c_str());
+	jstring mime = string(env, bytes(env, raw_mime).c_str());
+	jstring topic = string(env, bytes(env, raw_topic).c_str());
+	jstring identity = string(env, bytes(env, raw_identity).c_str());
+	jstring name = string(env, bytes(env, raw_name).c_str());
+	jstring reply = string(env, bytes(env, raw_reply).c_str());
+	jobject total_size = stream_total_size(env, info.has_total_size, info.total_size);
+	jclass cls = env->FindClass("io/livekit/client/StreamWriterInfo");
+	jmethodID ctor = env->GetMethodID(
+	    cls, "<init>",
+	    "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+	    "Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;JLjava/util/Map;Ljava/util/List;)V");
+	jobject result = env->NewObject(
+	    cls, ctor, static_cast<jint>(info.kind), id, mime, topic, identity, name, reply, total_size,
+	    static_cast<jlong>(info.timestamp), attribute_values, attachments);
+	for (jobject value :
+	     {static_cast<jobject>(raw_id), static_cast<jobject>(raw_mime),
+	      static_cast<jobject>(raw_topic), static_cast<jobject>(raw_identity),
+	      static_cast<jobject>(raw_name), static_cast<jobject>(raw_reply), static_cast<jobject>(id),
+	      static_cast<jobject>(mime), static_cast<jobject>(topic), static_cast<jobject>(identity),
+	      static_cast<jobject>(name), static_cast<jobject>(reply), total_size, attribute_values,
+	      attachments, static_cast<jobject>(cls)}) {
+		if (value != nullptr)
+			env->DeleteLocalRef(value);
+	}
+	return result;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_writeStream(JNIEnv* env, jclass, jlong ptr,
                                                                  jboolean text, jbyteArray data) {
 	std::string payload = bytes(env, data);

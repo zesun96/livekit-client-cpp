@@ -14,6 +14,15 @@ public final class TextStreamWriter implements AutoCloseable {
         return Native.string(Native.streamWriterId(handle, true));
     }
 
+    public synchronized boolean isClosed() {
+        return handle == 0 || Native.streamWriterClosed(handle, true);
+    }
+
+    public synchronized StreamWriterInfo info() {
+        if (handle == 0) throw new IllegalStateException("Text stream is closed");
+        return Native.streamWriterInfo(handle, true);
+    }
+
     public synchronized void write(String text) {
         if (handle == 0) throw new IllegalStateException("Text stream is closed");
         Native.writeStream(handle, true, Native.utf8(Objects.requireNonNull(text)));
