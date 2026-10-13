@@ -594,6 +594,94 @@ std::string snapshot_string(JNIEnv* env, const Snapshot* snapshot, Getter fn) {
 	return result;
 }
 
+jobjectArray rtc_stats_array(JNIEnv* env, const lk_rtc_stats_snapshot_t* snapshot) {
+	const size_t count = lk_rtc_stats_snapshot_count(snapshot);
+	if (count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Too many RTC stats streams");
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/RtcTrackStats");
+	jclass string_class = env->FindClass("java/lang/String");
+	if (cls == nullptr || string_class == nullptr)
+		return nullptr;
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "([Ljava/lang/String;[J[D[Z)V");
+	if (ctor == nullptr)
+		return nullptr;
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
+	using StringGetter = size_t (*)(const lk_rtc_stats_snapshot_t*, size_t, char*, size_t);
+	const std::array<StringGetter, 6> fields = {lk_rtc_stats_snapshot_id,
+	                                            lk_rtc_stats_snapshot_kind,
+	                                            lk_rtc_stats_snapshot_rid,
+	                                            lk_rtc_stats_snapshot_codec_mime_type,
+	                                            lk_rtc_stats_snapshot_codec_implementation,
+	                                            lk_rtc_stats_snapshot_quality_limitation_reason};
+	for (size_t i = 0; i < count && !env->ExceptionCheck(); ++i) {
+		if (env->PushLocalFrame(24) != JNI_OK)
+			break;
+		lk_rtc_track_stats_t stats;
+		lk_rtc_track_stats_init(&stats);
+		auto status = lk_rtc_stats_snapshot_info(snapshot, i, &stats);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			env->PopLocalFrame(nullptr);
+			break;
+		}
+		jobjectArray text = env->NewObjectArray(6, string_class, nullptr);
+		for (size_t j = 0; j < fields.size() && !env->ExceptionCheck(); ++j) {
+			jbyteArray raw = getter(env, [snapshot, i, field = fields[j]](char* p, size_t n) {
+				return field(snapshot, i, p, n);
+			});
+			if (raw == nullptr)
+				break;
+			std::string value = bytes(env, raw);
+			jstring decoded = string(env, value.c_str());
+			if (decoded != nullptr) {
+				env->SetObjectArrayElement(text, static_cast<jsize>(j), decoded);
+				env->DeleteLocalRef(decoded);
+			}
+			env->DeleteLocalRef(raw);
+		}
+		const jlong counters[] = {static_cast<jlong>(stats.direction),
+		                          static_cast<jlong>(stats.bytes),
+		                          static_cast<jlong>(stats.packets),
+		                          static_cast<jlong>(stats.packets_lost),
+		                          static_cast<jlong>(stats.concealed_samples),
+		                          static_cast<jlong>(stats.frame_width),
+		                          static_cast<jlong>(stats.frame_height),
+		                          static_cast<jlong>(stats.frames),
+		                          static_cast<jlong>(stats.frames_dropped),
+		                          static_cast<jlong>(stats.fir_count),
+		                          static_cast<jlong>(stats.pli_count),
+		                          static_cast<jlong>(stats.nack_count),
+		                          static_cast<jlong>(stats.qp_sum)};
+		const jdouble measurements[] = {
+		    stats.timestamp_ms,   stats.bitrate_bps, stats.round_trip_time_seconds,
+		    stats.jitter_seconds, stats.audio_level, stats.frames_per_second};
+		const jboolean available[] = {static_cast<jboolean>(stats.has_bitrate_bps != 0),
+		                              static_cast<jboolean>(stats.has_round_trip_time_seconds != 0),
+		                              static_cast<jboolean>(stats.has_jitter_seconds != 0),
+		                              static_cast<jboolean>(stats.has_audio_level != 0)};
+		jlongArray counts = env->NewLongArray(13);
+		jdoubleArray doubles = env->NewDoubleArray(6);
+		jbooleanArray flags = env->NewBooleanArray(4);
+		if (!env->ExceptionCheck()) {
+			env->SetLongArrayRegion(counts, 0, 13, counters);
+			env->SetDoubleArrayRegion(doubles, 0, 6, measurements);
+			env->SetBooleanArrayRegion(flags, 0, 4, available);
+		}
+		if (!env->ExceptionCheck()) {
+			jobject item = env->NewObject(cls, ctor, text, counts, doubles, flags);
+			if (item != nullptr)
+				env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		}
+		env->PopLocalFrame(nullptr);
+	}
+	env->DeleteLocalRef(string_class);
+	env->DeleteLocalRef(cls);
+	return env->ExceptionCheck() ? nullptr : result;
+}
+
 jobject publication_snapshot(JNIEnv* env, const std::string& participant_identity,
                              const lk_remote_track_publication_snapshot_t* publication) {
 	lk_remote_track_publication_snapshot_info_t info;
@@ -3531,6 +3619,111 @@ JNIEXPORT jfloat JNICALL Java_io_livekit_client_Native_microphoneVolume(JNIEnv*,
                                                                         jlong ptr) {
 	return lk_audio_source_microphone_volume(reinterpret_cast<lk_audio_source_t*>(ptr));
 }
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_microphoneProcessingOptions(JNIEnv* env,
+                                                                                    jclass,
+                                                                                    jlong ptr) {
+	lk_audio_source_options_t options;
+	lk_audio_source_options_init(&options);
+	auto status = lk_audio_source_microphone_processing_options(
+	    reinterpret_cast<lk_audio_source_t*>(ptr), &options);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/MicrophoneProcessingOptions");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(ZZZ)V");
+	jobject result = env->NewObject(cls, ctor, options.echo_cancellation ? JNI_TRUE : JNI_FALSE,
+	                                options.auto_gain_control ? JNI_TRUE : JNI_FALSE,
+	                                options.noise_suppression ? JNI_TRUE : JNI_FALSE);
+	env->DeleteLocalRef(cls);
+	return result;
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setMicrophoneProcessingOptions(
+    JNIEnv* env, jclass, jlong ptr, jboolean echoCancellation, jboolean autoGainControl,
+    jboolean noiseSuppression) {
+	lk_audio_source_options_t options;
+	lk_audio_source_options_init(&options);
+	options.echo_cancellation = echoCancellation == JNI_TRUE ? 1 : 0;
+	options.auto_gain_control = autoGainControl == JNI_TRUE ? 1 : 0;
+	options.noise_suppression = noiseSuppression == JNI_TRUE ? 1 : 0;
+	fail(env, lk_audio_source_microphone_set_processing_options(
+	              reinterpret_cast<lk_audio_source_t*>(ptr), &options));
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_microphoneProcessingStats(JNIEnv* env,
+                                                                                  jclass,
+                                                                                  jlong ptr) {
+	lk_microphone_processing_stats_t stats;
+	lk_microphone_processing_stats_init(&stats);
+	auto status = lk_audio_source_microphone_processing_stats(
+	    reinterpret_cast<lk_audio_source_t*>(ptr), &stats);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jclass double_class = env->FindClass("java/lang/Double");
+	jclass integer_class = env->FindClass("java/lang/Integer");
+	jclass cls = env->FindClass("io/livekit/client/MicrophoneProcessingStats");
+	if (double_class == nullptr || integer_class == nullptr || cls == nullptr)
+		return nullptr;
+	jmethodID double_ctor = env->GetMethodID(double_class, "<init>", "(D)V");
+	jmethodID integer_ctor = env->GetMethodID(integer_class, "<init>", "(I)V");
+	jmethodID ctor = env->GetMethodID(
+	    cls, "<init>",
+	    "(JJJJJZLjava/lang/Double;Ljava/lang/Double;Ljava/lang/Double;"
+	    "Ljava/lang/Double;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)V");
+	if (double_ctor == nullptr || integer_ctor == nullptr || ctor == nullptr)
+		return nullptr;
+	auto optional_double = [env, double_class, double_ctor](int available,
+	                                                        double value) -> jobject {
+		return available ? env->NewObject(double_class, double_ctor, static_cast<jdouble>(value))
+		                 : nullptr;
+	};
+	auto optional_int = [env, integer_class, integer_ctor](int available, int value) -> jobject {
+		return available ? env->NewObject(integer_class, integer_ctor, static_cast<jint>(value))
+		                 : nullptr;
+	};
+	jobject echo_loss =
+	    optional_double(stats.echo_return_loss_available, stats.echo_return_loss_db);
+	jobject echo_enhancement = optional_double(stats.echo_return_loss_enhancement_available,
+	                                           stats.echo_return_loss_enhancement_db);
+	jobject echo_likelihood =
+	    optional_double(stats.residual_echo_likelihood_available, stats.residual_echo_likelihood);
+	jobject echo_recent_max = optional_double(stats.residual_echo_likelihood_recent_max_available,
+	                                          stats.residual_echo_likelihood_recent_max);
+	jobject delay_median = optional_int(stats.delay_median_available, stats.delay_median_ms);
+	jobject delay_deviation =
+	    optional_int(stats.delay_standard_deviation_available, stats.delay_standard_deviation_ms);
+	jobject delay = optional_int(stats.delay_available, stats.delay_ms);
+	jobject result =
+	    env->ExceptionCheck()
+	        ? nullptr
+	        : env->NewObject(cls, ctor, static_cast<jlong>(stats.capture_frames_processed),
+	                         static_cast<jlong>(stats.render_frames_processed),
+	                         static_cast<jlong>(stats.capture_processing_errors),
+	                         static_cast<jlong>(stats.render_processing_errors),
+	                         static_cast<jlong>(stats.frames_dropped),
+	                         stats.echo_cancellation_enabled ? JNI_TRUE : JNI_FALSE, echo_loss,
+	                         echo_enhancement, echo_likelihood, echo_recent_max, delay_median,
+	                         delay_deviation, delay);
+	if (echo_loss != nullptr)
+		env->DeleteLocalRef(echo_loss);
+	if (echo_enhancement != nullptr)
+		env->DeleteLocalRef(echo_enhancement);
+	if (echo_likelihood != nullptr)
+		env->DeleteLocalRef(echo_likelihood);
+	if (echo_recent_max != nullptr)
+		env->DeleteLocalRef(echo_recent_max);
+	if (delay_median != nullptr)
+		env->DeleteLocalRef(delay_median);
+	if (delay_deviation != nullptr)
+		env->DeleteLocalRef(delay_deviation);
+	if (delay != nullptr)
+		env->DeleteLocalRef(delay);
+	env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(integer_class);
+	env->DeleteLocalRef(double_class);
+	return result;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyAudioSource(JNIEnv* env, jclass,
                                                                         jlong ptr) {
 	fail(env, lk_audio_source_destroy(reinterpret_cast<lk_audio_source_t*>(ptr)));
@@ -3689,6 +3882,70 @@ JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_trackStats(JNIEnv* en
 	auto* track = reinterpret_cast<lk_local_track_t*>(ptr);
 	return getter(env,
 	              [track](char* p, size_t n) { return lk_local_track_rtc_stats(track, p, n); });
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_localRtcStats(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	lk_rtc_stats_snapshot_t* raw = nullptr;
+	auto status =
+	    lk_local_track_create_rtc_stats_snapshot(reinterpret_cast<lk_local_track_t*>(ptr), &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(&lk_rtc_stats_snapshot_destroy)> snapshot(
+	    raw, lk_rtc_stats_snapshot_destroy);
+	return rtc_stats_array(env, snapshot.get());
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteRtcStats(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid) {
+	const std::string identity = bytes(env, participantIdentity);
+	const std::string sid = bytes(env, trackSid);
+	lk_remote_participant_list_t* raw = nullptr;
+	auto status = lk_room_create_remote_participant_snapshot(handle(room)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_remote_participant_list_t, decltype(&lk_remote_participant_list_destroy)>
+	    participants(raw, lk_remote_participant_list_destroy);
+	for (size_t i = 0; i < lk_remote_participant_list_count(participants.get()); ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(participants.get(), i, &participant);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			return nullptr;
+		}
+		if (snapshot_string(env, participant, lk_remote_participant_snapshot_identity) != identity)
+			continue;
+		for (size_t j = 0; j < lk_remote_participant_snapshot_publication_count(participant); ++j) {
+			const lk_remote_track_publication_snapshot_t* publication = nullptr;
+			status = lk_remote_participant_snapshot_publication_at(participant, j, &publication);
+			if (status != LK_STATUS_OK) {
+				fail(env, status);
+				return nullptr;
+			}
+			if (snapshot_string(env, publication, lk_remote_track_publication_snapshot_sid) != sid)
+				continue;
+			const lk_remote_track_snapshot_t* track = nullptr;
+			status = lk_remote_track_publication_snapshot_track(publication, &track);
+			if (status != LK_STATUS_OK) {
+				fail(env, status);
+				return nullptr;
+			}
+			lk_rtc_stats_snapshot_t* stats_raw = nullptr;
+			status = lk_remote_track_snapshot_create_rtc_stats_snapshot(track, &stats_raw);
+			if (status != LK_STATUS_OK) {
+				fail(env, status);
+				return nullptr;
+			}
+			std::unique_ptr<lk_rtc_stats_snapshot_t, decltype(&lk_rtc_stats_snapshot_destroy)>
+			    stats(stats_raw, lk_rtc_stats_snapshot_destroy);
+			return rtc_stats_array(env, stats.get());
+		}
+		break;
+	}
+	env->ThrowNew(env->FindClass("java/util/NoSuchElementException"), "Remote track was not found");
+	return nullptr;
 }
 JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_mediaDevices(JNIEnv* env, jclass) {
 	lk_media_device_list_t* devices = nullptr;

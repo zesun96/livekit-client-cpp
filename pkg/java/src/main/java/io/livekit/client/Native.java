@@ -120,6 +120,11 @@ final class Native {
     static native boolean microphoneMuted(long source);
     static native void setMicrophoneVolume(long source, float volume);
     static native float microphoneVolume(long source);
+    static native MicrophoneProcessingOptions microphoneProcessingOptions(long source);
+    static native void setMicrophoneProcessingOptions(long source, boolean echoCancellation,
+                                                      boolean autoGainControl,
+                                                      boolean noiseSuppression);
+    static native MicrophoneProcessingStats microphoneProcessingStats(long source);
     static native void destroyAudioSource(long source);
     static native void captureAudio(long source, short[] samples, int samplesPerChannel);
     static native long createVideoSource(boolean screencast);
@@ -137,6 +142,9 @@ final class Native {
     static native void destroyTrack(long track);
     static native void muteTrack(long track, boolean muted);
     static native byte[] trackStats(long track);
+    static native RtcTrackStats[] localRtcStats(long track);
+    static native RtcTrackStats[] remoteRtcStats(long room, byte[] participantIdentity,
+                                                 byte[] trackSid);
     static native MediaDevice[] mediaDevices();
     static native ScreenSource[] screenSources();
     static native long publishDataTrack(long room, byte[] name, int frameEncoding);

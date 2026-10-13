@@ -429,6 +429,16 @@ public final class OfflineSmoke {
                 throw new AssertionError("New room has playback frames");
             if (room.remoteParticipants().size() != 0) throw new AssertionError("Unexpected participant");
             if (!room.remoteTrackPublications().isEmpty()) throw new AssertionError("Unexpected track");
+            try {
+                room.remoteRtcStats("remote", "TR_offline");
+                throw new AssertionError("Missing remote RTC track was accepted");
+            } catch (java.util.NoSuchElementException expected) { }
+            try {
+                Native.localRtcStats(0);
+                throw new AssertionError("Null local RTC track was accepted");
+            } catch (LiveKitException expected) {
+                if (expected.status() != 1) throw expected;
+            }
             if (!room.remoteDataTracks().isEmpty()) throw new AssertionError("Unexpected DataTrack");
             if (room.state() != 3) throw new AssertionError("New room is not disconnected");
             try {
@@ -559,6 +569,37 @@ public final class OfflineSmoke {
                     audio.startCapture();
                     throw new AssertionError("Synthetic audio source started device capture");
                 } catch (IllegalStateException expected) { }
+                try {
+                    audio.microphoneProcessingOptions();
+                    throw new AssertionError("Synthetic source returned microphone options");
+                } catch (IllegalStateException expected) { }
+                try {
+                    audio.setMicrophoneProcessingOptions(
+                        new MicrophoneProcessingOptions(true, false, true));
+                    throw new AssertionError("Synthetic source accepted microphone options");
+                } catch (IllegalStateException expected) { }
+                try {
+                    audio.microphoneProcessingStats();
+                    throw new AssertionError("Synthetic source returned microphone stats");
+                } catch (IllegalStateException expected) { }
+                try {
+                    Native.microphoneProcessingOptions(audio.handle());
+                    throw new AssertionError("Native microphone options accepted a synthetic source");
+                } catch (LiveKitException expected) {
+                    if (expected.status() != 1) throw expected;
+                }
+                try {
+                    Native.setMicrophoneProcessingOptions(audio.handle(), true, true, true);
+                    throw new AssertionError("Native microphone options changed a synthetic source");
+                } catch (LiveKitException expected) {
+                    if (expected.status() != 1) throw expected;
+                }
+                try {
+                    Native.microphoneProcessingStats(audio.handle());
+                    throw new AssertionError("Native microphone stats accepted a synthetic source");
+                } catch (LiveKitException expected) {
+                    if (expected.status() != 1) throw expected;
+                }
                 try {
                     video.startCapture();
                     throw new AssertionError("Synthetic video source started device capture");

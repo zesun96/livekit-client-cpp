@@ -91,12 +91,17 @@ integer values match the corresponding `lk_*` enums in `include/livekit/capi/liv
 `AudioSource.createMicrophone`, `AudioSource.createSystemAudio`, `VideoSource.createCamera`, and
 `VideoSource.createScreen` open host devices when called. Start or stop capture with the source's
 `startCapture()` and `stopCapture()` methods. Use `LocalTrack.publishScreenShare()` for screen
-video and system audio. Hardware capture has not been exercised by the offline smoke test.
+video and system audio. A microphone source exposes `microphoneProcessingOptions()`,
+`setMicrophoneProcessingOptions(...)`, and `microphoneProcessingStats()`; unavailable
+measurements in the statistics record are `null`. Hardware capture has not been exercised by
+the offline smoke test.
 
 Use `Room.remoteTrackPublications()` to find a participant identity and track SID, then call
 `createAudioStream` or `createVideoStream`. Read with `readFor(timeoutMs)` and close the stream
 when done. A read returns `null` on timeout or when the remote track closes. Frames are copied
 into Java arrays; `droppedFrames()` reports frames discarded by the bounded native queue.
+`LocalTrack.rtcStats()` and `Room.remoteRtcStats(identity, sid)` return detached, normalized
+`RtcTrackStats` snapshots. Optional RTC measurements are `null` when unavailable.
 Use `startTrackRecording` with the same identity and SID to write a remote track to a file. Call
 `stop()` before reading the file, then close the recorder.
 
@@ -141,10 +146,8 @@ use domain 2 and their `lk_data_track_error_code_t` value.
 
 | Area | Current Java API | Available in the C ABI or other bindings |
 | --- | --- | --- |
-| RTC stream statistics | `LocalTrack.rtcStatsJson()` | Normalized local and remote RTC stream snapshots; Java has no remote RTC stats getter. |
 | Diagnostics callbacks | Log levels, trace options, and JSON trace files | Process-wide log and trace callback sinks with copied records. |
 | Local media publication | Basic track source, screen share, mute, I420 capture | Track publish codec, simulcast, encoding, metadata and degradation options; richer video input formats and frame metadata. |
-| Microphone processing | Echo cancellation, gain control, and noise suppression toggles | Detailed processing options and processing statistics. |
 | Frame callback delivery | Direct listener calls on native media threads | Bounded queues, dropped-event counters, and a dedicated callback-error channel in other bindings. |
 | Asynchronous operations | Room connect/disconnect, data publish, and RPC futures | Other bindings expose async variants for more stream, media, and DataTrack operations. |
 

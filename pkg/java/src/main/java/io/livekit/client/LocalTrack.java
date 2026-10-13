@@ -1,5 +1,7 @@
 package io.livekit.client;
 
+import java.util.List;
+
 /** Owned local track. Close it before its source; the room also closes its remaining tracks. */
 public final class LocalTrack implements AutoCloseable {
     private final Room room;
@@ -37,6 +39,11 @@ public final class LocalTrack implements AutoCloseable {
     public synchronized String rtcStatsJson() {
         if (handle == 0) throw new IllegalStateException("Track is closed");
         return Native.string(Native.trackStats(handle));
+    }
+
+    public synchronized List<RtcTrackStats> rtcStats() {
+        if (handle == 0) throw new IllegalStateException("Track is closed");
+        return List.of(Native.localRtcStats(handle));
     }
 
     @Override public synchronized void close() {

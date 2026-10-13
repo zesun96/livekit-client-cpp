@@ -276,6 +276,15 @@ public final class Room implements AutoCloseable {
     public List<RemoteTrackPublication> remoteTrackPublications() {
         return withHandle(h -> List.of(Native.remoteTrackPublications(h)));
     }
+
+    public List<RtcTrackStats> remoteRtcStats(String participantIdentity, String trackSid) {
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        if (participantIdentity.isEmpty() || trackSid.isEmpty())
+            throw new IllegalArgumentException("Participant identity and track SID are required");
+        return withHandle(h -> List.of(Native.remoteRtcStats(h, Native.utf8(participantIdentity),
+            Native.utf8(trackSid))));
+    }
     public List<RemoteTrackPublicationDetails> remoteTrackPublicationDetails() {
         return withHandle(h -> List.of(Native.remoteTrackPublicationDetails(h)));
     }

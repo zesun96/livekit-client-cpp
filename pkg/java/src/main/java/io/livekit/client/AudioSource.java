@@ -1,5 +1,7 @@
 package io.livekit.client;
 
+import java.util.Objects;
+
 /** Caller-owned audio source. Close tracks before closing their source. */
 public final class AudioSource implements AutoCloseable {
     private long handle;
@@ -96,6 +98,23 @@ public final class AudioSource implements AutoCloseable {
     public synchronized float microphoneVolume() {
         requireMicrophone();
         return Native.microphoneVolume(handle());
+    }
+
+    public synchronized MicrophoneProcessingOptions microphoneProcessingOptions() {
+        requireMicrophone();
+        return Native.microphoneProcessingOptions(handle());
+    }
+
+    public synchronized void setMicrophoneProcessingOptions(MicrophoneProcessingOptions options) {
+        requireMicrophone();
+        Objects.requireNonNull(options);
+        Native.setMicrophoneProcessingOptions(handle(), options.echoCancellation(),
+            options.autoGainControl(), options.noiseSuppression());
+    }
+
+    public synchronized MicrophoneProcessingStats microphoneProcessingStats() {
+        requireMicrophone();
+        return Native.microphoneProcessingStats(handle());
     }
 
     synchronized long handle() {
