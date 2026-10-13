@@ -613,6 +613,64 @@ jobject publication_snapshot(JNIEnv* env, const std::string& participant_identit
 	return result;
 }
 
+jobject publication_details(JNIEnv* env, const std::string& participant_identity,
+                            const lk_remote_track_publication_snapshot_t* publication) {
+	lk_remote_track_publication_snapshot_info_t info;
+	lk_remote_track_publication_snapshot_info_init(&info);
+	lk_status_t status = lk_remote_track_publication_snapshot_info(publication, &info);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	jobject basic = publication_snapshot(env, participant_identity, publication);
+	if (basic == nullptr)
+		return nullptr;
+	jobject track_state = nullptr;
+	if (info.has_subscribed_track) {
+		const lk_remote_track_snapshot_t* track = nullptr;
+		status = lk_remote_track_publication_snapshot_track(publication, &track);
+		lk_remote_track_snapshot_info_t track_info;
+		lk_remote_track_snapshot_info_init(&track_info);
+		if (status == LK_STATUS_OK && track != nullptr)
+			status = lk_remote_track_snapshot_info(track, &track_info);
+		if (status != LK_STATUS_OK || track == nullptr) {
+			env->DeleteLocalRef(basic);
+			fail(env, status == LK_STATUS_OK ? LK_STATUS_INVALID_STATE : status);
+			return nullptr;
+		}
+		std::string sid = snapshot_string(env, track, lk_remote_track_snapshot_sid);
+		std::string name = snapshot_string(env, track, lk_remote_track_snapshot_name);
+		jstring java_sid = string(env, sid.c_str());
+		jstring java_name = string(env, name.c_str());
+		jclass cls = env->FindClass("io/livekit/client/RemoteTrackState");
+		jmethodID ctor =
+		    env->GetMethodID(cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;IIIIIZ)V");
+		track_state = env->NewObject(
+		    cls, ctor, java_sid, java_name, static_cast<jint>(track_info.kind),
+		    static_cast<jint>(track_info.source), static_cast<jint>(track_info.stream_state),
+		    static_cast<jint>(track_info.width), static_cast<jint>(track_info.height),
+		    track_info.enabled ? JNI_TRUE : JNI_FALSE);
+		env->DeleteLocalRef(java_sid);
+		env->DeleteLocalRef(java_name);
+		env->DeleteLocalRef(cls);
+	}
+	jclass cls = env->FindClass("io/livekit/client/RemoteTrackPublicationDetails");
+	jmethodID ctor = env->GetMethodID(cls, "<init>",
+	                                  "(Lio/livekit/client/RemoteTrackPublication;ZZIZII"
+	                                  "Lio/livekit/client/RemoteTrackState;)V");
+	jobject result = env->NewObject(cls, ctor, basic, info.is_simulcasted ? JNI_TRUE : JNI_FALSE,
+	                                info.subscription_allowed ? JNI_TRUE : JNI_FALSE,
+	                                static_cast<jint>(info.subscription_status),
+	                                info.has_subscription_error ? JNI_TRUE : JNI_FALSE,
+	                                static_cast<jint>(info.subscription_error),
+	                                static_cast<jint>(info.encryption), track_state);
+	env->DeleteLocalRef(basic);
+	if (track_state != nullptr)
+		env->DeleteLocalRef(track_state);
+	env->DeleteLocalRef(cls);
+	return result;
+}
+
 jobject participant_details(JNIEnv* env, RoomHandle* h, const lk_participant_info_t& info,
                             const lk_participant_permissions_t& access, jobject attributes,
                             jobjectArray publications) {
@@ -4170,6 +4228,62 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteTrackPublicat
 		return nullptr;
 	}
 	return result;
+}
+JNIEXPORT jobjectArray JNICALL
+Java_io_livekit_client_Native_remoteTrackPublicationDetails(JNIEnv* env, jclass, jlong room) {
+	lk_remote_participant_list_t* raw = nullptr;
+	lk_status_t status = lk_room_create_remote_participant_snapshot(handle(room)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_remote_participant_list_t, decltype(&lk_remote_participant_list_destroy)>
+	    snapshot(raw, lk_remote_participant_list_destroy);
+	const size_t participant_count = lk_remote_participant_list_count(snapshot.get());
+	size_t publication_count = 0;
+	for (size_t i = 0; i < participant_count; ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(snapshot.get(), i, &participant);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			return nullptr;
+		}
+		publication_count += lk_remote_participant_snapshot_publication_count(participant);
+		if (publication_count > static_cast<size_t>(INT32_MAX)) {
+			env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+			              "Too many remote track publications");
+			return nullptr;
+		}
+	}
+	jclass cls = env->FindClass("io/livekit/client/RemoteTrackPublicationDetails");
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(publication_count), cls, nullptr);
+	jsize output_index = 0;
+	for (size_t i = 0; i < participant_count; ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(snapshot.get(), i, &participant);
+		if (status != LK_STATUS_OK)
+			break;
+		std::string identity =
+		    snapshot_string(env, participant, lk_remote_participant_snapshot_identity);
+		const size_t count = lk_remote_participant_snapshot_publication_count(participant);
+		for (size_t j = 0; j < count; ++j) {
+			const lk_remote_track_publication_snapshot_t* publication = nullptr;
+			status = lk_remote_participant_snapshot_publication_at(participant, j, &publication);
+			if (status != LK_STATUS_OK)
+				break;
+			jobject item = publication_details(env, identity, publication);
+			if (item == nullptr)
+				break;
+			env->SetObjectArrayElement(result, output_index++, item);
+			env->DeleteLocalRef(item);
+		}
+		if (status != LK_STATUS_OK || env->ExceptionCheck())
+			break;
+	}
+	env->DeleteLocalRef(cls);
+	if (status != LK_STATUS_OK)
+		fail(env, status);
+	return env->ExceptionCheck() ? nullptr : result;
 }
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_startTrackRecording(
     JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,

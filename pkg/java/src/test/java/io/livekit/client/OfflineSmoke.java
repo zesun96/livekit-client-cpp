@@ -94,7 +94,8 @@ public final class OfflineSmoke {
             ParticipantDetails localDetails = room.localParticipantDetails();
             if (!localDetails.participant().local() || localDetails.permissions() == null ||
                 !localDetails.publications().isEmpty() ||
-                !room.remoteParticipantDetails().isEmpty())
+                !room.remoteParticipantDetails().isEmpty() ||
+                !room.remoteTrackPublicationDetails().isEmpty())
                 throw new AssertionError("Participant detail snapshots are incorrect");
             try {
                 room.sendText("offline", sendOptions);

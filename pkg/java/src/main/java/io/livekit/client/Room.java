@@ -274,6 +274,9 @@ public final class Room implements AutoCloseable {
     public List<RemoteTrackPublication> remoteTrackPublications() {
         return withHandle(h -> List.of(Native.remoteTrackPublications(h)));
     }
+    public List<RemoteTrackPublicationDetails> remoteTrackPublicationDetails() {
+        return withHandle(h -> List.of(Native.remoteTrackPublicationDetails(h)));
+    }
 
     public LocalDataTrack publishDataTrack(String name, int frameEncoding) {
         Objects.requireNonNull(name);
