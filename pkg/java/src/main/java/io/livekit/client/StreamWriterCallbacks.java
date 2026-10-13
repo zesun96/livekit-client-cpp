@@ -21,7 +21,7 @@ final class StreamWriterCallbacks {
         completed = true;
         if (listener != null) {
             StreamCompletion result = new StreamCompletion(status, streamId, bytesSent,
-                totalSize, reason, errorCode);
+                totalSize, reason, status == 2 ? 1 : 0, errorCode);
             dispatch(() -> listener.onComplete(result));
         }
     }

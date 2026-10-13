@@ -98,6 +98,7 @@ public final class OfflineSmoke {
         callbacks.complete(0, "stream", "", 0);
         callbacks.complete(1, "stream", "cancelled", 0);
         if (sentBytes.get() != 5 || completed.get().status() != 0 ||
+            completed.get().errorDomain() != 0 ||
             completed.get().bytesSent() != 5)
             throw new AssertionError("Stream writer callbacks lost progress or completion");
         try (Room room = new Room()) {
