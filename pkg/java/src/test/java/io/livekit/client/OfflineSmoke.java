@@ -25,6 +25,24 @@ public final class OfflineSmoke {
         if (detailedE2ee.unencryptedMagicBytes()[0] != 1 ||
             detailedE2ee.ratchetWindowSize() != 32 || detailedE2ee.keyRingSize() != 8)
             throw new AssertionError("E2EE settings were not retained");
+        java.util.List<String> attachments = new java.util.ArrayList<>();
+        attachments.add("file-1");
+        java.util.Map<String, String> textAttributes = new java.util.HashMap<>();
+        textAttributes.put("language", "en");
+        TextMessage detailedText = new TextMessage("text-1", "hello", "topic", "remote",
+            "reply-1", 1, attachments, textAttributes);
+        attachments.clear();
+        textAttributes.clear();
+        if (!"file-1".equals(detailedText.attachedStreamIds().get(0)) ||
+            !"en".equals(detailedText.attributes().get("language")))
+            throw new AssertionError("Text message metadata was not copied");
+        byte[] incomingBytes = {1, 2};
+        ByteMessage detailedBytes = new ByteMessage("bytes-1", incomingBytes, "file", "text/plain",
+            "topic", "remote", 1, java.util.Map.of("role", "sample"));
+        incomingBytes[0] = 9;
+        if (detailedBytes.data()[0] != 1 ||
+            !"sample".equals(detailedBytes.attributes().get("role")))
+            throw new AssertionError("Byte message metadata was not copied");
         try (Room room = new Room()) {
             if (room.e2eeConfigured() || room.dataKeyIndex() != 0)
                 throw new AssertionError("Unconfigured E2EE state is incorrect");
@@ -241,6 +259,17 @@ public final class OfflineSmoke {
             segments[0] = null;
             if (!"hello".equals(transcription.get().segments().get(0).text()))
                 throw new AssertionError("Transcription segment was not retained");
+            java.util.concurrent.atomic.AtomicReference<ChatMessage> editedChat =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onChatMessageReceived(ChatMessage message) {
+                    editedChat.set(message);
+                }
+            });
+            room.onNativeChat(new ChatMessage("chat", 10, 11L, "edited", "remote", false,
+                false));
+            if (editedChat.get().editTimestamp() != 11L)
+                throw new AssertionError("Chat edit timestamp was lost");
             java.util.concurrent.atomic.AtomicReference<MetricsMessage> metrics =
                 new java.util.concurrent.atomic.AtomicReference<>();
             room.addListener(new Room.Listener() {

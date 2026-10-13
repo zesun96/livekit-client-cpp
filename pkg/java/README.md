@@ -56,6 +56,9 @@ operations from inside the callback. A thrown exception or empty credentials fai
 `Room.Listener` reports room metadata, SID, recording status, token refresh, end of session,
 transcription segments with their timing and finality, participant changes, and remote track
 lifecycle events.
+Chat callbacks preserve optional edit timestamps.
+Text callbacks preserve reply IDs, attached stream IDs, and attributes; byte and file callbacks
+preserve attributes. Message metadata is detached before the native callback returns.
 Local track publication, unpublication, and subscription callbacks carry detached publication
 snapshots.
 Subscribed quality updates include copied per-codec quality lists.

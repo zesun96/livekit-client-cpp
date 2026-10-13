@@ -820,7 +820,7 @@ public final class Room implements AutoCloseable {
         dispatch(listener -> listener.onByteStreamEvent(event));
     }
 
-    private void onNativeChat(ChatMessage message) {
+    void onNativeChat(ChatMessage message) {
         dispatch(listener -> listener.onChatMessageReceived(message));
     }
 

@@ -508,60 +508,135 @@ void participant_list_event(RoomHandle* h, int kind, const lk_participant_info_t
 	});
 }
 
+jobject attribute_map(JNIEnv* env, const lk_attribute_t* values, size_t count) {
+	jclass cls = env->FindClass("java/util/HashMap");
+	jmethodID ctor = cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "()V");
+	jobject result = ctor == nullptr ? nullptr : env->NewObject(cls, ctor);
+	jmethodID put =
+	    result == nullptr
+	        ? nullptr
+	        : env->GetMethodID(cls, "put",
+	                           "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+	for (size_t i = 0; put != nullptr && i < count && !env->ExceptionCheck(); ++i) {
+		jstring key = string(env, values[i].key);
+		jstring value = env->ExceptionCheck() ? nullptr : string(env, values[i].value);
+		if (!env->ExceptionCheck()) {
+			jobject old = env->CallObjectMethod(result, put, key, value);
+			if (old != nullptr)
+				env->DeleteLocalRef(old);
+		}
+		if (key != nullptr)
+			env->DeleteLocalRef(key);
+		if (value != nullptr)
+			env->DeleteLocalRef(value);
+	}
+	return result;
+}
+
 void text_event(RoomHandle* h, const lk_text_received_t* value) {
-	if (value == nullptr)
+	if (value == nullptr || value->attached_stream_id_count > static_cast<size_t>(INT32_MAX) ||
+	    value->attribute_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->attached_stream_id_count != 0 && value->attached_stream_ids == nullptr) ||
+	    (value->attribute_count != 0 && value->attributes == nullptr))
 		return;
 	deliver(h, [h, value](JNIEnv* env) {
-		jclass cls = h->text_class;
-		jmethodID ctor = env->GetMethodID(
-		    cls, "<init>",
-		    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V");
-		jstring id = string(env, value->stream_id);
-		jstring body = string(env, value->text);
-		jstring topic = string(env, value->topic);
-		jstring identity = string(env, value->participant_identity);
-		jobject item = env->NewObject(cls, ctor, id, body, topic, identity, value->timestamp);
-		jclass owner = env->GetObjectClass(h->owner);
-		jmethodID callback =
-		    env->GetMethodID(owner, "onNativeText", "(Lio/livekit/client/TextMessage;)V");
-		env->CallVoidMethod(h->owner, callback, item);
-		env->DeleteLocalRef(item);
-		env->DeleteLocalRef(owner);
-		env->DeleteLocalRef(id);
-		env->DeleteLocalRef(body);
-		env->DeleteLocalRef(topic);
-		env->DeleteLocalRef(identity);
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jclass strings = env->FindClass("java/lang/String");
+		jobjectArray attachments =
+		    strings == nullptr
+		        ? nullptr
+		        : env->NewObjectArray(static_cast<jsize>(value->attached_stream_id_count), strings,
+		                              nullptr);
+		for (size_t i = 0; attachments != nullptr && i < value->attached_stream_id_count &&
+		                   !env->ExceptionCheck();
+		     ++i) {
+			jstring id = string(env, value->attached_stream_ids[i]);
+			if (!env->ExceptionCheck())
+				env->SetObjectArrayElement(attachments, static_cast<jsize>(i), id);
+			if (id != nullptr)
+				env->DeleteLocalRef(id);
+		}
+		jclass arrays = env->ExceptionCheck() ? nullptr : env->FindClass("java/util/Arrays");
+		jmethodID as_list =
+		    arrays == nullptr
+		        ? nullptr
+		        : env->GetStaticMethodID(arrays, "asList", "([Ljava/lang/Object;)Ljava/util/List;");
+		jobject list = as_list == nullptr
+		                   ? nullptr
+		                   : env->CallStaticObjectMethod(arrays, as_list, attachments);
+		jobject attributes = env->ExceptionCheck()
+		                         ? nullptr
+		                         : attribute_map(env, value->attributes, value->attribute_count);
+		jmethodID ctor =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->GetMethodID(h->text_class, "<init>",
+		                           "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+		                           "Ljava/lang/String;Ljava/lang/String;JLjava/util/List;"
+		                           "Ljava/util/Map;)V");
+		jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
+		jstring body = env->ExceptionCheck() ? nullptr : string(env, value->text);
+		jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		jstring reply = env->ExceptionCheck() ? nullptr : string(env, value->reply_to_stream_id);
+		jobject item = env->ExceptionCheck()
+		                   ? nullptr
+		                   : env->NewObject(h->text_class, ctor, id, body, topic, identity, reply,
+		                                    static_cast<jlong>(value->timestamp), list, attributes);
+		if (item != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(owner, "onNativeText", "(Lio/livekit/client/TextMessage;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, item);
+		}
+		env->PopLocalFrame(nullptr);
 	});
 }
 
 void byte_event(RoomHandle* h, const lk_file_received_t* value, bool file) {
-	if (value == nullptr)
+	if (value == nullptr || value->data_size > static_cast<size_t>(INT32_MAX) ||
+	    value->attribute_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->data_size != 0 && value->data == nullptr) ||
+	    (value->attribute_count != 0 && value->attributes == nullptr))
 		return;
 	deliver(h, [h, value, file](JNIEnv* env) {
-		jclass cls = h->byte_class;
-		jmethodID ctor = env->GetMethodID(cls, "<init>",
-		                                  "(Ljava/lang/String;[BLjava/lang/String;Ljava/lang/"
-		                                  "String;Ljava/lang/String;Ljava/lang/String;J)V");
-		jstring id = string(env, value->stream_id);
-		jbyteArray body = array(env, value->data, value->data_size);
-		jstring name = string(env, value->name);
-		jstring mime = string(env, value->mime_type);
-		jstring topic = string(env, value->topic);
-		jstring identity = string(env, value->participant_identity);
+		if (env->PushLocalFrame(24) != JNI_OK)
+			return;
+		jobject attributes = attribute_map(env, value->attributes, value->attribute_count);
+		jmethodID ctor =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->GetMethodID(h->byte_class, "<init>",
+		                           "(Ljava/lang/String;[BLjava/lang/String;Ljava/lang/String;"
+		                           "Ljava/lang/String;Ljava/lang/String;JLjava/util/Map;)V");
+		jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
+		jbyteArray body =
+		    env->ExceptionCheck() ? nullptr : array(env, value->data, value->data_size);
+		jstring name = env->ExceptionCheck() ? nullptr : string(env, value->name);
+		jstring mime = env->ExceptionCheck() ? nullptr : string(env, value->mime_type);
+		jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
 		jobject item =
-		    env->NewObject(cls, ctor, id, body, name, mime, topic, identity, value->timestamp);
-		jclass owner = env->GetObjectClass(h->owner);
-		jmethodID callback =
-		    env->GetMethodID(owner, "onNativeBytes", "(Lio/livekit/client/ByteMessage;Z)V");
-		env->CallVoidMethod(h->owner, callback, item, file ? JNI_TRUE : JNI_FALSE);
-		env->DeleteLocalRef(item);
-		env->DeleteLocalRef(owner);
-		env->DeleteLocalRef(id);
-		env->DeleteLocalRef(body);
-		env->DeleteLocalRef(name);
-		env->DeleteLocalRef(mime);
-		env->DeleteLocalRef(topic);
-		env->DeleteLocalRef(identity);
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObject(h->byte_class, ctor, id, body, name, mime, topic, identity,
+		                         static_cast<jlong>(value->timestamp), attributes);
+		if (item != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeBytes",
+			                                            "(Lio/livekit/client/ByteMessage;Z)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, item, file ? JNI_TRUE : JNI_FALSE);
+		}
+		env->PopLocalFrame(nullptr);
 	});
 }
 
@@ -569,24 +644,40 @@ void chat_event(RoomHandle* h, const lk_chat_message_t* value) {
 	if (value == nullptr)
 		return;
 	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(16) != JNI_OK)
+			return;
 		jclass cls = h->chat_class;
-		jmethodID ctor = env->GetMethodID(
-		    cls, "<init>", "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;ZZ)V");
-		jstring id = string(env, value->id);
-		jstring body = string(env, value->message);
-		jstring identity = string(env, value->participant_identity);
-		jobject item = env->NewObject(cls, ctor, id, value->timestamp, body, identity,
-		                              value->deleted ? JNI_TRUE : JNI_FALSE,
-		                              value->generated ? JNI_TRUE : JNI_FALSE);
-		jclass owner = env->GetObjectClass(h->owner);
-		jmethodID callback =
-		    env->GetMethodID(owner, "onNativeChat", "(Lio/livekit/client/ChatMessage;)V");
-		env->CallVoidMethod(h->owner, callback, item);
-		env->DeleteLocalRef(item);
-		env->DeleteLocalRef(owner);
-		env->DeleteLocalRef(id);
-		env->DeleteLocalRef(body);
-		env->DeleteLocalRef(identity);
+		jmethodID ctor = env->GetMethodID(cls, "<init>",
+		                                  "(Ljava/lang/String;JLjava/lang/Long;Ljava/lang/String;"
+		                                  "Ljava/lang/String;ZZ)V");
+		jstring id = env->ExceptionCheck() ? nullptr : string(env, value->id);
+		jobject edit = nullptr;
+		if (!env->ExceptionCheck() && value->has_edit_timestamp) {
+			jclass number = env->FindClass("java/lang/Long");
+			jmethodID long_ctor =
+			    number == nullptr ? nullptr : env->GetMethodID(number, "<init>", "(J)V");
+			if (long_ctor != nullptr)
+				edit = env->NewObject(number, long_ctor, static_cast<jlong>(value->edit_timestamp));
+		}
+		jstring body = env->ExceptionCheck() ? nullptr : string(env, value->message);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		jobject item =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObject(cls, ctor, id, static_cast<jlong>(value->timestamp), edit, body,
+		                         identity, value->deleted ? JNI_TRUE : JNI_FALSE,
+		                         value->generated ? JNI_TRUE : JNI_FALSE);
+		if (item != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(owner, "onNativeChat", "(Lio/livekit/client/ChatMessage;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, item);
+		}
+		env->PopLocalFrame(nullptr);
 	});
 }
 
