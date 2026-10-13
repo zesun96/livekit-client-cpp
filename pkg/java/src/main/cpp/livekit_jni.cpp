@@ -1259,11 +1259,66 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* 
 		return;
 	fail(env, lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), &options));
 }
-JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(JNIEnv* env, jclass,
-                                                                            jlong ptr) {
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(
+    JNIEnv* env, jclass, jlong ptr, jobjectArray fields, jobjectArray attributeKeys,
+    jobjectArray attributeValues) {
+	if (fields == nullptr || attributeKeys == nullptr || attributeValues == nullptr ||
+	    env->GetArrayLength(fields) != 7 ||
+	    env->GetArrayLength(attributeKeys) != env->GetArrayLength(attributeValues)) {
+		jclass cls = env->FindClass("java/lang/IllegalArgumentException");
+		if (cls != nullptr)
+			env->ThrowNew(cls, "Invalid token fetch options");
+		return;
+	}
+	std::array<std::string, 7> values;
+	for (jsize i = 0; i < 7; ++i) {
+		jbyteArray field = static_cast<jbyteArray>(env->GetObjectArrayElement(fields, i));
+		if (env->ExceptionCheck())
+			return;
+		values[static_cast<size_t>(i)] = bytes(env, field);
+		env->DeleteLocalRef(field);
+		if (env->ExceptionCheck())
+			return;
+	}
+	const jsize count = env->GetArrayLength(attributeKeys);
+	std::vector<std::string> keys, attributes;
+	keys.reserve(static_cast<size_t>(count));
+	attributes.reserve(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		jbyteArray key = static_cast<jbyteArray>(env->GetObjectArrayElement(attributeKeys, i));
+		jbyteArray value =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : static_cast<jbyteArray>(env->GetObjectArrayElement(attributeValues, i));
+		if (env->ExceptionCheck())
+			return;
+		keys.push_back(bytes(env, key));
+		if (!env->ExceptionCheck())
+			attributes.push_back(bytes(env, value));
+		env->DeleteLocalRef(key);
+		env->DeleteLocalRef(value);
+		if (env->ExceptionCheck())
+			return;
+	}
+	std::vector<lk_attribute_t> copied(static_cast<size_t>(count));
+	for (jsize i = 0; i < count; ++i) {
+		copied[static_cast<size_t>(i)].key = keys[static_cast<size_t>(i)].c_str();
+		copied[static_cast<size_t>(i)].value = attributes[static_cast<size_t>(i)].c_str();
+	}
+	lk_token_source_fetch_options_t options;
+	lk_token_source_fetch_options_init(&options);
+	options.room_name = values[0].c_str();
+	options.participant_name = values[1].c_str();
+	options.participant_identity = values[2].c_str();
+	options.participant_metadata = values[3].c_str();
+	options.agent_name = values[4].c_str();
+	options.agent_metadata = values[5].c_str();
+	options.deployment = values[6].c_str();
+	options.participant_attributes = copied.data();
+	options.participant_attribute_count = copied.size();
 	auto* h = handle(ptr);
 	fail(env,
-	     lk_room_connect_with_token_source(h->room, token_source_callback, h, nullptr, nullptr));
+	     lk_room_connect_with_token_source(h->room, token_source_callback, h, &options, nullptr));
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_disconnect(JNIEnv* env, jclass, jlong ptr) {
 	fail(env, lk_room_disconnect(handle(ptr)->room));

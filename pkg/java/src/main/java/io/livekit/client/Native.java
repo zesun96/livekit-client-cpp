@@ -28,7 +28,8 @@ final class Native {
     static native void destroy(long handle);
     static native void connect(long handle, byte[] url, byte[] token);
     static native void connectWithOptions(long handle, byte[] url, byte[] token, ConnectionOptions options);
-    static native void connectWithTokenSource(long handle);
+    static native void connectWithTokenSource(long handle, byte[][] fields,
+                                              byte[][] attributeKeys, byte[][] attributeValues);
     static native void disconnect(long handle);
     static native int state(long handle);
     static native int disconnectReason(long handle);

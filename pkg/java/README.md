@@ -43,6 +43,8 @@ snapshots, bounded readers, remote track recording, and outgoing incremental tex
 Incoming incremental text/byte events can be registered by topic. DataTrack schemas and custom
 frame encodings are supported. Diagnostics exposes process-wide log levels and JSON tracing.
 `Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.
+Pass `TokenFetchOptions` to supply room, participant, agent, deployment, and attribute fields
+to the provider on initial connection and refresh.
 Its callback can run on the native recovery thread; return promptly and avoid blocking room
 operations from inside the callback. A thrown exception or empty credentials fails that fetch.
 `Room.Listener` reports room metadata, SID, recording status, token refresh, and end of session

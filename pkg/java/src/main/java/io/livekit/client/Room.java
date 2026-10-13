@@ -313,7 +313,25 @@ public final class Room implements AutoCloseable {
     }
 
     public void connectWithTokenSource(TokenSource source) {
+        connectWithTokenSource(source, new TokenFetchOptions());
+    }
+
+    public void connectWithTokenSource(TokenSource source, TokenFetchOptions options) {
         Objects.requireNonNull(source);
+        Objects.requireNonNull(options);
+        byte[][] fields = {
+            Native.utf8(options.roomName()), Native.utf8(options.participantName()),
+            Native.utf8(options.participantIdentity()),
+            Native.utf8(options.participantMetadata()), Native.utf8(options.agentName()),
+            Native.utf8(options.agentMetadata()), Native.utf8(options.deployment())
+        };
+        byte[][] keys = new byte[options.participantAttributes().size()][];
+        byte[][] values = new byte[keys.length][];
+        int index = 0;
+        for (Map.Entry<String, String> entry : options.participantAttributes().entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
         TokenSource previous;
         synchronized (this) {
             if (tokenConnectPending) throw new IllegalStateException("Token source connection is in progress");
@@ -321,13 +339,18 @@ public final class Room implements AutoCloseable {
             previous = tokenSource;
             tokenSource = source;
         }
-        try { useHandle(Native::connectWithTokenSource); }
+        try { useHandle(h -> Native.connectWithTokenSource(h, fields, keys, values)); }
         catch (RuntimeException failure) { tokenSource = previous; throw failure; }
         finally { synchronized (this) { tokenConnectPending = false; } }
     }
 
     public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source) {
         return CompletableFuture.runAsync(() -> connectWithTokenSource(source));
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source,
+                                                               TokenFetchOptions options) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source, options));
     }
 
     private TokenCredentials onNativeTokenFetch(TokenFetchRequest request) {

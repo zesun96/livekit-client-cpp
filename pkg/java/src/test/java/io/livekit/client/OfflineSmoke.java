@@ -185,14 +185,29 @@ public final class OfflineSmoke {
             }
             java.util.concurrent.atomic.AtomicBoolean tokenRequested =
                 new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean tokenOptionsValid =
+                new java.util.concurrent.atomic.AtomicBoolean();
+            TokenFetchOptions tokenOptions = new TokenFetchOptions("room", "name", "identity",
+                "metadata", java.util.Map.of("role", "test"), "agent", "agent-metadata",
+                "deployment");
             try {
                 room.connectWithTokenSource(request -> {
                     tokenRequested.set(true);
+                    tokenOptionsValid.set("room".equals(request.roomName()) &&
+                        "name".equals(request.participantName()) &&
+                        "identity".equals(request.participantIdentity()) &&
+                        "metadata".equals(request.participantMetadata()) &&
+                        "test".equals(request.participantAttributes().get("role")) &&
+                        "agent".equals(request.agentName()) &&
+                        "agent-metadata".equals(request.agentMetadata()) &&
+                        "deployment".equals(request.deployment()));
                     throw new IllegalStateException("Offline token source");
-                });
+                }, tokenOptions);
                 throw new AssertionError("Failed token source was accepted");
             } catch (LiveKitException expected) {
                 if (!tokenRequested.get()) throw new AssertionError("Token source was not called");
+                if (!tokenOptionsValid.get())
+                    throw new AssertionError("Token fetch options were not forwarded");
             }
             try {
                 room.publishDataTrack("offline", 0);
