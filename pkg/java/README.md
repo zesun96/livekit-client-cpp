@@ -55,6 +55,9 @@ snapshots.
 Subscribed quality updates include copied per-codec quality lists.
 Metrics callbacks provide time series, event samples, normalized timestamps, and string-table
 indexes.
+Register `Room.FrameListener` to receive copied audio and video frames with video metadata.
+Frame delivery is synchronous on native media threads; return promptly. Callbacks are enabled
+only while a frame listener is registered.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
 Participant permission change callbacks include detached old and new permission snapshots.

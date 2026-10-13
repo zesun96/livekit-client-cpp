@@ -3,6 +3,7 @@
 #include <livekit/capi/livekit.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +33,7 @@ struct RoomHandle {
 	jclass token_request_class = nullptr;
 	jclass remote_track_class = nullptr;
 	jclass permissions_class = nullptr;
+	std::atomic<bool> frame_callbacks_enabled{false};
 	std::vector<std::unique_ptr<RpcContext>> rpc_contexts;
 };
 
@@ -952,23 +954,36 @@ void metrics_event(RoomHandle* h, const lk_metrics_received_t* value) {
 	});
 }
 
+jobject publication(JNIEnv* env, RoomHandle* h, const lk_track_publication_info_t* track,
+                    const lk_participant_info_t* who) {
+	if (env->PushLocalFrame(8) != JNI_OK)
+		return nullptr;
+	jmethodID ctor = env->GetMethodID(
+	    h->remote_track_class, "<init>",
+	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZII)V");
+	jstring identity =
+	    ctor == nullptr ? nullptr : string(env, who == nullptr ? nullptr : who->identity);
+	jstring sid = env->ExceptionCheck() ? nullptr : string(env, track->sid);
+	jstring name = env->ExceptionCheck() ? nullptr : string(env, track->name);
+	jstring mime = env->ExceptionCheck() ? nullptr : string(env, track->mime_type);
+	jobject item =
+	    env->ExceptionCheck()
+	        ? nullptr
+	        : env->NewObject(h->remote_track_class, ctor, identity, sid, name, mime,
+	                         static_cast<jint>(track->kind), static_cast<jint>(track->source),
+	                         track->is_muted ? JNI_TRUE : JNI_FALSE,
+	                         static_cast<jint>(track->width), static_cast<jint>(track->height));
+	return env->PopLocalFrame(item);
+}
+
 void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* track,
                  const lk_participant_info_t* who, int value = 0) {
 	if (track == nullptr)
 		return;
 	deliver(h, [h, kind, track, who, value](JNIEnv* env) {
-		jclass cls = h->remote_track_class;
-		jmethodID ctor = env->GetMethodID(
-		    cls, "<init>",
-		    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZII)V");
-		jstring identity = string(env, who == nullptr ? nullptr : who->identity);
-		jstring sid = string(env, track->sid);
-		jstring name = string(env, track->name);
-		jstring mime = string(env, track->mime_type);
-		jobject item =
-		    env->NewObject(cls, ctor, identity, sid, name, mime, static_cast<jint>(track->kind),
-		                   static_cast<jint>(track->source), track->is_muted ? JNI_TRUE : JNI_FALSE,
-		                   static_cast<jint>(track->width), static_cast<jint>(track->height));
+		jobject item = publication(env, h, track, who);
+		if (item == nullptr || env->ExceptionCheck())
+			return;
 		jclass owner = env->GetObjectClass(h->owner);
 		jmethodID callback = env->GetMethodID(owner, "onNativeTrack",
 		                                      "(ILio/livekit/client/RemoteTrackPublication;I)V");
@@ -976,10 +991,94 @@ void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* tra
 		                    static_cast<jint>(value));
 		env->DeleteLocalRef(owner);
 		env->DeleteLocalRef(item);
-		env->DeleteLocalRef(identity);
-		env->DeleteLocalRef(sid);
-		env->DeleteLocalRef(name);
-		env->DeleteLocalRef(mime);
+	});
+}
+
+void audio_frame_event(RoomHandle* h, const lk_track_publication_info_t* track,
+                       const lk_participant_info_t* who, const lk_audio_frame_t* frame) {
+	if (!h->frame_callbacks_enabled.load(std::memory_order_relaxed) || track == nullptr ||
+	    frame == nullptr || frame->sample_count > static_cast<size_t>(INT32_MAX) ||
+	    (frame->sample_count != 0 && frame->data == nullptr))
+		return;
+	deliver(h, [h, track, who, frame](JNIEnv* env) {
+		if (env->PushLocalFrame(24) != JNI_OK)
+			return;
+		jobject item = publication(env, h, track, who);
+		jobject p = env->ExceptionCheck() ? nullptr : participant(env, h, who);
+		jshortArray samples = env->ExceptionCheck()
+		                          ? nullptr
+		                          : env->NewShortArray(static_cast<jsize>(frame->sample_count));
+		if (samples != nullptr && frame->sample_count != 0)
+			env->SetShortArrayRegion(samples, 0, static_cast<jsize>(frame->sample_count),
+			                         frame->data);
+		if (!env->ExceptionCheck() && item != nullptr && samples != nullptr) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr ? nullptr
+			                     : env->GetMethodID(owner, "onNativeAudioFrame",
+			                                        "(Lio/livekit/client/RemoteTrackPublication;"
+			                                        "Lio/livekit/client/Participant;[SIII)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, item, p, samples,
+				                    static_cast<jint>(frame->sample_rate),
+				                    static_cast<jint>(frame->num_channels),
+				                    static_cast<jint>(frame->samples_per_channel));
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
+void video_frame_event(RoomHandle* h, const lk_track_publication_info_t* track,
+                       const lk_participant_info_t* who, const lk_video_frame_t* frame,
+                       const lk_video_frame_metadata_t* metadata) {
+	if (!h->frame_callbacks_enabled.load(std::memory_order_relaxed) || track == nullptr ||
+	    frame == nullptr || frame->data_size > static_cast<size_t>(INT32_MAX) ||
+	    (frame->data_size != 0 && frame->data == nullptr) ||
+	    (metadata != nullptr && (metadata->user_data_size > static_cast<size_t>(INT32_MAX) ||
+	                             (metadata->has_user_data && metadata->user_data_size != 0 &&
+	                              metadata->user_data == nullptr))))
+		return;
+	deliver(h, [h, track, who, frame, metadata](JNIEnv* env) {
+		if (env->PushLocalFrame(24) != JNI_OK)
+			return;
+		jobject item = publication(env, h, track, who);
+		jobject p = env->ExceptionCheck() ? nullptr : participant(env, h, who);
+		jbyteArray data =
+		    env->ExceptionCheck() ? nullptr : array(env, frame->data, frame->data_size);
+		jbyteArray user_data =
+		    env->ExceptionCheck() || metadata == nullptr || !metadata->has_user_data
+		        ? nullptr
+		        : array(env, metadata->user_data, metadata->user_data_size);
+		jobject user_timestamp = nullptr, frame_id = nullptr;
+		if (!env->ExceptionCheck() && metadata != nullptr && metadata->has_user_timestamp_us) {
+			jclass cls = env->FindClass("java/lang/Long");
+			jmethodID ctor = cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(J)V");
+			if (ctor != nullptr)
+				user_timestamp =
+				    env->NewObject(cls, ctor, bounded_long(metadata->user_timestamp_us));
+		}
+		if (!env->ExceptionCheck() && metadata != nullptr && metadata->has_frame_id) {
+			jclass cls = env->FindClass("java/lang/Integer");
+			jmethodID ctor = cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(I)V");
+			if (ctor != nullptr)
+				frame_id = env->NewObject(cls, ctor, static_cast<jint>(metadata->frame_id));
+		}
+		if (!env->ExceptionCheck() && item != nullptr && data != nullptr) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(owner, "onNativeVideoFrame",
+			                           "(Lio/livekit/client/RemoteTrackPublication;"
+			                           "Lio/livekit/client/Participant;[BIIJLjava/lang/Long;"
+			                           "Ljava/lang/Integer;[B)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(
+				    h->owner, callback, item, p, data, static_cast<jint>(frame->width),
+				    static_cast<jint>(frame->height), static_cast<jlong>(frame->timestamp_us),
+				    user_timestamp, frame_id, user_data);
+		}
+		env->PopLocalFrame(nullptr);
 	});
 }
 
@@ -1462,6 +1561,16 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_data_received = [](void* p, lk_room_t*, const lk_data_received_t* v) {
 		event(static_cast<RoomHandle*>(p), 7, 0, nullptr, v);
 	};
+	callbacks.on_audio_frame = [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	                              const lk_participant_info_t* who, const lk_audio_frame_t* frame) {
+		audio_frame_event(static_cast<RoomHandle*>(p), track, who, frame);
+	};
+	callbacks.on_video_frame_with_metadata =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who, const lk_video_frame_t* frame,
+	       const lk_video_frame_metadata_t* metadata) {
+		    video_frame_event(static_cast<RoomHandle*>(p), track, who, frame, metadata);
+	    };
 	callbacks.on_text_received = [](void* p, lk_room_t*, const lk_text_received_t* v) {
 		text_event(static_cast<RoomHandle*>(p), v);
 	};
@@ -1536,6 +1645,12 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroy(JNIEnv* env, jclass
 	lk_room_destroy(h->room);
 	env->DeleteGlobalRef(h->owner);
 	release_classes(env, h.get());
+}
+
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setFrameCallbacksEnabled(JNIEnv*, jclass,
+                                                                              jlong ptr,
+                                                                              jboolean enabled) {
+	handle(ptr)->frame_callbacks_enabled.store(enabled == JNI_TRUE, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_connect(JNIEnv* env, jclass, jlong ptr,

@@ -73,7 +73,16 @@ public final class Room implements AutoCloseable {
         default void onDataTrackFrame(DataTrackPublication track, DataTrackFrame frame) {}
     }
 
+    /** Frame callbacks run on native media threads; return promptly. */
+    public interface FrameListener {
+        default void onAudioFrame(RemoteTrackPublication track, Participant participant,
+                                  AudioFrame frame) {}
+        default void onVideoFrame(RemoteTrackPublication track, Participant participant,
+                                  VideoFrame frame) {}
+    }
+
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
+    private final List<FrameListener> frameListeners = new CopyOnWriteArrayList<>();
     private final List<LocalTrack> tracks = new CopyOnWriteArrayList<>();
     private final List<LocalDataTrack> dataTracks = new CopyOnWriteArrayList<>();
     private final List<DataTrackReader> dataTrackReaders = new CopyOnWriteArrayList<>();
@@ -94,6 +103,21 @@ public final class Room implements AutoCloseable {
     public static String version() { return Native.version(); }
     public void addListener(Listener listener) { listeners.add(Objects.requireNonNull(listener)); }
     public void removeListener(Listener listener) { listeners.remove(listener); }
+
+    public synchronized void addFrameListener(FrameListener listener) {
+        Objects.requireNonNull(listener);
+        useHandle(h -> {
+            if (frameListeners.isEmpty()) Native.setFrameCallbacksEnabled(h, true);
+            frameListeners.add(listener);
+        });
+    }
+
+    public synchronized void removeFrameListener(FrameListener listener) {
+        useHandle(h -> {
+            frameListeners.remove(listener);
+            if (frameListeners.isEmpty()) Native.setFrameCallbacksEnabled(h, false);
+        });
+    }
 
     private synchronized long beginCall() {
         if (handle == 0 || closing) throw new IllegalStateException("Room is closed");
@@ -703,6 +727,36 @@ public final class Room implements AutoCloseable {
         dispatch(listener -> listener.onMetricsReceived(message));
     }
 
+    void onNativeAudioFrame(RemoteTrackPublication track, Participant participant,
+                            short[] samples, int sampleRate, int channels,
+                            int samplesPerChannel) {
+        AudioFrame frame = new AudioFrame(samples, sampleRate, channels, samplesPerChannel);
+        dispatchFrame(listener -> listener.onAudioFrame(track, participant, frame));
+    }
+
+    void onNativeVideoFrame(RemoteTrackPublication track, Participant participant,
+                            byte[] data, int width, int height, long timestampUs,
+                            Long userTimestampUs, Integer frameId, byte[] userData) {
+        VideoFrame frame = new VideoFrame(data, width, height, timestampUs, userTimestampUs,
+            frameId, userData);
+        dispatchFrame(listener -> listener.onVideoFrame(track, participant, frame));
+    }
+
+    private void dispatchFrame(Consumer<FrameListener> delivery) {
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try {
+            for (FrameListener listener : frameListeners) {
+                try { delivery.accept(listener); }
+                catch (Throwable failure) {
+                    Thread thread = Thread.currentThread();
+                    Thread.UncaughtExceptionHandler handler = thread.getUncaughtExceptionHandler();
+                    if (handler != null) handler.uncaughtException(thread, failure);
+                }
+            }
+        } finally { inCallback.set(previous); }
+    }
+
     @Override public void close() {
         if (inCallback.get()) throw new IllegalStateException("Close the room after its callback returns");
         synchronized (this) {
@@ -736,6 +790,7 @@ public final class Room implements AutoCloseable {
             Native.destroy(old);
             rpcHandlers.clear();
             tokenSource = null;
+            frameListeners.clear();
         } finally {
             synchronized (this) { closing = false; notifyAll(); }
         }

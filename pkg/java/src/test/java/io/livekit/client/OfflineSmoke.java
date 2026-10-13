@@ -30,6 +30,36 @@ public final class OfflineSmoke {
             room.onNativeTrack(4, new RemoteTrackPublication("remote", "track-1", "mic",
                 "audio/opus", 1, 1, false, 0, 0), 0);
             if (subscribed.get() != 1) throw new AssertionError("Track listener was not called");
+            java.util.concurrent.atomic.AtomicReference<AudioFrame> receivedAudio =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<VideoFrame> receivedVideo =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Room.FrameListener frameListener = new Room.FrameListener() {
+                @Override public void onAudioFrame(RemoteTrackPublication track,
+                                                   Participant participant, AudioFrame frame) {
+                    receivedAudio.set(frame);
+                }
+                @Override public void onVideoFrame(RemoteTrackPublication track,
+                                                   Participant participant, VideoFrame frame) {
+                    receivedVideo.set(frame);
+                }
+            };
+            room.addFrameListener(frameListener);
+            RemoteTrackPublication frameTrack = new RemoteTrackPublication("remote", "frame-1",
+                "camera", "video/vp8", 2, 2, false, 640, 480);
+            Participant frameParticipant = new Participant("p-1", "remote", "name", "");
+            room.onNativeAudioFrame(frameTrack, frameParticipant, new short[] {1, 2}, 48000, 1, 2);
+            room.onNativeVideoFrame(frameTrack, frameParticipant, new byte[] {3, 4}, 2, 2,
+                123, 456L, 7, new byte[] {8});
+            if (receivedAudio.get().samples()[1] != 2 ||
+                receivedVideo.get().userTimestampUs() != 456L ||
+                receivedVideo.get().userData()[0] != 8)
+                throw new AssertionError("Media frame listener failed");
+            room.removeFrameListener(frameListener);
+            receivedAudio.set(null);
+            room.onNativeAudioFrame(frameTrack, frameParticipant, new short[] {9}, 48000, 1, 1);
+            if (receivedAudio.get() != null)
+                throw new AssertionError("Removed frame listener was called");
             java.util.concurrent.atomic.AtomicReference<LocalTrackPublication> localTrack =
                 new java.util.concurrent.atomic.AtomicReference<>();
             java.util.concurrent.atomic.AtomicInteger localUnpublished =

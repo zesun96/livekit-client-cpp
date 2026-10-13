@@ -26,6 +26,7 @@ final class Native {
     static native void stopTrace();
     static native long create(Room room);
     static native void destroy(long handle);
+    static native void setFrameCallbacksEnabled(long handle, boolean enabled);
     static native void connect(long handle, byte[] url, byte[] token);
     static native void connectWithOptions(long handle, byte[] url, byte[] token, ConnectionOptions options);
     static native void connectWithTokenSource(long handle, byte[][] fields,
