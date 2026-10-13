@@ -68,6 +68,7 @@ before connecting; the native room retains the policy for signaling.
 Connection quality, active speaker, and participant-list updates are available through
 `Room.Listener`; speaker and participant lists are immutable snapshots.
 `Room.Listener` also reports SIP DTMF, data channel backpressure, and E2EE cryptor state.
+E2EE controls include shared and participant keys, key removal, ratcheting, and the data key index.
 Room update and move callbacks provide a detached `RoomSnapshot`.
 DataTrack publish and unpublish callbacks include detached schema and encoding metadata;
 `onDataTrackFrame` supplies copied frame bytes and optional user timestamps.

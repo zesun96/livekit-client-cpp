@@ -2368,6 +2368,10 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_unregisterRpc(JNIEnv* env, 
 JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_e2eeEnabled(JNIEnv*, jclass, jlong ptr) {
 	return lk_room_e2ee_is_enabled(handle(ptr)->room) ? JNI_TRUE : JNI_FALSE;
 }
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_e2eeConfigured(JNIEnv*, jclass,
+                                                                        jlong ptr) {
+	return lk_room_e2ee_is_configured(handle(ptr)->room) ? JNI_TRUE : JNI_FALSE;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_setE2eeEnabled(JNIEnv* env, jclass, jlong ptr,
                                                                     jboolean enabled) {
 	fail(env, lk_room_e2ee_set_enabled(handle(ptr)->room, enabled ? 1 : 0));
@@ -2391,6 +2395,76 @@ JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_exportSharedKey(JNIEn
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_ratchetSharedKey(JNIEnv* env, jclass,
                                                                       jlong ptr, jint index) {
 	fail(env, lk_room_e2ee_ratchet_shared_key(handle(ptr)->room, static_cast<size_t>(index)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_removeSharedKey(JNIEnv* env, jclass, jlong ptr,
+                                                                     jint index) {
+	fail(env, lk_room_e2ee_remove_shared_key(handle(ptr)->room, static_cast<size_t>(index)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setParticipantKey(JNIEnv* env, jclass,
+                                                                       jlong ptr,
+                                                                       jbyteArray identity,
+                                                                       jbyteArray key, jint index) {
+	std::string who = bytes(env, identity), secret = bytes(env, key);
+	if (env->ExceptionCheck())
+		return;
+	fail(env, lk_room_e2ee_set_participant_key(handle(ptr)->room, who.c_str(),
+	                                           reinterpret_cast<const uint8_t*>(secret.data()),
+	                                           secret.size(), static_cast<size_t>(index)));
+}
+JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_exportParticipantKey(JNIEnv* env, jclass,
+                                                                                jlong ptr,
+                                                                                jbyteArray identity,
+                                                                                jint index) {
+	std::string who = bytes(env, identity);
+	if (env->ExceptionCheck())
+		return nullptr;
+	lk_room_t* room = handle(ptr)->room;
+	size_t n = lk_room_e2ee_export_participant_key(room, who.c_str(), static_cast<size_t>(index),
+	                                               nullptr, 0);
+	if (n > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "E2EE key is too large");
+		return nullptr;
+	}
+	std::vector<uint8_t> data(n);
+	if (n != 0)
+		lk_room_e2ee_export_participant_key(room, who.c_str(), static_cast<size_t>(index),
+		                                    data.data(), data.size());
+	return array(env, data.data(), data.size());
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_ratchetParticipantKey(JNIEnv* env, jclass,
+                                                                           jlong ptr,
+                                                                           jbyteArray identity,
+                                                                           jint index) {
+	std::string who = bytes(env, identity);
+	if (!env->ExceptionCheck())
+		fail(env, lk_room_e2ee_ratchet_participant_key(handle(ptr)->room, who.c_str(),
+		                                               static_cast<size_t>(index)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_removeParticipantKey(JNIEnv* env, jclass,
+                                                                          jlong ptr,
+                                                                          jbyteArray identity,
+                                                                          jint index) {
+	std::string who = bytes(env, identity);
+	if (!env->ExceptionCheck())
+		fail(env, lk_room_e2ee_remove_participant_key(handle(ptr)->room, who.c_str(),
+		                                              static_cast<size_t>(index)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_removeParticipantKeys(JNIEnv* env, jclass,
+                                                                           jlong ptr,
+                                                                           jbyteArray identity) {
+	std::string who = bytes(env, identity);
+	if (!env->ExceptionCheck())
+		fail(env, lk_room_e2ee_remove_participant_keys(handle(ptr)->room, who.c_str()));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_clearE2eeKeys(JNIEnv* env, jclass, jlong ptr) {
+	fail(env, lk_room_e2ee_clear_keys(handle(ptr)->room));
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_dataKeyIndex(JNIEnv*, jclass, jlong ptr) {
+	return bounded_long(lk_room_e2ee_data_key_index(handle(ptr)->room));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setDataKeyIndex(JNIEnv* env, jclass, jlong ptr,
+                                                                     jlong index) {
+	fail(env, lk_room_e2ee_set_data_key_index(handle(ptr)->room, static_cast<size_t>(index)));
 }
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createAudioSource(JNIEnv* env, jclass,
                                                                         jint sampleRate,

@@ -75,10 +75,20 @@ final class Native {
     static native void registerRpc(long handle, byte[] method);
     static native void unregisterRpc(long handle, byte[] method);
     static native boolean e2eeEnabled(long handle);
+    static native boolean e2eeConfigured(long handle);
     static native void setE2eeEnabled(long handle, boolean enabled);
     static native void setSharedKey(long handle, byte[] key, int index);
     static native byte[] exportSharedKey(long handle, int index);
     static native void ratchetSharedKey(long handle, int index);
+    static native void removeSharedKey(long handle, int index);
+    static native void setParticipantKey(long handle, byte[] identity, byte[] key, int index);
+    static native byte[] exportParticipantKey(long handle, byte[] identity, int index);
+    static native void ratchetParticipantKey(long handle, byte[] identity, int index);
+    static native void removeParticipantKey(long handle, byte[] identity, int index);
+    static native void removeParticipantKeys(long handle, byte[] identity);
+    static native void clearE2eeKeys(long handle);
+    static native long dataKeyIndex(long handle);
+    static native void setDataKeyIndex(long handle, long index);
     static native long createAudioSource(int sampleRate, int channels, int queueMs);
     static native long createDeviceAudioSource(int kind, byte[] deviceId, int queueMs,
                                                boolean echoCancellation, boolean autoGainControl,

@@ -19,6 +19,16 @@ public final class OfflineSmoke {
             throw new AssertionError("Conflicting remote track settings were accepted");
         } catch (IllegalArgumentException expected) { }
         try (Room room = new Room()) {
+            if (room.e2eeConfigured() || room.dataKeyIndex() != 0)
+                throw new AssertionError("Unconfigured E2EE state is incorrect");
+            try {
+                room.setSharedKey(new byte[32], -1);
+                throw new AssertionError("Negative E2EE key index was accepted");
+            } catch (IllegalArgumentException expected) { }
+            try {
+                room.setParticipantKey("peer", new byte[32], 0);
+                throw new AssertionError("Unconfigured participant key was accepted");
+            } catch (LiveKitException expected) { }
             java.util.concurrent.atomic.AtomicInteger subscribed =
                 new java.util.concurrent.atomic.AtomicInteger();
             room.addListener(new Room.Listener() {

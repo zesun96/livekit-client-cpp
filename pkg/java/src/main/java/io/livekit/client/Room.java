@@ -546,11 +546,48 @@ public final class Room implements AutoCloseable {
         finally { inCallback.set(previous); }
     }
 
+    private static int keyIndex(int index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        return index;
+    }
+
+    public boolean e2eeConfigured() { return withHandle(Native::e2eeConfigured); }
     public boolean e2eeEnabled() { return withHandle(Native::e2eeEnabled); }
     public void setE2eeEnabled(boolean enabled) { useHandle(h -> Native.setE2eeEnabled(h, enabled)); }
-    public void setSharedKey(byte[] key, int index) { useHandle(h -> Native.setSharedKey(h, key, index)); }
-    public byte[] exportSharedKey(int index) { return withHandle(h -> Native.exportSharedKey(h, index)); }
-    public void ratchetSharedKey(int index) { useHandle(h -> Native.ratchetSharedKey(h, index)); }
+    public void setSharedKey(byte[] key, int index) { useHandle(h -> Native.setSharedKey(h,
+        Objects.requireNonNull(key), keyIndex(index))); }
+    public byte[] exportSharedKey(int index) { return withHandle(h -> Native.exportSharedKey(h,
+        keyIndex(index))); }
+    public void ratchetSharedKey(int index) { useHandle(h -> Native.ratchetSharedKey(h,
+        keyIndex(index))); }
+    public void removeSharedKey(int index) { useHandle(h -> Native.removeSharedKey(h,
+        keyIndex(index))); }
+    public void setParticipantKey(String identity, byte[] key, int index) {
+        useHandle(h -> Native.setParticipantKey(h, Native.utf8(Objects.requireNonNull(identity)),
+            Objects.requireNonNull(key), keyIndex(index)));
+    }
+    public byte[] exportParticipantKey(String identity, int index) {
+        return withHandle(h -> Native.exportParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void ratchetParticipantKey(String identity, int index) {
+        useHandle(h -> Native.ratchetParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void removeParticipantKey(String identity, int index) {
+        useHandle(h -> Native.removeParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void removeParticipantKeys(String identity) {
+        useHandle(h -> Native.removeParticipantKeys(h,
+            Native.utf8(Objects.requireNonNull(identity))));
+    }
+    public void clearE2eeKeys() { useHandle(Native::clearE2eeKeys); }
+    public long dataKeyIndex() { return withHandle(Native::dataKeyIndex); }
+    public void setDataKeyIndex(long index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        useHandle(h -> Native.setDataKeyIndex(h, index));
+    }
 
     private void onNativeEvent(int event, int value, Participant participant, DataPacket packet) {
         dispatch(listener -> {
