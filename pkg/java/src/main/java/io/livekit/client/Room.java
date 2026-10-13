@@ -606,6 +606,9 @@ public final class Room implements AutoCloseable {
         return withHandle(h -> Native.setParticipantE2eeEnabled(h,
             Native.utf8(Objects.requireNonNull(identity)), enabled));
     }
+    public List<EncryptionState> frameCryptors() {
+        return withHandle(h -> List.of(Native.frameCryptors(h)));
+    }
 
     private void onNativeEvent(int event, int value, Participant participant, DataPacket packet) {
         dispatch(listener -> {

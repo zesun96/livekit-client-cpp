@@ -2499,6 +2499,64 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_setParticipantE2eeEnabled(
 	}
 	return bounded_long(updated);
 }
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_frameCryptors(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	lk_frame_cryptor_list_t* raw = nullptr;
+	lk_status_t status = lk_frame_cryptor_list_create(handle(ptr)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_frame_cryptor_list_t, decltype(&lk_frame_cryptor_list_destroy)> cryptors(
+	    raw, lk_frame_cryptor_list_destroy);
+	const size_t count = lk_frame_cryptor_list_count(cryptors.get());
+	if (count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "Too many frame cryptors");
+		return nullptr;
+	}
+	jclass cls = env->FindClass("io/livekit/client/EncryptionState");
+	if (cls == nullptr)
+		return nullptr;
+	jmethodID ctor =
+	    env->GetMethodID(cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;IIZJI)V");
+	if (ctor == nullptr)
+		return nullptr;
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
+	for (size_t i = 0; result != nullptr && i < count && !env->ExceptionCheck(); ++i) {
+		if (env->PushLocalFrame(16) != JNI_OK)
+			return nullptr;
+		lk_frame_cryptor_info_t info;
+		lk_frame_cryptor_info_init(&info);
+		status = lk_frame_cryptor_list_info(cryptors.get(), i, &info);
+		if (status != LK_STATUS_OK) {
+			env->PopLocalFrame(nullptr);
+			fail(env, status);
+			return nullptr;
+		}
+		jbyteArray raw_track = getter(env, [&](char* p, size_t n) {
+			return lk_frame_cryptor_list_track_id(cryptors.get(), i, p, n);
+		});
+		jbyteArray raw_identity =
+		    env->ExceptionCheck() ? nullptr : getter(env, [&](char* p, size_t n) {
+			    return lk_frame_cryptor_list_participant_identity(cryptors.get(), i, p, n);
+		    });
+		std::string track = raw_track == nullptr ? "" : bytes(env, raw_track);
+		std::string identity = raw_identity == nullptr ? "" : bytes(env, raw_identity);
+		jstring track_id = env->ExceptionCheck() ? nullptr : string(env, track.c_str());
+		jstring who = env->ExceptionCheck() ? nullptr : string(env, identity.c_str());
+		jobject item =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObject(cls, ctor, track_id, who, static_cast<jint>(info.kind),
+		                         static_cast<jint>(info.direction),
+		                         info.enabled ? JNI_TRUE : JNI_FALSE, bounded_long(info.key_index),
+		                         static_cast<jint>(info.state));
+		if (item != nullptr && !env->ExceptionCheck())
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		env->PopLocalFrame(nullptr);
+	}
+	return env->ExceptionCheck() ? nullptr : result;
+}
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createAudioSource(JNIEnv* env, jclass,
                                                                         jint sampleRate,
                                                                         jint channels,

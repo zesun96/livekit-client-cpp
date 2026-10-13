@@ -37,6 +37,10 @@ public final class OfflineSmoke {
                 room.setParticipantE2eeEnabled("peer", true);
                 throw new AssertionError("Unconfigured participant E2EE update was accepted");
             } catch (LiveKitException expected) { }
+            try {
+                room.frameCryptors();
+                throw new AssertionError("Unconfigured frame cryptor snapshot was accepted");
+            } catch (LiveKitException expected) { }
             java.util.concurrent.atomic.AtomicInteger subscribed =
                 new java.util.concurrent.atomic.AtomicInteger();
             room.addListener(new Room.Listener() {

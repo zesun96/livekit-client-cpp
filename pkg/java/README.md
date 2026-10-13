@@ -71,6 +71,7 @@ Connection quality, active speaker, and participant-list updates are available t
 E2EE controls include shared and participant keys, key removal, ratcheting, and the data key index.
 Frame cryptors can be enabled per track and direction, switched to another key index, or enabled
 for all tracks from one participant.
+`Room.frameCryptors()` returns detached cryptor state snapshots when E2EE is configured.
 Room update and move callbacks provide a detached `RoomSnapshot`.
 DataTrack publish and unpublish callbacks include detached schema and encoding metadata;
 `onDataTrackFrame` supplies copied frame bytes and optional user timestamps.

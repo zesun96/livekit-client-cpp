@@ -94,6 +94,7 @@ final class Native {
     static native void setFrameCryptorKeyIndex(long handle, byte[] trackId, int direction,
                                                long index);
     static native long setParticipantE2eeEnabled(long handle, byte[] identity, boolean enabled);
+    static native EncryptionState[] frameCryptors(long handle);
     static native long createAudioSource(int sampleRate, int channels, int queueMs);
     static native long createDeviceAudioSource(int kind, byte[] deviceId, int queueMs,
                                                boolean echoCancellation, boolean autoGainControl,
