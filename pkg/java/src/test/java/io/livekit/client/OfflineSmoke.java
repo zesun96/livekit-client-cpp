@@ -73,7 +73,14 @@ public final class OfflineSmoke {
                 null, java.util.List.of(), null, -1L, 1024, false, false, 0);
             throw new AssertionError("Negative stream size was accepted");
         } catch (IllegalArgumentException expected) { }
+        DataSendOptions sendOptions = new DataSendOptions("topic", null, null,
+            java.util.List.of("peer"), java.util.Map.of("language", "en"), "reply",
+            java.util.List.of("attachment"), 1024, true);
         try (Room room = new Room()) {
+            try {
+                room.sendText("offline", sendOptions);
+                throw new AssertionError("Disconnected text send was accepted");
+            } catch (LiveKitException expected) { }
             try {
                 room.streamText(streamOptions);
                 throw new AssertionError("Disconnected text stream was accepted");

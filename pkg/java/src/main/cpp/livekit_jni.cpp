@@ -2255,6 +2255,103 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendFile(JNIEnv* env, jclas
 	std::string v = bytes(env, value);
 	fail(env, lk_room_send_file(handle(ptr)->room, v.c_str(), nullptr));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_sendWithOptions(
+    JNIEnv* env, jclass, jlong ptr, jint kind, jbyteArray value, jobjectArray fields,
+    jobjectArray destinations, jobjectArray attributeKeys, jobjectArray attributeValues,
+    jobjectArray attachedStreamIds, jint chunkSize, jboolean compress) {
+	if (kind < 0 || kind > 2 || fields == nullptr || env->GetArrayLength(fields) != 4 ||
+	    destinations == nullptr || attributeKeys == nullptr || attributeValues == nullptr ||
+	    attachedStreamIds == nullptr ||
+	    env->GetArrayLength(attributeKeys) != env->GetArrayLength(attributeValues)) {
+		fail(env, LK_STATUS_INVALID_ARGUMENT);
+		return;
+	}
+	auto read = [env](jobjectArray source) {
+		std::vector<std::string> result;
+		for (jsize i = 0; i < env->GetArrayLength(source); ++i) {
+			auto* part = static_cast<jbyteArray>(env->GetObjectArrayElement(source, i));
+			result.push_back(bytes(env, part));
+			if (part != nullptr)
+				env->DeleteLocalRef(part);
+		}
+		return result;
+	};
+	auto pointers = [](const std::vector<std::string>& source) {
+		std::vector<const char*> result;
+		for (const auto& part : source)
+			result.push_back(part.c_str());
+		return result;
+	};
+	auto field_values = read(fields);
+	auto identities = read(destinations);
+	auto destination_pointers = pointers(identities);
+	auto attachment_ids = read(attachedStreamIds);
+	auto attachment_pointers = pointers(attachment_ids);
+	auto keys = read(attributeKeys);
+	auto values = read(attributeValues);
+	std::vector<lk_attribute_t> attributes;
+	for (size_t i = 0; i < keys.size(); ++i)
+		attributes.push_back({keys[i].c_str(), values[i].c_str()});
+	auto field = [&](jsize index) {
+		auto* item = env->GetObjectArrayElement(fields, index);
+		bool present = item != nullptr;
+		if (item != nullptr)
+			env->DeleteLocalRef(item);
+		return present ? field_values[static_cast<size_t>(index)].c_str() : nullptr;
+	};
+	const char* topic = field(0);
+	const char* mime_type = field(1);
+	const char* name = field(2);
+	const char* reply_to = field(3);
+	std::string payload = bytes(env, value);
+	if (kind == 0) {
+		lk_text_send_options_t options;
+		lk_text_send_options_init(&options);
+		options.topic = topic;
+		options.destination_identities = destination_pointers.data();
+		options.destination_identity_count = destination_pointers.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.reply_to_stream_id = reply_to;
+		options.attached_stream_ids = attachment_pointers.data();
+		options.attached_stream_id_count = attachment_pointers.size();
+		options.chunk_size = static_cast<size_t>(chunkSize);
+		options.compress = compress == JNI_TRUE;
+		fail(env, lk_room_send_text(handle(ptr)->room, payload.c_str(), &options));
+		return;
+	}
+	if (kind == 1) {
+		lk_byte_send_options_t options;
+		lk_byte_send_options_init(&options);
+		options.topic = topic;
+		if (mime_type != nullptr)
+			options.mime_type = mime_type;
+		options.name = name;
+		options.destination_identities = destination_pointers.data();
+		options.destination_identity_count = destination_pointers.size();
+		options.attributes = attributes.data();
+		options.attribute_count = attributes.size();
+		options.chunk_size = static_cast<size_t>(chunkSize);
+		options.compress = compress == JNI_TRUE;
+		fail(env,
+		     lk_room_send_bytes(handle(ptr)->room, reinterpret_cast<const uint8_t*>(payload.data()),
+		                        payload.size(), &options));
+		return;
+	}
+	lk_file_send_options_t options;
+	lk_file_send_options_init(&options);
+	if (topic != nullptr)
+		options.topic = topic;
+	if (mime_type != nullptr)
+		options.mime_type = mime_type;
+	options.destination_identities = destination_pointers.data();
+	options.destination_identity_count = destination_pointers.size();
+	options.attributes = attributes.data();
+	options.attribute_count = attributes.size();
+	options.chunk_size = static_cast<size_t>(chunkSize);
+	options.compress = compress == JNI_TRUE;
+	fail(env, lk_room_send_file(handle(ptr)->room, payload.c_str(), &options));
+}
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createStreamWriter(
     JNIEnv* env, jclass, jlong room, jboolean text, jobjectArray fields, jobjectArray destinations,
     jobjectArray attributeKeys, jobjectArray attributeValues, jobjectArray attachedStreamIds,

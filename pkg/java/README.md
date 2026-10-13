@@ -103,6 +103,9 @@ Closing the room cancels any remaining writers.
 The `StreamWriterOptions` overloads set destinations, attributes, stream ID, total size, chunk
 size, and compression. Text streams can also set a reply ID, attached stream IDs, update flag,
 and version. The shorter overloads retain the default 15,000 byte chunk size.
+The `DataSendOptions` overloads of `sendText`, `sendBytes`, and `sendFile` expose destinations,
+attributes, chunk size, and compression. Text sends also support replies and attachments;
+byte sends support MIME type and name; file sends support MIME type.
 `sendChatMessage` returns the message ID and original timestamp; pass that value to
 `editChatMessage` to edit it later. `sendChat` still returns just the ID.
 Register an incoming topic with `registerTextStreamHandler` or `registerByteStreamHandler` and

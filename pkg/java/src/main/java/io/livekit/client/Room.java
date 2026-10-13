@@ -544,6 +544,42 @@ public final class Room implements AutoCloseable {
     public void sendText(String text) { useHandle(h -> Native.sendText(h, Native.utf8(Objects.requireNonNull(text)))); }
     public void sendBytes(byte[] data) { useHandle(h -> Native.sendBytes(h, Objects.requireNonNull(data))); }
     public void sendFile(String path) { useHandle(h -> Native.sendFile(h, Native.utf8(Objects.requireNonNull(path)))); }
+    public void sendText(String text, DataSendOptions options) {
+        Objects.requireNonNull(options);
+        if (options.mimeType() != null || options.name() != null)
+            throw new IllegalArgumentException("Byte stream fields cannot be used for text");
+        sendWithOptions(0, Native.utf8(Objects.requireNonNull(text)), options);
+    }
+    public void sendBytes(byte[] data, DataSendOptions options) {
+        requireNoTextFields(options);
+        sendWithOptions(1, Objects.requireNonNull(data), options);
+    }
+    public void sendFile(String path, DataSendOptions options) {
+        requireNoTextFields(options);
+        if (options.name() != null) throw new IllegalArgumentException("File name comes from path");
+        sendWithOptions(2, Native.utf8(Objects.requireNonNull(path)), options);
+    }
+    private static void requireNoTextFields(DataSendOptions options) {
+        Objects.requireNonNull(options);
+        if (options.replyToStreamId() != null || !options.attachedStreamIds().isEmpty())
+            throw new IllegalArgumentException("Text stream fields cannot be used here");
+    }
+    private void sendWithOptions(int kind, byte[] value, DataSendOptions options) {
+        Objects.requireNonNull(options);
+        byte[][] keys = new byte[options.attributes().size()][];
+        byte[][] values = new byte[keys.length][];
+        int index = 0;
+        for (var entry : options.attributes().entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        byte[][] fields = { Native.utf8(options.topic()), Native.utf8(options.mimeType()),
+            Native.utf8(options.name()), Native.utf8(options.replyToStreamId()) };
+        useHandle(h -> Native.sendWithOptions(h, kind, value, fields,
+            encodeDestinations(options.destinations().toArray(String[]::new)), keys, values,
+            encodeDestinations(options.attachedStreamIds().toArray(String[]::new)),
+            options.chunkSize(), options.compress()));
+    }
     public void publishDtmf(int code, String digit) { useHandle(h -> Native.sendDtmf(h, code, Native.utf8(digit))); }
     public String sendChat(String message) { return sendChatMessage(message).id(); }
     public SentChatMessage sendChatMessage(String message) {

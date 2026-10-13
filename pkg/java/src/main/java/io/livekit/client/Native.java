@@ -53,6 +53,10 @@ final class Native {
     static native void sendText(long handle, byte[] text);
     static native void sendBytes(long handle, byte[] data);
     static native void sendFile(long handle, byte[] path);
+    static native void sendWithOptions(long handle, int kind, byte[] value, byte[][] fields,
+                                       byte[][] destinations, byte[][] attributeKeys,
+                                       byte[][] attributeValues, byte[][] attachedStreamIds,
+                                       int chunkSize, boolean compress);
     static native long createStreamWriter(long room, boolean text, byte[][] fields,
                                           byte[][] destinations, byte[][] attributeKeys,
                                           byte[][] attributeValues, byte[][] attachedStreamIds,
