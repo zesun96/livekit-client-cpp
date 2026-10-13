@@ -9,7 +9,8 @@ public record StreamWriterOptions(String topic, String mimeType, String name,
                                   List<String> destinations, Map<String, String> attributes,
                                   String replyToStreamId, List<String> attachedStreamIds,
                                   String streamId, Long totalSize, int chunkSize,
-                                  boolean compress, boolean update, int version) {
+                                  boolean compress, boolean update, int version,
+                                  StreamWriterListener listener) {
     public StreamWriterOptions {
         destinations = List.copyOf(Objects.requireNonNull(destinations));
         attributes = Map.copyOf(Objects.requireNonNull(attributes));
@@ -18,8 +19,17 @@ public record StreamWriterOptions(String topic, String mimeType, String name,
         if (chunkSize < 1) throw new IllegalArgumentException("Invalid chunk size");
     }
 
+    public StreamWriterOptions(String topic, String mimeType, String name,
+                               List<String> destinations, Map<String, String> attributes,
+                               String replyToStreamId, List<String> attachedStreamIds,
+                               String streamId, Long totalSize, int chunkSize,
+                               boolean compress, boolean update, int version) {
+        this(topic, mimeType, name, destinations, attributes, replyToStreamId, attachedStreamIds,
+            streamId, totalSize, chunkSize, compress, update, version, null);
+    }
+
     public StreamWriterOptions(String topic) {
         this(topic, null, null, List.of(), Map.of(), null, List.of(), null, null, 15000,
-            false, false, 0);
+            false, false, 0, null);
     }
 }

@@ -160,7 +160,8 @@ public final class Room implements AutoCloseable {
     public TextStreamWriter streamText(StreamWriterOptions options) {
         Objects.requireNonNull(options);
         return withHandle(h -> {
-            TextStreamWriter writer = new TextStreamWriter(this, createStreamWriter(h, true, options));
+            TextStreamWriter writer = new TextStreamWriter(this, createStreamWriter(h, true, options),
+                options.listener(), options.totalSize());
             textWriters.add(writer);
             return writer;
         });
@@ -178,7 +179,8 @@ public final class Room implements AutoCloseable {
             options.update() || options.version() != 0)
             throw new IllegalArgumentException("Text stream options cannot be used for byte streams");
         return withHandle(h -> {
-            ByteStreamWriter writer = new ByteStreamWriter(this, createStreamWriter(h, false, options));
+            ByteStreamWriter writer = new ByteStreamWriter(this, createStreamWriter(h, false, options),
+                options.listener(), options.totalSize());
             byteWriters.add(writer);
             return writer;
         });

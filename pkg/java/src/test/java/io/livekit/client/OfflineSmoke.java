@@ -83,6 +83,23 @@ public final class OfflineSmoke {
         writerAttributes.clear();
         if (!"en".equals(writerInfo.attributes().get("language")))
             throw new AssertionError("Writer metadata was not copied");
+        java.util.concurrent.atomic.AtomicLong sentBytes = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicReference<StreamCompletion> completed =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        StreamWriterCallbacks callbacks = new StreamWriterCallbacks(new StreamWriterListener() {
+            @Override public void onProgress(long bytesSent, Long totalSize) {
+                if (totalSize != 5L) throw new AssertionError("Wrong stream total size");
+                sentBytes.set(bytesSent);
+            }
+            @Override public void onComplete(StreamCompletion result) { completed.set(result); }
+        }, 5L);
+        callbacks.wrote(2);
+        callbacks.wrote(3);
+        callbacks.complete(0, "stream", "", 0);
+        callbacks.complete(1, "stream", "cancelled", 0);
+        if (sentBytes.get() != 5 || completed.get().status() != 0 ||
+            completed.get().bytesSent() != 5)
+            throw new AssertionError("Stream writer callbacks lost progress or completion");
         try (Room room = new Room()) {
             if (!new TextStreamWriter(room, 0).isClosed() ||
                 !new ByteStreamWriter(room, 0).isClosed())

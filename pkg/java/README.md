@@ -107,6 +107,9 @@ The `StreamWriterOptions` overloads set destinations, attributes, stream ID, tot
 size, and compression. Text streams can also set a reply ID, attached stream IDs, update flag,
 and version. The shorter overloads retain the default 15,000 byte chunk size.
 Writer `info()` returns a detached metadata snapshot and `isClosed()` reports its current state.
+Pass a `StreamWriterListener` in `StreamWriterOptions` to receive progress after successful writes
+and one completion result after close, cancel, write failure, or room shutdown. Listener methods
+run on the calling thread; failures are sent to that thread's uncaught exception handler.
 The `DataSendOptions` overloads of `sendText`, `sendBytes`, and `sendFile` expose destinations,
 attributes, chunk size, and compression. Text sends also support replies and attachments;
 byte sends support MIME type and name; file sends support MIME type.
