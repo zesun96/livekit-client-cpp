@@ -40,6 +40,8 @@ local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
 connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
 snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
+`E2eeOptions` also exposes unencrypted magic bytes, ratchet window, failure tolerance, and key
+ring size; the shorter constructors retain SDK defaults.
 Incoming incremental text/byte events can be registered by topic. DataTrack schemas and custom
 frame encodings are supported. Diagnostics exposes process-wide log levels and JSON tracing.
 `Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.

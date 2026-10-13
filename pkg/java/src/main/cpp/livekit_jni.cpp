@@ -1727,7 +1727,7 @@ void with_connect_options(JNIEnv* env, jobject config,
 	}
 	options.ice_servers = servers.data();
 	options.ice_server_count = servers.size();
-	std::string key, salt;
+	std::string key, salt, magic;
 	lk_e2ee_options_t e2ee;
 	lk_e2ee_options_init(&e2ee);
 	jmethodID get_e2ee = env->GetMethodID(cls, "e2ee", "()Lio/livekit/client/E2eeOptions;");
@@ -1738,8 +1738,11 @@ void with_connect_options(JNIEnv* env, jobject config,
 		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "sharedKey", "()[B")));
 		jbyteArray raw_salt = static_cast<jbyteArray>(
 		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "ratchetSalt", "()[B")));
+		jbyteArray raw_magic = static_cast<jbyteArray>(env->CallObjectMethod(
+		    encryption, env->GetMethodID(e2ee_cls, "unencryptedMagicBytes", "()[B")));
 		key = bytes(env, raw_key);
 		salt = bytes(env, raw_salt);
+		magic = bytes(env, raw_magic);
 		e2ee.enabled = env->CallBooleanMethod(
 		                   encryption, env->GetMethodID(e2ee_cls, "enabled", "()Z")) == JNI_TRUE
 		                   ? 1
@@ -1750,9 +1753,18 @@ void with_connect_options(JNIEnv* env, jobject config,
 		e2ee.shared_key_size = key.size();
 		e2ee.ratchet_salt = reinterpret_cast<const uint8_t*>(salt.data());
 		e2ee.ratchet_salt_size = salt.size();
+		e2ee.unencrypted_magic_bytes = reinterpret_cast<const uint8_t*>(magic.data());
+		e2ee.unencrypted_magic_bytes_size = magic.size();
+		e2ee.ratchet_window_size = static_cast<size_t>(
+		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "ratchetWindowSize", "()I")));
+		e2ee.failure_tolerance =
+		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "failureTolerance", "()I"));
+		e2ee.key_ring_size = static_cast<size_t>(
+		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "keyRingSize", "()I")));
 		options.e2ee_options = &e2ee;
 		env->DeleteLocalRef(raw_key);
 		env->DeleteLocalRef(raw_salt);
+		env->DeleteLocalRef(raw_magic);
 		env->DeleteLocalRef(e2ee_cls);
 		env->DeleteLocalRef(encryption);
 	}

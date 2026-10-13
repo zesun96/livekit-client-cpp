@@ -18,6 +18,13 @@ public final class OfflineSmoke {
             new RemoteTrackSettings(true, 2, 640, 480, 0, 0);
             throw new AssertionError("Conflicting remote track settings were accepted");
         } catch (IllegalArgumentException expected) { }
+        byte[] magic = {1, 2};
+        E2eeOptions detailedE2ee = new E2eeOptions(new byte[32], new byte[16], true, 0,
+            magic, 32, 2, 8);
+        magic[0] = 9;
+        if (detailedE2ee.unencryptedMagicBytes()[0] != 1 ||
+            detailedE2ee.ratchetWindowSize() != 32 || detailedE2ee.keyRingSize() != 8)
+            throw new AssertionError("E2EE settings were not retained");
         try (Room room = new Room()) {
             if (room.e2eeConfigured() || room.dataKeyIndex() != 0)
                 throw new AssertionError("Unconfigured E2EE state is incorrect");
@@ -303,7 +310,7 @@ public final class OfflineSmoke {
             }
             ConnectionOptions options = new ConnectionOptions(true, false, false, 3, 15_000,
                 new IceServer[] { new IceServer(new String[] { "stun:example.invalid:3478" }, "u", "p") },
-                3, 1, new E2eeOptions(new byte[32], new byte[16]));
+                3, 1, detailedE2ee);
             try {
                 room.connect("", "", options);
                 throw new AssertionError("Empty URL was accepted");
