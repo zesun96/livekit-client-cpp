@@ -74,6 +74,7 @@ final class Native {
     static native void editChat(long handle, byte[] messageId, long originalTimestamp,
                                 byte[] message);
     static native Participant[] remoteParticipants(long handle);
+    static native Participant localParticipant(long handle);
     static native void setTrackSubscribed(long handle, byte[] participantSid, byte[] trackSid, boolean subscribed);
     static native void updateRemoteTrackSettings(long handle, byte[] participantSid,
                                                   byte[] trackSid, boolean enabled, int videoQuality,

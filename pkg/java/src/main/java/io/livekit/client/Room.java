@@ -596,6 +596,7 @@ public final class Room implements AutoCloseable {
             Native.utf8(Objects.requireNonNull(message))));
     }
     public List<Participant> remoteParticipants() { return withHandle(h -> List.of(Native.remoteParticipants(h))); }
+    public Participant localParticipant() { return withHandle(Native::localParticipant); }
 
     public void setTrackSubscribed(String participantSid, String trackSid, boolean subscribed) {
         useHandle(h -> Native.setTrackSubscribed(h, Native.utf8(participantSid), Native.utf8(trackSid), subscribed));

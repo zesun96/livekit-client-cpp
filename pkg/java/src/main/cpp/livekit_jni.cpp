@@ -155,12 +155,15 @@ jobject participant(JNIEnv* env, RoomHandle* h, const lk_participant_info_t* val
 	jclass cls = h->participant_class;
 	jmethodID ctor = env->GetMethodID(
 	    cls, "<init>",
-	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;FIZZ)V");
 	jstring sid = string(env, value->sid);
 	jstring identity = string(env, value->identity);
 	jstring name = string(env, value->name);
 	jstring metadata = string(env, value->metadata);
-	jobject result = env->NewObject(cls, ctor, sid, identity, name, metadata);
+	jobject result = env->NewObject(cls, ctor, sid, identity, name, metadata, value->audio_level,
+	                                static_cast<jint>(value->connection_quality),
+	                                value->is_speaking == 0 ? JNI_FALSE : JNI_TRUE,
+	                                value->is_local == 0 ? JNI_FALSE : JNI_TRUE);
 	env->DeleteLocalRef(sid);
 	env->DeleteLocalRef(identity);
 	env->DeleteLocalRef(name);
@@ -2571,13 +2574,23 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteParticipants(
 	jclass cls = env->FindClass("io/livekit/client/Participant");
 	jmethodID ctor = env->GetMethodID(
 	    cls, "<init>",
-	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;FIZZ)V");
 	size_t count = lk_remote_participant_list_count(list);
 	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
 	for (size_t i = 0; i < count; ++i) {
 		const lk_remote_participant_snapshot_t* p = nullptr;
-		if (lk_remote_participant_list_at(list, i, &p) != LK_STATUS_OK)
-			continue;
+		status = lk_remote_participant_list_at(list, i, &p);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			break;
+		}
+		lk_remote_participant_snapshot_info_t info;
+		lk_remote_participant_snapshot_info_init(&info);
+		status = lk_remote_participant_snapshot_info(p, &info);
+		if (status != LK_STATUS_OK) {
+			fail(env, status);
+			break;
+		}
 		auto read = [env, p](auto fn) {
 			jbyteArray raw = getter(env, [p, fn](char* out, size_t n) { return fn(p, out, n); });
 			std::string v = bytes(env, raw);
@@ -2588,7 +2601,9 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteParticipants(
 		jstring identity = read(lk_remote_participant_snapshot_identity);
 		jstring name = read(lk_remote_participant_snapshot_name);
 		jstring metadata = read(lk_remote_participant_snapshot_metadata);
-		jobject item = env->NewObject(cls, ctor, sid, identity, name, metadata);
+		jobject item = env->NewObject(cls, ctor, sid, identity, name, metadata, info.audio_level,
+		                              static_cast<jint>(info.connection_quality),
+		                              info.is_speaking == 0 ? JNI_FALSE : JNI_TRUE, JNI_FALSE);
 		env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
 		env->DeleteLocalRef(item);
 		env->DeleteLocalRef(sid);
@@ -2598,6 +2613,48 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteParticipants(
 	}
 	env->DeleteLocalRef(cls);
 	lk_remote_participant_list_destroy(list);
+	return result;
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_localParticipant(JNIEnv* env, jclass,
+                                                                         jlong ptr) {
+	lk_local_participant_snapshot_t* snapshot = nullptr;
+	lk_status_t status = lk_room_create_local_participant_snapshot(handle(ptr)->room, &snapshot);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	lk_local_participant_snapshot_info_t info;
+	lk_local_participant_snapshot_info_init(&info);
+	status = lk_local_participant_snapshot_info(snapshot, &info);
+	if (status != LK_STATUS_OK) {
+		lk_local_participant_snapshot_destroy(snapshot);
+		fail(env, status);
+		return nullptr;
+	}
+	auto read = [env, snapshot](auto fn) {
+		jbyteArray raw =
+		    getter(env, [snapshot, fn](char* out, size_t n) { return fn(snapshot, out, n); });
+		std::string value = bytes(env, raw);
+		env->DeleteLocalRef(raw);
+		return string(env, value.c_str());
+	};
+	jstring sid = read(lk_local_participant_snapshot_sid);
+	jstring identity = read(lk_local_participant_snapshot_identity);
+	jstring name = read(lk_local_participant_snapshot_name);
+	jstring metadata = read(lk_local_participant_snapshot_metadata);
+	jclass cls = env->FindClass("io/livekit/client/Participant");
+	jmethodID ctor = env->GetMethodID(
+	    cls, "<init>",
+	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;FIZZ)V");
+	jobject result = env->NewObject(cls, ctor, sid, identity, name, metadata, info.audio_level,
+	                                static_cast<jint>(info.connection_quality),
+	                                info.is_speaking == 0 ? JNI_FALSE : JNI_TRUE, JNI_TRUE);
+	env->DeleteLocalRef(sid);
+	env->DeleteLocalRef(identity);
+	env->DeleteLocalRef(name);
+	env->DeleteLocalRef(metadata);
+	env->DeleteLocalRef(cls);
+	lk_local_participant_snapshot_destroy(snapshot);
 	return result;
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTrackSubscribed(JNIEnv* env, jclass,

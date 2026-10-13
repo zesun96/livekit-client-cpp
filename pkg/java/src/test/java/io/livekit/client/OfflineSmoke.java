@@ -77,6 +77,10 @@ public final class OfflineSmoke {
             java.util.List.of("peer"), java.util.Map.of("language", "en"), "reply",
             java.util.List.of("attachment"), 1024, true);
         try (Room room = new Room()) {
+            Participant localParticipant = room.localParticipant();
+            if (!localParticipant.local() || localParticipant.speaking() ||
+                !room.remoteParticipants().isEmpty())
+                throw new AssertionError("Participant snapshots are incorrect");
             try {
                 room.sendText("offline", sendOptions);
                 throw new AssertionError("Disconnected text send was accepted");

@@ -30,7 +30,8 @@ listeners before connecting. Listeners run on native SDK callback threads, recei
 and should return promptly. Blocking operations have `CompletableFuture` alternatives. The
 binding currently covers room lifecycle and state, local participant identity and profile,
 local participant attributes and recording state,
-remote participant identity snapshots, data messages, basic text/byte/file sending and receiving,
+local and remote participant snapshots with audio level, connection quality and speaking state,
+data messages, basic text/byte/file sending and receiving,
 chat sending and editing, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
 remote track snapshots and bounded audio/video stream readers,
