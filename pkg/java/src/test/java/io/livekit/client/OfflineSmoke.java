@@ -43,6 +43,19 @@ public final class OfflineSmoke {
         if (detailedBytes.data()[0] != 1 ||
             !"sample".equals(detailedBytes.attributes().get("role")))
             throw new AssertionError("Byte message metadata was not copied");
+        TextStreamEvent textChunk = new TextStreamEvent(1, "stream", "topic", "remote",
+            new byte[] {65}, 2, "", "text/plain", 100L, java.util.Map.of("language", "en"),
+            123, "reply", java.util.List.of("attachment"));
+        ByteStreamEvent byteChunk = new ByteStreamEvent(1, "stream", "topic", "remote",
+            "file", "application/octet-stream", new byte[] {1}, 2, "", 100L,
+            java.util.Map.of("role", "sample"), 123);
+        if (!"attachment".equals(textChunk.attachedStreamIds().get(0)) ||
+            textChunk.totalSize() != 100L || byteChunk.totalSize() != 100L ||
+            !"sample".equals(byteChunk.attributes().get("role")))
+            throw new AssertionError("Stream event metadata was lost");
+        byteChunk.content()[0] = 9;
+        if (byteChunk.content()[0] != 1)
+            throw new AssertionError("Stream frame bytes escaped their snapshot");
         try (Room room = new Room()) {
             if (room.e2eeConfigured() || room.dataKeyIndex() != 0)
                 throw new AssertionError("Unconfigured E2EE state is incorrect");

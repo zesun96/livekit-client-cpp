@@ -103,6 +103,8 @@ Closing the room cancels any remaining writers.
 Register an incoming topic with `registerTextStreamHandler` or `registerByteStreamHandler` and
 receive copied open, chunk, closed, and failed events through `Room.Listener`. Unregister the
 topic when it is no longer needed.
+Stream events include MIME type, optional total size, timestamp, and attributes. Text stream
+events also include reply and attached-stream IDs.
 
 `Diagnostics` controls process-wide logging and tracing. Start a JSON trace with
 `startTraceJson(path)` and call `stopTrace()` to flush it. Trace output is written to the given
