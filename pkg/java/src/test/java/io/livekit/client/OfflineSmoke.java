@@ -55,6 +55,25 @@ public final class OfflineSmoke {
             if (!"local-1".equals(localTrack.get().sid()) || localUnpublished.get() != 1 ||
                 localSubscribed.get() != 1)
                 throw new AssertionError("Local track lifecycle event was lost");
+            java.util.concurrent.atomic.AtomicReference<SubscribedQualityChange> qualityChange =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            room.addListener(new Room.Listener() {
+                @Override public void onSubscribedQualityUpdated(SubscribedQualityChange change) {
+                    qualityChange.set(change);
+                }
+            });
+            SubscribedQuality[] incomingQualities = {new SubscribedQuality(2, true)};
+            SubscribedCodec[] incomingCodecs = {new SubscribedCodec("vp8",
+                java.util.List.of(incomingQualities))};
+            room.onNativeSubscribedQuality(localSnapshot,
+                new Participant("participant-1", "local", "name", ""), "local-1", incomingQualities,
+                incomingCodecs);
+            incomingQualities[0] = null;
+            incomingCodecs[0] = null;
+            if (!"local".equals(qualityChange.get().participant().identity()) ||
+                !qualityChange.get().qualities().get(0).enabled() ||
+                !"vp8".equals(qualityChange.get().codecs().get(0).codec()))
+                throw new AssertionError("Subscribed quality update was lost");
             java.util.concurrent.atomic.AtomicInteger failureCode =
                 new java.util.concurrent.atomic.AtomicInteger(-1);
             room.addListener(new Room.Listener() {

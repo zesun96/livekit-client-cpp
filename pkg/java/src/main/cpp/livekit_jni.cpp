@@ -647,6 +647,121 @@ void transcription_event(RoomHandle* h, const lk_transcription_received_t* value
 	});
 }
 
+jobjectArray quality_array(JNIEnv* env, jclass cls, jmethodID constructor,
+                           const lk_subscribed_quality_t* values, size_t count) {
+	if (count > static_cast<size_t>(INT32_MAX) || (count != 0 && values == nullptr))
+		return nullptr;
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
+	for (size_t i = 0; result != nullptr && i < count && !env->ExceptionCheck(); ++i) {
+		jobject item = env->NewObject(cls, constructor, static_cast<jint>(values[i].quality),
+		                              values[i].enabled ? JNI_TRUE : JNI_FALSE);
+		if (item != nullptr && !env->ExceptionCheck())
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		if (item != nullptr)
+			env->DeleteLocalRef(item);
+	}
+	return result;
+}
+
+void quality_event(RoomHandle* h, const lk_track_publication_info_t* track,
+                   const lk_participant_info_t* who, const lk_subscribed_quality_update_t* update) {
+	if (track == nullptr || update == nullptr ||
+	    update->quality_count > static_cast<size_t>(INT32_MAX) ||
+	    (update->quality_count != 0 && update->qualities == nullptr) ||
+	    update->codec_count > static_cast<size_t>(INT32_MAX) ||
+	    (update->codec_count != 0 && update->codecs == nullptr))
+		return;
+	for (size_t i = 0; i < update->codec_count; ++i)
+		if (update->codecs[i].quality_count > static_cast<size_t>(INT32_MAX) ||
+		    (update->codecs[i].quality_count != 0 && update->codecs[i].qualities == nullptr))
+			return;
+	deliver(h, [h, track, who, update](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jclass quality_class = env->FindClass("io/livekit/client/SubscribedQuality");
+		jclass codec_class =
+		    env->ExceptionCheck() ? nullptr : env->FindClass("io/livekit/client/SubscribedCodec");
+		jmethodID quality_ctor =
+		    quality_class == nullptr ? nullptr : env->GetMethodID(quality_class, "<init>", "(IZ)V");
+		jmethodID codec_ctor =
+		    codec_class == nullptr
+		        ? nullptr
+		        : env->GetMethodID(codec_class, "<init>", "(Ljava/lang/String;Ljava/util/List;)V");
+		jobjectArray qualities = quality_ctor == nullptr
+		                             ? nullptr
+		                             : quality_array(env, quality_class, quality_ctor,
+		                                             update->qualities, update->quality_count);
+		jobjectArray codecs = codec_ctor == nullptr || qualities == nullptr
+		                          ? nullptr
+		                          : env->NewObjectArray(static_cast<jsize>(update->codec_count),
+		                                                codec_class, nullptr);
+		jclass arrays = env->ExceptionCheck() ? nullptr : env->FindClass("java/util/Arrays");
+		jmethodID as_list =
+		    arrays == nullptr
+		        ? nullptr
+		        : env->GetStaticMethodID(arrays, "asList", "([Ljava/lang/Object;)Ljava/util/List;");
+		for (size_t i = 0; codecs != nullptr && as_list != nullptr && i < update->codec_count &&
+		                   !env->ExceptionCheck();
+		     ++i) {
+			const auto& source = update->codecs[i];
+			jobjectArray entries = quality_array(env, quality_class, quality_ctor, source.qualities,
+			                                     source.quality_count);
+			jobject list = entries == nullptr
+			                   ? nullptr
+			                   : env->CallStaticObjectMethod(arrays, as_list, entries);
+			jstring name = env->ExceptionCheck() ? nullptr : string(env, source.codec);
+			jobject item = env->ExceptionCheck()
+			                   ? nullptr
+			                   : env->NewObject(codec_class, codec_ctor, name, list);
+			if (item != nullptr && !env->ExceptionCheck())
+				env->SetObjectArrayElement(codecs, static_cast<jsize>(i), item);
+			if (item != nullptr)
+				env->DeleteLocalRef(item);
+			if (name != nullptr)
+				env->DeleteLocalRef(name);
+			if (list != nullptr)
+				env->DeleteLocalRef(list);
+			if (entries != nullptr)
+				env->DeleteLocalRef(entries);
+		}
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, who == nullptr ? nullptr : who->identity);
+		jstring sid = env->ExceptionCheck() ? nullptr : string(env, track->sid);
+		jstring name = env->ExceptionCheck() ? nullptr : string(env, track->name);
+		jstring mime = env->ExceptionCheck() ? nullptr : string(env, track->mime_type);
+		jstring changed_sid = env->ExceptionCheck() ? nullptr : string(env, update->track_sid);
+		jmethodID track_ctor = env->ExceptionCheck()
+		                           ? nullptr
+		                           : env->GetMethodID(h->remote_track_class, "<init>",
+		                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/"
+		                                              "lang/String;Ljava/lang/String;IIZII)V");
+		jobject publication =
+		    track_ctor == nullptr
+		        ? nullptr
+		        : env->NewObject(h->remote_track_class, track_ctor, identity, sid, name, mime,
+		                         static_cast<jint>(track->kind), static_cast<jint>(track->source),
+		                         track->is_muted ? JNI_TRUE : JNI_FALSE,
+		                         static_cast<jint>(track->width), static_cast<jint>(track->height));
+		jobject participant_value = env->ExceptionCheck() ? nullptr : participant(env, h, who);
+		if (!env->ExceptionCheck() && publication != nullptr && codecs != nullptr &&
+		    as_list != nullptr) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback =
+			    owner == nullptr
+			        ? nullptr
+			        : env->GetMethodID(owner, "onNativeSubscribedQuality",
+			                           "(Lio/livekit/client/RemoteTrackPublication;"
+			                           "Lio/livekit/client/Participant;Ljava/lang/"
+			                           "String;[Lio/livekit/client/SubscribedQuality;[Lio/livekit/"
+			                           "client/SubscribedCodec;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, publication, participant_value, changed_sid,
+				                    qualities, codecs);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
+
 void track_event(RoomHandle* h, int kind, const lk_track_publication_info_t* track,
                  const lk_participant_info_t* who, int value = 0) {
 	if (track == nullptr)
@@ -1149,6 +1264,11 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	                                         const lk_participant_info_t* who) {
 		track_event(static_cast<RoomHandle*>(p), 12, track, who);
 	};
+	callbacks.on_subscribed_quality_update =
+	    [](void* p, lk_room_t*, const lk_track_publication_info_t* track,
+	       const lk_participant_info_t* who, const lk_subscribed_quality_update_t* update) {
+		    quality_event(static_cast<RoomHandle*>(p), track, who, update);
+	    };
 	callbacks.on_data_received = [](void* p, lk_room_t*, const lk_data_received_t* v) {
 		event(static_cast<RoomHandle*>(p), 7, 0, nullptr, v);
 	};

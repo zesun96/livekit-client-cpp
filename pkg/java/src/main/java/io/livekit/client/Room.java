@@ -53,6 +53,7 @@ public final class Room implements AutoCloseable {
         default void onLocalTrackPublished(LocalTrackPublication track) {}
         default void onLocalTrackUnpublished(LocalTrackPublication track) {}
         default void onLocalTrackSubscribed(LocalTrackPublication track) {}
+        default void onSubscribedQualityUpdated(SubscribedQualityChange change) {}
         default void onDataReceived(DataPacket packet) {}
         default void onTextReceived(TextMessage message) {}
         default void onBytesReceived(ByteMessage message) {}
@@ -660,6 +661,15 @@ public final class Room implements AutoCloseable {
                 default -> throw new AssertionError(kind);
             }
         });
+    }
+
+    void onNativeSubscribedQuality(RemoteTrackPublication track, Participant participant,
+                                   String trackSid,
+                                   SubscribedQuality[] qualities, SubscribedCodec[] codecs) {
+        SubscribedQualityChange change = new SubscribedQualityChange(
+            LocalTrackPublication.from(track), participant, trackSid,
+            List.of(qualities.clone()), List.of(codecs.clone()));
+        dispatch(listener -> listener.onSubscribedQualityUpdated(change));
     }
 
     private void onNativeBytes(ByteMessage message, boolean file) {
