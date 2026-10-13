@@ -3,8 +3,8 @@
 #include <livekit/capi/livekit.h>
 
 #include <algorithm>
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -72,18 +72,34 @@ void release_classes(JNIEnv* env, RoomHandle* h) {
 		env->DeleteGlobalRef(h->permissions_class);
 }
 
-void fail(JNIEnv* env, lk_status_t status) {
-	if (status == LK_STATUS_OK)
-		return;
+void throw_livekit_error(JNIEnv* env, lk_status_t status, lk_error_domain_t domain, int code) {
 	const char* error = lk_last_error();
 	jclass cls = env->FindClass("io/livekit/client/LiveKitException");
-	jmethodID ctor = env->GetMethodID(cls, "<init>", "(ILjava/lang/String;)V");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(IIILjava/lang/String;)V");
 	jstring message = string(env, error == nullptr ? "LiveKit operation failed" : error);
-	jobject exception = env->NewObject(cls, ctor, static_cast<jint>(status), message);
+	jobject exception = env->NewObject(cls, ctor, static_cast<jint>(status),
+	                                   static_cast<jint>(domain), static_cast<jint>(code), message);
 	env->Throw(static_cast<jthrowable>(exception));
 	env->DeleteLocalRef(exception);
 	env->DeleteLocalRef(message);
 	env->DeleteLocalRef(cls);
+}
+
+void fail(JNIEnv* env, lk_status_t status) {
+	if (status == LK_STATUS_OK)
+		return;
+	lk_error_info_t info;
+	lk_error_info_init(&info);
+	lk_last_error_info(&info);
+	const auto domain = info.domain == LK_ERROR_DOMAIN_NONE ? LK_ERROR_DOMAIN_STATUS : info.domain;
+	const int code = info.domain == LK_ERROR_DOMAIN_NONE ? static_cast<int>(status) : info.code;
+	throw_livekit_error(env, status, domain, code);
+}
+
+void fail_data_track(JNIEnv* env, lk_data_track_error_code_t code) {
+	if (code != LK_DATA_TRACK_ERROR_NONE)
+		throw_livekit_error(env, LK_STATUS_OPERATION_FAILED, LK_ERROR_DOMAIN_DATA_TRACK,
+		                    static_cast<int>(code));
 }
 
 std::string bytes(JNIEnv* env, jbyteArray value) {
@@ -1360,164 +1376,164 @@ jobject stream_attachments(JNIEnv* env, const char* const* values, size_t count)
 	return as_list == nullptr ? nullptr : env->CallStaticObjectMethod(arrays, as_list, items);
 }
 
- void text_stream_event(RoomHandle* h, const lk_text_stream_event_t* value) {
-	 if (value == nullptr || value->content_size > static_cast<size_t>(INT32_MAX) ||
-	     (value->content_size != 0 && value->content == nullptr) ||
-	     value->attached_stream_id_count > static_cast<size_t>(INT32_MAX) ||
-	     (value->attached_stream_id_count != 0 && value->attached_stream_ids == nullptr) ||
-	     value->attribute_count > static_cast<size_t>(INT32_MAX) ||
-	     (value->attribute_count != 0 && value->attributes == nullptr))
-		 return;
-	 deliver(h, [h, value](JNIEnv* env) {
-		 if (env->PushLocalFrame(32) != JNI_OK)
-			 return;
-		 jclass cls = h->text_stream_class;
-		 jmethodID ctor = env->GetMethodID(
-		     cls, "<init>",
-		     "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BJLjava/lang/String;"
-		     "Ljava/lang/String;Ljava/lang/Long;Ljava/util/Map;JLjava/lang/String;"
-		     "Ljava/util/List;)V");
-		 jobject attributes = env->ExceptionCheck()
+void text_stream_event(RoomHandle* h, const lk_text_stream_event_t* value) {
+	if (value == nullptr || value->content_size > static_cast<size_t>(INT32_MAX) ||
+	    (value->content_size != 0 && value->content == nullptr) ||
+	    value->attached_stream_id_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->attached_stream_id_count != 0 && value->attached_stream_ids == nullptr) ||
+	    value->attribute_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->attribute_count != 0 && value->attributes == nullptr))
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(32) != JNI_OK)
+			return;
+		jclass cls = h->text_stream_class;
+		jmethodID ctor = env->GetMethodID(
+		    cls, "<init>",
+		    "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BJLjava/lang/String;"
+		    "Ljava/lang/String;Ljava/lang/Long;Ljava/util/Map;JLjava/lang/String;"
+		    "Ljava/util/List;)V");
+		jobject attributes = env->ExceptionCheck()
+		                         ? nullptr
+		                         : attribute_map(env, value->attributes, value->attribute_count);
+		jobject attachments = env->ExceptionCheck()
 		                          ? nullptr
-		                          : attribute_map(env, value->attributes, value->attribute_count);
-		 jobject attachments = env->ExceptionCheck()
-		                           ? nullptr
-		                           : stream_attachments(env, value->attached_stream_ids,
-		                                                value->attached_stream_id_count);
-		 jobject total = env->ExceptionCheck()
-		                     ? nullptr
-		                     : stream_total_size(env, value->has_total_size, value->total_size);
-		 jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
-		 jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
-		 jstring identity =
-		     env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
-		 jbyteArray content =
-		     env->ExceptionCheck() ? nullptr : array(env, value->content, value->content_size);
-		 jstring reason = env->ExceptionCheck() ? nullptr : string(env, value->reason);
-		 jstring mime = env->ExceptionCheck() ? nullptr : string(env, value->mime_type);
-		 jstring reply = env->ExceptionCheck() ? nullptr : string(env, value->reply_to_stream_id);
-		 jobject event =
-		     env->ExceptionCheck()
-		         ? nullptr
-		         : env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity,
-		                          content, bounded_long(value->chunk_index), reason, mime, total,
-		                          attributes, static_cast<jlong>(value->timestamp), reply,
-		                          attachments);
-		 if (event != nullptr && !env->ExceptionCheck()) {
-			 jclass owner = env->GetObjectClass(h->owner);
-			 jmethodID callback = owner == nullptr
-			                          ? nullptr
-			                          : env->GetMethodID(owner, "onNativeTextStream",
-			                                             "(Lio/livekit/client/TextStreamEvent;)V");
-			 if (callback != nullptr)
-				 env->CallVoidMethod(h->owner, callback, event);
-		 }
-		 env->PopLocalFrame(nullptr);
-	 });
- }
+		                          : stream_attachments(env, value->attached_stream_ids,
+		                                               value->attached_stream_id_count);
+		jobject total = env->ExceptionCheck()
+		                    ? nullptr
+		                    : stream_total_size(env, value->has_total_size, value->total_size);
+		jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
+		jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		jbyteArray content =
+		    env->ExceptionCheck() ? nullptr : array(env, value->content, value->content_size);
+		jstring reason = env->ExceptionCheck() ? nullptr : string(env, value->reason);
+		jstring mime = env->ExceptionCheck() ? nullptr : string(env, value->mime_type);
+		jstring reply = env->ExceptionCheck() ? nullptr : string(env, value->reply_to_stream_id);
+		jobject event =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity,
+		                         content, bounded_long(value->chunk_index), reason, mime, total,
+		                         attributes, static_cast<jlong>(value->timestamp), reply,
+		                         attachments);
+		if (event != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeTextStream",
+			                                            "(Lio/livekit/client/TextStreamEvent;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, event);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
 
- void byte_stream_event(RoomHandle* h, const lk_byte_stream_event_t* value) {
-	 if (value == nullptr || value->content_size > static_cast<size_t>(INT32_MAX) ||
-	     (value->content_size != 0 && value->content == nullptr) ||
-	     value->attribute_count > static_cast<size_t>(INT32_MAX) ||
-	     (value->attribute_count != 0 && value->attributes == nullptr))
-		 return;
-	 deliver(h, [h, value](JNIEnv* env) {
-		 if (env->PushLocalFrame(24) != JNI_OK)
-			 return;
-		 jclass cls = h->byte_stream_class;
-		 jmethodID ctor = env->GetMethodID(
-		     cls, "<init>",
-		     "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
-		     "Ljava/lang/String;[BJLjava/lang/String;Ljava/lang/Long;Ljava/util/Map;J)V");
-		 jobject attributes = env->ExceptionCheck()
-		                          ? nullptr
-		                          : attribute_map(env, value->attributes, value->attribute_count);
-		 jobject total = env->ExceptionCheck()
-		                     ? nullptr
-		                     : stream_total_size(env, value->has_total_size, value->total_size);
-		 jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
-		 jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
-		 jstring identity =
-		     env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
-		 jstring name = env->ExceptionCheck() ? nullptr : string(env, value->name);
-		 jstring mime = env->ExceptionCheck() ? nullptr : string(env, value->mime_type);
-		 jbyteArray content =
-		     env->ExceptionCheck() ? nullptr : array(env, value->content, value->content_size);
-		 jstring reason = env->ExceptionCheck() ? nullptr : string(env, value->reason);
-		 jobject event =
-		     env->ExceptionCheck()
-		         ? nullptr
-		         : env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity,
-		                          name, mime, content, bounded_long(value->chunk_index), reason,
-		                          total, attributes, static_cast<jlong>(value->timestamp));
-		 if (event != nullptr && !env->ExceptionCheck()) {
-			 jclass owner = env->GetObjectClass(h->owner);
-			 jmethodID callback = owner == nullptr
-			                          ? nullptr
-			                          : env->GetMethodID(owner, "onNativeByteStream",
-			                                             "(Lio/livekit/client/ByteStreamEvent;)V");
-			 if (callback != nullptr)
-				 env->CallVoidMethod(h->owner, callback, event);
-		 }
-		 env->PopLocalFrame(nullptr);
-	 });
- }
+void byte_stream_event(RoomHandle* h, const lk_byte_stream_event_t* value) {
+	if (value == nullptr || value->content_size > static_cast<size_t>(INT32_MAX) ||
+	    (value->content_size != 0 && value->content == nullptr) ||
+	    value->attribute_count > static_cast<size_t>(INT32_MAX) ||
+	    (value->attribute_count != 0 && value->attributes == nullptr))
+		return;
+	deliver(h, [h, value](JNIEnv* env) {
+		if (env->PushLocalFrame(24) != JNI_OK)
+			return;
+		jclass cls = h->byte_stream_class;
+		jmethodID ctor = env->GetMethodID(
+		    cls, "<init>",
+		    "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+		    "Ljava/lang/String;[BJLjava/lang/String;Ljava/lang/Long;Ljava/util/Map;J)V");
+		jobject attributes = env->ExceptionCheck()
+		                         ? nullptr
+		                         : attribute_map(env, value->attributes, value->attribute_count);
+		jobject total = env->ExceptionCheck()
+		                    ? nullptr
+		                    : stream_total_size(env, value->has_total_size, value->total_size);
+		jstring id = env->ExceptionCheck() ? nullptr : string(env, value->stream_id);
+		jstring topic = env->ExceptionCheck() ? nullptr : string(env, value->topic);
+		jstring identity =
+		    env->ExceptionCheck() ? nullptr : string(env, value->participant_identity);
+		jstring name = env->ExceptionCheck() ? nullptr : string(env, value->name);
+		jstring mime = env->ExceptionCheck() ? nullptr : string(env, value->mime_type);
+		jbyteArray content =
+		    env->ExceptionCheck() ? nullptr : array(env, value->content, value->content_size);
+		jstring reason = env->ExceptionCheck() ? nullptr : string(env, value->reason);
+		jobject event =
+		    env->ExceptionCheck()
+		        ? nullptr
+		        : env->NewObject(cls, ctor, static_cast<jint>(value->type), id, topic, identity,
+		                         name, mime, content, bounded_long(value->chunk_index), reason,
+		                         total, attributes, static_cast<jlong>(value->timestamp));
+		if (event != nullptr && !env->ExceptionCheck()) {
+			jclass owner = env->GetObjectClass(h->owner);
+			jmethodID callback = owner == nullptr
+			                         ? nullptr
+			                         : env->GetMethodID(owner, "onNativeByteStream",
+			                                            "(Lio/livekit/client/ByteStreamEvent;)V");
+			if (callback != nullptr)
+				env->CallVoidMethod(h->owner, callback, event);
+		}
+		env->PopLocalFrame(nullptr);
+	});
+}
 
- int reconnect_policy_callback(void* user_data, const lk_reconnect_context_t* context,
-                               uint32_t* retry_delay_ms) {
-	 if (context == nullptr || retry_delay_ms == nullptr)
-		 return 0;
-	 auto* h = static_cast<RoomHandle*>(user_data);
-	 JNIEnv* env = nullptr;
-	 bool attached = false;
-	 if (h->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-		 if (h->vm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK)
-			 return 0;
-		 attached = true;
-	 }
-	 bool retry = false;
-	 if (env->PushLocalFrame(16) == JNI_OK) {
-		 jclass cls = env->FindClass("io/livekit/client/ReconnectContext");
-		 jmethodID ctor =
-		     cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(JJILjava/lang/String;)V");
-		 jstring url = env->ExceptionCheck() ? nullptr : string(env, context->server_url);
-		 jobject value = env->ExceptionCheck()
-		                     ? nullptr
-		                     : env->NewObject(cls, ctor, static_cast<jlong>(context->retry_count),
-		                                      bounded_long(context->elapsed_ms),
-		                                      static_cast<jint>(context->reason), url);
-		 jclass owner = env->ExceptionCheck() ? nullptr : env->GetObjectClass(h->owner);
-		 jmethodID callback = owner == nullptr
-		                          ? nullptr
-		                          : env->GetMethodID(owner, "onNativeReconnectPolicy",
-		                                             "(Lio/livekit/client/ReconnectContext;)"
-		                                             "Ljava/lang/Long;");
-		 jobject delay =
-		     callback == nullptr ? nullptr : env->CallObjectMethod(h->owner, callback, value);
-		 if (!env->ExceptionCheck() && delay != nullptr) {
-			 jclass number = env->FindClass("java/lang/Long");
-			 jmethodID as_long =
-			     number == nullptr ? nullptr : env->GetMethodID(number, "longValue", "()J");
-			 if (as_long != nullptr) {
-				 jlong milliseconds = env->CallLongMethod(delay, as_long);
-				 if (!env->ExceptionCheck() && milliseconds >= 0 &&
-				     static_cast<uint64_t>(milliseconds) <= UINT32_MAX) {
-					 *retry_delay_ms = static_cast<uint32_t>(milliseconds);
-					 retry = true;
-				 }
-			 }
-		 }
-		 if (env->ExceptionCheck())
-			 env->ExceptionClear();
-		 env->PopLocalFrame(nullptr);
-	 } else if (env->ExceptionCheck()) {
-		 env->ExceptionClear();
-	 }
-	 if (attached)
-		 h->vm->DetachCurrentThread();
-	 return retry ? 1 : 0;
- }
+int reconnect_policy_callback(void* user_data, const lk_reconnect_context_t* context,
+                              uint32_t* retry_delay_ms) {
+	if (context == nullptr || retry_delay_ms == nullptr)
+		return 0;
+	auto* h = static_cast<RoomHandle*>(user_data);
+	JNIEnv* env = nullptr;
+	bool attached = false;
+	if (h->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+		if (h->vm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK)
+			return 0;
+		attached = true;
+	}
+	bool retry = false;
+	if (env->PushLocalFrame(16) == JNI_OK) {
+		jclass cls = env->FindClass("io/livekit/client/ReconnectContext");
+		jmethodID ctor =
+		    cls == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(JJILjava/lang/String;)V");
+		jstring url = env->ExceptionCheck() ? nullptr : string(env, context->server_url);
+		jobject value = env->ExceptionCheck()
+		                    ? nullptr
+		                    : env->NewObject(cls, ctor, static_cast<jlong>(context->retry_count),
+		                                     bounded_long(context->elapsed_ms),
+		                                     static_cast<jint>(context->reason), url);
+		jclass owner = env->ExceptionCheck() ? nullptr : env->GetObjectClass(h->owner);
+		jmethodID callback = owner == nullptr
+		                         ? nullptr
+		                         : env->GetMethodID(owner, "onNativeReconnectPolicy",
+		                                            "(Lio/livekit/client/ReconnectContext;)"
+		                                            "Ljava/lang/Long;");
+		jobject delay =
+		    callback == nullptr ? nullptr : env->CallObjectMethod(h->owner, callback, value);
+		if (!env->ExceptionCheck() && delay != nullptr) {
+			jclass number = env->FindClass("java/lang/Long");
+			jmethodID as_long =
+			    number == nullptr ? nullptr : env->GetMethodID(number, "longValue", "()J");
+			if (as_long != nullptr) {
+				jlong milliseconds = env->CallLongMethod(delay, as_long);
+				if (!env->ExceptionCheck() && milliseconds >= 0 &&
+				    static_cast<uint64_t>(milliseconds) <= UINT32_MAX) {
+					*retry_delay_ms = static_cast<uint32_t>(milliseconds);
+					retry = true;
+				}
+			}
+		}
+		if (env->ExceptionCheck())
+			env->ExceptionClear();
+		env->PopLocalFrame(nullptr);
+	} else if (env->ExceptionCheck()) {
+		env->ExceptionClear();
+	}
+	if (attached)
+		h->vm->DetachCurrentThread();
+	return retry ? 1 : 0;
+}
 
 lk_status_t token_source_callback(void* user_data, const lk_token_source_fetch_options_t* options,
                                   int force_refresh, lk_token_source_response_t* response) {
@@ -1819,7 +1835,9 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass
 	callbacks.on_recording_status_changed = [](void* p, lk_room_t*, int recording) {
 		event(static_cast<RoomHandle*>(p), 8, recording);
 	};
-	callbacks.on_token_refreshed = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 9); };
+	callbacks.on_token_refreshed = [](void* p, lk_room_t*) {
+		event(static_cast<RoomHandle*>(p), 9);
+	};
 	callbacks.on_room_eos = [](void* p, lk_room_t*) { event(static_cast<RoomHandle*>(p), 10); };
 	callbacks.on_room_updated = [](void* p, lk_room_t*, const lk_room_snapshot_t* value) {
 		room_snapshot_event(static_cast<RoomHandle*>(p), 0, value);
@@ -2030,8 +2048,9 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connect(JNIEnv* env, jclass
 	std::string u = bytes(env, url), t = bytes(env, token);
 	fail(env, lk_room_connect(handle(ptr)->room, u.c_str(), t.c_str()));
 }
-void with_connect_options(JNIEnv* env, RoomHandle* h, jobject config,
-                          const std::function<lk_status_t(const lk_room_connect_options_t*)>& connect) {
+void with_connect_options(
+    JNIEnv* env, RoomHandle* h, jobject config,
+    const std::function<lk_status_t(const lk_room_connect_options_t*)>& connect) {
 	lk_room_connect_options_t options;
 	lk_room_connect_options_init(&options);
 	jclass cls = env->GetObjectClass(config);
@@ -2166,10 +2185,10 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithOptions(JNIEnv* 
 	std::string u = bytes(env, url), t = bytes(env, token);
 	if (env->ExceptionCheck())
 		return;
-	with_connect_options(env, handle(ptr), config,
-	                     [ptr, &u, &t](const lk_room_connect_options_t* options) {
-		return lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), options);
-	});
+	with_connect_options(
+	    env, handle(ptr), config, [ptr, &u, &t](const lk_room_connect_options_t* options) {
+		    return lk_room_connect_with_options(handle(ptr)->room, u.c_str(), t.c_str(), options);
+	    });
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_connectWithTokenSource(
     JNIEnv* env, jclass, jlong ptr, jobjectArray fields, jobjectArray attributeKeys,
@@ -3764,7 +3783,7 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_publishDataTrack(JNIEnv* e
 	lk_local_data_track_t* track = nullptr;
 	auto status = lk_room_publish_data_track(handle(room)->room, &options, &track);
 	if (status != LK_DATA_TRACK_ERROR_NONE) {
-		fail(env, static_cast<lk_status_t>(status));
+		fail_data_track(env, status);
 		return 0;
 	}
 	return reinterpret_cast<jlong>(track);
@@ -3793,7 +3812,7 @@ JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_publishDataTrackWithOption
 	lk_local_data_track_t* track = nullptr;
 	auto status = lk_room_publish_data_track(handle(room)->room, &options, &track);
 	if (status != LK_DATA_TRACK_ERROR_NONE) {
-		fail(env, static_cast<lk_status_t>(status));
+		fail_data_track(env, status);
 		return 0;
 	}
 	return reinterpret_cast<jlong>(track);
@@ -3811,7 +3830,7 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_storeDataTrackSchema(
 		id.custom_encoding = custom.c_str();
 	auto status = lk_room_store_data_track_schema(
 	    handle(room)->room, &id, reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
-	fail(env, static_cast<lk_status_t>(status));
+	fail_data_track(env, status);
 }
 JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_getDataTrackSchema(
     JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray name, jint encoding,
@@ -3827,7 +3846,7 @@ JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_getDataTrackSchema(
 	lk_data_track_schema_t* raw = nullptr;
 	auto status = lk_room_get_data_track_schema(handle(room)->room, identity.c_str(), &id, &raw);
 	if (status != LK_DATA_TRACK_ERROR_NONE) {
-		fail(env, static_cast<lk_status_t>(status));
+		fail_data_track(env, status);
 		return nullptr;
 	}
 	std::unique_ptr<lk_data_track_schema_t, decltype(&lk_data_track_schema_destroy)> schema(
@@ -3870,7 +3889,7 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_pushDataTrack(JNIEnv* env, 
 	                                           reinterpret_cast<const uint8_t*>(payload.data()),
 	                                           payload.size(), hasTimestamp == JNI_TRUE ? 1 : 0,
 	                                           static_cast<uint64_t>(timestamp));
-	fail(env, static_cast<lk_status_t>(status));
+	fail_data_track(env, status);
 }
 JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_dataTrackSid(JNIEnv* env, jclass,
                                                                         jlong ptr) {
@@ -3881,7 +3900,7 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_unpublishDataTrack(JNIEnv* 
                                                                         jlong ptr) {
 	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
 	if (lk_local_data_track_is_published(track))
-		fail(env, static_cast<lk_status_t>(lk_local_data_track_unpublish(track)));
+		fail_data_track(env, lk_local_data_track_unpublish(track));
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyDataTrack(JNIEnv* env, jclass,
                                                                       jlong ptr) {
@@ -3889,28 +3908,58 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyDataTrack(JNIEnv* en
 	if (lk_local_data_track_is_published(track)) {
 		auto status = lk_local_data_track_unpublish(track);
 		if (status != LK_DATA_TRACK_ERROR_NONE && status != LK_DATA_TRACK_ERROR_DISCONNECTED) {
-			fail(env, static_cast<lk_status_t>(status));
+			fail_data_track(env, status);
 			return;
 		}
 	}
-	fail(env, static_cast<lk_status_t>(lk_local_data_track_destroy(track)));
+	fail_data_track(env, lk_local_data_track_destroy(track));
 }
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_subscribeDataTrack(
     JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
-    jint bufferCapacity) {
+    jint targetFps, jint bufferCapacity, jint maxPartialFrames) {
 	std::string identity = bytes(env, participantIdentity);
 	std::string sid = bytes(env, trackSid);
 	lk_data_track_subscription_options_t options;
 	lk_data_track_subscription_options_init(&options);
+	options.has_target_fps = targetFps > 0;
+	options.target_fps = static_cast<uint32_t>(targetFps);
 	options.buffer_capacity = static_cast<size_t>(bufferCapacity);
+	options.max_partial_frames = static_cast<size_t>(maxPartialFrames);
 	lk_data_track_reader_t* reader = nullptr;
 	auto status = lk_room_subscribe_data_track(handle(room)->room, identity.c_str(), sid.c_str(),
 	                                           &options, &reader);
 	if (status != LK_DATA_TRACK_ERROR_NONE) {
-		fail(env, static_cast<lk_status_t>(status));
+		fail_data_track(env, status);
 		return 0;
 	}
 	return reinterpret_cast<jlong>(reader);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_updateDataTrackSubscription(
+    JNIEnv* env, jclass, jlong room, jbyteArray participantIdentity, jbyteArray trackSid,
+    jint targetFps, jint bufferCapacity, jint maxPartialFrames) {
+	std::string identity = bytes(env, participantIdentity);
+	std::string sid = bytes(env, trackSid);
+	lk_data_track_subscription_options_t options;
+	lk_data_track_subscription_options_init(&options);
+	options.has_target_fps = targetFps > 0;
+	options.target_fps = static_cast<uint32_t>(targetFps);
+	options.buffer_capacity = static_cast<size_t>(bufferCapacity);
+	options.max_partial_frames = static_cast<size_t>(maxPartialFrames);
+	auto status = lk_room_update_data_track_subscription_options(
+	    handle(room)->room, identity.c_str(), sid.c_str(), &options);
+	if (status != LK_DATA_TRACK_ERROR_NONE)
+		fail_data_track(env, status);
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_dataTrackReaderClosed(JNIEnv*, jclass,
+                                                                               jlong reader) {
+	return lk_data_track_reader_is_closed(reinterpret_cast<lk_data_track_reader_t*>(reader))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_dataTrackReaderDroppedFrames(JNIEnv*, jclass,
+                                                                                   jlong reader) {
+	return static_cast<jlong>(
+	    lk_data_track_reader_dropped_frames(reinterpret_cast<lk_data_track_reader_t*>(reader)));
 }
 JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JNIEnv* env, jclass,
                                                                               jlong room) {
@@ -3921,8 +3970,10 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JN
 		return nullptr;
 	}
 	jclass cls = env->FindClass("io/livekit/client/RemoteDataTrack");
-	jmethodID ctor = env->GetMethodID(
-	    cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IZ)V");
+	jmethodID ctor =
+	    env->GetMethodID(cls, "<init>",
+	                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/"
+	                     "String;Ljava/lang/String;ILjava/lang/String;Z)V");
 	const size_t count = lk_remote_data_track_list_count(snapshot);
 	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
 	for (size_t i = 0; i < count; ++i) {
@@ -3949,15 +4000,23 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JN
 		jstring identity = read(lk_remote_data_track_snapshot_publisher_identity);
 		jstring sid = read(lk_remote_data_track_snapshot_sid);
 		jstring name = read(lk_remote_data_track_snapshot_name);
+		jstring custom_frame_encoding = read(lk_remote_data_track_snapshot_custom_frame_encoding);
+		jstring schema_name = read(lk_remote_data_track_snapshot_schema_name);
+		jstring custom_schema_encoding = read(lk_remote_data_track_snapshot_custom_schema_encoding);
 		jobject item =
 		    env->NewObject(cls, ctor, identity, sid, name,
 		                   info.has_frame_encoding ? static_cast<jint>(info.frame_encoding) : 0,
-		                   info.is_published ? JNI_TRUE : JNI_FALSE);
+		                   custom_frame_encoding, schema_name,
+		                   info.has_schema ? static_cast<jint>(info.schema_encoding) : 0,
+		                   custom_schema_encoding, info.is_published ? JNI_TRUE : JNI_FALSE);
 		env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
 		env->DeleteLocalRef(item);
 		env->DeleteLocalRef(identity);
 		env->DeleteLocalRef(sid);
 		env->DeleteLocalRef(name);
+		env->DeleteLocalRef(custom_frame_encoding);
+		env->DeleteLocalRef(schema_name);
+		env->DeleteLocalRef(custom_schema_encoding);
 	}
 	env->DeleteLocalRef(cls);
 	lk_remote_data_track_list_destroy(snapshot);
@@ -3971,7 +4030,7 @@ JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_readDataTrack(JNIEnv* en
 	if (status == LK_DATA_TRACK_READ_EMPTY || status == LK_DATA_TRACK_READ_CLOSED)
 		return nullptr;
 	if (status != LK_DATA_TRACK_READ_FRAME) {
-		fail(env, static_cast<lk_status_t>(LK_DATA_TRACK_ERROR_INVALID_ARGUMENT));
+		fail_data_track(env, LK_DATA_TRACK_ERROR_INVALID_ARGUMENT);
 		return nullptr;
 	}
 	const size_t size = lk_data_track_frame_data(frame, nullptr, 0);

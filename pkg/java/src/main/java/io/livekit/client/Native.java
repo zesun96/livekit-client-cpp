@@ -153,7 +153,12 @@ final class Native {
     static native void unpublishDataTrack(long track);
     static native void destroyDataTrack(long track);
     static native long subscribeDataTrack(long room, byte[] participantIdentity, byte[] trackSid,
-                                          int bufferCapacity);
+                                          int targetFps, int bufferCapacity, int maxPartialFrames);
+    static native void updateDataTrackSubscription(long room, byte[] participantIdentity,
+                                                    byte[] trackSid, int targetFps,
+                                                    int bufferCapacity, int maxPartialFrames);
+    static native boolean dataTrackReaderClosed(long reader);
+    static native long dataTrackReaderDroppedFrames(long reader);
     static native RemoteDataTrack[] remoteDataTracks(long room);
     static native DataTrackFrame readDataTrack(long reader, int timeoutMs);
     static native void destroyDataTrackReader(long reader);

@@ -127,10 +127,32 @@ path by the native SDK. `traceOptions()` reports the current enabled state and c
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
-`Room.subscribeDataTrack`. Close the returned reader and local publisher when done. A reader
-returns `null` when its timeout expires or the track closes.
+`Room.subscribeDataTrack`, along with frame encoding and schema metadata. Pass
+`DataTrackSubscriptionOptions` to set target FPS, buffer capacity, and maximum partial frames;
+`Room.updateDataTrackSubscription` changes these options for an existing subscription. Close the
+returned reader and local publisher when done. A reader returns `null` when its timeout expires
+or the track closes, and exposes `isClosed()` and `droppedFrames()`.
 Use `storeDataTrackSchema`, `getDataTrackSchema`, and `DataTrackPublishOptions` to associate
 schemas and custom encodings with published DataTracks.
+`LiveKitException` exposes `status()`, `errorDomain()`, and `errorCode()`; DataTrack failures
+use domain 2 and their `lk_data_track_error_code_t` value.
+
+## Known parity gaps
+
+| Area | Current Java API | Available in the C ABI or other bindings |
+| --- | --- | --- |
+| RTC stream statistics | `LocalTrack.rtcStatsJson()` | Normalized local and remote RTC stream snapshots; Java has no remote RTC stats getter. |
+| Diagnostics callbacks | Log levels, trace options, and JSON trace files | Process-wide log and trace callback sinks with copied records. |
+| Local media publication | Basic track source, screen share, mute, I420 capture | Track publish codec, simulcast, encoding, metadata and degradation options; richer video input formats and frame metadata. |
+| Microphone processing | Echo cancellation, gain control, and noise suppression toggles | Detailed processing options and processing statistics. |
+| Frame callback delivery | Direct listener calls on native media threads | Bounded queues, dropped-event counters, and a dedicated callback-error channel in other bindings. |
+| Asynchronous operations | Room connect/disconnect, data publish, and RPC futures | Other bindings expose async variants for more stream, media, and DataTrack operations. |
+
+Java's asynchronous room and data calls use `CompletableFuture` to run synchronous native calls
+on an executor. Its audio/video frame listeners run directly on native media threads.
+The offline JNI smoke test covers loading, local snapshots, and disconnected-room behavior.
+Two-peer transfer, remote snapshots, physical capture, and callback delivery still need integration
+validation. Physical audio tests require the host-device procedure in the repository instructions.
 
 ```java
 try (Room room = new Room()) {

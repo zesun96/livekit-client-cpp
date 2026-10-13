@@ -102,6 +102,18 @@ public final class OfflineSmoke {
             completed.get().bytesSent() != 5)
             throw new AssertionError("Stream writer callbacks lost progress or completion");
         try (Room room = new Room()) {
+            if (!new DataTrackReader(room, 0).isClosed())
+                throw new AssertionError("Closed DataTrack reader state is incorrect");
+            DataTrackSubscriptionOptions subscription =
+                new DataTrackSubscriptionOptions(30, 8, 2);
+            try {
+                room.updateDataTrackSubscription("peer", "track", subscription);
+                throw new AssertionError("Disconnected DataTrack update was accepted");
+            } catch (LiveKitException expected) { }
+            try {
+                room.subscribeDataTrack("peer", "track", subscription);
+                throw new AssertionError("Disconnected DataTrack subscribe was accepted");
+            } catch (LiveKitException expected) { }
             if (!new TextStreamWriter(room, 0).isClosed() ||
                 !new ByteStreamWriter(room, 0).isClosed())
                 throw new AssertionError("Closed writer state is incorrect");
@@ -434,7 +446,8 @@ public final class OfflineSmoke {
                 room.connect("", "", options);
                 throw new AssertionError("Empty URL was accepted");
             } catch (LiveKitException expected) {
-                if (expected.status() != 1) throw expected;
+                if (expected.status() != 1 || expected.errorDomain() != 1 ||
+                    expected.errorCode() != 1) throw expected;
             }
             java.util.concurrent.atomic.AtomicBoolean tokenRequested =
                 new java.util.concurrent.atomic.AtomicBoolean();
@@ -479,14 +492,16 @@ public final class OfflineSmoke {
                 room.publishDataTrack("offline", 0);
                 throw new AssertionError("Disconnected DataTrack publish was accepted");
             } catch (LiveKitException expected) {
-                if (expected.status() != 6) throw expected;
+                if (expected.status() != 3 || expected.errorDomain() != 2 ||
+                    expected.errorCode() != 6) throw expected;
             }
             try {
                 room.publishDataTrack(new DataTrackPublishOptions("offline", 8, "custom",
                     "schema", 8, "custom-schema"));
                 throw new AssertionError("Disconnected custom DataTrack publish was accepted");
             } catch (LiveKitException expected) {
-                if (expected.status() != 6) throw expected;
+                if (expected.status() != 3 || expected.errorDomain() != 2 ||
+                    expected.errorCode() != 6) throw expected;
             }
             try {
                 room.storeDataTrackSchema(new DataTrackSchema("offline", 7, "", new byte[] { 1 }));
@@ -527,7 +542,8 @@ public final class OfflineSmoke {
                 room.subscribeDataTrack("remote", "DT_offline", 8);
                 throw new AssertionError("Disconnected DataTrack subscription was accepted");
             } catch (LiveKitException expected) {
-                if (expected.status() != 6) throw expected;
+                if (expected.status() != 3 || expected.errorDomain() != 2 ||
+                    expected.errorCode() != 6) throw expected;
             }
             room.registerRpcMethod("echo", invocation -> invocation.payload());
             room.unregisterRpcMethod("echo");

@@ -7,6 +7,15 @@ public final class DataTrackReader implements AutoCloseable {
 
     DataTrackReader(Room room, long handle) { this.room = room; this.handle = handle; }
 
+    public synchronized boolean isClosed() {
+        return handle == 0 || Native.dataTrackReaderClosed(handle);
+    }
+
+    public synchronized long droppedFrames() {
+        if (handle == 0) throw new IllegalStateException("DataTrack reader is closed");
+        return Native.dataTrackReaderDroppedFrames(handle);
+    }
+
     public synchronized DataTrackFrame readFor(int timeoutMs) {
         if (timeoutMs < 0) throw new IllegalArgumentException("Negative timeout");
         if (handle == 0) throw new IllegalStateException("DataTrack reader is closed");

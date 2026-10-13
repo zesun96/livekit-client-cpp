@@ -326,14 +326,32 @@ public final class Room implements AutoCloseable {
 
     public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
                                                int bufferCapacity) {
-        if (bufferCapacity < 1) throw new IllegalArgumentException("Invalid buffer capacity");
+        return subscribeDataTrack(participantIdentity, trackSid,
+            new DataTrackSubscriptionOptions(null, bufferCapacity, 1));
+    }
+
+    public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
+                                               DataTrackSubscriptionOptions options) {
+        Objects.requireNonNull(options);
         return withHandle(h -> {
             DataTrackReader reader = new DataTrackReader(this, Native.subscribeDataTrack(h,
                 Native.utf8(Objects.requireNonNull(participantIdentity)),
-                Native.utf8(Objects.requireNonNull(trackSid)), bufferCapacity));
+                Native.utf8(Objects.requireNonNull(trackSid)),
+                options.targetFps() == null ? 0 : options.targetFps(), options.bufferCapacity(),
+                options.maxPartialFrames()));
             dataTrackReaders.add(reader);
             return reader;
         });
+    }
+
+    public void updateDataTrackSubscription(String participantIdentity, String trackSid,
+                                            DataTrackSubscriptionOptions options) {
+        Objects.requireNonNull(options);
+        useHandle(h -> Native.updateDataTrackSubscription(h,
+            Native.utf8(Objects.requireNonNull(participantIdentity)),
+            Native.utf8(Objects.requireNonNull(trackSid)),
+            options.targetFps() == null ? 0 : options.targetFps(), options.bufferCapacity(),
+            options.maxPartialFrames()));
     }
 
     public List<RemoteDataTrack> remoteDataTracks() {

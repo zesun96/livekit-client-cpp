@@ -37,27 +37,6 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Media devices and remote recording | Yes | Yes | Yes | Yes | No | Yes |
 | Logging, tracing, and RTC statistics | Yes | Yes | Yes | Partial | No | Yes |
 
-Java's asynchronous room and data calls use `CompletableFuture` to run synchronous native calls
-on an executor. Its audio/video frame listeners run directly on native media threads; Java does
-not provide the bounded callback queues described by the frame-event row.
-
-## Known Java parity gaps
-
-| Area | Current Java API | Available in the C ABI or other bindings |
-| --- | --- | --- |
-| RTC stream statistics | `LocalTrack.rtcStatsJson()` | Normalized local and remote RTC stream snapshots; Java has no remote RTC stats getter. |
-| DataTrack subscriptions | Publish, subscribe with buffer capacity, read, and close | Target FPS, maximum partial frames, subscription updates, reader close state and dropped-frame count. |
-| Diagnostics callbacks | Log levels, trace options, and JSON trace files | Process-wide log and trace callback sinks with copied records. |
-| Local media publication | Basic track source, screen share, mute, I420 capture | Track publish codec, simulcast, encoding, metadata and degradation options; richer video input formats and frame metadata. |
-| Microphone processing | Echo cancellation, gain control, and noise suppression toggles | Detailed processing options and processing statistics. |
-| Frame callback delivery | Direct listener calls on native media threads | Bounded queues, dropped-event counters, and a dedicated callback-error channel in other bindings. |
-| Asynchronous operations | Room connect/disconnect, data publish, and RPC futures | Other bindings expose async variants for more stream, media, and DataTrack operations. |
-| Error details | `LiveKitException` exposes status and message | Native error domain/code, including DataTrack-specific errors. |
-
-Java's offline JNI smoke test covers loading, local snapshots, and disconnected-room behavior.
-Two-peer transfer, remote snapshot, physical capture, and callback delivery still need integration
-validation. Physical audio tests require the host-device procedure in the repository instructions.
-
 Lua covers one-shot and incremental outgoing streams, writer progress and completion events,
 and incoming completed and incremental stream events.
 It also covers DataTrack, RPC, E2EE key control, device enumeration and speaker control, recording
