@@ -31,6 +31,7 @@ and should return promptly. Blocking operations have `CompletableFuture` alterna
 binding currently covers room lifecycle and state, local participant identity and profile,
 local participant attributes and recording state,
 local and remote participant snapshots with audio level, connection quality and speaking state,
+detached participant permission, attribute and remote publication details,
 data messages, basic text/byte/file sending and receiving,
 chat sending and editing, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,

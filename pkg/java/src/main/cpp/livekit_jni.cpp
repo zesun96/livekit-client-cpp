@@ -186,18 +186,24 @@ jobject permissions(JNIEnv* env, RoomHandle* h, const lk_participant_permissions
 		copied.push_back(static_cast<jint>(value->can_publish_sources[i]));
 	if (!copied.empty())
 		env->SetIntArrayRegion(sources, 0, static_cast<jsize>(copied.size()), copied.data());
-	if (env->ExceptionCheck())
+	if (env->ExceptionCheck()) {
+		env->DeleteLocalRef(sources);
 		return nullptr;
+	}
 	jmethodID ctor = env->GetMethodID(h->permissions_class, "<init>", "(ZZZ[IZZZZZZ)V");
-	if (ctor == nullptr)
+	if (ctor == nullptr) {
+		env->DeleteLocalRef(sources);
 		return nullptr;
-	return env->NewObject(
+	}
+	jobject result = env->NewObject(
 	    h->permissions_class, ctor, value->can_subscribe ? JNI_TRUE : JNI_FALSE,
 	    value->can_publish ? JNI_TRUE : JNI_FALSE, value->can_publish_data ? JNI_TRUE : JNI_FALSE,
 	    sources, value->hidden ? JNI_TRUE : JNI_FALSE, value->recorder ? JNI_TRUE : JNI_FALSE,
 	    value->can_update_metadata ? JNI_TRUE : JNI_FALSE, value->agent ? JNI_TRUE : JNI_FALSE,
 	    value->can_subscribe_metrics ? JNI_TRUE : JNI_FALSE,
 	    value->can_manage_agent_session ? JNI_TRUE : JNI_FALSE);
+	env->DeleteLocalRef(sources);
+	return result;
 }
 
 void event(RoomHandle* h, int kind, int value = 0, const lk_participant_info_t* who = nullptr,
@@ -533,6 +539,98 @@ jobject attribute_map(JNIEnv* env, const lk_attribute_t* values, size_t count) {
 		if (value != nullptr)
 			env->DeleteLocalRef(value);
 	}
+	if (cls != nullptr)
+		env->DeleteLocalRef(cls);
+	return result;
+}
+
+template <typename Snapshot, typename KeyGetter, typename ValueGetter>
+jobject snapshot_attribute_map(JNIEnv* env, const Snapshot* snapshot, size_t count,
+                               KeyGetter key_getter, ValueGetter value_getter) {
+	std::vector<std::string> keys, values;
+	keys.reserve(count);
+	values.reserve(count);
+	for (size_t i = 0; i < count; ++i) {
+		auto read = [env, snapshot, i](auto fn) {
+			jbyteArray raw = getter(env, [snapshot, i, fn](char* out, size_t size) {
+				return fn(snapshot, i, out, size);
+			});
+			std::string result = bytes(env, raw);
+			env->DeleteLocalRef(raw);
+			return result;
+		};
+		keys.push_back(read(key_getter));
+		values.push_back(read(value_getter));
+	}
+	std::vector<lk_attribute_t> attributes;
+	attributes.reserve(count);
+	for (size_t i = 0; i < count; ++i)
+		attributes.push_back({keys[i].c_str(), values[i].c_str()});
+	return attribute_map(env, attributes.data(), attributes.size());
+}
+
+template <typename Snapshot, typename Getter>
+std::string snapshot_string(JNIEnv* env, const Snapshot* snapshot, Getter fn) {
+	jbyteArray raw =
+	    getter(env, [snapshot, fn](char* out, size_t size) { return fn(snapshot, out, size); });
+	std::string result = bytes(env, raw);
+	env->DeleteLocalRef(raw);
+	return result;
+}
+
+jobject publication_snapshot(JNIEnv* env, const std::string& participant_identity,
+                             const lk_remote_track_publication_snapshot_t* publication) {
+	lk_remote_track_publication_snapshot_info_t info;
+	lk_remote_track_publication_snapshot_info_init(&info);
+	lk_status_t status = lk_remote_track_publication_snapshot_info(publication, &info);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	auto read = [env, publication](auto fn) {
+		jbyteArray raw = getter(
+		    env, [publication, fn](char* out, size_t size) { return fn(publication, out, size); });
+		std::string value = bytes(env, raw);
+		env->DeleteLocalRef(raw);
+		return string(env, value.c_str());
+	};
+	jstring identity = string(env, participant_identity.c_str());
+	jstring sid = read(lk_remote_track_publication_snapshot_sid);
+	jstring name = read(lk_remote_track_publication_snapshot_name);
+	jstring mime = read(lk_remote_track_publication_snapshot_mime_type);
+	jclass cls = env->FindClass("io/livekit/client/RemoteTrackPublication");
+	jmethodID ctor = env->GetMethodID(cls, "<init>",
+	                                  "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+	                                  "Ljava/lang/String;IIZII)V");
+	jobject result =
+	    env->NewObject(cls, ctor, identity, sid, name, mime, static_cast<jint>(info.kind),
+	                   static_cast<jint>(info.source), info.is_muted ? JNI_TRUE : JNI_FALSE,
+	                   static_cast<jint>(info.width), static_cast<jint>(info.height));
+	for (jobject value :
+	     {static_cast<jobject>(identity), static_cast<jobject>(sid), static_cast<jobject>(name),
+	      static_cast<jobject>(mime), static_cast<jobject>(cls)})
+		env->DeleteLocalRef(value);
+	return result;
+}
+
+jobject participant_details(JNIEnv* env, RoomHandle* h, const lk_participant_info_t& info,
+                            const lk_participant_permissions_t& access, jobject attributes,
+                            jobjectArray publications) {
+	jobject who = participant(env, h, &info);
+	jobject allowed = permissions(env, h, &access);
+	jclass arrays = env->FindClass("java/util/Arrays");
+	jmethodID as_list =
+	    env->GetStaticMethodID(arrays, "asList", "([Ljava/lang/Object;)Ljava/util/List;");
+	jobject publication_list = env->CallStaticObjectMethod(arrays, as_list, publications);
+	jclass cls = env->FindClass("io/livekit/client/ParticipantDetails");
+	jmethodID ctor = env->GetMethodID(
+	    cls, "<init>",
+	    "(Lio/livekit/client/Participant;Lio/livekit/client/ParticipantPermissions;"
+	    "Ljava/util/Map;Ljava/util/List;)V");
+	jobject result = env->NewObject(cls, ctor, who, allowed, attributes, publication_list);
+	for (jobject value :
+	     {who, allowed, publication_list, static_cast<jobject>(arrays), static_cast<jobject>(cls)})
+		env->DeleteLocalRef(value);
 	return result;
 }
 
@@ -2756,6 +2854,138 @@ JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_localParticipant(JNIEnv*
 	env->DeleteLocalRef(metadata);
 	env->DeleteLocalRef(cls);
 	lk_local_participant_snapshot_destroy(snapshot);
+	return result;
+}
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_localParticipantDetails(JNIEnv* env, jclass,
+                                                                                jlong ptr) {
+	lk_local_participant_snapshot_t* raw = nullptr;
+	lk_status_t status = lk_room_create_local_participant_snapshot(handle(ptr)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_local_participant_snapshot_t,
+	                decltype(&lk_local_participant_snapshot_destroy)>
+	    snapshot(raw, lk_local_participant_snapshot_destroy);
+	lk_local_participant_snapshot_info_t info;
+	lk_local_participant_snapshot_info_init(&info);
+	status = lk_local_participant_snapshot_info(snapshot.get(), &info);
+	lk_participant_permissions_t access{};
+	if (status == LK_STATUS_OK)
+		status = lk_local_participant_snapshot_permissions(snapshot.get(), &access);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	const size_t attribute_count = lk_local_participant_snapshot_attribute_count(snapshot.get());
+	if (attribute_count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+		              "Too many participant attributes");
+		return nullptr;
+	}
+	std::string sid = snapshot_string(env, snapshot.get(), lk_local_participant_snapshot_sid);
+	std::string identity =
+	    snapshot_string(env, snapshot.get(), lk_local_participant_snapshot_identity);
+	std::string name = snapshot_string(env, snapshot.get(), lk_local_participant_snapshot_name);
+	std::string metadata =
+	    snapshot_string(env, snapshot.get(), lk_local_participant_snapshot_metadata);
+	lk_participant_info_t who{
+	    sid.c_str(),      identity.c_str(),        name.c_str(),     metadata.c_str(),
+	    info.audio_level, info.connection_quality, info.is_speaking, 1};
+	jobject attributes = snapshot_attribute_map(env, snapshot.get(), attribute_count,
+	                                            lk_local_participant_snapshot_attribute_key,
+	                                            lk_local_participant_snapshot_attribute_value);
+	jclass publication_class = env->FindClass("io/livekit/client/RemoteTrackPublication");
+	jobjectArray publications = env->NewObjectArray(0, publication_class, nullptr);
+	jobject result = participant_details(env, handle(ptr), who, access, attributes, publications);
+	env->DeleteLocalRef(attributes);
+	env->DeleteLocalRef(publications);
+	env->DeleteLocalRef(publication_class);
+	return result;
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteParticipantDetails(JNIEnv* env,
+                                                                                      jclass,
+                                                                                      jlong ptr) {
+	lk_remote_participant_list_t* raw = nullptr;
+	lk_status_t status = lk_room_create_remote_participant_snapshot(handle(ptr)->room, &raw);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	std::unique_ptr<lk_remote_participant_list_t, decltype(&lk_remote_participant_list_destroy)>
+	    snapshot(raw, lk_remote_participant_list_destroy);
+	const size_t count = lk_remote_participant_list_count(snapshot.get());
+	if (count > static_cast<size_t>(INT32_MAX)) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "Too many participants");
+		return nullptr;
+	}
+	jclass details_class = env->FindClass("io/livekit/client/ParticipantDetails");
+	jclass publication_class = env->FindClass("io/livekit/client/RemoteTrackPublication");
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), details_class, nullptr);
+	for (size_t i = 0; i < count; ++i) {
+		const lk_remote_participant_snapshot_t* participant = nullptr;
+		status = lk_remote_participant_list_at(snapshot.get(), i, &participant);
+		if (status != LK_STATUS_OK)
+			break;
+		lk_remote_participant_snapshot_info_t info;
+		lk_remote_participant_snapshot_info_init(&info);
+		status = lk_remote_participant_snapshot_info(participant, &info);
+		lk_participant_permissions_t access{};
+		if (status == LK_STATUS_OK)
+			status = lk_remote_participant_snapshot_permissions(participant, &access);
+		if (status != LK_STATUS_OK)
+			break;
+		const size_t attribute_count = lk_remote_participant_snapshot_attribute_count(participant);
+		const size_t publication_count =
+		    lk_remote_participant_snapshot_publication_count(participant);
+		if (attribute_count > static_cast<size_t>(INT32_MAX) ||
+		    publication_count > static_cast<size_t>(INT32_MAX)) {
+			env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),
+			              "Too much participant metadata");
+			break;
+		}
+		std::string sid = snapshot_string(env, participant, lk_remote_participant_snapshot_sid);
+		std::string identity =
+		    snapshot_string(env, participant, lk_remote_participant_snapshot_identity);
+		std::string name = snapshot_string(env, participant, lk_remote_participant_snapshot_name);
+		std::string metadata =
+		    snapshot_string(env, participant, lk_remote_participant_snapshot_metadata);
+		lk_participant_info_t who{
+		    sid.c_str(),      identity.c_str(),        name.c_str(),     metadata.c_str(),
+		    info.audio_level, info.connection_quality, info.is_speaking, 0};
+		jobject attributes = snapshot_attribute_map(env, participant, attribute_count,
+		                                            lk_remote_participant_snapshot_attribute_key,
+		                                            lk_remote_participant_snapshot_attribute_value);
+		jobjectArray publications =
+		    env->NewObjectArray(static_cast<jsize>(publication_count), publication_class, nullptr);
+		for (size_t j = 0; j < publication_count; ++j) {
+			const lk_remote_track_publication_snapshot_t* publication = nullptr;
+			status = lk_remote_participant_snapshot_publication_at(participant, j, &publication);
+			if (status != LK_STATUS_OK)
+				break;
+			jobject item = publication_snapshot(env, identity, publication);
+			if (item == nullptr)
+				break;
+			env->SetObjectArrayElement(publications, static_cast<jsize>(j), item);
+			env->DeleteLocalRef(item);
+		}
+		if (status == LK_STATUS_OK && !env->ExceptionCheck()) {
+			jobject details =
+			    participant_details(env, handle(ptr), who, access, attributes, publications);
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), details);
+			env->DeleteLocalRef(details);
+		}
+		env->DeleteLocalRef(attributes);
+		env->DeleteLocalRef(publications);
+		if (status != LK_STATUS_OK || env->ExceptionCheck())
+			break;
+	}
+	env->DeleteLocalRef(details_class);
+	env->DeleteLocalRef(publication_class);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
 	return result;
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTrackSubscribed(JNIEnv* env, jclass,

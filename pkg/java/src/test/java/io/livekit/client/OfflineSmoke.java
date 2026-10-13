@@ -91,6 +91,11 @@ public final class OfflineSmoke {
             if (!localParticipant.local() || localParticipant.speaking() ||
                 !room.remoteParticipants().isEmpty())
                 throw new AssertionError("Participant snapshots are incorrect");
+            ParticipantDetails localDetails = room.localParticipantDetails();
+            if (!localDetails.participant().local() || localDetails.permissions() == null ||
+                !localDetails.publications().isEmpty() ||
+                !room.remoteParticipantDetails().isEmpty())
+                throw new AssertionError("Participant detail snapshots are incorrect");
             try {
                 room.sendText("offline", sendOptions);
                 throw new AssertionError("Disconnected text send was accepted");
