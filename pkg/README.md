@@ -44,3 +44,47 @@ status, and local/remote track RTC snapshots.
 Lua exposes remote-track recording, bounded media, logging and tracing record queues, and JSON
 trace output. Lua asynchronous calls use a native worker thread and resume coroutines when the Lua
 thread calls `room:poll()` or `room:step()`.
+
+## Examples matrix
+
+✅ means a runnable example or smoke test exists; — means there is no corresponding program. A
+checkmark does not mean every device or platform has been tested. The columns link to each
+binding's example guide (Zig lists examples in its binding guide). Swift has no binding yet.
+
+| Example area | [Lua](lua/examples/README.md) | [Python](python/examples/README.md) | [.NET](dotnet/examples/README.md) | [Java](java/examples/README.md) | Swift | [Zig](zig/README.md) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Room connection and lifecycle | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Device and screen-source enumeration | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Data, text, and byte messages | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Incremental stream writer | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| DataTrack schema and frame publishing | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Dynamic token source | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Standalone RPC caller and receiver | ✅ | ✅ | ✅ | ✅ | — | — |
+| E2EE connection | — | — | ✅ | ✅ | — | ✅ |
+| Synthetic audio and video publishing | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Remote media readers and frame events | ✅ | ✅ | ✅ | ✅ | — | — |
+| Remote track recording | ✅ | ✅ | ✅ | ✅ | — | — |
+| Microphone, system audio, camera, and screen capture | ✅ | ✅ | ✅ | ✅ | — | — |
+| Local two-participant smoke test | — | ✅ | ✅ | ✅ | — | ✅ |
+
+The local smoke tests use generated media and temporary credentials. Physical capture examples
+require real devices and are separate from those smoke tests.
+
+## Platform support matrix
+
+This table follows the [core SDK platform status](../Readme.md#platform-status). ✅ means the
+binding can use the currently supported Windows native SDK; ⏳ means the core native SDK port is
+planned and the binding has not been validated there; — means no binding or mobile target is
+declared. The existence of cross-platform language code or loader instructions does not by itself
+establish native SDK support.
+
+| Platform | [Lua](lua/README.md) | [Python](python/README.md) | [.NET](dotnet/README.md) | [Java](java/README.md) | Swift | [Zig](zig/README.md) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Windows x64 | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| GNU/Linux | ⏳ | ⏳ | ⏳ | ⏳ | — | ⏳ |
+| macOS | ⏳ | ⏳ | ⏳ | ⏳ | — | ⏳ |
+| iOS | — | — | — | — | — | — |
+| Android | — | — | — | — | — | — |
+
+The core SDK lists iOS and Android as planned; no language binding in this matrix currently
+declares either as a supported target.
