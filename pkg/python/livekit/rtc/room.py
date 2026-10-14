@@ -112,7 +112,7 @@ from .stream import StreamCallbackBridge, StreamWriter
 from .recording import TrackRecorder
 from .stats import RtcTrackStats, read_rtc_stats
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 class LocalParticipant:
