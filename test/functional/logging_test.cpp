@@ -70,7 +70,11 @@ TEST(LoggingTest, FiltersOwnedSdkRecordsBySourceThreshold) {
 	EXPECT_TRUE(sink->Contains(LogSource::LiveKit, LogLevel::Warning, "retained"));
 }
 
-TEST(LoggingTest, BridgesWebRtcLogsAndContainsSinkExceptions) {
+TEST(LoggingTest, BridgesWebRtcLogs) {
+#if defined(LKC_SHARED)
+	GTEST_SKIP() << "Direct WebRTC logs use the executable's own logging state; "
+	                "the SDK bridge is validated with the static SDK build";
+#endif
 	LoggingStateGuard restore;
 	auto sink = std::make_shared<CapturingLogSink>();
 	SetLogSink(sink);
@@ -85,10 +89,13 @@ TEST(LoggingTest, BridgesWebRtcLogsAndContainsSinkExceptions) {
 	SetLogOptions(options);
 	RTC_LOG(LS_WARNING) << "filtered WebRTC sentinel";
 	EXPECT_FALSE(sink->Contains(LogSource::WebRTC, LogLevel::Warning, "filtered WebRTC sentinel"));
+	EXPECT_TRUE(Destroy());
+}
 
+TEST(LoggingTest, ContainsSinkExceptions) {
+	LoggingStateGuard restore;
 	SetLogSink(std::make_shared<ThrowingLogSink>());
 	EXPECT_NO_THROW(detail::EmitLog(LogLevel::Error, LogSource::LiveKit, "ignored exception"));
-	EXPECT_TRUE(Destroy());
 }
 
 TEST(LoggingTest, ProvidesStableNames) {

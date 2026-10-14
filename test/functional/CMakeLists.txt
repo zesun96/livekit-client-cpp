@@ -25,6 +25,16 @@ target_compile_definitions(livekit_public_api_tests PRIVATE
   LIVEKIT_TEST_RESOURCE_DIR="${PROJECT_SOURCE_DIR}/resources"
 )
 target_link_libraries(livekit_public_api_tests PRIVATE livekitclient GTest::gtest_main)
+if(BUILD_SHARED_LIBS)
+  # Internal tests call WebRTC directly; the SDK DLL's private dependencies
+  # are not part of its consumer link interface.
+  target_link_libraries(livekit_public_api_tests PRIVATE
+    $<TARGET_GENEX_EVAL:livekitclient,$<TARGET_PROPERTY:livekitclient,LINK_LIBRARIES>>
+  )
+  target_link_directories(livekit_public_api_tests PRIVATE
+    $<TARGET_GENEX_EVAL:livekitclient,$<TARGET_PROPERTY:livekitclient,LINK_DIRECTORIES>>
+  )
+endif()
 target_include_directories(livekit_public_api_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/core/detail
   ${PROJECT_SOURCE_DIR}/src/core/e2ee
