@@ -32,7 +32,7 @@ bump commit because no local v0.1.0 tag exists; its entries include the initial 
 
 ### Fixed
 
-- 2026-10-14: fix(test): support functional checks with shared sdk builds ([ab76a5b](https://github.com/zesun96/livekit-client-cpp/commit/ab76a5b1a3c327299d132cc9b722b73c30ccd1f0)).
+- 2026-10-14: fix(test): support functional checks with shared sdk builds ([#134](https://github.com/zesun96/livekit-client-cpp/pull/134)) ([70c2349](https://github.com/zesun96/livekit-client-cpp/commit/70c23495d6e8069d4a1b68ccd18271ed18694e84)).
 
 ## [0.6.0] - 2026-09-01
 
