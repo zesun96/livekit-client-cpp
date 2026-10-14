@@ -167,10 +167,14 @@ source build and an installed package.
 
 | Language | Available API | Guide |
 | --- | --- | --- |
-| Lua | Room lifecycle, connection and participant events, data messages, and synchronous or coroutine-based connection and data operations | [Lua binding](pkg/lua/README.md) |
+| Lua 5.1+ | Room, media, data and streams, DataTrack, RPC, E2EE, recording, diagnostics, and coroutine-based operations | [Lua binding](pkg/lua/README.md) |
 | Python 3.10+ | Async room and participant APIs, media publishing and capture, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Python binding](pkg/python/README.md) |
 | .NET 8 / C# | Room and participant APIs, async connection and data publishing, media, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [.NET binding](pkg/dotnet/README.md) |
+| Java 17 | Room and participant APIs, `CompletableFuture` operations, media and devices, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Java binding](pkg/java/README.md) |
 | Zig 0.18 dev | Complete C ABI access, with owned handles for common room, media, stream, RPC, E2EE, and DataTrack operations | [Zig binding](pkg/zig/README.md) |
+
+The Lua binding loads through a DLL-linked Lua interpreter on Windows. See the
+[Lua examples](pkg/lua/examples/README.md) for runnable feature scenarios.
 
 The Python package uses the same stable C ABI and imports as `from livekit import rtc`.
 Install it with `python -m pip install -e pkg/python`, then point
@@ -183,13 +187,19 @@ The .NET 8 package uses the stable C ABI through P/Invoke. Build the
 matching shared library, and see the [.NET examples](pkg/dotnet/examples/README.md)
 for runnable feature scenarios and a local-server smoke test.
 
+The Java 17 package calls the stable C ABI through JNI. Build the matching
+`livekitclient` shared library and `livekitclient_java` bridge, then compile the Java sources
+with `javac` or Gradle. See the [Java examples](pkg/java/examples/README.md) for runnable
+feature scenarios and a device-free local two-participant smoke test. Physical capture examples
+require a usable device and are not part of that smoke test.
+
 The Zig package translates the C ABI header during `zig build` and links the shared
 `livekitclient` library. Run `zig build test example` from `pkg/zig` to run its
 offline tests and build the examples; its guide also documents the local two-participant
 smoke test.
 
-See the [binding API support matrix](pkg/README.md) for feature coverage and the status of other
-language bindings.
+Swift has no implementation yet. See the [binding API support matrix](pkg/README.md) for feature
+coverage and the status of other language bindings.
 
 ## Dependencies
 
