@@ -171,6 +171,7 @@ source build and an installed package.
 | Python 3.10+ | Async room and participant APIs, media publishing and capture, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Python binding](pkg/python/README.md) |
 | .NET 8 / C# | Room and participant APIs, async connection and data publishing, media, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [.NET binding](pkg/dotnet/README.md) |
 | Java 17 | Room and participant APIs, `CompletableFuture` operations, media and devices, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Java binding](pkg/java/README.md) |
+| Swift 5.9+ | Complete C ABI access, ARC-owned wrappers, async room and data operations, participants, media and capture, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Swift binding](pkg/swift/README.md) |
 | Zig 0.18 dev | Complete C ABI access, with owned handles for common room, media, stream, RPC, E2EE, and DataTrack operations | [Zig binding](pkg/zig/README.md) |
 
 The Lua binding loads through a DLL-linked Lua interpreter on Windows. See the
@@ -198,7 +199,14 @@ The Zig package translates the C ABI header during `zig build` and links the sha
 offline tests and build the examples; its guide also documents the local two-participant
 smoke test.
 
-Swift has no implementation yet. See the [binding API support matrix](pkg/README.md) for feature
+The Swift package imports the stable C ABI as `CLiveKit` and provides the `LiveKitCpp` module
+through Swift Package Manager. Build the matching `livekitclient` shared library, then run
+`./pkg/swift/build.ps1 -Action test` from the repository root for offline tests and example builds.
+See the [Swift examples](pkg/swift/Examples/README.md) for feature scenarios and the opt-in
+two-participant data/RPC test. Windows x64 builds and 15 offline tests have passed; server
+integration and physical capture remain unvalidated. Linux and macOS await the native SDK ports.
+
+See the [binding API support matrix](pkg/README.md) for feature
 coverage and the status of other language bindings.
 
 ## Dependencies

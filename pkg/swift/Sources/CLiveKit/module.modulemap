@@ -1,0 +1,5 @@
+module CLiveKit [system] {
+    header "shim.h"
+    link "livekitclient"
+    export *
+}
