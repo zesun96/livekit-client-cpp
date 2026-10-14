@@ -1,0 +1,1217 @@
+package io.livekit.client;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.LongConsumer;
+import java.util.function.LongFunction;
+
+/** Owns one native LiveKit room. Close after all calls and callbacks have completed. */
+public final class Room implements AutoCloseable {
+    public interface Listener {
+        default void onConnected() {}
+        default void onDisconnected(int reason) {}
+        default void onReconnecting() {}
+        default void onReconnected() {}
+        default void onConnectionStateChanged(int state) {}
+        default void onRoomMetadataChanged(String metadata) {}
+        default void onRoomSidChanged(String previousSid, String sid) {}
+        default void onRecordingStatusChanged(boolean recording) {}
+        default void onTokenRefreshed() {}
+        default void onRoomEos() {}
+        default void onRoomUpdated(RoomSnapshot snapshot) {}
+        default void onRoomMoved(RoomSnapshot snapshot) {}
+        default void onParticipantConnected(Participant participant) {}
+        default void onParticipantDisconnected(Participant participant) {}
+        default void onParticipantMetadataChanged(Participant participant, String previousMetadata) {}
+        default void onParticipantNameChanged(Participant participant, String name) {}
+        default void onParticipantAttributesChanged(Participant participant,
+                                                    Map<String, String> changes) {}
+        default void onParticipantPermissionsChanged(Participant participant,
+                                                     ParticipantPermissions previous,
+                                                     ParticipantPermissions current) {}
+        default void onConnectionQualityChanged(Participant participant, int quality) {}
+        default void onActiveSpeakersChanged(List<Participant> speakers) {}
+        default void onParticipantsUpdated(List<Participant> participants) {}
+        default void onTrackPublished(RemoteTrackPublication track) {}
+        default void onTrackUnpublished(RemoteTrackPublication track) {}
+        default void onTrackMuted(RemoteTrackPublication track) {}
+        default void onTrackUnmuted(RemoteTrackPublication track) {}
+        default void onTrackSubscribed(RemoteTrackPublication track) {}
+        default void onTrackUnsubscribed(RemoteTrackPublication track) {}
+        default void onTrackSubscriptionPermissionChanged(RemoteTrackPublication track,
+                                                          boolean allowed) {}
+        default void onTrackSubscriptionFailed(RemoteTrackPublication track, int error) {}
+        default void onTrackStreamStateChanged(RemoteTrackPublication track, int state) {}
+        default void onTrackSubscriptionStatusChanged(RemoteTrackPublication track, int status) {}
+        default void onLocalTrackPublished(LocalTrackPublication track) {}
+        default void onLocalTrackUnpublished(LocalTrackPublication track) {}
+        default void onLocalTrackSubscribed(LocalTrackPublication track) {}
+        default void onSubscribedQualityUpdated(SubscribedQualityChange change) {}
+        default void onDataReceived(DataPacket packet) {}
+        default void onTextReceived(TextMessage message) {}
+        default void onBytesReceived(ByteMessage message) {}
+        default void onFileReceived(ByteMessage message) {}
+        default void onTextStreamEvent(TextStreamEvent event) {}
+        default void onByteStreamEvent(ByteStreamEvent event) {}
+        default void onChatMessageReceived(ChatMessage message) {}
+        default void onTranscriptionReceived(TranscriptionMessage message) {}
+        default void onMetricsReceived(MetricsMessage message) {}
+        default void onSipDtmfReceived(SipDtmf event) {}
+        default void onDataChannelBufferStatusChanged(DataChannelBufferStatus status) {}
+        default void onEncryptionStateChanged(EncryptionState state) {}
+        default void onDataTrackPublished(DataTrackPublication track) {}
+        default void onDataTrackUnpublished(DataTrackPublication track) {}
+        default void onLocalDataTrackPublished(DataTrackPublication track) {}
+        default void onLocalDataTrackUnpublished(DataTrackPublication track) {}
+        default void onDataTrackFrame(DataTrackPublication track, DataTrackFrame frame) {}
+    }
+
+    /** Frame callbacks run on a dedicated Java thread; return promptly. */
+    public interface FrameListener {
+        default void onAudioFrame(RemoteTrackPublication track, Participant participant,
+                                  AudioFrame frame) {}
+        default void onVideoFrame(RemoteTrackPublication track, Participant participant,
+                                  VideoFrame frame) {}
+    }
+
+    private final List<Listener> listeners = new CopyOnWriteArrayList<>();
+    private final List<FrameListener> frameListeners = new CopyOnWriteArrayList<>();
+    private record FrameDelivery(String kind, Consumer<FrameListener> callback) {}
+    private final ArrayBlockingQueue<FrameDelivery> frameQueue;
+    private final ArrayBlockingQueue<FrameCallbackError> frameErrors = new ArrayBlockingQueue<>(64);
+    private final AtomicLong droppedFrameCallbacks = new AtomicLong();
+    private final AtomicLong droppedFrameErrors = new AtomicLong();
+    private volatile boolean frameCallbacksRunning;
+    private Thread frameCallbackThread;
+    private final List<LocalTrack> tracks = new CopyOnWriteArrayList<>();
+    private final List<LocalDataTrack> dataTracks = new CopyOnWriteArrayList<>();
+    private final List<DataTrackReader> dataTrackReaders = new CopyOnWriteArrayList<>();
+    private final List<AudioStream> audioStreams = new CopyOnWriteArrayList<>();
+    private final List<VideoStream> videoStreams = new CopyOnWriteArrayList<>();
+    private final List<TrackRecorder> recorders = new CopyOnWriteArrayList<>();
+    private final List<TextStreamWriter> textWriters = new CopyOnWriteArrayList<>();
+    private final List<ByteStreamWriter> byteWriters = new CopyOnWriteArrayList<>();
+    private final ConcurrentHashMap<String, RpcHandler> rpcHandlers = new ConcurrentHashMap<>();
+    private volatile TokenSource tokenSource;
+    private volatile ReconnectPolicy reconnectPolicy;
+    private boolean tokenConnectPending;
+    private final ThreadLocal<Boolean> inCallback = ThreadLocal.withInitial(() -> false);
+    private long handle;
+    private int activeCalls;
+    private boolean closing;
+
+    public Room() { this(32); }
+
+    public Room(int frameQueueCapacity) {
+        if (frameQueueCapacity < 1) throw new IllegalArgumentException("Invalid frame queue capacity");
+        frameQueue = new ArrayBlockingQueue<>(frameQueueCapacity);
+        handle = Native.create(this);
+    }
+    public static String version() { return Native.version(); }
+    public void addListener(Listener listener) { listeners.add(Objects.requireNonNull(listener)); }
+    public void removeListener(Listener listener) { listeners.remove(listener); }
+
+    public synchronized void addFrameListener(FrameListener listener) {
+        Objects.requireNonNull(listener);
+        useHandle(h -> {
+            if (frameListeners.isEmpty()) {
+                if (frameCallbackThread == null || !frameCallbackThread.isAlive()) {
+                    frameCallbacksRunning = true;
+                    frameCallbackThread = new Thread(this::drainFrameCallbacks, "livekit-java-frames");
+                    frameCallbackThread.setDaemon(true);
+                    frameCallbackThread.start();
+                }
+                try { Native.setFrameCallbacksEnabled(h, true); }
+                catch (RuntimeException | Error failure) {
+                    frameCallbacksRunning = false;
+                    frameCallbackThread.interrupt();
+                    throw failure;
+                }
+            }
+            frameListeners.add(listener);
+        });
+    }
+
+    public synchronized void removeFrameListener(FrameListener listener) {
+        useHandle(h -> {
+            frameListeners.remove(listener);
+            if (frameListeners.isEmpty()) {
+                Native.setFrameCallbacksEnabled(h, false);
+                frameQueue.clear();
+            }
+        });
+    }
+
+    public long droppedFrameCallbacks() { return droppedFrameCallbacks.get(); }
+    public long droppedFrameCallbackErrors() { return droppedFrameErrors.get(); }
+
+    public List<FrameCallbackError> drainFrameCallbackErrors() {
+        java.util.ArrayList<FrameCallbackError> result = new java.util.ArrayList<>();
+        frameErrors.drainTo(result);
+        return List.copyOf(result);
+    }
+
+    private synchronized long beginCall() {
+        if (handle == 0 || closing) throw new IllegalStateException("Room is closed");
+        activeCalls++;
+        return handle;
+    }
+
+    private synchronized void endCall() { activeCalls--; notifyAll(); }
+
+    <T> T withHandle(LongFunction<T> operation) {
+        long h = beginCall();
+        try { return operation.apply(h); }
+        finally { endCall(); }
+    }
+
+    void useHandle(LongConsumer operation) { withHandle(h -> { operation.accept(h); return null; }); }
+    void removeTrack(LocalTrack track) { tracks.remove(track); }
+    void removeDataTrack(LocalDataTrack track) { dataTracks.remove(track); }
+    void removeDataTrackReader(DataTrackReader reader) { dataTrackReaders.remove(reader); }
+    void removeAudioStream(AudioStream stream) { audioStreams.remove(stream); }
+    void removeVideoStream(VideoStream stream) { videoStreams.remove(stream); }
+    void removeTrackRecorder(TrackRecorder recorder) { recorders.remove(recorder); }
+    void removeTextStreamWriter(TextStreamWriter writer) { textWriters.remove(writer); }
+    void removeByteStreamWriter(ByteStreamWriter writer) { byteWriters.remove(writer); }
+
+    private static byte[][] encodeDestinations(String[] destinations) {
+        Objects.requireNonNull(destinations);
+        byte[][] encoded = new byte[destinations.length][];
+        for (int i = 0; i < destinations.length; i++)
+            encoded[i] = Native.utf8(Objects.requireNonNull(destinations[i]));
+        return encoded;
+    }
+
+    public TextStreamWriter streamText(String topic, String... destinations) {
+        return streamText(new StreamWriterOptions(topic, null, null, List.of(destinations),
+            java.util.Map.of(), null, List.of(), null, null, 15000, false, false, 0));
+    }
+
+    public TextStreamWriter streamText(StreamWriterOptions options) {
+        Objects.requireNonNull(options);
+        return withHandle(h -> {
+            TextStreamWriter writer = new TextStreamWriter(this, createStreamWriter(h, true, options),
+                options.listener(), options.totalSize());
+            textWriters.add(writer);
+            return writer;
+        });
+    }
+
+    public ByteStreamWriter streamBytes(String topic, String mimeType, String name,
+                                        String... destinations) {
+        return streamBytes(new StreamWriterOptions(topic, mimeType, name, List.of(destinations),
+            java.util.Map.of(), null, List.of(), null, null, 15000, false, false, 0));
+    }
+
+    public ByteStreamWriter streamBytes(StreamWriterOptions options) {
+        Objects.requireNonNull(options);
+        if (options.replyToStreamId() != null || !options.attachedStreamIds().isEmpty() ||
+            options.update() || options.version() != 0)
+            throw new IllegalArgumentException("Text stream options cannot be used for byte streams");
+        return withHandle(h -> {
+            ByteStreamWriter writer = new ByteStreamWriter(this, createStreamWriter(h, false, options),
+                options.listener(), options.totalSize());
+            byteWriters.add(writer);
+            return writer;
+        });
+    }
+
+    private static long createStreamWriter(long handle, boolean text, StreamWriterOptions options) {
+        var attributes = options.attributes();
+        byte[][] keys = new byte[attributes.size()][];
+        byte[][] values = new byte[attributes.size()][];
+        int index = 0;
+        for (var entry : attributes.entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        return Native.createStreamWriter(handle, text, new byte[][] {
+                Native.utf8(options.topic()), Native.utf8(options.mimeType()),
+                Native.utf8(options.name()), Native.utf8(options.replyToStreamId()),
+                Native.utf8(options.streamId()) },
+            encodeDestinations(options.destinations().toArray(String[]::new)), keys, values,
+            encodeDestinations(options.attachedStreamIds().toArray(String[]::new)),
+            options.totalSize() == null ? 0 : options.totalSize(), options.totalSize() != null,
+            options.chunkSize(), options.compress(), options.update(), options.version());
+    }
+
+    public void registerTextStreamHandler(String topic) {
+        useHandle(h -> Native.registerStreamHandler(h, true, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void unregisterTextStreamHandler(String topic) {
+        useHandle(h -> Native.unregisterStreamHandler(h, true, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void registerByteStreamHandler(String topic) {
+        useHandle(h -> Native.registerStreamHandler(h, false, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public void unregisterByteStreamHandler(String topic) {
+        useHandle(h -> Native.unregisterStreamHandler(h, false, Native.utf8(Objects.requireNonNull(topic))));
+    }
+
+    public TrackRecorder startTrackRecording(String participantIdentity, String trackSid,
+                                             String outputPath, int queueCapacity) {
+        if (queueCapacity < 1) throw new IllegalArgumentException("Invalid recording queue capacity");
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        Objects.requireNonNull(outputPath);
+        return withHandle(h -> {
+            TrackRecorder recorder = new TrackRecorder(this, Native.startTrackRecording(h,
+                Native.utf8(participantIdentity), Native.utf8(trackSid),
+                Native.utf8(outputPath), queueCapacity));
+            recorders.add(recorder);
+            return recorder;
+        });
+    }
+
+    public TrackRecorder startTrackRecording(String participantIdentity, String trackSid,
+                                             String outputPath) {
+        return startTrackRecording(participantIdentity, trackSid, outputPath, 64);
+    }
+
+    public AudioStream createAudioStream(String participantIdentity, String trackSid, int capacity) {
+        if (capacity < 1) throw new IllegalArgumentException("Invalid audio stream capacity");
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        return withHandle(h -> {
+            AudioStream stream = new AudioStream(this, Native.createAudioStream(h,
+                Native.utf8(participantIdentity), Native.utf8(trackSid), capacity));
+            audioStreams.add(stream);
+            return stream;
+        });
+    }
+
+    public AudioStream createAudioStream(String participantIdentity, String trackSid) {
+        return createAudioStream(participantIdentity, trackSid, 64);
+    }
+
+    public VideoStream createVideoStream(String participantIdentity, String trackSid, int capacity) {
+        if (capacity < 1) throw new IllegalArgumentException("Invalid video stream capacity");
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        return withHandle(h -> {
+            VideoStream stream = new VideoStream(this, Native.createVideoStream(h,
+                Native.utf8(participantIdentity), Native.utf8(trackSid), capacity));
+            videoStreams.add(stream);
+            return stream;
+        });
+    }
+
+    public VideoStream createVideoStream(String participantIdentity, String trackSid) {
+        return createVideoStream(participantIdentity, trackSid, 8);
+    }
+
+    public List<RemoteTrackPublication> remoteTrackPublications() {
+        return withHandle(h -> List.of(Native.remoteTrackPublications(h)));
+    }
+
+    public List<RtcTrackStats> remoteRtcStats(String participantIdentity, String trackSid) {
+        Objects.requireNonNull(participantIdentity);
+        Objects.requireNonNull(trackSid);
+        if (participantIdentity.isEmpty() || trackSid.isEmpty())
+            throw new IllegalArgumentException("Participant identity and track SID are required");
+        return withHandle(h -> List.of(Native.remoteRtcStats(h, Native.utf8(participantIdentity),
+            Native.utf8(trackSid))));
+    }
+    public List<RemoteTrackPublicationDetails> remoteTrackPublicationDetails() {
+        return withHandle(h -> List.of(Native.remoteTrackPublicationDetails(h)));
+    }
+
+    public LocalDataTrack publishDataTrack(String name, int frameEncoding) {
+        Objects.requireNonNull(name);
+        if (name.isEmpty()) throw new IllegalArgumentException("DataTrack name is empty");
+        if (frameEncoding < 0 || frameEncoding > 7)
+            throw new IllegalArgumentException("Unsupported DataTrack frame encoding");
+        return withHandle(h -> {
+            LocalDataTrack track = new LocalDataTrack(this,
+                Native.publishDataTrack(h, Native.utf8(name), frameEncoding));
+            dataTracks.add(track);
+            return track;
+        });
+    }
+
+    public LocalDataTrack publishDataTrack(DataTrackPublishOptions options) {
+        Objects.requireNonNull(options);
+        return withHandle(h -> {
+            LocalDataTrack track = new LocalDataTrack(this, Native.publishDataTrackWithOptions(h,
+                Native.utf8(options.name()), options.frameEncoding(),
+                Native.utf8(options.customFrameEncoding()), Native.utf8(options.schemaName()),
+                options.schemaEncoding(), Native.utf8(options.customSchemaEncoding())));
+            dataTracks.add(track);
+            return track;
+        });
+    }
+
+    public void storeDataTrackSchema(DataTrackSchema schema) {
+        Objects.requireNonNull(schema);
+        useHandle(h -> Native.storeDataTrackSchema(h, Native.utf8(schema.name()), schema.encoding(),
+            Native.utf8(schema.customEncoding()), schema.definition()));
+    }
+
+    public DataTrackSchema getDataTrackSchema(String participantIdentity, String name,
+                                               int encoding, String customEncoding) {
+        if (name == null || name.isEmpty() || encoding < 0 || encoding > 8)
+            throw new IllegalArgumentException("Invalid schema ID");
+        if (participantIdentity == null || participantIdentity.isEmpty())
+            throw new IllegalArgumentException("Participant identity is required");
+        if (encoding == 8 && (customEncoding == null || customEncoding.isEmpty()))
+            throw new IllegalArgumentException("Custom schema encoding is required");
+        return withHandle(h -> Native.getDataTrackSchema(h,
+            Native.utf8(participantIdentity), Native.utf8(name),
+            encoding, Native.utf8(customEncoding)));
+    }
+
+    public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
+                                               int bufferCapacity) {
+        return subscribeDataTrack(participantIdentity, trackSid,
+            new DataTrackSubscriptionOptions(null, bufferCapacity, 1));
+    }
+
+    public DataTrackReader subscribeDataTrack(String participantIdentity, String trackSid,
+                                               DataTrackSubscriptionOptions options) {
+        Objects.requireNonNull(options);
+        return withHandle(h -> {
+            DataTrackReader reader = new DataTrackReader(this, Native.subscribeDataTrack(h,
+                Native.utf8(Objects.requireNonNull(participantIdentity)),
+                Native.utf8(Objects.requireNonNull(trackSid)),
+                options.targetFps() == null ? 0 : options.targetFps(), options.bufferCapacity(),
+                options.maxPartialFrames()));
+            dataTrackReaders.add(reader);
+            return reader;
+        });
+    }
+
+    public void updateDataTrackSubscription(String participantIdentity, String trackSid,
+                                            DataTrackSubscriptionOptions options) {
+        Objects.requireNonNull(options);
+        useHandle(h -> Native.updateDataTrackSubscription(h,
+            Native.utf8(Objects.requireNonNull(participantIdentity)),
+            Native.utf8(Objects.requireNonNull(trackSid)),
+            options.targetFps() == null ? 0 : options.targetFps(), options.bufferCapacity(),
+            options.maxPartialFrames()));
+    }
+
+    public List<RemoteDataTrack> remoteDataTracks() {
+        return withHandle(h -> List.of(Native.remoteDataTracks(h)));
+    }
+
+    public LocalTrack createAudioTrack(String label, AudioSource source) {
+        Objects.requireNonNull(source).retain();
+        try {
+            return withHandle(h -> {
+                LocalTrack track = new LocalTrack(this, source,
+                    Native.createTrack(h, Native.utf8(label), source.handle(), false));
+                tracks.add(track);
+                return track;
+            });
+        } catch (RuntimeException failure) { source.release(); throw failure; }
+    }
+
+    public LocalTrack createVideoTrack(String label, VideoSource source) {
+        Objects.requireNonNull(source).retain();
+        try {
+            return withHandle(h -> {
+                LocalTrack track = new LocalTrack(this, source,
+                    Native.createTrack(h, Native.utf8(label), source.handle(), true));
+                tracks.add(track);
+                return track;
+            });
+        } catch (RuntimeException failure) { source.release(); throw failure; }
+    }
+
+    public void connect(String url, String token) {
+        ReconnectPolicy previous = reconnectPolicy;
+        reconnectPolicy = null;
+        try { useHandle(h -> Native.connect(h, Native.utf8(Objects.requireNonNull(url)),
+            Native.utf8(Objects.requireNonNull(token)))); }
+        catch (RuntimeException failure) { reconnectPolicy = previous; throw failure; }
+    }
+
+    public void connect(String url, String token, ConnectionOptions options) {
+        Objects.requireNonNull(options);
+        ReconnectPolicy previous = reconnectPolicy;
+        reconnectPolicy = options.reconnectPolicy();
+        try { useHandle(h -> Native.connectWithOptions(h, Native.utf8(Objects.requireNonNull(url)),
+            Native.utf8(Objects.requireNonNull(token)), options)); }
+        catch (RuntimeException failure) { reconnectPolicy = previous; throw failure; }
+    }
+
+    @FunctionalInterface public interface TokenSource {
+        TokenCredentials fetch(TokenFetchRequest request);
+    }
+
+    public void connectWithTokenSource(TokenSource source) {
+        connectWithTokenSource(source, new TokenFetchOptions());
+    }
+
+    public void connectWithTokenSource(TokenSource source, TokenFetchOptions options) {
+        connectWithTokenSource(source, options, null);
+    }
+
+    public void connectWithTokenSource(TokenSource source, ConnectionOptions options) {
+        connectWithTokenSource(source, new TokenFetchOptions(), Objects.requireNonNull(options));
+    }
+
+    public void connectWithTokenSource(TokenSource source, TokenFetchOptions options,
+                                       ConnectionOptions connectionOptions) {
+        Objects.requireNonNull(source);
+        Objects.requireNonNull(options);
+        byte[][] fields = {
+            Native.utf8(options.roomName()), Native.utf8(options.participantName()),
+            Native.utf8(options.participantIdentity()),
+            Native.utf8(options.participantMetadata()), Native.utf8(options.agentName()),
+            Native.utf8(options.agentMetadata()), Native.utf8(options.deployment())
+        };
+        byte[][] keys = new byte[options.participantAttributes().size()][];
+        byte[][] values = new byte[keys.length][];
+        int index = 0;
+        for (Map.Entry<String, String> entry : options.participantAttributes().entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        TokenSource previous;
+        ReconnectPolicy previousPolicy;
+        synchronized (this) {
+            if (tokenConnectPending) throw new IllegalStateException("Token source connection is in progress");
+            tokenConnectPending = true;
+            previous = tokenSource;
+            previousPolicy = reconnectPolicy;
+            tokenSource = source;
+            reconnectPolicy = connectionOptions == null ? null : connectionOptions.reconnectPolicy();
+        }
+        try { useHandle(h -> Native.connectWithTokenSource(h, fields, keys, values,
+            connectionOptions)); }
+        catch (RuntimeException failure) {
+            tokenSource = previous;
+            reconnectPolicy = previousPolicy;
+            throw failure;
+        }
+        finally { synchronized (this) { tokenConnectPending = false; } }
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source));
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source,
+                                                               TokenFetchOptions options) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source, options));
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source,
+                                                               ConnectionOptions options) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source, options));
+    }
+
+    public CompletableFuture<Void> connectWithTokenSourceAsync(TokenSource source,
+                                                               TokenFetchOptions fetchOptions,
+                                                               ConnectionOptions connectionOptions) {
+        return CompletableFuture.runAsync(() -> connectWithTokenSource(source, fetchOptions,
+            connectionOptions));
+    }
+
+    private TokenCredentials onNativeTokenFetch(TokenFetchRequest request) {
+        TokenSource source = tokenSource;
+        if (source == null) throw new IllegalStateException("Token source is unavailable");
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try { return Objects.requireNonNull(source.fetch(request)); }
+        finally { inCallback.set(previous); }
+    }
+
+    private Long onNativeReconnectPolicy(ReconnectContext context) {
+        ReconnectPolicy policy = reconnectPolicy;
+        if (policy == null) return null;
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try {
+            Long delay = policy.nextDelayMs(context);
+            if (delay != null && (delay < 0 || delay > 0xffff_ffffL))
+                throw new IllegalArgumentException("Reconnect delay is outside uint32 range");
+            return delay;
+        } finally { inCallback.set(previous); }
+    }
+
+    public CompletableFuture<Void> connectAsync(String url, String token, ConnectionOptions options) {
+        return CompletableFuture.runAsync(() -> connect(url, token, options));
+    }
+
+    public CompletableFuture<Void> connectAsync(String url, String token) {
+        return connectAsync(url, token, ForkJoinPool.commonPool());
+    }
+
+    public CompletableFuture<Void> connectAsync(String url, String token, Executor executor) {
+        return CompletableFuture.runAsync(() -> connect(url, token), executor);
+    }
+
+    public void disconnect() {
+        useHandle(Native::disconnect);
+        tokenSource = null;
+    }
+    public CompletableFuture<Void> disconnectAsync() {
+        return CompletableFuture.runAsync(this::disconnect);
+    }
+
+    public int state() { return withHandle(Native::state); }
+    public int disconnectReason() { return withHandle(Native::disconnectReason); }
+    public boolean isConnected() { return withHandle(Native::connected); }
+    public AudioPlaybackStats audioPlaybackStats() { return withHandle(Native::audioPlaybackStats); }
+    public String audioOutputDevice() { return withHandle(h -> Native.string(Native.audioOutputDevice(h))); }
+    public void setAudioOutputDevice(String deviceId) {
+        useHandle(h -> Native.setAudioOutputDevice(h, Native.utf8(Objects.requireNonNull(deviceId))));
+    }
+    public float speakerVolume() { return withHandle(Native::speakerVolume); }
+    public void setSpeakerVolume(float volume) {
+        if (!Float.isFinite(volume) || volume < 0 || volume > 1)
+            throw new IllegalArgumentException("Volume must be between 0 and 1");
+        useHandle(h -> Native.setSpeakerVolume(h, volume));
+    }
+    public boolean speakerMuted() { return withHandle(Native::speakerMuted); }
+    public void setSpeakerMuted(boolean muted) { useHandle(h -> Native.setSpeakerMuted(h, muted)); }
+    public void republishAllTracks() { useHandle(Native::republishAllTracks); }
+    public boolean isRecording() { return withHandle(Native::isRecording); }
+    public String sid() { return withHandle(h -> Native.string(Native.roomString(h, 0))); }
+    public String name() { return withHandle(h -> Native.string(Native.roomString(h, 1))); }
+    public String metadata() { return withHandle(h -> Native.string(Native.roomString(h, 2))); }
+    public String localSid() { return withHandle(h -> Native.string(Native.localString(h, 0))); }
+    public String localIdentity() { return withHandle(h -> Native.string(Native.localString(h, 1))); }
+    public String localName() { return withHandle(h -> Native.string(Native.localString(h, 2))); }
+    public String localMetadata() { return withHandle(h -> Native.string(Native.localString(h, 3))); }
+    public void setLocalName(String name) { useHandle(h -> Native.setLocalString(h, 0, Native.utf8(name))); }
+    public void setLocalMetadata(String metadata) { useHandle(h -> Native.setLocalString(h, 1, Native.utf8(metadata))); }
+    public void setLocalAttributes(Map<String, String> attributes) {
+        Map<String, String> snapshot = Map.copyOf(Objects.requireNonNull(attributes));
+        byte[][] keys = new byte[snapshot.size()][];
+        byte[][] values = new byte[snapshot.size()][];
+        int index = 0;
+        for (var entry : snapshot.entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        useHandle(h -> Native.setLocalAttributes(h, keys, values));
+    }
+
+    public void publishData(byte[] data, String topic, boolean reliable, String... destinations) {
+        byte[][] encoded = new byte[destinations.length][];
+        for (int i = 0; i < destinations.length; i++) encoded[i] = Native.utf8(Objects.requireNonNull(destinations[i]));
+        useHandle(h -> Native.publishData(h, Objects.requireNonNull(data), Native.utf8(topic), reliable, encoded));
+    }
+
+    public CompletableFuture<Void> publishDataAsync(byte[] data, String topic, boolean reliable, String... destinations) {
+        byte[] payload = Objects.requireNonNull(data).clone();
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.runAsync(() -> publishData(payload, topic, reliable, recipients));
+    }
+
+    public void sendText(String text) { useHandle(h -> Native.sendText(h, Native.utf8(Objects.requireNonNull(text)))); }
+    public void sendBytes(byte[] data) { useHandle(h -> Native.sendBytes(h, Objects.requireNonNull(data))); }
+    public void sendFile(String path) { useHandle(h -> Native.sendFile(h, Native.utf8(Objects.requireNonNull(path)))); }
+    public void sendText(String text, DataSendOptions options) {
+        Objects.requireNonNull(options);
+        if (options.mimeType() != null || options.name() != null)
+            throw new IllegalArgumentException("Byte stream fields cannot be used for text");
+        sendWithOptions(0, Native.utf8(Objects.requireNonNull(text)), options);
+    }
+    public void sendBytes(byte[] data, DataSendOptions options) {
+        requireNoTextFields(options);
+        sendWithOptions(1, Objects.requireNonNull(data), options);
+    }
+    public void sendFile(String path, DataSendOptions options) {
+        requireNoTextFields(options);
+        if (options.name() != null) throw new IllegalArgumentException("File name comes from path");
+        sendWithOptions(2, Native.utf8(Objects.requireNonNull(path)), options);
+    }
+    private static void requireNoTextFields(DataSendOptions options) {
+        Objects.requireNonNull(options);
+        if (options.replyToStreamId() != null || !options.attachedStreamIds().isEmpty())
+            throw new IllegalArgumentException("Text stream fields cannot be used here");
+    }
+    private void sendWithOptions(int kind, byte[] value, DataSendOptions options) {
+        Objects.requireNonNull(options);
+        byte[][] keys = new byte[options.attributes().size()][];
+        byte[][] values = new byte[keys.length][];
+        int index = 0;
+        for (var entry : options.attributes().entrySet()) {
+            keys[index] = Native.utf8(entry.getKey());
+            values[index++] = Native.utf8(entry.getValue());
+        }
+        byte[][] fields = { Native.utf8(options.topic()), Native.utf8(options.mimeType()),
+            Native.utf8(options.name()), Native.utf8(options.replyToStreamId()) };
+        useHandle(h -> Native.sendWithOptions(h, kind, value, fields,
+            encodeDestinations(options.destinations().toArray(String[]::new)), keys, values,
+            encodeDestinations(options.attachedStreamIds().toArray(String[]::new)),
+            options.chunkSize(), options.compress()));
+    }
+    public void publishDtmf(int code, String digit) { useHandle(h -> Native.sendDtmf(h, code, Native.utf8(digit))); }
+    public String sendChat(String message) { return sendChatMessage(message).id(); }
+    public SentChatMessage sendChatMessage(String message) {
+        return withHandle(h -> Native.sendChatMessage(h, Native.utf8(Objects.requireNonNull(message))));
+    }
+    public void editChatMessage(SentChatMessage original, String message) {
+        Objects.requireNonNull(original);
+        editChatMessage(original.id(), original.timestamp(), message);
+    }
+    public void editChatMessage(String messageId, long originalTimestamp, String message) {
+        if (Objects.requireNonNull(messageId).isEmpty())
+            throw new IllegalArgumentException("Message ID is empty");
+        useHandle(h -> Native.editChat(h, Native.utf8(messageId), originalTimestamp,
+            Native.utf8(Objects.requireNonNull(message))));
+    }
+    public List<Participant> remoteParticipants() { return withHandle(h -> List.of(Native.remoteParticipants(h))); }
+    public Participant localParticipant() { return withHandle(Native::localParticipant); }
+    public ParticipantDetails localParticipantDetails() {
+        return withHandle(Native::localParticipantDetails);
+    }
+    public List<ParticipantDetails> remoteParticipantDetails() {
+        return withHandle(h -> List.of(Native.remoteParticipantDetails(h)));
+    }
+
+    public void setTrackSubscribed(String participantSid, String trackSid, boolean subscribed) {
+        useHandle(h -> Native.setTrackSubscribed(h, Native.utf8(participantSid), Native.utf8(trackSid), subscribed));
+    }
+
+    public void updateRemoteTrackSettings(String participantSid, String trackSid,
+                                          RemoteTrackSettings settings) {
+        if (participantSid == null || participantSid.isEmpty() ||
+            trackSid == null || trackSid.isEmpty())
+            throw new IllegalArgumentException("Participant and track SIDs are required");
+        Objects.requireNonNull(settings);
+        useHandle(h -> Native.updateRemoteTrackSettings(h, Native.utf8(participantSid),
+            Native.utf8(trackSid), settings.enabled(), settings.videoQuality(),
+            settings.width(), settings.height(), settings.fps(), settings.priority()));
+    }
+
+    public void setTrackSubscriptionPermissions(boolean allowAll,
+                                                 ParticipantTrackPermission... permissions) {
+        Objects.requireNonNull(permissions);
+        ParticipantTrackPermission[] copied = permissions.clone();
+        for (ParticipantTrackPermission permission : copied) Objects.requireNonNull(permission);
+        useHandle(h -> Native.setTrackSubscriptionPermissions(h, allowAll, copied));
+    }
+
+    public RpcResult performRpc(String destination, String method, String payload, int timeoutMs) {
+        return withHandle(h -> Native.performRpc(h, Native.utf8(destination), Native.utf8(method), Native.utf8(payload), timeoutMs));
+    }
+
+    public CompletableFuture<RpcResult> performRpcAsync(String destination, String method, String payload, int timeoutMs) {
+        return CompletableFuture.supplyAsync(() -> performRpc(destination, method, payload, timeoutMs));
+    }
+
+    @FunctionalInterface public interface RpcHandler { String handle(RpcInvocation invocation); }
+
+    public void registerRpcMethod(String method, RpcHandler handler) {
+        Objects.requireNonNull(method);
+        Objects.requireNonNull(handler);
+        if (rpcHandlers.putIfAbsent(method, handler) != null)
+            throw new IllegalStateException("RPC method already registered: " + method);
+        try { useHandle(h -> Native.registerRpc(h, Native.utf8(method))); }
+        catch (RuntimeException failure) { rpcHandlers.remove(method, handler); throw failure; }
+    }
+
+    public void unregisterRpcMethod(String method) {
+        useHandle(h -> Native.unregisterRpc(h, Native.utf8(method)));
+        rpcHandlers.remove(method);
+    }
+
+    private String onNativeRpc(String method, String requestId, String caller, String payload, int timeoutMs) {
+        RpcHandler handler = rpcHandlers.get(method);
+        if (handler == null) throw new IllegalStateException("RPC method is unregistered: " + method);
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try { return handler.handle(new RpcInvocation(requestId, caller, payload, timeoutMs)); }
+        finally { inCallback.set(previous); }
+    }
+
+    private static int keyIndex(int index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        return index;
+    }
+
+    public boolean e2eeConfigured() { return withHandle(Native::e2eeConfigured); }
+    public boolean e2eeEnabled() { return withHandle(Native::e2eeEnabled); }
+    public void setE2eeEnabled(boolean enabled) { useHandle(h -> Native.setE2eeEnabled(h, enabled)); }
+    public void setSharedKey(byte[] key, int index) { useHandle(h -> Native.setSharedKey(h,
+        Objects.requireNonNull(key), keyIndex(index))); }
+    public byte[] exportSharedKey(int index) { return withHandle(h -> Native.exportSharedKey(h,
+        keyIndex(index))); }
+    public void ratchetSharedKey(int index) { useHandle(h -> Native.ratchetSharedKey(h,
+        keyIndex(index))); }
+    public void removeSharedKey(int index) { useHandle(h -> Native.removeSharedKey(h,
+        keyIndex(index))); }
+    public void setParticipantKey(String identity, byte[] key, int index) {
+        useHandle(h -> Native.setParticipantKey(h, Native.utf8(Objects.requireNonNull(identity)),
+            Objects.requireNonNull(key), keyIndex(index)));
+    }
+    public byte[] exportParticipantKey(String identity, int index) {
+        return withHandle(h -> Native.exportParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void ratchetParticipantKey(String identity, int index) {
+        useHandle(h -> Native.ratchetParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void removeParticipantKey(String identity, int index) {
+        useHandle(h -> Native.removeParticipantKey(h,
+            Native.utf8(Objects.requireNonNull(identity)), keyIndex(index)));
+    }
+    public void removeParticipantKeys(String identity) {
+        useHandle(h -> Native.removeParticipantKeys(h,
+            Native.utf8(Objects.requireNonNull(identity))));
+    }
+    public void clearE2eeKeys() { useHandle(Native::clearE2eeKeys); }
+    public long dataKeyIndex() { return withHandle(Native::dataKeyIndex); }
+    public void setDataKeyIndex(long index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        useHandle(h -> Native.setDataKeyIndex(h, index));
+    }
+    private static int cryptorDirection(int direction) {
+        if (direction < 0 || direction > 1)
+            throw new IllegalArgumentException("Invalid frame cryptor direction");
+        return direction;
+    }
+    public void setFrameCryptorEnabled(String trackId, int direction, boolean enabled) {
+        useHandle(h -> Native.setFrameCryptorEnabled(h,
+            Native.utf8(Objects.requireNonNull(trackId)), cryptorDirection(direction), enabled));
+    }
+    public void setFrameCryptorKeyIndex(String trackId, int direction, long index) {
+        if (index < 0) throw new IllegalArgumentException("Negative E2EE key index");
+        useHandle(h -> Native.setFrameCryptorKeyIndex(h,
+            Native.utf8(Objects.requireNonNull(trackId)), cryptorDirection(direction), index));
+    }
+    public long setParticipantE2eeEnabled(String identity, boolean enabled) {
+        return withHandle(h -> Native.setParticipantE2eeEnabled(h,
+            Native.utf8(Objects.requireNonNull(identity)), enabled));
+    }
+    public List<EncryptionState> frameCryptors() {
+        return withHandle(h -> List.of(Native.frameCryptors(h)));
+    }
+
+    public CompletableFuture<TextStreamWriter> streamTextAsync(StreamWriterOptions options) {
+        return CompletableFuture.supplyAsync(() -> streamText(options));
+    }
+
+    public CompletableFuture<TextStreamWriter> streamTextAsync(String topic, String... destinations) {
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.supplyAsync(() -> streamText(topic, recipients));
+    }
+
+    public CompletableFuture<ByteStreamWriter> streamBytesAsync(StreamWriterOptions options) {
+        return CompletableFuture.supplyAsync(() -> streamBytes(options));
+    }
+
+    public CompletableFuture<ByteStreamWriter> streamBytesAsync(
+            String topic, String mimeType, String name, String... destinations) {
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.supplyAsync(() -> streamBytes(topic, mimeType, name, recipients));
+    }
+
+    public CompletableFuture<Void> sendTextAsync(String text, DataSendOptions options) {
+        return CompletableFuture.runAsync(() -> sendText(text, options));
+    }
+
+    public CompletableFuture<Void> sendTextAsync(String text) {
+        return CompletableFuture.runAsync(() -> sendText(text));
+    }
+
+    public CompletableFuture<Void> sendBytesAsync(byte[] data, DataSendOptions options) {
+        byte[] payload = Objects.requireNonNull(data).clone();
+        return CompletableFuture.runAsync(() -> sendBytes(payload, options));
+    }
+
+    public CompletableFuture<Void> sendBytesAsync(byte[] data) {
+        byte[] payload = Objects.requireNonNull(data).clone();
+        return CompletableFuture.runAsync(() -> sendBytes(payload));
+    }
+
+    public CompletableFuture<Void> sendFileAsync(String path, DataSendOptions options) {
+        return CompletableFuture.runAsync(() -> sendFile(path, options));
+    }
+
+    public CompletableFuture<Void> sendFileAsync(String path) {
+        return CompletableFuture.runAsync(() -> sendFile(path));
+    }
+
+    public CompletableFuture<LocalDataTrack> publishDataTrackAsync(DataTrackPublishOptions options) {
+        return CompletableFuture.supplyAsync(() -> publishDataTrack(options));
+    }
+
+    public CompletableFuture<LocalDataTrack> publishDataTrackAsync(String name, int frameEncoding) {
+        return CompletableFuture.supplyAsync(() -> publishDataTrack(name, frameEncoding));
+    }
+
+    public CompletableFuture<Void> storeDataTrackSchemaAsync(DataTrackSchema schema) {
+        return CompletableFuture.runAsync(() -> storeDataTrackSchema(schema));
+    }
+
+    public CompletableFuture<DataTrackSchema> getDataTrackSchemaAsync(
+            String participantIdentity, String name, int encoding, String customEncoding) {
+        return CompletableFuture.supplyAsync(() -> getDataTrackSchema(
+            participantIdentity, name, encoding, customEncoding));
+    }
+
+    public CompletableFuture<DataTrackReader> subscribeDataTrackAsync(
+            String participantIdentity, String trackSid, DataTrackSubscriptionOptions options) {
+        return CompletableFuture.supplyAsync(() -> subscribeDataTrack(
+            participantIdentity, trackSid, options));
+    }
+
+    public CompletableFuture<DataTrackReader> subscribeDataTrackAsync(
+            String participantIdentity, String trackSid, int bufferCapacity) {
+        return CompletableFuture.supplyAsync(() -> subscribeDataTrack(
+            participantIdentity, trackSid, bufferCapacity));
+    }
+
+    public CompletableFuture<Void> updateDataTrackSubscriptionAsync(
+            String participantIdentity, String trackSid, DataTrackSubscriptionOptions options) {
+        return CompletableFuture.runAsync(() -> updateDataTrackSubscription(
+            participantIdentity, trackSid, options));
+    }
+
+    public CompletableFuture<LocalTrack> createAudioTrackAsync(String label, AudioSource source) {
+        return CompletableFuture.supplyAsync(() -> createAudioTrack(label, source));
+    }
+
+    public CompletableFuture<LocalTrack> createVideoTrackAsync(String label, VideoSource source) {
+        return CompletableFuture.supplyAsync(() -> createVideoTrack(label, source));
+    }
+
+    public CompletableFuture<AudioStream> createAudioStreamAsync(
+            String participantIdentity, String trackSid, int capacity) {
+        return CompletableFuture.supplyAsync(() -> createAudioStream(
+            participantIdentity, trackSid, capacity));
+    }
+
+    public CompletableFuture<AudioStream> createAudioStreamAsync(
+            String participantIdentity, String trackSid) {
+        return CompletableFuture.supplyAsync(() -> createAudioStream(
+            participantIdentity, trackSid));
+    }
+
+    public CompletableFuture<VideoStream> createVideoStreamAsync(
+            String participantIdentity, String trackSid, int capacity) {
+        return CompletableFuture.supplyAsync(() -> createVideoStream(
+            participantIdentity, trackSid, capacity));
+    }
+
+    public CompletableFuture<VideoStream> createVideoStreamAsync(
+            String participantIdentity, String trackSid) {
+        return CompletableFuture.supplyAsync(() -> createVideoStream(
+            participantIdentity, trackSid));
+    }
+
+    public CompletableFuture<TrackRecorder> startTrackRecordingAsync(
+            String participantIdentity, String trackSid, String outputPath, int queueCapacity) {
+        return CompletableFuture.supplyAsync(() -> startTrackRecording(
+            participantIdentity, trackSid, outputPath, queueCapacity));
+    }
+
+    public CompletableFuture<TrackRecorder> startTrackRecordingAsync(
+            String participantIdentity, String trackSid, String outputPath) {
+        return CompletableFuture.supplyAsync(() -> startTrackRecording(
+            participantIdentity, trackSid, outputPath));
+    }
+
+    private void onNativeEvent(int event, int value, Participant participant, DataPacket packet) {
+        dispatch(listener -> {
+            switch (event) {
+                case 0 -> listener.onConnected();
+                case 1 -> listener.onDisconnected(value);
+                case 2 -> listener.onReconnecting();
+                case 3 -> listener.onReconnected();
+                case 4 -> listener.onConnectionStateChanged(value);
+                case 5 -> listener.onParticipantConnected(participant);
+                case 6 -> listener.onParticipantDisconnected(participant);
+                case 7 -> listener.onDataReceived(packet);
+                case 8 -> listener.onRecordingStatusChanged(value != 0);
+                case 9 -> listener.onTokenRefreshed();
+                case 10 -> listener.onRoomEos();
+                case 11 -> listener.onConnectionQualityChanged(participant, value);
+                default -> throw new AssertionError(event);
+            }
+        });
+    }
+
+    void onNativeRoomString(int kind, String previous, String current) {
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onRoomMetadataChanged(current);
+                case 1 -> listener.onRoomSidChanged(previous, current);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeParticipantChange(int kind, Participant participant, String detail,
+                                   Map<String, String> changes) {
+        Map<String, String> copied = changes == null ? Map.of() : Map.copyOf(changes);
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onParticipantMetadataChanged(participant, detail);
+                case 1 -> listener.onParticipantNameChanged(participant, detail);
+                case 2 -> listener.onParticipantAttributesChanged(participant, copied);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeParticipantList(int kind, Participant[] participants) {
+        List<Participant> copied = List.of(participants.clone());
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onActiveSpeakersChanged(copied);
+                case 1 -> listener.onParticipantsUpdated(copied);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativePermissionsChanged(Participant participant, ParticipantPermissions previous,
+                                    ParticipantPermissions current) {
+        dispatch(listener -> listener.onParticipantPermissionsChanged(participant, previous,
+            current));
+    }
+
+    void onNativeSipDtmf(long code, String digit, String participantIdentity) {
+        SipDtmf event = new SipDtmf(code, digit, participantIdentity);
+        dispatch(listener -> listener.onSipDtmfReceived(event));
+    }
+
+    void onNativeDataChannelBufferStatus(boolean reliable, long bufferedAmount,
+                                         long highWaterMark, long lowWaterMark,
+                                         boolean backpressured) {
+        DataChannelBufferStatus status = new DataChannelBufferStatus(reliable, bufferedAmount,
+            highWaterMark, lowWaterMark, backpressured);
+        dispatch(listener -> listener.onDataChannelBufferStatusChanged(status));
+    }
+
+    void onNativeEncryptionState(String trackId, String participantIdentity, int kind,
+                                 int direction, boolean enabled, long keyIndex, int state) {
+        EncryptionState value = new EncryptionState(trackId, participantIdentity, kind,
+            direction, enabled, keyIndex, state);
+        dispatch(listener -> listener.onEncryptionStateChanged(value));
+    }
+
+    void onNativeRoomSnapshot(int kind, String sid, String name, String metadata,
+                              boolean recording) {
+        RoomSnapshot snapshot = new RoomSnapshot(sid, name, metadata, recording);
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onRoomUpdated(snapshot);
+                case 1 -> listener.onRoomMoved(snapshot);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeDataTrack(int kind, String participantIdentity, int publisherHandle,
+                           String sid, String name, boolean usesE2ee, boolean hasFrameEncoding,
+                           int frameEncoding, String customFrameEncoding, boolean hasSchema,
+                           String schemaName, int schemaEncoding, String customSchemaEncoding,
+                           byte[] frameData, boolean hasUserTimestamp, long userTimestamp) {
+        DataTrackPublication track = new DataTrackPublication(participantIdentity, publisherHandle,
+            sid, name, usesE2ee, hasFrameEncoding, frameEncoding, customFrameEncoding,
+            hasSchema, schemaName, schemaEncoding, customSchemaEncoding);
+        if (kind == 4) {
+            DataTrackFrame frame = new DataTrackFrame(Objects.requireNonNull(frameData).clone(),
+                userTimestamp, hasUserTimestamp);
+            dispatch(listener -> listener.onDataTrackFrame(track, frame));
+            return;
+        }
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onDataTrackPublished(track);
+                case 1 -> listener.onDataTrackUnpublished(track);
+                case 2 -> listener.onLocalDataTrackPublished(track);
+                case 3 -> listener.onLocalDataTrackUnpublished(track);
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    private void dispatch(Consumer<Listener> delivery) {
+        boolean previous = inCallback.get();
+        inCallback.set(true);
+        try {
+        for (Listener listener : listeners) {
+            try {
+                delivery.accept(listener);
+            } catch (Throwable failure) {
+                Thread thread = Thread.currentThread();
+                Thread.UncaughtExceptionHandler handler = thread.getUncaughtExceptionHandler();
+                if (handler != null) handler.uncaughtException(thread, failure);
+            }
+        }
+        } finally { inCallback.set(previous); }
+    }
+
+    private void onNativeText(TextMessage message) {
+        dispatch(listener -> listener.onTextReceived(message));
+    }
+
+    void onNativeTrack(int kind, RemoteTrackPublication track, int value) {
+        dispatch(listener -> {
+            switch (kind) {
+                case 0 -> listener.onTrackPublished(track);
+                case 1 -> listener.onTrackUnpublished(track);
+                case 2 -> listener.onTrackMuted(track);
+                case 3 -> listener.onTrackUnmuted(track);
+                case 4 -> listener.onTrackSubscribed(track);
+                case 5 -> listener.onTrackUnsubscribed(track);
+                case 6 -> listener.onTrackSubscriptionPermissionChanged(track, value != 0);
+                case 7 -> listener.onTrackSubscriptionFailed(track, value);
+                case 8 -> listener.onTrackStreamStateChanged(track, value);
+                case 9 -> listener.onTrackSubscriptionStatusChanged(track, value);
+                case 10 -> listener.onLocalTrackPublished(LocalTrackPublication.from(track));
+                case 11 -> listener.onLocalTrackUnpublished(LocalTrackPublication.from(track));
+                case 12 -> listener.onLocalTrackSubscribed(LocalTrackPublication.from(track));
+                default -> throw new AssertionError(kind);
+            }
+        });
+    }
+
+    void onNativeSubscribedQuality(RemoteTrackPublication track, Participant participant,
+                                   String trackSid,
+                                   SubscribedQuality[] qualities, SubscribedCodec[] codecs) {
+        SubscribedQualityChange change = new SubscribedQualityChange(
+            LocalTrackPublication.from(track), participant, trackSid,
+            List.of(qualities.clone()), List.of(codecs.clone()));
+        dispatch(listener -> listener.onSubscribedQualityUpdated(change));
+    }
+
+    private void onNativeBytes(ByteMessage message, boolean file) {
+        dispatch(listener -> {
+            if (file) listener.onFileReceived(message);
+            else listener.onBytesReceived(message);
+        });
+    }
+
+    private void onNativeTextStream(TextStreamEvent event) {
+        dispatch(listener -> listener.onTextStreamEvent(event));
+    }
+
+    private void onNativeByteStream(ByteStreamEvent event) {
+        dispatch(listener -> listener.onByteStreamEvent(event));
+    }
+
+    void onNativeChat(ChatMessage message) {
+        dispatch(listener -> listener.onChatMessageReceived(message));
+    }
+
+    void onNativeTranscription(String participantIdentity, String trackId,
+                               TranscriptionSegment[] segments) {
+        TranscriptionMessage message = new TranscriptionMessage(participantIdentity, trackId,
+            List.of(segments.clone()));
+        dispatch(listener -> listener.onTranscriptionReceived(message));
+    }
+
+    void onNativeMetrics(MetricsMessage message) {
+        dispatch(listener -> listener.onMetricsReceived(message));
+    }
+
+    void onNativeAudioFrame(RemoteTrackPublication track, Participant participant,
+                            short[] samples, int sampleRate, int channels,
+                            int samplesPerChannel) {
+        AudioFrame frame = new AudioFrame(samples, sampleRate, channels, samplesPerChannel);
+        dispatchFrame("audio", listener -> listener.onAudioFrame(track, participant, frame));
+    }
+
+    void onNativeVideoFrame(RemoteTrackPublication track, Participant participant,
+                            byte[] data, int width, int height, long timestampUs,
+                            Long userTimestampUs, Integer frameId, byte[] userData) {
+        VideoFrame frame = new VideoFrame(data, width, height, timestampUs, userTimestampUs,
+            frameId, userData);
+        dispatchFrame("video", listener -> listener.onVideoFrame(track, participant, frame));
+    }
+
+    private void dispatchFrame(String kind, Consumer<FrameListener> delivery) {
+        if (frameCallbacksRunning && !frameQueue.offer(new FrameDelivery(kind, delivery)))
+            droppedFrameCallbacks.incrementAndGet();
+    }
+
+    private void drainFrameCallbacks() {
+        while (frameCallbacksRunning) {
+            try {
+                FrameDelivery delivery = frameQueue.take();
+                if (!frameCallbacksRunning) break;
+                boolean previous = inCallback.get();
+                inCallback.set(true);
+                try {
+                    for (FrameListener listener : frameListeners) {
+                        try { delivery.callback().accept(listener); }
+                        catch (Throwable failure) {
+                            if (!frameErrors.offer(new FrameCallbackError(delivery.kind(), failure)))
+                                droppedFrameErrors.incrementAndGet();
+                        }
+                    }
+                } finally { inCallback.set(previous); }
+            } catch (InterruptedException interrupted) {
+                if (!frameCallbacksRunning) break;
+            }
+        }
+    }
+
+    @Override public void close() {
+        if (inCallback.get()) throw new IllegalStateException("Close the room after its callback returns");
+        synchronized (this) {
+            boolean interrupted = false;
+            while (closing) {
+                try { wait(); }
+                catch (InterruptedException ignored) { interrupted = true; }
+            }
+            if (handle == 0) {
+                if (interrupted) Thread.currentThread().interrupt();
+                return;
+            }
+            closing = true;
+            while (activeCalls != 0) {
+                try { wait(); }
+                catch (InterruptedException ignored) { interrupted = true; }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+        try {
+            frameCallbacksRunning = false;
+            frameQueue.clear();
+            Thread frameWorker = frameCallbackThread;
+            if (frameWorker != null) frameWorker.interrupt();
+            for (TextStreamWriter writer : textWriters) writer.abortOnRoomClose();
+            for (ByteStreamWriter writer : byteWriters) writer.abortOnRoomClose();
+            for (TrackRecorder recorder : recorders) recorder.close();
+            for (AudioStream stream : audioStreams) stream.close();
+            for (VideoStream stream : videoStreams) stream.close();
+            for (DataTrackReader reader : dataTrackReaders) reader.close();
+            for (LocalDataTrack track : dataTracks) track.close();
+            for (LocalTrack track : tracks) track.close();
+            long old = handle;
+            handle = 0;
+            Native.destroy(old);
+            rpcHandlers.clear();
+            tokenSource = null;
+            reconnectPolicy = null;
+            frameListeners.clear();
+            if (frameWorker != null) {
+                boolean interrupted = false;
+                try {
+                    frameWorker.join(1000);
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        } finally {
+            synchronized (this) { closing = false; notifyAll(); }
+        }
+    }
+}

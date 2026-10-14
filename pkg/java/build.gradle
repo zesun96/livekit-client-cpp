@@ -1,0 +1,21 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.livekit'
+version = '0.1.0'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(17) }
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.register('offlineSmoke', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.main.runtimeClasspath + sourceSets.test.runtimeClasspath
+    mainClass = 'io.livekit.client.OfflineSmoke'
+}
