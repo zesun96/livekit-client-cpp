@@ -28,7 +28,8 @@ version. The OS loader must also find the native SDK's dependencies.
 The public API is `io.livekit.client.Room`. It owns the native room and must be closed. Register
 listeners before connecting. Listeners run on native SDK callback threads, receive copied data,
 and should return promptly. Blocking operations have `CompletableFuture` alternatives. The
-binding currently covers room lifecycle and state, local participant identity and profile,
+[Java examples](examples/README.md) include feature scenarios and a local two-peer smoke test.
+The binding currently covers room lifecycle and state, local participant identity and profile,
 local participant attributes and recording state,
 local and remote participant snapshots with audio level, connection quality and speaking state,
 detached participant permission, attribute and remote publication details,
@@ -163,11 +164,13 @@ Java provides `CompletableFuture` variants for room connection, data and stream 
 incremental writers, DataTrack publishing and reading, track publication, frame capture, and
 remote media readers. These run synchronous native calls on an executor; cancelling a future
 cannot interrupt a native call already in progress.
-The offline JNI smoke test covers loading, local snapshots, and disconnected-room behavior.
-It also covers diagnostics queue setup, video input, audio queue controls, bounded frame callback
-delivery, and asynchronous error propagation. Two-peer transfer, remote snapshots, actual
-diagnostic record delivery, and physical capture still need integration validation. Physical audio
-tests require the host-device procedure in the repository instructions.
+The offline JNI smoke test covers loading, local snapshots, disconnected-room behavior,
+diagnostics queue setup, video input, audio queue controls, bounded frame callback delivery, and
+asynchronous error propagation. The local two-peer smoke validates data and byte messages,
+incremental streams, RPC, DataTrack frames and schemas, remote snapshots, synthetic video frames,
+a remote video reader, and copied native trace records. Physical capture still needs
+integration validation. Physical audio tests require the host-device procedure in the repository
+instructions.
 
 ```java
 try (Room room = new Room()) {
