@@ -1,5 +1,6 @@
 package io.livekit.client;
 
+import java.util.List;
 import java.util.Objects;
 
 /** Process-wide SDK logging and JSON tracing controls. */
@@ -27,4 +28,22 @@ public final class Diagnostics {
     }
 
     public static void stopTrace() { Native.stopTrace(); }
+
+    /** Capture copied log records in a bounded native queue; capacity 0 disables capture. */
+    public static void setLogCaptureCapacity(int capacity) {
+        if (capacity < 0) throw new IllegalArgumentException("Negative log queue capacity");
+        Native.setLogCaptureCapacity(capacity);
+    }
+
+    public static List<LogRecord> drainLogRecords() { return List.of(Native.drainLogRecords()); }
+    public static long droppedLogRecords() { return Native.droppedLogRecords(); }
+
+    /** Capture copied trace records in a bounded native queue; capacity 0 disables capture. */
+    public static void setTraceCaptureCapacity(int capacity) {
+        if (capacity < 0) throw new IllegalArgumentException("Negative trace queue capacity");
+        Native.setTraceCaptureCapacity(capacity);
+    }
+
+    public static List<TraceRecord> drainTraceRecords() { return List.of(Native.drainTraceRecords()); }
+    public static long droppedTraceRecords() { return Native.droppedTraceRecords(); }
 }

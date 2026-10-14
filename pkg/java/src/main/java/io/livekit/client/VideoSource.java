@@ -1,5 +1,8 @@
 package io.livekit.client;
 
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+
 /** Caller-owned video source. Close tracks before closing their source. */
 public final class VideoSource implements AutoCloseable {
     private long handle;
@@ -73,6 +76,37 @@ public final class VideoSource implements AutoCloseable {
         if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
                 data.length != (long) width * height * 3 / 2) throw new IllegalArgumentException("Invalid I420 frame");
         Native.captureI420(handle(), data, width, height, timestampUs);
+    }
+
+    /** Capture any C ABI video format with optional planes and frame metadata. */
+    public synchronized void captureFrame(VideoFrameInput frame) {
+        if (kind != 0) throw new IllegalStateException("Device source captures its own video");
+        Objects.requireNonNull(frame);
+        long[] offsets = new long[frame.planes().size()];
+        long[] sizes = new long[offsets.length];
+        int[] strides = new int[offsets.length];
+        for (int i = 0; i < offsets.length; i++) {
+            VideoPlane plane = frame.planes().get(i);
+            offsets[i] = plane.offset();
+            sizes[i] = plane.size();
+            strides[i] = plane.stride();
+        }
+        VideoFrameMetadata metadata = frame.metadata();
+        Native.captureVideoFrame(handle(), frame.data(), frame.width(), frame.height(),
+            frame.timestampUs(), frame.rotation(), frame.format(), offsets, sizes, strides,
+            metadata == null ? null : metadata.userTimestampUs(),
+            metadata == null ? null : metadata.frameId(),
+            metadata == null ? null : metadata.userData());
+    }
+
+    public CompletableFuture<Void> captureFrameAsync(VideoFrameInput frame) {
+        return CompletableFuture.runAsync(() -> captureFrame(frame));
+    }
+
+    public CompletableFuture<Void> captureI420Async(byte[] data, int width, int height,
+                                                    long timestampUs) {
+        byte[] frame = Objects.requireNonNull(data).clone();
+        return CompletableFuture.runAsync(() -> captureI420(frame, width, height, timestampUs));
     }
 
     @Override public synchronized void close() {

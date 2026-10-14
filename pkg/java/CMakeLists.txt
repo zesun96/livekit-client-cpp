@@ -14,6 +14,10 @@ if(NOT EXISTS "${LIVEKIT_CLIENT_CPP_LIBRARY}")
 endif()
 
 add_library(livekitclient_java SHARED src/main/cpp/livekit_jni.cpp)
+if(MSVC)
+  set_property(TARGET livekitclient_java PROPERTY MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 target_compile_features(livekitclient_java PRIVATE cxx_std_20)
 target_include_directories(livekitclient_java PRIVATE ${_jni_includes} ../../include)
 target_compile_definitions(livekitclient_java PRIVATE LKC_SHARED)

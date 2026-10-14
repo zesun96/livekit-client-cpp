@@ -24,6 +24,12 @@ final class Native {
     static native TraceOptions traceOptions();
     static native void startTraceJson(byte[] path);
     static native void stopTrace();
+    static native void setLogCaptureCapacity(int capacity);
+    static native LogRecord[] drainLogRecords();
+    static native long droppedLogRecords();
+    static native void setTraceCaptureCapacity(int capacity);
+    static native TraceRecord[] drainTraceRecords();
+    static native long droppedTraceRecords();
     static native long create(Room room);
     static native void destroy(long handle);
     static native void setFrameCallbacksEnabled(long handle, boolean enabled);
@@ -127,6 +133,9 @@ final class Native {
     static native MicrophoneProcessingStats microphoneProcessingStats(long source);
     static native void destroyAudioSource(long source);
     static native void captureAudio(long source, short[] samples, int samplesPerChannel);
+    static native long audioSourceQueuedDurationMs(long source);
+    static native void clearAudioSourceQueue(long source);
+    static native void waitForAudioSourcePlayout(long source, int timeoutMs);
     static native long createVideoSource(boolean screencast);
     static native long createDeviceVideoSource(int kind, byte[] deviceId, int width, int height,
                                                int framesPerSecond, boolean includeCursor);
@@ -135,8 +144,15 @@ final class Native {
     static native byte[] deviceVideoSourceId(long source, int kind);
     static native void destroyVideoSource(long source);
     static native void captureI420(long source, byte[] data, int width, int height, long timestampUs);
+    static native void captureVideoFrame(long source, byte[] data, int width, int height,
+                                         long timestampUs, int rotation, int format, long[] offsets,
+                                         long[] sizes, int[] strides, Long userTimestampUs,
+                                         Long frameId, byte[] userData);
     static native long createTrack(long room, byte[] label, long source, boolean video);
     static native void publishTrack(long room, long track, int source);
+    static native void publishTrackWithOptions(long room, long track, int mode, long[] integers,
+                                               float[] frameRates, boolean[] flags,
+                                               byte[][] strings);
     static native void publishScreenShareTrack(long room, long track, boolean video);
     static native void unpublishTrack(long track);
     static native void destroyTrack(long track);
@@ -158,6 +174,8 @@ final class Native {
                                                      byte[] customEncoding);
     static native void pushDataTrack(long track, byte[] data, boolean hasTimestamp, long timestamp);
     static native byte[] dataTrackSid(long track);
+    static native LocalDataTrackInfo localDataTrackInfo(long track);
+    static native boolean localDataTrackPublished(long track);
     static native void unpublishDataTrack(long track);
     static native void destroyDataTrack(long track);
     static native long subscribeDataTrack(long room, byte[] participantIdentity, byte[] trackSid,

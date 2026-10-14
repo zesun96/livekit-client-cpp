@@ -7,8 +7,8 @@ third-party dependencies.
 On Windows, build `livekitclient.dll` with `-DLKC_MSVC_RUNTIME=static`. Some Java distributions
 ship an older `msvcp140.dll` beside `java.exe`; a dynamically linked SDK can load that runtime and
 crash while enumerating media devices. The static runtime build avoids that process-wide DLL
-collision. Use the matching static-runtime libwebrtc and dependency packages when configuring the
-SDK.
+collision. The JNI bridge also links the static MSVC runtime. Use the matching static-runtime
+libwebrtc and dependency packages when configuring the SDK.
 
 ```powershell
 cmake -S pkg/java -B out/build/java-binding -G "Visual Studio 17 2022" -A x64 `
@@ -33,7 +33,7 @@ local participant attributes and recording state,
 local and remote participant snapshots with audio level, connection quality and speaking state,
 detached participant permission, attribute and remote publication details,
 remote publication subscription, encryption and subscribed-track state snapshots,
-data messages, basic text/byte/file sending and receiving,
+data messages, text/byte/file sending and receiving,
 chat sending and editing, DTMF, track subscription, RPC calls and handlers, shared-key E2EE controls, synthetic audio
 and video sources, microphone, system audio, camera, and screen capture sources, local tracks,
 remote track snapshots and bounded audio/video stream readers,
@@ -41,12 +41,13 @@ remote track publish, mute, and subscription events,
 remote track subscription and playback settings,
 local RTC stats JSON, device and screen-source enumeration,
 speaker controls and audio playback statistics,
-connection options including ICE servers and GCM E2EE, and basic DataTrack publishing, remote
+connection options including ICE servers and GCM E2EE, DataTrack publishing, remote
 snapshots, bounded readers, remote track recording, and outgoing incremental text/byte writers.
 `E2eeOptions` also exposes unencrypted magic bytes, ratchet window, failure tolerance, and key
 ring size; the shorter constructors retain SDK defaults.
 Incoming incremental text/byte events can be registered by topic. DataTrack schemas and custom
-frame encodings are supported. Diagnostics exposes process-wide log levels and JSON tracing.
+frame encodings are supported. Diagnostics exposes process-wide log levels, bounded log and trace
+record queues, and JSON tracing.
 `Room.connectWithTokenSource` supplies credentials again when the SDK requests a refresh.
 Pass `TokenFetchOptions` to supply room, participant, agent, deployment, and attribute fields
 to the provider on initial connection and refresh.
@@ -68,8 +69,12 @@ Subscribed quality updates include copied per-codec quality lists.
 Metrics callbacks provide time series, event samples, normalized timestamps, and string-table
 indexes.
 Register `Room.FrameListener` to receive copied audio and video frames with video metadata.
-Frame delivery is synchronous on native media threads; return promptly. Callbacks are enabled
-only while a frame listener is registered.
+Frame delivery uses a dedicated Java thread and a bounded queue. `Room(int frameQueueCapacity)`
+sets its capacity (default 32); `droppedFrameCallbacks()` counts frames discarded when full.
+`drainFrameCallbackErrors()` retrieves listener failures from a bounded error queue, and
+`droppedFrameCallbackErrors()` counts failures discarded when that queue is full. Return
+promptly from frame listeners. Native frame callbacks are enabled only while a listener is
+registered.
 Participant metadata, name, and attribute change callbacks include copied participant data;
 an empty attribute value means that key was removed.
 Participant permission change callbacks include detached old and new permission snapshots.
@@ -94,7 +99,11 @@ integer values match the corresponding `lk_*` enums in `include/livekit/capi/liv
 video and system audio. A microphone source exposes `microphoneProcessingOptions()`,
 `setMicrophoneProcessingOptions(...)`, and `microphoneProcessingStats()`; unavailable
 measurements in the statistics record are `null`. Hardware capture has not been exercised by
-the offline smoke test.
+the offline smoke test. Synthetic audio sources expose `queuedDurationMs()`, `clearQueue()`,
+and `waitForPlayout(timeoutMs)`. `VideoSource.captureFrame(VideoFrameInput)` accepts all C ABI
+video formats, optional plane layouts, rotation, and copied user metadata.
+`TrackPublishOptions` controls codec, simulcast, encodings, frame metadata, and degradation
+settings for ordinary and screen-share publication; shorter publish methods retain native defaults.
 
 Use `Room.remoteTrackPublications()` to find a participant identity and track SID, then call
 `createAudioStream` or `createVideoStream`. Read with `readFor(timeoutMs)` and close the stream
@@ -129,6 +138,10 @@ events also include reply and attached-stream IDs.
 `Diagnostics` controls process-wide logging and tracing. Start a JSON trace with
 `startTraceJson(path)` and call `stopTrace()` to flush it. Trace output is written to the given
 path by the native SDK. `traceOptions()` reports the current enabled state and category mask.
+`setLogCaptureCapacity(n)` and `setTraceCaptureCapacity(n)` install process-wide callback
+sinks. `drainLogRecords()` and `drainTraceRecords()` return copied records; the corresponding
+`dropped*Records()` counters report overflow. A capacity of zero disables capture. Setting
+either sink replaces another binding's sink of the same kind in this process.
 
 DataTrack frame encoding values match `lk_data_track_frame_encoding_t` in the C ABI; use `0` for
 unspecified. A `RemoteDataTrack` snapshot supplies the participant identity and SID needed by
@@ -139,23 +152,22 @@ returned reader and local publisher when done. A reader returns `null` when its 
 or the track closes, and exposes `isClosed()` and `droppedFrames()`.
 Use `storeDataTrackSchema`, `getDataTrackSchema`, and `DataTrackPublishOptions` to associate
 schemas and custom encodings with published DataTracks.
+`LocalDataTrack.info()` and `RemoteDataTrack` expose publisher handles, E2EE state, encoding,
+schema, and publication state.
 `LiveKitException` exposes `status()`, `errorDomain()`, and `errorCode()`; DataTrack failures
 use domain 2 and their `lk_data_track_error_code_t` value.
 
-## Known parity gaps
+## Validation status
 
-| Area | Current Java API | Available in the C ABI or other bindings |
-| --- | --- | --- |
-| Diagnostics callbacks | Log levels, trace options, and JSON trace files | Process-wide log and trace callback sinks with copied records. |
-| Local media publication | Basic track source, screen share, mute, I420 capture | Track publish codec, simulcast, encoding, metadata and degradation options; richer video input formats and frame metadata. |
-| Frame callback delivery | Direct listener calls on native media threads | Bounded queues, dropped-event counters, and a dedicated callback-error channel in other bindings. |
-| Asynchronous operations | Room connect/disconnect, data publish, and RPC futures | Other bindings expose async variants for more stream, media, and DataTrack operations. |
-
-Java's asynchronous room and data calls use `CompletableFuture` to run synchronous native calls
-on an executor. Its audio/video frame listeners run directly on native media threads.
+Java provides `CompletableFuture` variants for room connection, data and stream sending,
+incremental writers, DataTrack publishing and reading, track publication, frame capture, and
+remote media readers. These run synchronous native calls on an executor; cancelling a future
+cannot interrupt a native call already in progress.
 The offline JNI smoke test covers loading, local snapshots, and disconnected-room behavior.
-Two-peer transfer, remote snapshots, physical capture, and callback delivery still need integration
-validation. Physical audio tests require the host-device procedure in the repository instructions.
+It also covers diagnostics queue setup, video input, audio queue controls, bounded frame callback
+delivery, and asynchronous error propagation. Two-peer transfer, remote snapshots, actual
+diagnostic record delivery, and physical capture still need integration validation. Physical audio
+tests require the host-device procedure in the repository instructions.
 
 ```java
 try (Room room = new Room()) {

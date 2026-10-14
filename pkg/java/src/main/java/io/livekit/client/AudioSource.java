@@ -1,6 +1,7 @@
 package io.livekit.client;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /** Caller-owned audio source. Close tracks before closing their source. */
 public final class AudioSource implements AutoCloseable {
@@ -129,6 +130,28 @@ public final class AudioSource implements AutoCloseable {
         if (kind != 0) throw new IllegalStateException("Device source captures its own audio");
         if (interleavedPcm.length % channels != 0) throw new IllegalArgumentException("Incomplete audio frame");
         Native.captureAudio(handle(), interleavedPcm, interleavedPcm.length / channels);
+    }
+
+    public CompletableFuture<Void> captureAsync(short[] interleavedPcm) {
+        short[] samples = Objects.requireNonNull(interleavedPcm).clone();
+        return CompletableFuture.runAsync(() -> capture(samples));
+    }
+
+    public synchronized long queuedDurationMs() {
+        return Native.audioSourceQueuedDurationMs(handle());
+    }
+
+    public synchronized void clearQueue() {
+        Native.clearAudioSourceQueue(handle());
+    }
+
+    public synchronized void waitForPlayout(int timeoutMs) {
+        if (timeoutMs < 0) throw new IllegalArgumentException("Negative playout timeout");
+        Native.waitForAudioSourcePlayout(handle(), timeoutMs);
+    }
+
+    public CompletableFuture<Void> waitForPlayoutAsync(int timeoutMs) {
+        return CompletableFuture.runAsync(() -> waitForPlayout(timeoutMs));
     }
 
     @Override public synchronized void close() {

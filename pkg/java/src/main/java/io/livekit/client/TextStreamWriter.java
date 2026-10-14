@@ -1,6 +1,7 @@
 package io.livekit.client;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /** Outgoing incremental text stream. Close completes the stream. */
 public final class TextStreamWriter implements AutoCloseable {
@@ -42,6 +43,10 @@ public final class TextStreamWriter implements AutoCloseable {
         callbacks.wrote(data.length);
     }
 
+    public CompletableFuture<Void> writeAsync(String text) {
+        return CompletableFuture.runAsync(() -> write(text));
+    }
+
     public synchronized void cancel(String reason) {
         if (handle == 0) return;
         String streamId = id();
@@ -56,6 +61,10 @@ public final class TextStreamWriter implements AutoCloseable {
             throw failure;
         }
         callbacks.complete(1, streamId, reason == null || reason.isEmpty() ? "cancelled" : reason, 0);
+    }
+
+    public CompletableFuture<Void> cancelAsync(String reason) {
+        return CompletableFuture.runAsync(() -> cancel(reason));
     }
 
     private void destroy() {
@@ -86,5 +95,9 @@ public final class TextStreamWriter implements AutoCloseable {
             throw failure;
         }
         callbacks.complete(0, streamId, "", 0);
+    }
+
+    public CompletableFuture<Void> closeAsync() {
+        return CompletableFuture.runAsync(this::close);
     }
 }

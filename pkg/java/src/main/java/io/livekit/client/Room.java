@@ -6,8 +6,10 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
@@ -73,7 +75,7 @@ public final class Room implements AutoCloseable {
         default void onDataTrackFrame(DataTrackPublication track, DataTrackFrame frame) {}
     }
 
-    /** Frame callbacks run on native media threads; return promptly. */
+    /** Frame callbacks run on a dedicated Java thread; return promptly. */
     public interface FrameListener {
         default void onAudioFrame(RemoteTrackPublication track, Participant participant,
                                   AudioFrame frame) {}
@@ -83,6 +85,13 @@ public final class Room implements AutoCloseable {
 
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
     private final List<FrameListener> frameListeners = new CopyOnWriteArrayList<>();
+    private record FrameDelivery(String kind, Consumer<FrameListener> callback) {}
+    private final ArrayBlockingQueue<FrameDelivery> frameQueue;
+    private final ArrayBlockingQueue<FrameCallbackError> frameErrors = new ArrayBlockingQueue<>(64);
+    private final AtomicLong droppedFrameCallbacks = new AtomicLong();
+    private final AtomicLong droppedFrameErrors = new AtomicLong();
+    private volatile boolean frameCallbacksRunning;
+    private Thread frameCallbackThread;
     private final List<LocalTrack> tracks = new CopyOnWriteArrayList<>();
     private final List<LocalDataTrack> dataTracks = new CopyOnWriteArrayList<>();
     private final List<DataTrackReader> dataTrackReaders = new CopyOnWriteArrayList<>();
@@ -100,7 +109,13 @@ public final class Room implements AutoCloseable {
     private int activeCalls;
     private boolean closing;
 
-    public Room() { handle = Native.create(this); }
+    public Room() { this(32); }
+
+    public Room(int frameQueueCapacity) {
+        if (frameQueueCapacity < 1) throw new IllegalArgumentException("Invalid frame queue capacity");
+        frameQueue = new ArrayBlockingQueue<>(frameQueueCapacity);
+        handle = Native.create(this);
+    }
     public static String version() { return Native.version(); }
     public void addListener(Listener listener) { listeners.add(Objects.requireNonNull(listener)); }
     public void removeListener(Listener listener) { listeners.remove(listener); }
@@ -108,7 +123,20 @@ public final class Room implements AutoCloseable {
     public synchronized void addFrameListener(FrameListener listener) {
         Objects.requireNonNull(listener);
         useHandle(h -> {
-            if (frameListeners.isEmpty()) Native.setFrameCallbacksEnabled(h, true);
+            if (frameListeners.isEmpty()) {
+                if (frameCallbackThread == null || !frameCallbackThread.isAlive()) {
+                    frameCallbacksRunning = true;
+                    frameCallbackThread = new Thread(this::drainFrameCallbacks, "livekit-java-frames");
+                    frameCallbackThread.setDaemon(true);
+                    frameCallbackThread.start();
+                }
+                try { Native.setFrameCallbacksEnabled(h, true); }
+                catch (RuntimeException | Error failure) {
+                    frameCallbacksRunning = false;
+                    frameCallbackThread.interrupt();
+                    throw failure;
+                }
+            }
             frameListeners.add(listener);
         });
     }
@@ -116,8 +144,20 @@ public final class Room implements AutoCloseable {
     public synchronized void removeFrameListener(FrameListener listener) {
         useHandle(h -> {
             frameListeners.remove(listener);
-            if (frameListeners.isEmpty()) Native.setFrameCallbacksEnabled(h, false);
+            if (frameListeners.isEmpty()) {
+                Native.setFrameCallbacksEnabled(h, false);
+                frameQueue.clear();
+            }
         });
+    }
+
+    public long droppedFrameCallbacks() { return droppedFrameCallbacks.get(); }
+    public long droppedFrameCallbackErrors() { return droppedFrameErrors.get(); }
+
+    public List<FrameCallbackError> drainFrameCallbackErrors() {
+        java.util.ArrayList<FrameCallbackError> result = new java.util.ArrayList<>();
+        frameErrors.drainTo(result);
+        return List.copyOf(result);
     }
 
     private synchronized long beginCall() {
@@ -570,7 +610,9 @@ public final class Room implements AutoCloseable {
     }
 
     public CompletableFuture<Void> publishDataAsync(byte[] data, String topic, boolean reliable, String... destinations) {
-        return CompletableFuture.runAsync(() -> publishData(data, topic, reliable, destinations));
+        byte[] payload = Objects.requireNonNull(data).clone();
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.runAsync(() -> publishData(payload, topic, reliable, recipients));
     }
 
     public void sendText(String text) { useHandle(h -> Native.sendText(h, Native.utf8(Objects.requireNonNull(text)))); }
@@ -754,6 +796,131 @@ public final class Room implements AutoCloseable {
     }
     public List<EncryptionState> frameCryptors() {
         return withHandle(h -> List.of(Native.frameCryptors(h)));
+    }
+
+    public CompletableFuture<TextStreamWriter> streamTextAsync(StreamWriterOptions options) {
+        return CompletableFuture.supplyAsync(() -> streamText(options));
+    }
+
+    public CompletableFuture<TextStreamWriter> streamTextAsync(String topic, String... destinations) {
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.supplyAsync(() -> streamText(topic, recipients));
+    }
+
+    public CompletableFuture<ByteStreamWriter> streamBytesAsync(StreamWriterOptions options) {
+        return CompletableFuture.supplyAsync(() -> streamBytes(options));
+    }
+
+    public CompletableFuture<ByteStreamWriter> streamBytesAsync(
+            String topic, String mimeType, String name, String... destinations) {
+        String[] recipients = Objects.requireNonNull(destinations).clone();
+        return CompletableFuture.supplyAsync(() -> streamBytes(topic, mimeType, name, recipients));
+    }
+
+    public CompletableFuture<Void> sendTextAsync(String text, DataSendOptions options) {
+        return CompletableFuture.runAsync(() -> sendText(text, options));
+    }
+
+    public CompletableFuture<Void> sendTextAsync(String text) {
+        return CompletableFuture.runAsync(() -> sendText(text));
+    }
+
+    public CompletableFuture<Void> sendBytesAsync(byte[] data, DataSendOptions options) {
+        byte[] payload = Objects.requireNonNull(data).clone();
+        return CompletableFuture.runAsync(() -> sendBytes(payload, options));
+    }
+
+    public CompletableFuture<Void> sendBytesAsync(byte[] data) {
+        byte[] payload = Objects.requireNonNull(data).clone();
+        return CompletableFuture.runAsync(() -> sendBytes(payload));
+    }
+
+    public CompletableFuture<Void> sendFileAsync(String path, DataSendOptions options) {
+        return CompletableFuture.runAsync(() -> sendFile(path, options));
+    }
+
+    public CompletableFuture<Void> sendFileAsync(String path) {
+        return CompletableFuture.runAsync(() -> sendFile(path));
+    }
+
+    public CompletableFuture<LocalDataTrack> publishDataTrackAsync(DataTrackPublishOptions options) {
+        return CompletableFuture.supplyAsync(() -> publishDataTrack(options));
+    }
+
+    public CompletableFuture<LocalDataTrack> publishDataTrackAsync(String name, int frameEncoding) {
+        return CompletableFuture.supplyAsync(() -> publishDataTrack(name, frameEncoding));
+    }
+
+    public CompletableFuture<Void> storeDataTrackSchemaAsync(DataTrackSchema schema) {
+        return CompletableFuture.runAsync(() -> storeDataTrackSchema(schema));
+    }
+
+    public CompletableFuture<DataTrackSchema> getDataTrackSchemaAsync(
+            String participantIdentity, String name, int encoding, String customEncoding) {
+        return CompletableFuture.supplyAsync(() -> getDataTrackSchema(
+            participantIdentity, name, encoding, customEncoding));
+    }
+
+    public CompletableFuture<DataTrackReader> subscribeDataTrackAsync(
+            String participantIdentity, String trackSid, DataTrackSubscriptionOptions options) {
+        return CompletableFuture.supplyAsync(() -> subscribeDataTrack(
+            participantIdentity, trackSid, options));
+    }
+
+    public CompletableFuture<DataTrackReader> subscribeDataTrackAsync(
+            String participantIdentity, String trackSid, int bufferCapacity) {
+        return CompletableFuture.supplyAsync(() -> subscribeDataTrack(
+            participantIdentity, trackSid, bufferCapacity));
+    }
+
+    public CompletableFuture<Void> updateDataTrackSubscriptionAsync(
+            String participantIdentity, String trackSid, DataTrackSubscriptionOptions options) {
+        return CompletableFuture.runAsync(() -> updateDataTrackSubscription(
+            participantIdentity, trackSid, options));
+    }
+
+    public CompletableFuture<LocalTrack> createAudioTrackAsync(String label, AudioSource source) {
+        return CompletableFuture.supplyAsync(() -> createAudioTrack(label, source));
+    }
+
+    public CompletableFuture<LocalTrack> createVideoTrackAsync(String label, VideoSource source) {
+        return CompletableFuture.supplyAsync(() -> createVideoTrack(label, source));
+    }
+
+    public CompletableFuture<AudioStream> createAudioStreamAsync(
+            String participantIdentity, String trackSid, int capacity) {
+        return CompletableFuture.supplyAsync(() -> createAudioStream(
+            participantIdentity, trackSid, capacity));
+    }
+
+    public CompletableFuture<AudioStream> createAudioStreamAsync(
+            String participantIdentity, String trackSid) {
+        return CompletableFuture.supplyAsync(() -> createAudioStream(
+            participantIdentity, trackSid));
+    }
+
+    public CompletableFuture<VideoStream> createVideoStreamAsync(
+            String participantIdentity, String trackSid, int capacity) {
+        return CompletableFuture.supplyAsync(() -> createVideoStream(
+            participantIdentity, trackSid, capacity));
+    }
+
+    public CompletableFuture<VideoStream> createVideoStreamAsync(
+            String participantIdentity, String trackSid) {
+        return CompletableFuture.supplyAsync(() -> createVideoStream(
+            participantIdentity, trackSid));
+    }
+
+    public CompletableFuture<TrackRecorder> startTrackRecordingAsync(
+            String participantIdentity, String trackSid, String outputPath, int queueCapacity) {
+        return CompletableFuture.supplyAsync(() -> startTrackRecording(
+            participantIdentity, trackSid, outputPath, queueCapacity));
+    }
+
+    public CompletableFuture<TrackRecorder> startTrackRecordingAsync(
+            String participantIdentity, String trackSid, String outputPath) {
+        return CompletableFuture.supplyAsync(() -> startTrackRecording(
+            participantIdentity, trackSid, outputPath));
     }
 
     private void onNativeEvent(int event, int value, Participant participant, DataPacket packet) {
@@ -957,7 +1124,7 @@ public final class Room implements AutoCloseable {
                             short[] samples, int sampleRate, int channels,
                             int samplesPerChannel) {
         AudioFrame frame = new AudioFrame(samples, sampleRate, channels, samplesPerChannel);
-        dispatchFrame(listener -> listener.onAudioFrame(track, participant, frame));
+        dispatchFrame("audio", listener -> listener.onAudioFrame(track, participant, frame));
     }
 
     void onNativeVideoFrame(RemoteTrackPublication track, Participant participant,
@@ -965,22 +1132,34 @@ public final class Room implements AutoCloseable {
                             Long userTimestampUs, Integer frameId, byte[] userData) {
         VideoFrame frame = new VideoFrame(data, width, height, timestampUs, userTimestampUs,
             frameId, userData);
-        dispatchFrame(listener -> listener.onVideoFrame(track, participant, frame));
+        dispatchFrame("video", listener -> listener.onVideoFrame(track, participant, frame));
     }
 
-    private void dispatchFrame(Consumer<FrameListener> delivery) {
-        boolean previous = inCallback.get();
-        inCallback.set(true);
-        try {
-            for (FrameListener listener : frameListeners) {
-                try { delivery.accept(listener); }
-                catch (Throwable failure) {
-                    Thread thread = Thread.currentThread();
-                    Thread.UncaughtExceptionHandler handler = thread.getUncaughtExceptionHandler();
-                    if (handler != null) handler.uncaughtException(thread, failure);
-                }
+    private void dispatchFrame(String kind, Consumer<FrameListener> delivery) {
+        if (frameCallbacksRunning && !frameQueue.offer(new FrameDelivery(kind, delivery)))
+            droppedFrameCallbacks.incrementAndGet();
+    }
+
+    private void drainFrameCallbacks() {
+        while (frameCallbacksRunning) {
+            try {
+                FrameDelivery delivery = frameQueue.take();
+                if (!frameCallbacksRunning) break;
+                boolean previous = inCallback.get();
+                inCallback.set(true);
+                try {
+                    for (FrameListener listener : frameListeners) {
+                        try { delivery.callback().accept(listener); }
+                        catch (Throwable failure) {
+                            if (!frameErrors.offer(new FrameCallbackError(delivery.kind(), failure)))
+                                droppedFrameErrors.incrementAndGet();
+                        }
+                    }
+                } finally { inCallback.set(previous); }
+            } catch (InterruptedException interrupted) {
+                if (!frameCallbacksRunning) break;
             }
-        } finally { inCallback.set(previous); }
+        }
     }
 
     @Override public void close() {
@@ -1003,6 +1182,10 @@ public final class Room implements AutoCloseable {
             if (interrupted) Thread.currentThread().interrupt();
         }
         try {
+            frameCallbacksRunning = false;
+            frameQueue.clear();
+            Thread frameWorker = frameCallbackThread;
+            if (frameWorker != null) frameWorker.interrupt();
             for (TextStreamWriter writer : textWriters) writer.abortOnRoomClose();
             for (ByteStreamWriter writer : byteWriters) writer.abortOnRoomClose();
             for (TrackRecorder recorder : recorders) recorder.close();
@@ -1018,6 +1201,15 @@ public final class Room implements AutoCloseable {
             tokenSource = null;
             reconnectPolicy = null;
             frameListeners.clear();
+            if (frameWorker != null) {
+                boolean interrupted = false;
+                try {
+                    frameWorker.join(1000);
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
         } finally {
             synchronized (this) { closing = false; notifyAll(); }
         }

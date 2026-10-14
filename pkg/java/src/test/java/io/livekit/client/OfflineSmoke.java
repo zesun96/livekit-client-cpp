@@ -14,6 +14,56 @@ public final class OfflineSmoke {
         if (!Diagnostics.traceOptions().equals(new TraceOptions(true, 1)))
             throw new AssertionError("Trace options did not round-trip");
         Diagnostics.setTraceOptions(traceBefore.enabled(), traceBefore.categoryMask());
+        Diagnostics.setLogCaptureCapacity(8);
+        Diagnostics.setTraceCaptureCapacity(8);
+        if (Diagnostics.droppedLogRecords() != 0 || Diagnostics.droppedTraceRecords() != 0)
+            throw new AssertionError("New diagnostics queue dropped records");
+        Diagnostics.setTraceOptions(true, 127);
+        try (Room tracedRoom = new Room()) { tracedRoom.state(); }
+        Diagnostics.setTraceOptions(traceBefore.enabled(), traceBefore.categoryMask());
+        Diagnostics.drainLogRecords();
+        for (TraceRecord record : Diagnostics.drainTraceRecords())
+            if (record.name() == null) throw new AssertionError("Trace name was not copied");
+        Diagnostics.setLogCaptureCapacity(0);
+        Diagnostics.setTraceCaptureCapacity(0);
+        java.util.concurrent.CountDownLatch frameEntered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseFrame = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch secondFrame = new java.util.concurrent.CountDownLatch(1);
+        try (Room frameRoom = new Room(1)) {
+            java.util.concurrent.atomic.AtomicInteger received = new java.util.concurrent.atomic.AtomicInteger();
+            frameRoom.addFrameListener(new Room.FrameListener() {
+                @Override public void onAudioFrame(RemoteTrackPublication track,
+                                                   Participant participant, AudioFrame frame) {
+                    if (received.incrementAndGet() == 1) {
+                        frameEntered.countDown();
+                        await(releaseFrame);
+                    } else secondFrame.countDown();
+                }
+            });
+            frameRoom.onNativeAudioFrame(null, null, new short[1], 48_000, 1, 1);
+            await(frameEntered);
+            frameRoom.onNativeAudioFrame(null, null, new short[1], 48_000, 1, 1);
+            frameRoom.onNativeAudioFrame(null, null, new short[1], 48_000, 1, 1);
+            if (frameRoom.droppedFrameCallbacks() != 1)
+                throw new AssertionError("Bounded frame queue did not report a dropped frame");
+            releaseFrame.countDown();
+            await(secondFrame);
+        } finally { releaseFrame.countDown(); }
+        Room errorRoom = new Room(1);
+        java.util.concurrent.CountDownLatch failedFrame = new java.util.concurrent.CountDownLatch(1);
+        try {
+            errorRoom.addFrameListener(new Room.FrameListener() {
+                @Override public void onAudioFrame(RemoteTrackPublication track,
+                                                   Participant participant, AudioFrame frame) {
+                    failedFrame.countDown();
+                    throw new IllegalStateException("frame callback failure");
+                }
+            });
+            errorRoom.onNativeAudioFrame(null, null, new short[1], 48_000, 1, 1);
+            await(failedFrame);
+        } finally { errorRoom.close(); }
+        if (errorRoom.drainFrameCallbackErrors().size() != 1)
+            throw new AssertionError("Frame callback error was not reported");
         try {
             new RemoteTrackSettings(true, 2, 640, 480, 0, 0);
             throw new AssertionError("Conflicting remote track settings were accepted");
@@ -180,14 +230,18 @@ public final class OfflineSmoke {
                 new java.util.concurrent.atomic.AtomicReference<>();
             java.util.concurrent.atomic.AtomicReference<VideoFrame> receivedVideo =
                 new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.CountDownLatch audioDelivered = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.CountDownLatch videoDelivered = new java.util.concurrent.CountDownLatch(1);
             Room.FrameListener frameListener = new Room.FrameListener() {
                 @Override public void onAudioFrame(RemoteTrackPublication track,
                                                    Participant participant, AudioFrame frame) {
                     receivedAudio.set(frame);
+                    audioDelivered.countDown();
                 }
                 @Override public void onVideoFrame(RemoteTrackPublication track,
                                                    Participant participant, VideoFrame frame) {
                     receivedVideo.set(frame);
+                    videoDelivered.countDown();
                 }
             };
             room.addFrameListener(frameListener);
@@ -197,6 +251,8 @@ public final class OfflineSmoke {
             room.onNativeAudioFrame(frameTrack, frameParticipant, new short[] {1, 2}, 48000, 1, 2);
             room.onNativeVideoFrame(frameTrack, frameParticipant, new byte[] {3, 4}, 2, 2,
                 123, 456L, 7, new byte[] {8});
+            await(audioDelivered);
+            await(videoDelivered);
             if (receivedAudio.get().samples()[1] != 2 ||
                 receivedVideo.get().userTimestampUs() != 456L ||
                 receivedVideo.get().userData()[0] != 8)
@@ -506,6 +562,13 @@ public final class OfflineSmoke {
                     expected.errorCode() != 6) throw expected;
             }
             try {
+                room.publishDataTrackAsync(new DataTrackPublishOptions("offline", 0)).join();
+                throw new AssertionError("Disconnected async DataTrack publish was accepted");
+            } catch (java.util.concurrent.CompletionException expected) {
+                if (!(expected.getCause() instanceof LiveKitException failure) ||
+                    failure.errorCode() != 6) throw expected;
+            }
+            try {
                 room.publishDataTrack(new DataTrackPublishOptions("offline", 8, "custom",
                     "schema", 8, "custom-schema"));
                 throw new AssertionError("Disconnected custom DataTrack publish was accepted");
@@ -564,7 +627,20 @@ public final class OfflineSmoke {
             try (AudioSource audio = new AudioSource(48_000, 1, 1_000);
                  VideoSource video = new VideoSource(false)) {
                 audio.capture(new short[480]);
+                audio.captureAsync(new short[480]).join();
+                if (audio.queuedDurationMs() < 0)
+                    throw new AssertionError("Negative audio queue duration");
+                audio.clearQueue();
+                audio.waitForPlayout(0);
                 video.captureI420(new byte[6], 2, 2, 0);
+                video.captureFrame(new VideoFrameInput(new byte[16], 2, 2, 0, 0, 0,
+                    java.util.List.of(), new VideoFrameMetadata(123L, 7L, new byte[] {1, 2})));
+                video.captureFrame(new VideoFrameInput(new byte[16], 2, 2, 0, 0, 0,
+                    java.util.List.of(new VideoPlane(0, 16, 8)), null));
+                video.captureFrameAsync(new VideoFrameInput(new byte[16], 2, 2, 0, 0, 0,
+                    java.util.List.of(), null)).join();
+                if (new TrackPublishOptions(1).videoCodec() != 0)
+                    throw new AssertionError("Unexpected default video codec");
                 try {
                     audio.startCapture();
                     throw new AssertionError("Synthetic audio source started device capture");
@@ -627,5 +703,15 @@ public final class OfflineSmoke {
             } catch (IllegalArgumentException expected) { }
         }
         System.out.println("Java JNI offline smoke passed");
+    }
+
+    private static void await(java.util.concurrent.CountDownLatch latch) {
+        try {
+            if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                throw new AssertionError("Timed out waiting for frame callback");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Interrupted while waiting for frame callback", interrupted);
+        }
     }
 }

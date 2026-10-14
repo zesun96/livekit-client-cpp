@@ -7,13 +7,88 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace {
+template <typename Record> struct RecordQueue {
+	std::mutex mutex;
+	std::deque<Record> records;
+	size_t capacity = 0;
+	uint64_t dropped = 0;
+};
+
+struct CopiedLogRecord {
+	int level;
+	int source;
+	std::string message;
+	std::string file;
+	int line;
+};
+
+struct CopiedTraceRecord {
+	int phase;
+	uint64_t category;
+	std::string name;
+	uint64_t timestamp_us;
+	uint64_t thread_id;
+	uint64_t correlation_id;
+};
+
+RecordQueue<CopiedLogRecord> log_records;
+RecordQueue<CopiedTraceRecord> trace_records;
+std::mutex diagnostics_config_mutex;
+
+template <typename Record> void enqueue_record(RecordQueue<Record>& queue, Record record) {
+	std::lock_guard<std::mutex> guard(queue.mutex);
+	if (queue.capacity == 0)
+		return;
+	if (queue.records.size() >= queue.capacity) {
+		queue.records.pop_front();
+		++queue.dropped;
+	}
+	queue.records.push_back(std::move(record));
+}
+
+void on_log_record(void*, const lk_log_record_t* value) {
+	if (value == nullptr)
+		return;
+	try {
+		enqueue_record(log_records,
+		               {static_cast<int>(value->level), static_cast<int>(value->source),
+		                value->message == nullptr ? "" : value->message,
+		                value->file == nullptr ? "" : value->file, value->line});
+	} catch (...) {
+		try {
+			std::lock_guard<std::mutex> guard(log_records.mutex);
+			++log_records.dropped;
+		} catch (...) {
+		}
+	}
+}
+
+void on_trace_record(void*, const lk_trace_record_t* value) {
+	if (value == nullptr)
+		return;
+	try {
+		enqueue_record(trace_records,
+		               {static_cast<int>(value->phase), static_cast<uint64_t>(value->category),
+		                value->name == nullptr ? "" : value->name, value->timestamp_us,
+		                value->thread_id, value->correlation_id});
+	} catch (...) {
+		try {
+			std::lock_guard<std::mutex> guard(trace_records.mutex);
+			++trace_records.dropped;
+		} catch (...) {
+		}
+	}
+}
+
 struct RoomHandle;
 struct RpcContext {
 	RoomHandle* room;
@@ -121,8 +196,9 @@ std::string java_string_bytes(JNIEnv* env, jstring value) {
 	jclass cls = env->FindClass("java/lang/String");
 	jmethodID get = env->GetMethodID(cls, "getBytes", "(Ljava/nio/charset/Charset;)[B");
 	jbyteArray raw = static_cast<jbyteArray>(env->CallObjectMethod(value, get, encoding));
-	std::string result = bytes(env, raw);
-	env->DeleteLocalRef(raw);
+	std::string result = env->ExceptionCheck() ? std::string{} : bytes(env, raw);
+	if (raw != nullptr)
+		env->DeleteLocalRef(raw);
 	env->DeleteLocalRef(cls);
 	env->DeleteLocalRef(encoding);
 	env->DeleteLocalRef(charset);
@@ -784,6 +860,12 @@ jobject participant_details(JNIEnv* env, RoomHandle* h, const lk_participant_inf
 	jmethodID as_list =
 	    env->GetStaticMethodID(arrays, "asList", "([Ljava/lang/Object;)Ljava/util/List;");
 	jobject publication_list = env->CallStaticObjectMethod(arrays, as_list, publications);
+	if (env->ExceptionCheck()) {
+		for (jobject value : {who, allowed, static_cast<jobject>(arrays)})
+			if (value != nullptr)
+				env->DeleteLocalRef(value);
+		return nullptr;
+	}
 	jclass cls = env->FindClass("io/livekit/client/ParticipantDetails");
 	jmethodID ctor = env->GetMethodID(
 	    cls, "<init>",
@@ -1872,6 +1954,99 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_startTraceJson(JNIEnv* env,
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_stopTrace(JNIEnv* env, jclass) {
 	fail(env, lk_trace_stop());
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setLogCaptureCapacity(JNIEnv* env, jclass,
+                                                                           jint capacity) {
+	if (capacity < 0) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Negative capacity");
+		return;
+	}
+	std::lock_guard<std::mutex> config_guard(diagnostics_config_mutex);
+	auto status = lk_log_set_callback(capacity == 0 ? nullptr : on_log_record, nullptr);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return;
+	}
+	std::lock_guard<std::mutex> queue_guard(log_records.mutex);
+	log_records.capacity = static_cast<size_t>(capacity);
+	log_records.records.clear();
+	log_records.dropped = 0;
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_drainLogRecords(JNIEnv* env, jclass) {
+	std::deque<CopiedLogRecord> drained;
+	{
+		std::lock_guard<std::mutex> guard(log_records.mutex);
+		drained.swap(log_records.records);
+	}
+	jclass cls = env->FindClass("io/livekit/client/LogRecord");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(IILjava/lang/String;Ljava/lang/String;I)V");
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(drained.size()), cls, nullptr);
+	for (size_t i = 0; i < drained.size() && !env->ExceptionCheck(); ++i) {
+		if (env->PushLocalFrame(4) != JNI_OK)
+			break;
+		const auto& record = drained[i];
+		jstring message = string(env, record.message.c_str());
+		jstring file = string(env, record.file.c_str());
+		jobject item = env->NewObject(cls, ctor, static_cast<jint>(record.level),
+		                              static_cast<jint>(record.source), message, file,
+		                              static_cast<jint>(record.line));
+		if (item != nullptr)
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		env->PopLocalFrame(nullptr);
+	}
+	env->DeleteLocalRef(cls);
+	return env->ExceptionCheck() ? nullptr : result;
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_droppedLogRecords(JNIEnv*, jclass) {
+	std::lock_guard<std::mutex> guard(log_records.mutex);
+	return static_cast<jlong>(log_records.dropped);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_setTraceCaptureCapacity(JNIEnv* env, jclass,
+                                                                             jint capacity) {
+	if (capacity < 0) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Negative capacity");
+		return;
+	}
+	std::lock_guard<std::mutex> config_guard(diagnostics_config_mutex);
+	auto status = lk_trace_set_callback(capacity == 0 ? nullptr : on_trace_record, nullptr);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return;
+	}
+	std::lock_guard<std::mutex> queue_guard(trace_records.mutex);
+	trace_records.capacity = static_cast<size_t>(capacity);
+	trace_records.records.clear();
+	trace_records.dropped = 0;
+}
+JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_drainTraceRecords(JNIEnv* env,
+                                                                               jclass) {
+	std::deque<CopiedTraceRecord> drained;
+	{
+		std::lock_guard<std::mutex> guard(trace_records.mutex);
+		drained.swap(trace_records.records);
+	}
+	jclass cls = env->FindClass("io/livekit/client/TraceRecord");
+	jmethodID ctor = env->GetMethodID(cls, "<init>", "(IJLjava/lang/String;JJJ)V");
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(drained.size()), cls, nullptr);
+	for (size_t i = 0; i < drained.size() && !env->ExceptionCheck(); ++i) {
+		if (env->PushLocalFrame(3) != JNI_OK)
+			break;
+		const auto& record = drained[i];
+		jstring name = string(env, record.name.c_str());
+		jobject item = env->NewObject(
+		    cls, ctor, static_cast<jint>(record.phase), static_cast<jlong>(record.category), name,
+		    static_cast<jlong>(record.timestamp_us), static_cast<jlong>(record.thread_id),
+		    static_cast<jlong>(record.correlation_id));
+		if (item != nullptr)
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+		env->PopLocalFrame(nullptr);
+	}
+	env->DeleteLocalRef(cls);
+	return env->ExceptionCheck() ? nullptr : result;
+}
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_droppedTraceRecords(JNIEnv*, jclass) {
+	std::lock_guard<std::mutex> guard(trace_records.mutex);
+	return static_cast<jlong>(trace_records.dropped);
+}
 
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_create(JNIEnv* env, jclass, jobject owner) {
 	auto h = std::make_unique<RoomHandle>();
@@ -2143,10 +2318,18 @@ void with_connect_options(
 	lk_room_connect_options_init(&options);
 	jclass cls = env->GetObjectClass(config);
 	auto boolean = [env, config, cls](const char* name) {
-		return env->CallBooleanMethod(config, env->GetMethodID(cls, name, "()Z")) == JNI_TRUE;
+		jmethodID method = env->GetMethodID(cls, name, "()Z");
+		if (method == nullptr)
+			return false;
+		jboolean result = env->CallBooleanMethod(config, method);
+		return !env->ExceptionCheck() && result == JNI_TRUE;
 	};
 	auto integer = [env, config, cls](const char* name) {
-		return env->CallIntMethod(config, env->GetMethodID(cls, name, "()I"));
+		jmethodID method = env->GetMethodID(cls, name, "()I");
+		if (method == nullptr)
+			return static_cast<jint>(0);
+		jint result = env->CallIntMethod(config, method);
+		return env->ExceptionCheck() ? static_cast<jint>(0) : result;
 	};
 	options.auto_subscribe = boolean("autoSubscribe") ? 1 : 0;
 	options.adaptive_stream = boolean("adaptiveStream") ? 1 : 0;
@@ -2156,6 +2339,10 @@ void with_connect_options(
 	options.ice_transport_type = static_cast<lk_ice_transport_type_t>(integer("iceTransportType"));
 	options.continual_gathering_policy =
 	    static_cast<lk_continual_gathering_policy_t>(integer("continualGatheringPolicy"));
+	if (env->ExceptionCheck()) {
+		env->DeleteLocalRef(cls);
+		return;
+	}
 	jmethodID get_policy =
 	    env->GetMethodID(cls, "reconnectPolicy", "()Lio/livekit/client/ReconnectPolicy;");
 	jobject policy = get_policy == nullptr ? nullptr : env->CallObjectMethod(config, get_policy);
@@ -2179,6 +2366,13 @@ void with_connect_options(
 	std::vector<lk_ice_server_t> servers;
 	jmethodID get_ice = env->GetMethodID(cls, "iceServers", "()[Lio/livekit/client/IceServer;");
 	jobjectArray ice = static_cast<jobjectArray>(env->CallObjectMethod(config, get_ice));
+	if (env->ExceptionCheck())
+		return;
+	if (ice == nullptr) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "ICE server list is required");
+		return;
+	}
 	jsize count = env->GetArrayLength(ice);
 	owned.reserve(static_cast<size_t>(count));
 	servers.resize(static_cast<size_t>(count));
@@ -2187,6 +2381,13 @@ void with_connect_options(
 		jclass server_cls = env->GetObjectClass(server);
 		jmethodID get_urls = env->GetMethodID(server_cls, "urls", "()[Ljava/lang/String;");
 		jobjectArray urls = static_cast<jobjectArray>(env->CallObjectMethod(server, get_urls));
+		if (env->ExceptionCheck())
+			return;
+		if (urls == nullptr) {
+			env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+			              "ICE server URLs are required");
+			return;
+		}
 		OwnedIce item;
 		for (jsize j = 0; j < env->GetArrayLength(urls); ++j) {
 			jstring value = static_cast<jstring>(env->GetObjectArrayElement(urls, j));
@@ -2195,8 +2396,12 @@ void with_connect_options(
 		}
 		jstring username = static_cast<jstring>(env->CallObjectMethod(
 		    server, env->GetMethodID(server_cls, "username", "()Ljava/lang/String;")));
+		if (env->ExceptionCheck())
+			return;
 		jstring password = static_cast<jstring>(env->CallObjectMethod(
 		    server, env->GetMethodID(server_cls, "password", "()Ljava/lang/String;")));
+		if (env->ExceptionCheck())
+			return;
 		item.username = java_string_bytes(env, username);
 		item.password = java_string_bytes(env, password);
 		owned.push_back(std::move(item));
@@ -2224,14 +2429,22 @@ void with_connect_options(
 	lk_e2ee_options_init(&e2ee);
 	jmethodID get_e2ee = env->GetMethodID(cls, "e2ee", "()Lio/livekit/client/E2eeOptions;");
 	jobject encryption = env->CallObjectMethod(config, get_e2ee);
+	if (env->ExceptionCheck())
+		return;
 	if (encryption != nullptr) {
 		jclass e2ee_cls = env->GetObjectClass(encryption);
 		jbyteArray raw_key = static_cast<jbyteArray>(
 		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "sharedKey", "()[B")));
+		if (env->ExceptionCheck())
+			return;
 		jbyteArray raw_salt = static_cast<jbyteArray>(
 		    env->CallObjectMethod(encryption, env->GetMethodID(e2ee_cls, "ratchetSalt", "()[B")));
+		if (env->ExceptionCheck())
+			return;
 		jbyteArray raw_magic = static_cast<jbyteArray>(env->CallObjectMethod(
 		    encryption, env->GetMethodID(e2ee_cls, "unencryptedMagicBytes", "()[B")));
+		if (env->ExceptionCheck())
+			return;
 		key = bytes(env, raw_key);
 		salt = bytes(env, raw_salt);
 		magic = bytes(env, raw_magic);
@@ -2239,8 +2452,12 @@ void with_connect_options(
 		                   encryption, env->GetMethodID(e2ee_cls, "enabled", "()Z")) == JNI_TRUE
 		                   ? 1
 		                   : 0;
+		if (env->ExceptionCheck())
+			return;
 		e2ee.key_derivation = static_cast<lk_e2ee_key_derivation_t>(
 		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "keyDerivation", "()I")));
+		if (env->ExceptionCheck())
+			return;
 		e2ee.shared_key = reinterpret_cast<const uint8_t*>(key.data());
 		e2ee.shared_key_size = key.size();
 		e2ee.ratchet_salt = reinterpret_cast<const uint8_t*>(salt.data());
@@ -2249,10 +2466,16 @@ void with_connect_options(
 		e2ee.unencrypted_magic_bytes_size = magic.size();
 		e2ee.ratchet_window_size = static_cast<size_t>(
 		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "ratchetWindowSize", "()I")));
+		if (env->ExceptionCheck())
+			return;
 		e2ee.failure_tolerance =
 		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "failureTolerance", "()I"));
+		if (env->ExceptionCheck())
+			return;
 		e2ee.key_ring_size = static_cast<size_t>(
 		    env->CallIntMethod(encryption, env->GetMethodID(e2ee_cls, "keyRingSize", "()I")));
+		if (env->ExceptionCheck())
+			return;
 		options.e2ee_options = &e2ee;
 		env->DeleteLocalRef(raw_key);
 		env->DeleteLocalRef(raw_salt);
@@ -3737,6 +3960,32 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_captureAudio(JNIEnv* env, j
 	                                        reinterpret_cast<const int16_t*>(pcm.data()),
 	                                        static_cast<uint32_t>(samplesPerChannel)));
 }
+JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_audioSourceQueuedDurationMs(JNIEnv* env,
+                                                                                  jclass,
+                                                                                  jlong ptr) {
+	uint32_t duration = 0;
+	auto status =
+	    lk_audio_source_queued_duration_ms(reinterpret_cast<lk_audio_source_t*>(ptr), &duration);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return 0;
+	}
+	return static_cast<jlong>(duration);
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_clearAudioSourceQueue(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	fail(env, lk_audio_source_clear_queue(reinterpret_cast<lk_audio_source_t*>(ptr)));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_waitForAudioSourcePlayout(JNIEnv* env, jclass,
+                                                                               jlong ptr,
+                                                                               jint timeoutMs) {
+	if (timeoutMs < 0) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Negative timeout");
+		return;
+	}
+	fail(env, lk_audio_source_wait_for_playout(reinterpret_cast<lk_audio_source_t*>(ptr),
+	                                           static_cast<uint32_t>(timeoutMs)));
+}
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createVideoSource(JNIEnv* env, jclass,
                                                                         jboolean screencast) {
 	lk_video_source_options_t options;
@@ -3831,6 +4080,104 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_captureI420(JNIEnv* env, jc
 	                                       frame.size(), static_cast<uint32_t>(width),
 	                                       static_cast<uint32_t>(height), timestampUs));
 }
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_captureVideoFrame(
+    JNIEnv* env, jclass, jlong ptr, jbyteArray data, jint width, jint height, jlong timestampUs,
+    jint rotation, jint format, jlongArray offsets, jlongArray sizes, jintArray strides,
+    jobject userTimestampUs, jobject frameId, jbyteArray userData) {
+	if (data == nullptr || offsets == nullptr || sizes == nullptr || strides == nullptr ||
+	    env->GetArrayLength(offsets) != env->GetArrayLength(sizes) ||
+	    env->GetArrayLength(offsets) != env->GetArrayLength(strides) || width <= 0 || height <= 0) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Invalid video frame input");
+		return;
+	}
+	std::string payload = bytes(env, data);
+	std::string user_data = bytes(env, userData);
+	const jsize plane_count = env->GetArrayLength(offsets);
+	std::vector<jlong> plane_offsets(static_cast<size_t>(plane_count));
+	std::vector<jlong> plane_sizes(static_cast<size_t>(plane_count));
+	std::vector<jint> plane_strides(static_cast<size_t>(plane_count));
+	if (plane_count != 0) {
+		env->GetLongArrayRegion(offsets, 0, plane_count, plane_offsets.data());
+		if (env->ExceptionCheck())
+			return;
+		env->GetLongArrayRegion(sizes, 0, plane_count, plane_sizes.data());
+		if (env->ExceptionCheck())
+			return;
+		env->GetIntArrayRegion(strides, 0, plane_count, plane_strides.data());
+		if (env->ExceptionCheck())
+			return;
+	}
+	std::vector<lk_video_plane_t> planes;
+	planes.reserve(static_cast<size_t>(plane_count));
+	for (jsize i = 0; i < plane_count; ++i) {
+		if (plane_offsets[i] < 0 || plane_sizes[i] < 0 || plane_strides[i] < 0 ||
+		    static_cast<uint64_t>(plane_offsets[i]) > payload.size() ||
+		    static_cast<uint64_t>(plane_sizes[i]) >
+		        payload.size() - static_cast<size_t>(plane_offsets[i])) {
+			env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+			              "Video plane exceeds frame data");
+			return;
+		}
+		planes.push_back({static_cast<size_t>(plane_offsets[i]),
+		                  static_cast<size_t>(plane_sizes[i]),
+		                  static_cast<uint32_t>(plane_strides[i])});
+	}
+	lk_video_frame_metadata_t metadata;
+	lk_video_frame_metadata_init(&metadata);
+	if (userTimestampUs != nullptr || frameId != nullptr) {
+		jclass number = env->FindClass("java/lang/Long");
+		if (number == nullptr)
+			return;
+		jmethodID value = env->GetMethodID(number, "longValue", "()J");
+		if (value == nullptr) {
+			env->DeleteLocalRef(number);
+			return;
+		}
+		if (userTimestampUs != nullptr) {
+			metadata.has_user_timestamp_us = 1;
+			metadata.user_timestamp_us =
+			    static_cast<uint64_t>(env->CallLongMethod(userTimestampUs, value));
+			if (env->ExceptionCheck()) {
+				env->DeleteLocalRef(number);
+				return;
+			}
+		}
+		if (frameId != nullptr) {
+			const jlong id = env->CallLongMethod(frameId, value);
+			if (env->ExceptionCheck()) {
+				env->DeleteLocalRef(number);
+				return;
+			}
+			if (id < 0 || id > UINT32_MAX) {
+				env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+				              "Frame ID is outside uint32 range");
+				env->DeleteLocalRef(number);
+				return;
+			}
+			metadata.has_frame_id = 1;
+			metadata.frame_id = static_cast<uint32_t>(id);
+		}
+		env->DeleteLocalRef(number);
+	}
+	metadata.has_user_data = userData == nullptr ? 0 : 1;
+	metadata.user_data = reinterpret_cast<const uint8_t*>(user_data.data());
+	metadata.user_data_size = user_data.size();
+	lk_video_frame_input_t input;
+	lk_video_frame_input_init(&input);
+	input.data = reinterpret_cast<const uint8_t*>(payload.data());
+	input.data_size = payload.size();
+	input.width = static_cast<uint32_t>(width);
+	input.height = static_cast<uint32_t>(height);
+	input.timestamp_us = timestampUs;
+	input.rotation = static_cast<lk_video_rotation_t>(rotation);
+	input.format = static_cast<lk_video_buffer_type_t>(format);
+	input.planes = planes.empty() ? nullptr : planes.data();
+	input.plane_count = planes.size();
+	input.metadata = &metadata;
+	if (!env->ExceptionCheck())
+		fail(env, lk_video_source_capture_frame(reinterpret_cast<lk_video_source_t*>(ptr), &input));
+}
 JNIEXPORT jlong JNICALL Java_io_livekit_client_Native_createTrack(JNIEnv* env, jclass, jlong room,
                                                                   jbyteArray label, jlong source,
                                                                   jboolean video) {
@@ -3854,6 +4201,76 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishTrack(JNIEnv* env, j
 	options.source = static_cast<lk_track_source_t>(source);
 	fail(env, lk_local_track_publish(handle(room)->room, reinterpret_cast<lk_local_track_t*>(track),
 	                                 &options));
+}
+JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishTrackWithOptions(
+    JNIEnv* env, jclass, jlong room, jlong track, jint mode, jlongArray integers,
+    jfloatArray frameRates, jbooleanArray flags, jobjectArray strings) {
+	if (integers == nullptr || frameRates == nullptr || flags == nullptr || strings == nullptr ||
+	    env->GetArrayLength(integers) != 7 || env->GetArrayLength(frameRates) != 2 ||
+	    env->GetArrayLength(flags) != 8 || env->GetArrayLength(strings) != 2 || mode < 0 ||
+	    mode > 2) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Invalid track publish options");
+		return;
+	}
+	jlong values[7];
+	jfloat rates[2];
+	jboolean switches[8];
+	env->GetLongArrayRegion(integers, 0, 7, values);
+	if (env->ExceptionCheck())
+		return;
+	env->GetFloatArrayRegion(frameRates, 0, 2, rates);
+	if (env->ExceptionCheck())
+		return;
+	env->GetBooleanArrayRegion(flags, 0, 8, switches);
+	if (env->ExceptionCheck())
+		return;
+	if (values[4] < 0 || values[5] < 0 || values[6] < -1 || values[6] > 3) {
+		env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"),
+		              "Invalid track publish options");
+		return;
+	}
+	std::array<std::string, 2> text_values;
+	for (jsize i = 0; i < 2; ++i) {
+		jbyteArray raw = static_cast<jbyteArray>(env->GetObjectArrayElement(strings, i));
+		if (env->ExceptionCheck())
+			return;
+		text_values[static_cast<size_t>(i)] = bytes(env, raw);
+		if (raw != nullptr)
+			env->DeleteLocalRef(raw);
+		if (env->ExceptionCheck())
+			return;
+	}
+	lk_track_publish_options_t options;
+	lk_track_publish_options_init(&options);
+	options.source = static_cast<lk_track_source_t>(values[0]);
+	options.dtx = switches[0] ? 1 : 0;
+	options.red = switches[1] ? 1 : 0;
+	options.simulcast = switches[2] ? 1 : 0;
+	options.stream = text_values[0].empty() ? nullptr : text_values[0].c_str();
+	options.video_codec = static_cast<lk_video_codec_t>(values[1]);
+	options.scalability_mode = text_values[1].c_str();
+	options.backup_video_codec_enabled = switches[3] ? 1 : 0;
+	options.backup_video_codec = static_cast<lk_video_codec_t>(values[2]);
+	options.backup_codec_policy = static_cast<lk_backup_codec_policy_t>(values[3]);
+	options.video_encoding.max_bitrate = static_cast<uint64_t>(values[4]);
+	options.video_encoding.max_framerate = rates[0];
+	options.backup_video_encoding.max_bitrate = static_cast<uint64_t>(values[5]);
+	options.backup_video_encoding.max_framerate = rates[1];
+	options.frame_metadata_features.user_timestamp = switches[4] ? 1 : 0;
+	options.frame_metadata_features.frame_id = switches[5] ? 1 : 0;
+	options.frame_metadata_features.user_data = switches[6] ? 1 : 0;
+	options.preconnect_buffer = switches[7] ? 1 : 0;
+	options.has_degradation_preference = values[6] >= 0 ? 1 : 0;
+	if (options.has_degradation_preference)
+		options.degradation_preference = static_cast<lk_video_degradation_preference_t>(values[6]);
+	auto* native = reinterpret_cast<lk_local_track_t*>(track);
+	lk_status_t status =
+	    mode == 0 ? lk_local_track_publish(handle(room)->room, native, &options)
+	    : mode == 1
+	        ? lk_local_track_publish_screen_share_video(handle(room)->room, native, &options)
+	        : lk_local_track_publish_screen_share_audio(handle(room)->room, native, &options);
+	fail(env, status);
 }
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_publishScreenShareTrack(JNIEnv* env, jclass,
                                                                              jlong room,
@@ -4153,6 +4570,51 @@ JNIEXPORT jbyteArray JNICALL Java_io_livekit_client_Native_dataTrackSid(JNIEnv* 
 	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
 	return getter(env, [track](char* p, size_t n) { return lk_local_data_track_sid(track, p, n); });
 }
+JNIEXPORT jobject JNICALL Java_io_livekit_client_Native_localDataTrackInfo(JNIEnv* env, jclass,
+                                                                           jlong ptr) {
+	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
+	lk_data_track_snapshot_info_t info;
+	lk_data_track_snapshot_info_init(&info);
+	auto status = lk_local_data_track_info(track, &info);
+	if (status != LK_STATUS_OK) {
+		fail(env, status);
+		return nullptr;
+	}
+	auto read = [env, track](auto fn) {
+		jbyteArray raw = getter(env, [track, fn](char* p, size_t n) { return fn(track, p, n); });
+		std::string value = bytes(env, raw);
+		env->DeleteLocalRef(raw);
+		return string(env, value.c_str());
+	};
+	jstring sid = read(lk_local_data_track_sid);
+	jstring name = read(lk_local_data_track_name);
+	jstring custom_frame = read(lk_local_data_track_custom_frame_encoding);
+	jstring schema_name = read(lk_local_data_track_schema_name);
+	jstring custom_schema = read(lk_local_data_track_custom_schema_encoding);
+	jclass cls = env->FindClass("io/livekit/client/LocalDataTrackInfo");
+	jmethodID ctor = env->GetMethodID(cls, "<init>",
+	                                  "(Ljava/lang/String;Ljava/lang/String;IZILjava/lang/String;"
+	                                  "Ljava/lang/String;ILjava/lang/String;Z)V");
+	jobject result = env->NewObject(
+	    cls, ctor, sid, name, static_cast<jint>(info.publisher_handle),
+	    info.uses_e2ee ? JNI_TRUE : JNI_FALSE,
+	    info.has_frame_encoding ? static_cast<jint>(info.frame_encoding) : 0, custom_frame,
+	    schema_name, info.has_schema ? static_cast<jint>(info.schema_encoding) : 0, custom_schema,
+	    info.is_published ? JNI_TRUE : JNI_FALSE);
+	env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(sid);
+	env->DeleteLocalRef(name);
+	env->DeleteLocalRef(custom_frame);
+	env->DeleteLocalRef(schema_name);
+	env->DeleteLocalRef(custom_schema);
+	return result;
+}
+JNIEXPORT jboolean JNICALL Java_io_livekit_client_Native_localDataTrackPublished(JNIEnv*, jclass,
+                                                                                 jlong ptr) {
+	return lk_local_data_track_is_published(reinterpret_cast<lk_local_data_track_t*>(ptr))
+	           ? JNI_TRUE
+	           : JNI_FALSE;
+}
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_unpublishDataTrack(JNIEnv* env, jclass,
                                                                         jlong ptr) {
 	auto* track = reinterpret_cast<lk_local_data_track_t*>(ptr);
@@ -4230,7 +4692,7 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JN
 	jmethodID ctor =
 	    env->GetMethodID(cls, "<init>",
 	                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/"
-	                     "String;Ljava/lang/String;ILjava/lang/String;Z)V");
+	                     "String;Ljava/lang/String;ILjava/lang/String;ZIZ)V");
 	const size_t count = lk_remote_data_track_list_count(snapshot);
 	jobjectArray result = env->NewObjectArray(static_cast<jsize>(count), cls, nullptr);
 	for (size_t i = 0; i < count; ++i) {
@@ -4260,12 +4722,13 @@ JNIEXPORT jobjectArray JNICALL Java_io_livekit_client_Native_remoteDataTracks(JN
 		jstring custom_frame_encoding = read(lk_remote_data_track_snapshot_custom_frame_encoding);
 		jstring schema_name = read(lk_remote_data_track_snapshot_schema_name);
 		jstring custom_schema_encoding = read(lk_remote_data_track_snapshot_custom_schema_encoding);
-		jobject item =
-		    env->NewObject(cls, ctor, identity, sid, name,
-		                   info.has_frame_encoding ? static_cast<jint>(info.frame_encoding) : 0,
-		                   custom_frame_encoding, schema_name,
-		                   info.has_schema ? static_cast<jint>(info.schema_encoding) : 0,
-		                   custom_schema_encoding, info.is_published ? JNI_TRUE : JNI_FALSE);
+		jobject item = env->NewObject(
+		    cls, ctor, identity, sid, name,
+		    info.has_frame_encoding ? static_cast<jint>(info.frame_encoding) : 0,
+		    custom_frame_encoding, schema_name,
+		    info.has_schema ? static_cast<jint>(info.schema_encoding) : 0, custom_schema_encoding,
+		    info.is_published ? JNI_TRUE : JNI_FALSE, static_cast<jint>(info.publisher_handle),
+		    info.uses_e2ee ? JNI_TRUE : JNI_FALSE);
 		env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
 		env->DeleteLocalRef(item);
 		env->DeleteLocalRef(identity);
@@ -4651,5 +5114,12 @@ JNIEXPORT void JNICALL Java_io_livekit_client_Native_stopTrackRecorder(JNIEnv*, 
 JNIEXPORT void JNICALL Java_io_livekit_client_Native_destroyTrackRecorder(JNIEnv*, jclass,
                                                                           jlong ptr) {
 	lk_track_recorder_destroy(reinterpret_cast<lk_track_recorder_t*>(ptr));
+}
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM*, void*) {
+	std::lock_guard<std::mutex> config_guard(diagnostics_config_mutex);
+	if (log_records.capacity != 0)
+		lk_log_set_callback(nullptr, nullptr);
+	if (trace_records.capacity != 0)
+		lk_trace_set_callback(nullptr, nullptr);
 }
 }

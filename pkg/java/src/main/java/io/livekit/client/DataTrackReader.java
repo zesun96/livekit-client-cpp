@@ -1,5 +1,9 @@
 package io.livekit.client;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
+
 /** Bounded pull reader. A null result means timeout or a closed track. */
 public final class DataTrackReader implements AutoCloseable {
     private final Room room;
@@ -20,6 +24,14 @@ public final class DataTrackReader implements AutoCloseable {
         if (timeoutMs < 0) throw new IllegalArgumentException("Negative timeout");
         if (handle == 0) throw new IllegalStateException("DataTrack reader is closed");
         return Native.readDataTrack(handle, timeoutMs);
+    }
+
+    public CompletableFuture<DataTrackFrame> readForAsync(int timeoutMs) {
+        return readForAsync(timeoutMs, ForkJoinPool.commonPool());
+    }
+
+    public CompletableFuture<DataTrackFrame> readForAsync(int timeoutMs, Executor executor) {
+        return CompletableFuture.supplyAsync(() -> readFor(timeoutMs), executor);
     }
 
     @Override public synchronized void close() {

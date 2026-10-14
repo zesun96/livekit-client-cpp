@@ -7,7 +7,7 @@ exposes the complete C ABI as low-level declarations, with owned-handle wrappers
 room, media, stream, RPC, snapshot, E2EE, and DataTrack operations.
 Swift has no implementation yet. The [Java binding](java/README.md) covers room lifecycle and
 callbacks, token sources, participant and publication snapshots, messaging and streams, RPC,
-E2EE, DataTrack basics, local media, physical capture, and bounded remote media readers. The
+E2EE, DataTrack, local media, physical capture, and bounded remote media readers. The
 [.NET binding](dotnet/README.md) covers
 room, media, data, stream, RPC, device, recording, and diagnostic operations.
 
@@ -27,15 +27,15 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Local participant metadata and attributes | Yes | Yes | Yes | Yes | No | Yes |
 | Remote track subscription and settings | Yes | Yes | Yes | Yes | No | Yes |
 | Track subscription permissions and feedback events | Yes | Yes | Yes | Yes | No | Yes |
-| External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Partial | No | Yes |
-| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Partial | No | Yes |
-| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Partial | No | Yes |
+| External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Yes | No | Yes |
+| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Yes | No | Yes |
+| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Yes | No | Yes |
 | Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Yes | No | Yes |
-| DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Partial | No | Yes |
+| DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Yes | No | Yes |
 | RPC calls and method handlers | Yes | Yes | Yes | Yes | No | Yes |
 | E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Yes | Yes | No | Yes |
 | Media devices and remote recording | Yes | Yes | Yes | Yes | No | Yes |
-| Logging, tracing, and RTC statistics | Yes | Yes | Yes | Partial | No | Yes |
+| Logging, tracing, and RTC statistics | Yes | Yes | Yes | Yes | No | Yes |
 
 Lua covers one-shot and incremental outgoing streams, writer progress and completion events,
 and incoming completed and incremental stream events.
