@@ -22,6 +22,69 @@ use std::{
     },
 };
 
+macro_rules! native {
+    ($init:path) => {{
+        let mut value = MaybeUninit::uninit();
+        #[allow(unused_unsafe)]
+        unsafe {
+            $init(value.as_mut_ptr());
+            value.assume_init()
+        }
+    }};
+}
+
+macro_rules! owned_handle {
+    ($name:ident, $raw:ty, $destroy:path) => {
+        pub struct $name {
+            handle: NonNull<$raw>,
+            _sdk: Sdk,
+            _thread: PhantomData<Rc<()>>,
+        }
+        impl $name {
+            fn from_ptr(raw: *mut $raw, sdk: &Sdk) -> Result<Self> {
+                Ok(Self {
+                    handle: NonNull::new(raw).ok_or_else(|| invalid("null native handle"))?,
+                    _sdk: sdk.clone(),
+                    _thread: PhantomData,
+                })
+            }
+            pub fn as_raw(&self) -> *mut $raw {
+                self.handle.as_ptr()
+            }
+        }
+        impl Drop for $name {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = $destroy(self.as_raw());
+                }
+            }
+        }
+    };
+}
+
+mod devices;
+mod diagnostics;
+mod events;
+mod media;
+mod messaging;
+mod security;
+pub use devices::{MediaDevice, ScreenSource};
+pub use diagnostics::{
+    JsonTrace, LogEvents, LogRecord, RtcStats, RtcStatsSnapshot, TraceEvents, TraceRecord,
+};
+pub use events::{StreamEvent, TrackPublication};
+pub use media::{
+    AudioFrame, AudioOptions, AudioSource, AudioStream, LocalTrack, Read, Recorder, VideoFrame,
+    VideoInput, VideoMetadata, VideoSource, VideoStream,
+};
+pub use messaging::{
+    ByteWriter, ChatMessage, DataFrame, DataReader, DataSchema, DataTrack, RpcInvocation,
+    RpcResponse, SchemaId, TextWriter,
+};
+pub use security::{
+    E2eeOptions, FrameCryptor, IceServer, RemoteTrackSettings, TokenResponse, TrackPermission,
+};
+
 /// An owned copy of a native failure, captured before another C call can erase it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
@@ -163,6 +226,11 @@ impl Sdk {
             receiver,
             _sdk: self.clone(),
             _thread: PhantomData,
+            tracks: Vec::new(),
+            identity: Rc::new(()),
+            rpc_handlers: Vec::new(),
+            data_tracks: Vec::new(),
+            token_sources: Vec::new(),
         };
         unsafe {
             let mut native = MaybeUninit::uninit();
@@ -174,21 +242,32 @@ impl Sdk {
             native.on_participant_disconnected = Some(on_participant_disconnected);
             native.on_data_received = Some(on_data);
             native.on_text_received = Some(on_text);
+            native.on_byte_received = Some(events::on_bytes);
+            native.on_audio_frame = Some(events::on_audio);
+            native.on_video_frame_with_metadata = Some(events::on_video);
+            native.on_track_subscribed = Some(events::on_track_subscribed);
+            native.on_track_published = Some(events::on_track_published);
+            native.on_track_unsubscribed = Some(events::on_track_unsubscribed);
+            native.on_data_track_frame = Some(events::on_data_frame);
             check(ffi::lk_room_set_callbacks(raw, &native))?;
         }
         Ok(room)
     }
 }
 
-/// Common connection settings. Pointer-bearing ICE, E2EE and token-source
-/// options remain available through the unsafe C ABI.
-#[derive(Debug, Clone)]
+/// Owned connection settings. ICE credentials and E2EE keys are copied by the
+/// native SDK during connect.
+#[derive(Clone)]
 pub struct ConnectOptions {
     pub auto_subscribe: bool,
     pub adaptive_stream: bool,
     pub dynacast: bool,
     pub join_retries: u32,
     pub reconnect_timeout_ms: u32,
+    pub ice_servers: Vec<IceServer>,
+    pub ice_transport_type: ffi::lk_ice_transport_type_t,
+    pub continual_gathering_policy: ffi::lk_continual_gathering_policy_t,
+    pub e2ee: Option<E2eeOptions>,
 }
 
 impl Default for ConnectOptions {
@@ -203,6 +282,10 @@ impl Default for ConnectOptions {
                 dynacast: options.dynacast != 0,
                 join_retries: options.join_retries,
                 reconnect_timeout_ms: options.reconnect_timeout_ms,
+                ice_servers: Vec::new(),
+                ice_transport_type: options.ice_transport_type,
+                continual_gathering_policy: options.continual_gathering_policy,
+                e2ee: None,
             }
         }
     }
@@ -234,6 +317,41 @@ pub enum Event {
         participant_identity: String,
         stream_id: String,
     },
+    Bytes {
+        data: Vec<u8>,
+        topic: String,
+        participant_identity: String,
+        stream_id: String,
+        name: String,
+        mime_type: String,
+    },
+    Audio {
+        samples: Vec<i16>,
+        sample_rate: u32,
+        channels: u32,
+        track_sid: String,
+        participant_identity: String,
+    },
+    Video {
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+        timestamp_us: i64,
+        metadata: VideoMetadata,
+        track_sid: String,
+        participant_identity: String,
+    },
+    TrackPublished(TrackPublication),
+    TrackSubscribed(TrackPublication),
+    TrackUnsubscribed(TrackPublication),
+    DataFrame {
+        data: Vec<u8>,
+        timestamp: Option<u64>,
+        track_sid: String,
+        participant_identity: String,
+    },
+    TextStream(StreamEvent),
+    ByteStream(StreamEvent),
 }
 
 struct CallbackState {
@@ -328,6 +446,14 @@ pub struct Room {
     receiver: Receiver<Event>,
     _sdk: Sdk,
     _thread: PhantomData<Rc<()>>,
+    tracks: Vec<LocalTrack>,
+    identity: Rc<()>,
+    // Native code borrows each context address; Vec growth must not move it.
+    #[allow(clippy::vec_box)]
+    rpc_handlers: Vec<Box<messaging::RpcHandlerState>>,
+    data_tracks: Vec<DataTrack>,
+    #[allow(clippy::vec_box)]
+    token_sources: Vec<Box<security::TokenSourceState>>,
 }
 
 impl Drop for Room {
@@ -362,22 +488,16 @@ impl Room {
     ) -> Result<()> {
         let url = cstring(url)?;
         let token = cstring(token)?;
-        unsafe {
-            let mut native = MaybeUninit::uninit();
-            ffi::lk_room_connect_options_init(native.as_mut_ptr());
-            let mut native = native.assume_init();
-            native.auto_subscribe = options.auto_subscribe.into();
-            native.adaptive_stream = options.adaptive_stream.into();
-            native.dynacast = options.dynacast.into();
-            native.join_retries = options.join_retries;
-            native.reconnect_timeout_ms = options.reconnect_timeout_ms;
-            check(ffi::lk_room_connect_with_options(
-                self.as_raw(),
-                url.as_ptr(),
-                token.as_ptr(),
-                &native,
-            ))
-        }
+        options.with_native(|native| {
+            check(unsafe {
+                ffi::lk_room_connect_with_options(
+                    self.as_raw(),
+                    url.as_ptr(),
+                    token.as_ptr(),
+                    native,
+                )
+            })
+        })
     }
 
     pub fn disconnect(&mut self) -> Result<()> {

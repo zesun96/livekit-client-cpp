@@ -173,7 +173,7 @@ source build and an installed package.
 | Java 17 | Room and participant APIs, `CompletableFuture` operations, media and devices, data and streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Java binding](pkg/java/README.md) |
 | Swift 5.9+ | Complete C ABI access, ARC-owned wrappers, async room and data operations, participants, media and capture, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Swift binding](pkg/swift/README.md) |
 | Zig 0.18 dev | Complete C ABI access, with owned handles for common room, media, stream, RPC, E2EE, and DataTrack operations | [Zig binding](pkg/zig/README.md) |
-| Rust 1.77+ | Complete C ABI access, with safe SDK/room lifetime, participant values, messaging, and bounded callback event queues | [Rust binding](pkg/rust/README.md) |
+| Rust 1.77+ | Complete C ABI access, with safe owned room/media handles, streams, RPC, E2EE, DataTrack, devices, recording, diagnostics, and bounded event queues | [Rust binding](pkg/rust/README.md) |
 
 The Lua binding loads through a DLL-linked Lua interpreter on Windows. See the
 [Lua examples](pkg/lua/examples/README.md) for runnable feature scenarios.

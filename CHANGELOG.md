@@ -16,6 +16,10 @@ bump commit because no local v0.1.0 tag exists; its entries include the initial 
 - Rust binding with complete generated C ABI access, safe SDK/room lifetime,
   participant snapshots, data/text/byte sending, bounded event queues, examples,
   and offline tests.
+- Rust owned media sources/tracks/readers/frames, physical capture, recording,
+  incremental stream writers and incoming events, RPC calls/handlers, ICE/token
+  sources, E2EE keys/cryptors, DataTrack schemas/publishing/readers, devices,
+  diagnostics, feature examples, and an opt-in two-peer test.
 
 ## [0.7.0] - 2026-10-14
 

@@ -12,10 +12,11 @@ rooms, callbacks, snapshots, media/capture, messaging and streams, RPC, DataTrac
 recording, devices, and diagnostics. Native options and specialized controls remain available
 through the imported C ABI.
 The [Rust binding](rust/README.md) generates the complete C ABI through bindgen and
-provides safe SDK/room ownership, connection settings, participant values, messaging,
-and bounded callback queues. Media, streams, RPC, E2EE, DataTrack, recording, and
-diagnostics are currently exposed through unsafe FFI. It has offline tests and
-room/messaging and device-enumeration examples. Windows x64 MSVC is validated;
+provides safe SDK/room/media ownership, ICE and token sources, participant/track
+values, messaging and incremental streams, RPC, E2EE, DataTrack, recording, devices,
+diagnostics, and bounded callback queues. Specialized native controls remain
+available through unsafe FFI. It has offline tests, feature examples, and an opt-in
+two-peer test. Windows x64 MSVC is validated;
 GNU/Linux and macOS await core SDK support, and no mobile target is declared.
 The [Java binding](java/README.md) covers room lifecycle and
 callbacks, token sources, participant and publication snapshots, messaging and streams, RPC,
@@ -29,25 +30,25 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | Room creation and cleanup | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Synchronous room connect and disconnect | Yes | No | Yes | Yes | Yes | Yes | Yes |
 | Language-native asynchronous room connect and disconnect | Yes | Yes | Yes | Yes | Yes | No | No |
-| Dynamic token source and advanced ICE connection options | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
+| Dynamic token source and advanced ICE connection options | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Connection state, room SID, name, and metadata getters | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Connection and participant callbacks | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Receive data messages | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Publish data messages synchronously | Yes | No | Yes | Yes | Yes | Yes | Yes |
 | Publish data messages asynchronously | Yes | Yes | Yes | Yes | Yes | No | No |
 | Local participant and remote participant snapshots | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Local participant metadata and attributes | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
-| Remote track subscription and settings | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| Track subscription permissions and feedback events | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
+| Local participant metadata and attributes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Remote track subscription and settings | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Track subscription permissions and feedback events | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
+| External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
-| DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| RPC calls and method handlers | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| Media devices and remote recording | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
-| Logging, tracing, and RTC statistics | Yes | Yes | Yes | Yes | Yes | Yes | FFI |
+| DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| RPC calls and method handlers | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Media devices and remote recording | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Logging, tracing, and RTC statistics | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
 Lua covers one-shot and incremental outgoing streams, writer progress and completion events,
 and incoming completed and incremental stream events.
@@ -64,21 +65,21 @@ checkmark does not mean every device or platform has been tested. The columns li
 binding's example guide (Zig lists examples in its binding guide). Swift includes a room/data
 example, a feature example runner, offline lifecycle/callback tests, and an opt-in two-peer test.
 
-| Example area | [Lua](lua/examples/README.md) | [Python](python/examples/README.md) | [.NET](dotnet/examples/README.md) | [Java](java/examples/README.md) | [Swift](swift/Examples/README.md) | [Zig](zig/README.md) | [Rust](rust/README.md) |
+| Example area | [Lua](lua/examples/README.md) | [Python](python/examples/README.md) | [.NET](dotnet/examples/README.md) | [Java](java/examples/README.md) | [Swift](swift/Examples/README.md) | [Zig](zig/README.md) | [Rust](rust/examples/README.md) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Room connection and lifecycle | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Device and screen-source enumeration | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Devices only |
+| Device and screen-source enumeration | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Data, text, and byte messages | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Incremental stream writer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| DataTrack schema and frame publishing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Dynamic token source | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Standalone RPC caller and receiver | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
-| E2EE connection | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| Synthetic audio and video publishing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Remote media readers and frame events | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
-| Remote track recording | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
-| Microphone, system audio, camera, and screen capture | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
-| Local two-participant smoke test | — | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Incremental stream writer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| DataTrack schema and frame publishing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Dynamic token source | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Standalone RPC caller and receiver | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| E2EE connection | — | — | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Synthetic audio and video publishing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Remote media readers and frame events | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Remote track recording | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Microphone, system audio, camera, and screen capture | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Local two-participant smoke test | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 The existing local smoke runners use generated media and temporary credentials. Swift's opt-in
 two-peer test reads supplied test credentials and checks data/RPC delivery and snapshot lifetime.
