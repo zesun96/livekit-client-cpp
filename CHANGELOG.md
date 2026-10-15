@@ -11,6 +11,12 @@ bump commit because no local v0.1.0 tag exists; its entries include the initial 
 
 ## [Unreleased]
 
+### Added
+
+- Rust binding with complete generated C ABI access, safe SDK/room lifetime,
+  participant snapshots, data/text/byte sending, bounded event queues, examples,
+  and offline tests.
+
 ## [0.7.0] - 2026-10-14
 
 ### Added
