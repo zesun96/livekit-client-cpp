@@ -92,6 +92,8 @@
 
 ## Commit rules
 
+- Do not update `CHANGELOG.md` on development branches or in pull requests targeting `main`.
+  Generate release notes in `CHANGELOG.md` on `main` after merging, just before creating a release tag.
 - Review `git status --short`, `git diff`, and `git diff --cached` before every commit.
 - Stage explicit paths or use exclusion pathspecs. Never stage local dependency source trees, build
   output, logs, credentials, editor state, or unrelated user changes.
