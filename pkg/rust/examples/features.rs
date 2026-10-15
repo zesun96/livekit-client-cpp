@@ -136,6 +136,7 @@ fn main() -> ExampleResult {
             let options = AudioOptions::default();
             let audio = sdk.audio_source(&options)?;
             let video = sdk.video_source(false)?;
+            video.capture_i420(&vec![128; 64 * 48 * 3 / 2], 64, 48, 0)?;
             let at = room.create_audio_track("rust-audio", &audio)?;
             let vt = room.create_video_track("rust-video", &video)?;
             room.publish_track(&at, ffi::LK_TRACK_SOURCE_MICROPHONE)?;

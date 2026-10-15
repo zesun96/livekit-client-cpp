@@ -12,6 +12,7 @@ join/publish in the selected test room. Examples never print tokens or E2EE keys
 | --- | --- |
 | `media_devices` | Device and screen-source enumeration |
 | `room` | Connection, data/text/byte sending, queued event polling, disconnect |
+| `async_room` | Standard Future-based connection, messaging, event reception and disconnect |
 | `features -- streams` | Incremental text and binary writers, incoming stream events |
 | `features -- rpc_receiver` | Register `rust.echo` and wait 30 seconds for calls |
 | `features -- rpc_call` | Call `rust.echo` on `LIVEKIT_REMOTE_IDENTITY` |
@@ -48,10 +49,12 @@ but are never run by the offline test command.
 
 ## Opt-in two-peer test
 
-The test uses supplied credentials for two distinct participants in one isolated
-test room. It checks binary data, RPC, incremental text/byte streams, room ownership
-of published tracks, cross-room rejection, and caller-held track/statistic lifetimes.
-It is compiled but skipped by normal `cargo test` runs. To explicitly run it after
+The six tests use supplied credentials for two distinct participants in one
+isolated test room. They cover async messages/RPC/chat, stream writers and
+progress/completion, DataTrack schema/frame readers, E2EE and detailed token
+requests, generated media/frame metadata/WAV recording, owned snapshots, and
+track/source/frame teardown. Physical capture has an additional hardware opt-in.
+They are compiled but skipped by normal `cargo test` runs. To explicitly run them after
 configuring `LIVEKIT_URL`, `LIVEKIT_TOKEN`, and `LIVEKIT_TOKEN_B`:
 
 ```powershell
@@ -59,7 +62,28 @@ $env:BUILD_INTEGRATION_TESTS = 'ON'
 cargo test --locked --test two_peer -- --ignored --nocapture
 ```
 
-Missing opt-in or credentials produce a clear skip message. No test server is
-downloaded or started, and no credentials are generated or logged by the test.
+Missing opt-in or credentials produce a clear skip message. Direct Cargo test
+execution uses supplied credentials and does not start a server.
 The SDK may open its normal playback device when remote media is subscribed;
 follow the workspace's hardware execution rules when running it on this host.
+
+The Windows runner reuses the workspace's existing LiveKit server executable,
+generates temporary test-only JWT credentials in memory, starts a loopback-only
+server, runs tests with a timeout, stops its own processes, and deletes the secret
+configuration. Logs and generated recordings are kept under ignored `out/rust-smoke-*`.
+Build first, then run the hardware/audio portion outside the sandbox on this host:
+
+```powershell
+cargo test --locked --test two_peer --no-run
+./tests/run_local_smoke.ps1 -SkipBuild -IncludeHardware
+```
+
+`-BuildDirectory` selects the native SDK directory relative to the repository root.
+`-TestFilter` selects one test, `-TestTimeoutSeconds` sets the suite deadline, and
+`-Port` selects the local server port (the next two ports are reserved for RTC).
+Without `-IncludeHardware`, the physical capture test prints a skip message.
+
+The hardware test selects the independent USB microphone by its `USB Microphone`
+label, selects the USB output containing `USBAudio2.0` for system-audio capture,
+and verifies a camera and screen source. It records no microphone audio or screen
+images and checks processing counters, state controls, and nonzero dimensions.

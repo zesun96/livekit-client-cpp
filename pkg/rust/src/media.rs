@@ -41,7 +41,7 @@ impl Default for AudioOptions {
     }
 }
 impl AudioOptions {
-    fn native(&self) -> ffi::lk_audio_source_options_t {
+    pub(super) fn native(&self) -> ffi::lk_audio_source_options_t {
         let mut o = native!(ffi::lk_audio_source_options_init);
         o.sample_rate = self.sample_rate;
         o.num_channels = self.channels;
@@ -269,6 +269,7 @@ struct TrackInner {
     handle: NonNull<ffi::lk_local_track_t>,
     source: TrackSource,
     room_identity: Rc<()>,
+    _room: Rc<RoomLifetime>,
 }
 impl Drop for TrackInner {
     fn drop(&mut self) {
@@ -283,6 +284,9 @@ impl Drop for TrackInner {
 #[derive(Clone)]
 pub struct LocalTrack(Rc<TrackInner>);
 impl LocalTrack {
+    pub(super) fn belongs_to(&self, room: &Room) -> bool {
+        Rc::ptr_eq(&self.0.room_identity, &room.identity)
+    }
     pub(super) fn sdk(&self) -> &Sdk {
         match &self.0.source {
             TrackSource::Audio(source) => &source.inner._sdk,
@@ -343,6 +347,7 @@ impl Room {
             handle: NonNull::new(raw).ok_or_else(|| invalid("null track"))?,
             source,
             room_identity: self.identity.clone(),
+            _room: self.lifetime.clone(),
         }));
         self.tracks.push(track.clone());
         Ok(track)

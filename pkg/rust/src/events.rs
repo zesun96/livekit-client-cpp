@@ -8,7 +8,7 @@ pub struct TrackPublication {
     pub participant_identity: String,
     pub participant_sid: String,
 }
-unsafe fn track_info(
+pub(super) unsafe fn track_info(
     t: *const ffi::lk_track_publication_info_t,
     p: *const ffi::lk_participant_info_t,
 ) -> TrackPublication {
@@ -35,7 +35,7 @@ macro_rules! track_callback {
 track_callback!(on_track_published, TrackPublished);
 track_callback!(on_track_subscribed, TrackSubscribed);
 track_callback!(on_track_unsubscribed, TrackUnsubscribed);
-unsafe fn bytes(p: *const u8, n: usize) -> Vec<u8> {
+pub(super) unsafe fn bytes(p: *const u8, n: usize) -> Vec<u8> {
     if n == 0 {
         Vec::new()
     } else {
@@ -58,6 +58,7 @@ pub(super) unsafe extern "C" fn on_bytes(
             mime_type: copy_string(e.mime_type),
         }
     });
+    expanded_events::completed_byte_info(user, e);
 }
 pub(super) unsafe extern "C" fn on_audio(
     user: *mut c_void,
@@ -158,6 +159,7 @@ unsafe extern "C" fn on_text_stream(
             reason: copy_string(e.reason),
         })
     });
+    expanded_events::text_stream_info(user, e);
 }
 unsafe extern "C" fn on_byte_stream(
     user: *mut c_void,
@@ -177,6 +179,7 @@ unsafe extern "C" fn on_byte_stream(
             reason: copy_string(e.reason),
         })
     });
+    expanded_events::byte_stream_info(user, e);
 }
 impl Room {
     pub fn register_text_stream(&self, topic: &str) -> Result<()> {
@@ -257,7 +260,8 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel(1);
         let state = CallbackState {
             sender,
-            dropped: AtomicUsize::new(0),
+            dropped: Arc::new(AtomicUsize::new(0)),
+            notifier: Mutex::new(None),
         };
         let mut pixels = vec![128u8; 6];
         let mut extra = vec![1u8, 0, 255];

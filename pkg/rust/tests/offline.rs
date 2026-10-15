@@ -178,3 +178,13 @@ fn diagnostic_guards_release_global_sinks() {
             .unwrap(),
     );
 }
+
+#[test]
+fn versioned_device_snapshots_initialize_output_sizes() {
+    let sdk = Sdk::new().unwrap();
+    let devices = sdk.media_devices().unwrap();
+    let screens = sdk.screen_sources().unwrap();
+    drop(sdk);
+    assert!(devices.iter().all(|d| !d.id.is_empty()));
+    assert!(screens.iter().all(|s| !s.id.is_empty()));
+}

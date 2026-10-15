@@ -5,18 +5,16 @@ documented in the [SDK feature guide](../docs/FEATURES.md). `Yes` means the bind
 capability, `Partial` means some related APIs are available, and `No` means it does not. Zig
 exposes the complete C ABI as low-level declarations, with owned-handle wrappers for common
 room, media, stream, RPC, snapshot, E2EE, and DataTrack operations.
-`FFI` in the Rust column means the capability is available through unsafe C ABI
-declarations and does not yet have a safe Rust wrapper.
 The [Swift binding](swift/README.md) imports the complete C ABI and provides Swift wrappers for
 rooms, callbacks, snapshots, media/capture, messaging and streams, RPC, DataTrack, E2EE,
 recording, devices, and diagnostics. Native options and specialized controls remain available
 through the imported C ABI.
 The [Rust binding](rust/README.md) generates the complete C ABI through bindgen and
-provides safe SDK/room/media ownership, ICE and token sources, participant/track
-values, messaging and incremental streams, RPC, E2EE, DataTrack, recording, devices,
-diagnostics, and bounded callback queues. Specialized native controls remain
-available through unsafe FFI. It has offline tests, feature examples, and an opt-in
-two-peer test. Windows x64 MSVC is validated;
+provides safe SDK/room/media ownership, standard Future-based room/messaging APIs,
+ICE/token/reconnect options, participant/track values, messages and incremental
+streams, RPC, E2EE, DataTrack, recording, devices, diagnostics, complete copied room
+events, and bounded queues. It has offline tests, feature examples, and opt-in
+server/media/hardware tests. Windows x64 MSVC is validated;
 GNU/Linux and macOS await core SDK support, and no mobile target is declared.
 The [Java binding](java/README.md) covers room lifecycle and
 callbacks, token sources, participant and publication snapshots, messaging and streams, RPC,
@@ -29,21 +27,21 @@ room, media, data, stream, RPC, device, recording, and diagnostic operations.
 | SDK version | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Room creation and cleanup | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Synchronous room connect and disconnect | Yes | No | Yes | Yes | Yes | Yes | Yes |
-| Language-native asynchronous room connect and disconnect | Yes | Yes | Yes | Yes | Yes | No | No |
+| Language-native asynchronous room connect and disconnect | Yes | Yes | Yes | Yes | Yes | No | Yes |
 | Dynamic token source and advanced ICE connection options | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Connection state, room SID, name, and metadata getters | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Connection and participant callbacks | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Receive data messages | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Publish data messages synchronously | Yes | No | Yes | Yes | Yes | Yes | Yes |
-| Publish data messages asynchronously | Yes | Yes | Yes | Yes | Yes | No | No |
+| Publish data messages asynchronously | Yes | Yes | Yes | Yes | Yes | No | Yes |
 | Local participant and remote participant snapshots | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Local participant metadata and attributes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Remote track subscription and settings | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Track subscription permissions and feedback events | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
+| Track subscription permissions and feedback events | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | External audio/video tracks, frame push, and remote frame streams | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Audio/video frame events with bounded queues and video metadata | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Microphone, system audio, camera, and screen device capture | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Yes | Yes | Yes | Partial |
+| Text and byte streams, chat, and file transfer | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | DataTrack schema, publishing, and subscription | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | RPC calls and method handlers | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | E2EE (C ABI GCM, keys, frame cryptors) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |

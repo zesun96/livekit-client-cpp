@@ -4,16 +4,25 @@ use std::cell::RefCell;
 owned_handle!(
     TextWriter,
     ffi::lk_text_stream_writer_t,
-    ffi::lk_text_stream_writer_destroy
+    ffi::lk_text_stream_writer_destroy,
+    callbacks: Option<Box<WriterCallbacks>>
 );
 owned_handle!(
     ByteWriter,
     ffi::lk_byte_stream_writer_t,
-    ffi::lk_byte_stream_writer_destroy
+    ffi::lk_byte_stream_writer_destroy,
+    callbacks: Option<Box<WriterCallbacks>>
 );
 macro_rules! writer {
     ($name:ident, $close:path, $cancel:path, $id:path, $closed:path) => {
         impl $name {
+            pub(super) fn sdk(&self) -> &Sdk {
+                &self._sdk
+            }
+            pub(super) fn retain_callbacks(mut self, callbacks: Box<WriterCallbacks>) -> Self {
+                self.callbacks = Some(callbacks);
+                self
+            }
             pub fn close(&mut self) -> Result<()> {
                 check(unsafe { $close(self.as_raw()) })
             }
@@ -51,6 +60,10 @@ impl TextWriter {
         })
     }
 }
+pub(super) struct WriterCallbacks {
+    pub events: CallbackState,
+    pub stream_id: String,
+}
 impl ByteWriter {
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
         check(unsafe {
@@ -60,24 +73,18 @@ impl ByteWriter {
 }
 impl Room {
     pub fn stream_text(&self, topic: &str) -> Result<TextWriter> {
-        let topic = cstring(topic)?;
-        let mut o = native!(ffi::lk_stream_text_options_init);
-        o.topic = topic.as_ptr();
-        let mut raw = ptr::null_mut();
-        check(unsafe { ffi::lk_room_stream_text(self.as_raw(), &o, &mut raw) })?;
-        TextWriter::from_ptr(raw, &self._sdk)
+        self.stream_text_with_options(&DataStreamOptions {
+            topic: topic.into(),
+            ..DataStreamOptions::default()
+        })
     }
     pub fn stream_bytes(&self, topic: &str, name: &str, mime_type: &str) -> Result<ByteWriter> {
-        let topic = cstring(topic)?;
-        let name = cstring(name)?;
-        let mime = cstring(mime_type)?;
-        let mut o = native!(ffi::lk_stream_bytes_options_init);
-        o.topic = topic.as_ptr();
-        o.name = name.as_ptr();
-        o.mime_type = mime.as_ptr();
-        let mut raw = ptr::null_mut();
-        check(unsafe { ffi::lk_room_stream_bytes(self.as_raw(), &o, &mut raw) })?;
-        ByteWriter::from_ptr(raw, &self._sdk)
+        self.stream_bytes_with_options(&DataStreamOptions {
+            topic: topic.into(),
+            name: name.into(),
+            mime_type: mime_type.into(),
+            ..DataStreamOptions::default()
+        })
     }
     pub fn send_file(&self, path: &str, topic: &str) -> Result<()> {
         let path = cstring(path)?;
@@ -291,7 +298,7 @@ unsafe extern "C" fn on_rpc(
     }
 }
 
-fn check_data(code: ffi::lk_data_track_error_code_t) -> Result<()> {
+pub(super) fn check_data(code: ffi::lk_data_track_error_code_t) -> Result<()> {
     if code == ffi::LK_DATA_TRACK_ERROR_NONE {
         Ok(())
     } else {
@@ -338,7 +345,7 @@ pub struct SchemaId {
     pub custom_encoding: String,
 }
 impl SchemaId {
-    fn with_native<T>(
+    pub(super) fn with_native<T>(
         &self,
         f: impl FnOnce(&ffi::lk_data_track_schema_id_t) -> Result<T>,
     ) -> Result<T> {
@@ -354,11 +361,17 @@ impl SchemaId {
 owned_handle!(
     DataTrackHandle,
     ffi::lk_local_data_track_t,
-    ffi::lk_local_data_track_destroy
+    ffi::lk_local_data_track_destroy,
+    room: Option<Rc<RoomLifetime>>
 );
 #[derive(Clone)]
-pub struct DataTrack(Rc<DataTrackHandle>);
+pub struct DataTrack(pub(super) Rc<DataTrackHandle>);
 impl DataTrack {
+    pub(super) fn from_ptr(raw: *mut ffi::lk_local_data_track_t, room: &Room) -> Result<Self> {
+        let mut handle = DataTrackHandle::from_ptr(raw, &room._sdk)?;
+        handle.room = Some(room.lifetime.clone());
+        Ok(Self(Rc::new(handle)))
+    }
     pub fn as_raw(&self) -> *mut ffi::lk_local_data_track_t {
         self.0.as_raw()
     }
@@ -488,7 +501,7 @@ impl Room {
             check_data(unsafe {
                 ffi::lk_room_publish_data_track(self.as_raw(), &options, &mut raw)
             })?;
-            let track = DataTrack(Rc::new(DataTrackHandle::from_ptr(raw, &self._sdk)?));
+            let track = DataTrack::from_ptr(raw, self)?;
             self.data_tracks.push(track.clone());
             Ok(track)
         };

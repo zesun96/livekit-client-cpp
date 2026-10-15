@@ -1,8 +1,8 @@
 //! Rust bindings for the LiveKit C++ client.
 //!
-//! [`ffi`] exposes the complete C ABI. [`Sdk`] and [`Room`] provide synchronous,
-//! owned room operations and bounded, copied callback events. Rooms stay on the
-//! creating thread; poll events there instead of running user code on SDK threads.
+//! [`ffi`] exposes the complete C ABI. [`Sdk`] and [`Room`] provide owned native
+//! operations and bounded, copied callback events. [`AsyncRoom`] provides standard
+//! futures on a joined worker, with [`AsyncRoomHandle`] commands for executor tasks.
 
 #![doc = include_str!("../README.md")]
 
@@ -34,18 +34,20 @@ macro_rules! native {
 }
 
 macro_rules! owned_handle {
-    ($name:ident, $raw:ty, $destroy:path) => {
+    ($name:ident, $raw:ty, $destroy:path $(, $field:ident : $field_type:ty)*) => {
         pub struct $name {
             handle: NonNull<$raw>,
             _sdk: Sdk,
             _thread: PhantomData<Rc<()>>,
+            $($field: $field_type,)*
         }
         impl $name {
-            fn from_ptr(raw: *mut $raw, sdk: &Sdk) -> Result<Self> {
+            pub(super) fn from_ptr(raw: *mut $raw, sdk: &Sdk) -> Result<Self> {
                 Ok(Self {
                     handle: NonNull::new(raw).ok_or_else(|| invalid("null native handle"))?,
                     _sdk: sdk.clone(),
                     _thread: PhantomData,
+                    $($field: Default::default(),)*
                 })
             }
             pub fn as_raw(&self) -> *mut $raw {
@@ -62,17 +64,23 @@ macro_rules! owned_handle {
     };
 }
 
+mod asynchronous;
 mod devices;
 mod diagnostics;
 mod events;
+mod expanded_events;
 mod media;
 mod messaging;
+mod options;
 mod security;
+mod snapshots;
+pub use asynchronous::{AsyncRoom, AsyncRoomHandle, NextEvent, Operation};
 pub use devices::{MediaDevice, ScreenSource};
 pub use diagnostics::{
     JsonTrace, LogEvents, LogRecord, RtcStats, RtcStatsSnapshot, TraceEvents, TraceRecord,
 };
 pub use events::{StreamEvent, TrackPublication};
+pub use expanded_events::*;
 pub use media::{
     AudioFrame, AudioOptions, AudioSource, AudioStream, LocalTrack, Read, Recorder, VideoFrame,
     VideoInput, VideoMetadata, VideoSource, VideoStream,
@@ -81,8 +89,17 @@ pub use messaging::{
     ByteWriter, ChatMessage, DataFrame, DataReader, DataSchema, DataTrack, RpcInvocation,
     RpcResponse, SchemaId, TextWriter,
 };
+pub use options::{
+    DataPublishOptions, DataStreamOptions, DataSubscriptionOptions, DataTrackPublishOptions,
+    TrackPublishOptions,
+};
 pub use security::{
-    E2eeOptions, FrameCryptor, IceServer, RemoteTrackSettings, TokenResponse, TrackPermission,
+    AdvancedConnectOptions, AdvancedE2eeOptions, E2eeOptions, FrameCryptor, IceServer,
+    ReconnectContext, ReconnectPolicy, RemoteTrackSettings, TokenFetchOptions, TokenRequest,
+    TokenResponse, TrackPermission,
+};
+pub use snapshots::{
+    ParticipantSnapshot, PublicationSnapshot, RemoteDataTrack, RemoteTrackSnapshot, StreamInfo,
 };
 
 /// An owned copy of a native failure, captured before another C call can erase it.
@@ -213,13 +230,20 @@ impl Sdk {
             return Err(invalid("event capacity must be positive"));
         }
         let (sender, receiver) = mpsc::sync_channel(capacity);
-        let callbacks = Box::new(CallbackState {
+        let callbacks = Rc::new(CallbackState {
             sender,
-            dropped: AtomicUsize::new(0),
+            dropped: Arc::new(AtomicUsize::new(0)),
+            notifier: Mutex::new(None),
         });
         let mut raw = ptr::null_mut();
         check(unsafe { ffi::lk_room_create(&mut raw) })?;
         let handle = NonNull::new(raw).ok_or_else(|| invalid("native room is null"))?;
+        let lifetime = Rc::new(RoomLifetime {
+            handle,
+            _sdk: self.clone(),
+            _callbacks: callbacks.clone(),
+            contexts: std::cell::RefCell::new(None),
+        });
         let room = Room {
             handle,
             callbacks,
@@ -228,9 +252,11 @@ impl Sdk {
             _thread: PhantomData,
             tracks: Vec::new(),
             identity: Rc::new(()),
+            lifetime,
             rpc_handlers: Vec::new(),
             data_tracks: Vec::new(),
             token_sources: Vec::new(),
+            reconnect_policies: Vec::new(),
         };
         unsafe {
             let mut native = MaybeUninit::uninit();
@@ -249,6 +275,7 @@ impl Sdk {
             native.on_track_published = Some(events::on_track_published);
             native.on_track_unsubscribed = Some(events::on_track_unsubscribed);
             native.on_data_track_frame = Some(events::on_data_frame);
+            expanded_events::install(&mut native);
             check(ffi::lk_room_set_callbacks(raw, &native))?;
         }
         Ok(room)
@@ -352,11 +379,73 @@ pub enum Event {
     },
     TextStream(StreamEvent),
     ByteStream(StreamEvent),
+    Room(RoomEvent),
+    ParticipantChanged(ParticipantEvent),
+    TrackFeedback {
+        track: TrackPublication,
+        feedback: TrackFeedback,
+    },
+    Chat(ChatEvent),
+    SipDtmf {
+        code: u32,
+        digit: String,
+        participant_identity: String,
+    },
+    Transcription(TranscriptionEvent),
+    EncryptionChanged(EncryptionState),
+    DataTrackChanged {
+        track: DataTrackInfo,
+        participant: Participant,
+        change: DataTrackChange,
+    },
+    BufferStatus {
+        reliable: bool,
+        buffered_amount: u64,
+        high_water_mark: u64,
+        low_water_mark: u64,
+        backpressured: bool,
+    },
+    StreamProgress {
+        stream_id: String,
+        bytes_sent: u64,
+        total_size: Option<u64>,
+    },
+    StreamCompleted(StreamCompletion),
+    Metrics(MetricsEvent),
+    IncomingStreamInfo(ReceivedStreamInfo),
 }
 
 struct CallbackState {
     sender: SyncSender<Event>,
-    dropped: AtomicUsize,
+    dropped: Arc<AtomicUsize>,
+    notifier: Mutex<Option<Arc<asynchronous::EventNotifier>>>,
+}
+impl Clone for CallbackState {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            dropped: self.dropped.clone(),
+            notifier: Mutex::new(
+                self.notifier
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            ),
+        }
+    }
+}
+
+impl Drop for CallbackState {
+    fn drop(&mut self) {
+        let notifier = self
+            .notifier
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
+    }
 }
 
 // No user code runs on a native callback thread. Keep the box alive until native
@@ -366,6 +455,14 @@ unsafe fn emit(user_data: *mut c_void, event: impl FnOnce() -> Event) {
         let state = &*user_data.cast::<CallbackState>();
         if state.sender.try_send(event()).is_err() {
             state.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        let notifier = state
+            .notifier
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(notifier) = notifier {
+            notifier.notify();
         }
     }));
 }
@@ -436,33 +533,97 @@ unsafe extern "C" fn on_text(
             stream_id: copy_string(info.stream_id),
         }
     });
+    expanded_events::completed_text_info(user, info);
 }
 
-/// One native room. Neither Send nor Sync: use and drop it on its owning thread.
-/// Drop disconnects/destroys the native room before releasing callback storage.
+// Tracks retain this lifetime until their WebRTC objects are destroyed.
+struct RoomLifetime {
+    handle: NonNull<ffi::lk_room_t>,
+    _sdk: Sdk,
+    _callbacks: Rc<CallbackState>,
+    contexts: std::cell::RefCell<Option<RetainedContexts>>,
+}
+#[allow(clippy::vec_box)]
+struct RetainedContexts {
+    _rpc: Vec<Box<messaging::RpcHandlerState>>,
+    _tokens: Vec<Box<security::TokenSourceState>>,
+    _reconnect: Vec<Box<security::ReconnectPolicyState>>,
+}
+impl Drop for RoomLifetime {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::lk_room_destroy(self.handle.as_ptr());
+        }
+    }
+}
+/// One room owner. Neither Send nor Sync: use and drop it on its owning thread.
+/// Drop disconnects and releases retained tracks; caller-held tracks keep native
+/// room threads and callback storage alive until those tracks are destroyed.
 pub struct Room {
     handle: NonNull<ffi::lk_room_t>,
-    callbacks: Box<CallbackState>,
+    callbacks: Rc<CallbackState>,
     receiver: Receiver<Event>,
     _sdk: Sdk,
     _thread: PhantomData<Rc<()>>,
     tracks: Vec<LocalTrack>,
     identity: Rc<()>,
+    lifetime: Rc<RoomLifetime>,
     // Native code borrows each context address; Vec growth must not move it.
     #[allow(clippy::vec_box)]
     rpc_handlers: Vec<Box<messaging::RpcHandlerState>>,
     data_tracks: Vec<DataTrack>,
     #[allow(clippy::vec_box)]
     token_sources: Vec<Box<security::TokenSourceState>>,
+    #[allow(clippy::vec_box)]
+    reconnect_policies: Vec<Box<security::ReconnectPolicyState>>,
 }
 
 impl Drop for Room {
     fn drop(&mut self) {
-        unsafe { ffi::lk_room_destroy(self.handle.as_ptr()) }
+        // Context addresses remain stable while ownership moves into the lifetime
+        // retained by caller-held tracks. Disconnect while the room still owns
+        // the WebRTC factory, then release retained tracks before that factory.
+        *self.lifetime.contexts.borrow_mut() = Some(RetainedContexts {
+            _rpc: std::mem::take(&mut self.rpc_handlers),
+            _tokens: std::mem::take(&mut self.token_sources),
+            _reconnect: std::mem::take(&mut self.reconnect_policies),
+        });
+        unsafe {
+            if ffi::lk_room_is_connected(self.handle.as_ptr()) != 0 {
+                ffi::lk_room_disconnect(self.handle.as_ptr());
+            }
+        }
+        self.tracks.clear();
+        self.data_tracks.clear();
     }
 }
 
 impl Room {
+    /// The synchronous native connect returns after signaling join. Wait for
+    /// the RTC connection before operations requiring a fully connected room.
+    pub fn wait_connected(&self, timeout_ms: u32) -> Result<()> {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(u64::from(timeout_ms));
+        while !self.is_connected() {
+            if matches!(
+                self.state(),
+                ffi::LK_ROOM_STATE_FAILED | ffi::LK_ROOM_STATE_DISCONNECTED
+            ) {
+                return Err(Error {
+                    status: ffi::LK_STATUS_INVALID_STATE,
+                    message: "room did not reach connected state".into(),
+                });
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Error {
+                    status: ffi::LK_STATUS_OPERATION_FAILED,
+                    message: "timed out waiting for RTC connection".into(),
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        Ok(())
+    }
     /// Borrowed handle for advanced unsafe FFI operations. Never destroy it or
     /// replace its callback table while using the safe wrapper.
     pub fn as_raw(&self) -> *mut ffi::lk_room_t {
@@ -651,7 +812,8 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel(1);
         let state = CallbackState {
             sender,
-            dropped: AtomicUsize::new(0),
+            dropped: Arc::new(AtomicUsize::new(0)),
+            notifier: Mutex::new(None),
         };
         let topic = CString::new("测试").unwrap();
         let mut bytes = [1, 0, 255];
