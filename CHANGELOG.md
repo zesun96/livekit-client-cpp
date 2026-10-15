@@ -11,28 +11,6 @@ bump commit because no local v0.1.0 tag exists; its entries include the initial 
 
 ## [Unreleased]
 
-### Added
-
-- Rust binding with complete generated C ABI access, safe SDK/room lifetime,
-  participant snapshots, data/text/byte sending, bounded event queues, examples,
-  and offline tests.
-- Rust owned media sources/tracks/readers/frames, physical capture, recording,
-  incremental stream writers and incoming events, RPC calls/handlers, ICE/token
-  sources, E2EE keys/cryptors, DataTrack schemas/publishing/readers, devices,
-  diagnostics, feature examples, and an opt-in two-peer test.
-- Rust standard futures on a joined room worker, cloneable executor-safe command
-  handles, advanced publish/stream/connection options, owned detailed snapshots,
-  subscription/chat/participant/metrics callbacks, stream progress/completion,
-  and local server/media/physical-capture validation runners.
-
-### Fixed
-
-- Retain the native room and callback contexts until caller-held Rust tracks are
-  destroyed; release room-retained tracks before their WebRTC factory shuts down.
-- Initialize Rust device/screen output structure sizes before native enumeration.
-- Prime synthetic Rust video before publishing and wait for RTC readiness before
-  connected-room operations.
-
 ## [0.7.0] - 2026-10-14
 
 ### Added
