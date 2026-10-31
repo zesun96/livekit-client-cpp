@@ -174,6 +174,7 @@ source build and an installed package.
 | Swift 5.9+ | Complete C ABI access, ARC-owned wrappers, async room and data operations, participants, media and capture, streams, DataTrack, RPC, E2EE, recording, and diagnostics | [Swift binding](pkg/swift/README.md) |
 | Zig 0.18 dev | Complete C ABI access, with owned handles for common room, media, stream, RPC, E2EE, and DataTrack operations | [Zig binding](pkg/zig/README.md) |
 | Rust 1.77+ | Complete C ABI access, safe owned room/media handles, Future-based room/messaging APIs, streams, RPC, E2EE, DataTrack, devices, recording, diagnostics, and bounded event queues | [Rust binding](pkg/rust/README.md) |
+| Node.js 20+ / TypeScript | Worker-based Promise APIs, dynamic tokens/ICE/reconnect, snapshots/statistics, media/capture, streams, RPC handlers, DataTrack, E2EE, recording, diagnostics and bounded queues | [Node.js binding](pkg/nodejs/README.md) |
 
 The Lua binding loads through a DLL-linked Lua interpreter on Windows. See the
 [Lua examples](pkg/lua/examples/README.md) for runnable feature scenarios.

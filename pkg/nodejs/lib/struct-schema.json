@@ -1,0 +1,645 @@
+{
+  "CErrorInfo": {
+    "domain": "number",
+    "code": "number",
+    "messageSize": "number"
+  },
+  "CLogRecord": {
+    "level": "number",
+    "source": "number",
+    "message": "string",
+    "file": "string",
+    "line": "number"
+  },
+  "CLogOptions": {
+    "livekitLevel": "number",
+    "webrtcLevel": "number",
+    "websocketLevel": "number"
+  },
+  "CTraceRecord": {
+    "phase": "number",
+    "category": "number",
+    "name": "string",
+    "timestampUs": "bigint",
+    "threadId": "bigint",
+    "correlationId": "bigint"
+  },
+  "CTraceOptions": {
+    "enabled": "boolean",
+    "categoryMask": "bigint"
+  },
+  "CParticipantInfo": {
+    "sid": "string",
+    "identity": "string",
+    "name": "string",
+    "metadata": "string",
+    "audioLevel": "number",
+    "connectionQuality": "number",
+    "isSpeaking": "boolean",
+    "isLocal": "boolean"
+  },
+  "CMediaDeviceInfo": {
+    "kind": "number",
+    "isDefault": "boolean"
+  },
+  "CAudioPlaybackStats": {
+    "queuedFrames": "bigint",
+    "playedFrames": "bigint",
+    "droppedFrames": "bigint",
+    "underrunFrames": "bigint",
+    "bufferedDurationMs": "number",
+    "deviceLatencyMs": "number",
+    "estimatedDelayMs": "number"
+  },
+  "CScreenSourceInfo": {
+    "kind": "number",
+    "x": "number",
+    "y": "number",
+    "width": "number",
+    "height": "number"
+  },
+  "CParticipantPermissions": {
+    "canSubscribe": "boolean",
+    "canPublish": "boolean",
+    "canPublishData": "boolean",
+    "canPublishSources": "number[]",
+    "hidden": "boolean",
+    "recorder": "boolean",
+    "canUpdateMetadata": "boolean",
+    "agent": "boolean",
+    "canSubscribeMetrics": "boolean",
+    "canManageAgentSession": "boolean"
+  },
+  "CTrackPublicationInfo": {
+    "sid": "string",
+    "name": "string",
+    "mimeType": "string",
+    "kind": "number",
+    "source": "number",
+    "width": "number",
+    "height": "number",
+    "isMuted": "boolean",
+    "isSimulcasted": "boolean",
+    "subscriptionAllowed": "boolean"
+  },
+  "CRemoteParticipantSnapshotInfo": {
+    "audioLevel": "number",
+    "connectionQuality": "number",
+    "isSpeaking": "boolean"
+  },
+  "CLocalParticipantSnapshotInfo": {
+    "audioLevel": "number",
+    "connectionQuality": "number",
+    "isSpeaking": "boolean"
+  },
+  "CDataStreamWriterInfo": {
+    "kind": "number",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "timestamp": "bigint",
+    "attributeCount": "number",
+    "attachedStreamIdCount": "number"
+  },
+  "CRemoteTrackPublicationSnapshotInfo": {
+    "kind": "number",
+    "source": "number",
+    "width": "number",
+    "height": "number",
+    "isMuted": "boolean",
+    "isSimulcasted": "boolean",
+    "subscriptionAllowed": "boolean",
+    "subscriptionStatus": "number",
+    "hasSubscriptionError": "boolean",
+    "subscriptionError": "number",
+    "hasSubscribedTrack": "boolean",
+    "encryption": "number"
+  },
+  "CRemoteTrackSnapshotInfo": {
+    "kind": "number",
+    "source": "number",
+    "streamState": "number",
+    "width": "number",
+    "height": "number",
+    "enabled": "boolean"
+  },
+  "CRtcTrackStats": {
+    "direction": "number",
+    "timestampMs": "number",
+    "bytes": "bigint",
+    "packets": "bigint",
+    "packetsLost": "bigint",
+    "hasBitrateBps": "boolean",
+    "bitrateBps": "number",
+    "hasRoundTripTimeSeconds": "boolean",
+    "roundTripTimeSeconds": "number",
+    "hasJitterSeconds": "boolean",
+    "jitterSeconds": "number",
+    "hasAudioLevel": "boolean",
+    "audioLevel": "number",
+    "concealedSamples": "bigint",
+    "frameWidth": "number",
+    "frameHeight": "number",
+    "framesPerSecond": "number",
+    "frames": "bigint",
+    "framesDropped": "bigint",
+    "firCount": "bigint",
+    "pliCount": "bigint",
+    "nackCount": "bigint",
+    "qpSum": "bigint"
+  },
+  "CSubscribedQuality": {
+    "quality": "number",
+    "enabled": "boolean"
+  },
+  "CSubscribedCodec": {
+    "codec": "string",
+    "qualities": "CSubscribedQuality[]"
+  },
+  "CSubscribedQualityUpdate": {
+    "trackSid": "string",
+    "qualities": "CSubscribedQuality[]",
+    "codecs": "CSubscribedCodec[]"
+  },
+  "CEncryptionState": {
+    "trackId": "string",
+    "participantIdentity": "string",
+    "kind": "number",
+    "direction": "number",
+    "enabled": "boolean",
+    "keyIndex": "number",
+    "state": "number"
+  },
+  "CFrameCryptorInfo": {
+    "kind": "number",
+    "direction": "number",
+    "enabled": "boolean",
+    "keyIndex": "number",
+    "state": "number"
+  },
+  "CAudioFrame": {
+    "data": "Uint8Array",
+    "sampleRate": "number",
+    "numChannels": "number",
+    "samplesPerChannel": "number"
+  },
+  "CVideoFrame": {
+    "data": "Uint8Array",
+    "width": "number",
+    "height": "number",
+    "timestampUs": "bigint"
+  },
+  "CVideoPlane": {
+    "offset": "number",
+    "size": "number",
+    "stride": "number"
+  },
+  "CVideoFrameMetadata": {
+    "hasUserTimestampUs": "boolean",
+    "userTimestampUs": "bigint",
+    "hasFrameId": "boolean",
+    "frameId": "number",
+    "hasUserData": "boolean",
+    "userData": "Uint8Array"
+  },
+  "CVideoFrameInput": {
+    "data": "Uint8Array",
+    "width": "number",
+    "height": "number",
+    "timestampUs": "bigint",
+    "rotation": "number",
+    "format": "number",
+    "planes": "CVideoPlane[]",
+    "metadata": "CVideoFrameMetadata"
+  },
+  "CDataReceived": {
+    "data": "Uint8Array",
+    "topic": "string",
+    "participantIdentity": "string",
+    "reliable": "boolean"
+  },
+  "CDataTrackInfo": {
+    "publisherHandle": "number",
+    "sid": "string",
+    "name": "string",
+    "usesE2Ee": "number",
+    "hasFrameEncoding": "boolean",
+    "frameEncoding": "number",
+    "customFrameEncoding": "string",
+    "hasSchema": "boolean",
+    "schemaName": "string",
+    "schemaEncoding": "number",
+    "customSchemaEncoding": "string"
+  },
+  "CDataTrackFrameView": {
+    "data": "Uint8Array",
+    "hasUserTimestamp": "boolean",
+    "userTimestamp": "bigint"
+  },
+  "CDataTrackSnapshotInfo": {
+    "publisherHandle": "number",
+    "usesE2Ee": "number",
+    "hasFrameEncoding": "boolean",
+    "frameEncoding": "number",
+    "hasSchema": "boolean",
+    "schemaEncoding": "number",
+    "isPublished": "boolean"
+  },
+  "CSipDtmf": {
+    "code": "number",
+    "digit": "string",
+    "participantIdentity": "string"
+  },
+  "CChatMessage": {
+    "id": "string",
+    "timestamp": "bigint",
+    "hasEditTimestamp": "boolean",
+    "editTimestamp": "bigint",
+    "message": "string",
+    "deleted": "boolean",
+    "generated": "boolean",
+    "participantIdentity": "string"
+  },
+  "CTranscriptionSegment": {
+    "id": "string",
+    "text": "string",
+    "language": "string",
+    "startTime": "bigint",
+    "endTime": "bigint",
+    "isFinal": "boolean",
+    "firstReceivedTime": "bigint",
+    "lastReceivedTime": "bigint"
+  },
+  "CTranscriptionReceived": {
+    "transcribedParticipantIdentity": "string",
+    "trackId": "string",
+    "segments": "CTranscriptionSegment[]"
+  },
+  "CMetricTimestamp": {
+    "seconds": "bigint",
+    "nanos": "number"
+  },
+  "CMetricSample": {
+    "timestampMs": "bigint",
+    "hasNormalizedTimestamp": "boolean",
+    "normalizedTimestamp": "CMetricTimestamp",
+    "value": "number"
+  },
+  "CTimeSeriesMetric": {
+    "label": "number",
+    "participantIdentity": "number",
+    "trackSid": "number",
+    "rid": "number",
+    "samples": "CMetricSample[]"
+  },
+  "CEventMetric": {
+    "label": "number",
+    "participantIdentity": "number",
+    "trackSid": "number",
+    "rid": "number",
+    "startTimestampMs": "bigint",
+    "hasEndTimestampMs": "boolean",
+    "endTimestampMs": "bigint",
+    "hasNormalizedStartTimestamp": "boolean",
+    "normalizedStartTimestamp": "CMetricTimestamp",
+    "hasNormalizedEndTimestamp": "boolean",
+    "normalizedEndTimestamp": "CMetricTimestamp",
+    "metadata": "string"
+  },
+  "CMetricsReceived": {
+    "timestampMs": "bigint",
+    "hasNormalizedTimestamp": "boolean",
+    "normalizedTimestamp": "CMetricTimestamp",
+    "stringData": "string[]",
+    "timeSeries": "CTimeSeriesMetric[]",
+    "events": "CEventMetric[]",
+    "participantIdentity": "string"
+  },
+  "CAttribute": {
+    "key": "string",
+    "value": "string"
+  },
+  "CTokenSourceFetchOptions": {
+    "roomName": "string",
+    "participantName": "string",
+    "participantIdentity": "string",
+    "participantMetadata": "string",
+    "participantAttributes": "CAttribute[]",
+    "agentName": "string",
+    "agentMetadata": "string",
+    "deployment": "string"
+  },
+  "CTokenSourceResponse": {
+    "serverUrl": "string",
+    "participantToken": "string"
+  },
+  "CRoomSnapshot": {
+    "sid": "string",
+    "name": "string",
+    "metadata": "string",
+    "isRecording": "boolean"
+  },
+  "CFileReceived": {
+    "data": "Uint8Array",
+    "streamId": "string",
+    "name": "string",
+    "mimeType": "string",
+    "topic": "string",
+    "participantIdentity": "string",
+    "attributes": "CAttribute[]",
+    "timestamp": "bigint"
+  },
+  "CTextReceived": {
+    "streamId": "string",
+    "text": "string",
+    "topic": "string",
+    "participantIdentity": "string",
+    "replyToStreamId": "string",
+    "timestamp": "bigint",
+    "attachedStreamIds": "string[]",
+    "attributes": "CAttribute[]"
+  },
+  "CTextStreamEvent": {
+    "type": "number",
+    "streamId": "string",
+    "mimeType": "string",
+    "topic": "string",
+    "participantIdentity": "string",
+    "content": "string",
+    "chunkIndex": "bigint",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "reason": "string",
+    "attributes": "CAttribute[]",
+    "timestamp": "bigint",
+    "replyToStreamId": "string",
+    "attachedStreamIds": "string[]"
+  },
+  "CByteStreamEvent": {
+    "type": "number",
+    "streamId": "string",
+    "name": "string",
+    "mimeType": "string",
+    "topic": "string",
+    "participantIdentity": "string",
+    "content": "Uint8Array",
+    "chunkIndex": "bigint",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "reason": "string",
+    "attributes": "CAttribute[]",
+    "timestamp": "bigint"
+  },
+  "CDataChannelBufferStatus": {
+    "reliable": "boolean",
+    "bufferedAmount": "bigint",
+    "highWaterMark": "bigint",
+    "lowWaterMark": "bigint",
+    "backpressured": "number"
+  },
+  "CDataStreamCompletion": {
+    "status": "number",
+    "streamId": "string",
+    "bytesSent": "bigint",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "reason": "string",
+    "errorDomain": "number",
+    "errorCode": "number"
+  },
+  "CRpcInvocation": {
+    "requestId": "string",
+    "callerIdentity": "string",
+    "payload": "string",
+    "responseTimeoutMs": "number"
+  },
+  "CRpcHandlerResult": {
+    "payload": "string",
+    "errorCode": "number",
+    "errorMessage": "string",
+    "errorData": "string"
+  },
+  "CE2EeOptions": {
+    "enabled": "boolean",
+    "sharedKey": "Uint8Array",
+    "ratchetSalt": "Uint8Array",
+    "unencryptedMagicBytes": "Uint8Array",
+    "ratchetWindowSize": "number",
+    "failureTolerance": "number",
+    "keyRingSize": "number",
+    "keyDerivation": "number"
+  },
+  "CIceServer": {
+    "urls": "string[]",
+    "username": "string",
+    "password": "string"
+  },
+  "CReconnectContext": {
+    "retryCount": "number",
+    "elapsedMs": "bigint",
+    "reason": "number",
+    "serverUrl": "string"
+  },
+  "CRoomConnectOptions": {
+    "autoSubscribe": "boolean",
+    "adaptiveStream": "boolean",
+    "dynacast": "boolean",
+    "joinRetries": "number",
+    "reconnectTimeoutMs": "number",
+    "iceServers": "CIceServer[]",
+    "continualGatheringPolicy": "number",
+    "iceTransportType": "number",
+    "e2eeOptions": "CE2EeOptions"
+  },
+  "CAudioSourceOptions": {
+    "sampleRate": "number",
+    "numChannels": "number",
+    "queueSizeMs": "number",
+    "echoCancellation": "boolean",
+    "autoGainControl": "boolean",
+    "noiseSuppression": "boolean"
+  },
+  "CMicrophoneCaptureOptions": {
+    "deviceId": "string",
+    "queueSizeMs": "number",
+    "echoCancellation": "boolean",
+    "autoGainControl": "boolean",
+    "noiseSuppression": "boolean"
+  },
+  "CSystemAudioCaptureOptions": {
+    "deviceId": "string",
+    "queueSizeMs": "number"
+  },
+  "CMicrophoneProcessingStats": {
+    "captureFramesProcessed": "bigint",
+    "renderFramesProcessed": "bigint",
+    "captureProcessingErrors": "bigint",
+    "renderProcessingErrors": "bigint",
+    "framesDropped": "bigint",
+    "echoCancellationEnabled": "boolean",
+    "echoReturnLossAvailable": "boolean",
+    "echoReturnLossDb": "number",
+    "echoReturnLossEnhancementAvailable": "boolean",
+    "echoReturnLossEnhancementDb": "number",
+    "residualEchoLikelihoodAvailable": "boolean",
+    "residualEchoLikelihood": "number",
+    "residualEchoLikelihoodRecentMaxAvailable": "boolean",
+    "residualEchoLikelihoodRecentMax": "number",
+    "delayMedianAvailable": "boolean",
+    "delayMedianMs": "number",
+    "delayStandardDeviationAvailable": "boolean",
+    "delayStandardDeviationMs": "number",
+    "delayAvailable": "boolean",
+    "delayMs": "number"
+  },
+  "CVideoSourceOptions": {
+    "isScreencast": "boolean"
+  },
+  "CCameraCaptureOptions": {
+    "deviceId": "string",
+    "width": "number",
+    "height": "number",
+    "framesPerSecond": "number"
+  },
+  "CScreenCaptureOptions": {
+    "sourceId": "string",
+    "framesPerSecond": "number",
+    "includeCursor": "boolean"
+  },
+  "CVideoEncoding": {
+    "maxBitrate": "bigint",
+    "maxFramerate": "number"
+  },
+  "CFrameMetadataFeatures": {
+    "userTimestamp": "boolean",
+    "frameId": "boolean",
+    "userData": "boolean"
+  },
+  "CTrackPublishOptions": {
+    "source": "number",
+    "dtx": "boolean",
+    "red": "boolean",
+    "simulcast": "boolean",
+    "stream": "string",
+    "videoCodec": "number",
+    "scalabilityMode": "string",
+    "backupVideoCodecEnabled": "boolean",
+    "backupVideoCodec": "number",
+    "backupCodecPolicy": "number",
+    "videoEncoding": "CVideoEncoding",
+    "backupVideoEncoding": "CVideoEncoding",
+    "frameMetadataFeatures": "CFrameMetadataFeatures",
+    "preconnectBuffer": "boolean",
+    "hasDegradationPreference": "boolean",
+    "degradationPreference": "number"
+  },
+  "CDataPublishOptions": {
+    "reliable": "boolean",
+    "topic": "string",
+    "destinationIdentities": "string[]"
+  },
+  "CDataTrackSchemaId": {
+    "name": "string",
+    "encoding": "number",
+    "customEncoding": "string"
+  },
+  "CDataTrackPublishOptions": {
+    "name": "string",
+    "hasFrameEncoding": "boolean",
+    "frameEncoding": "number",
+    "customFrameEncoding": "string",
+    "hasSchema": "boolean",
+    "schema": "CDataTrackSchemaId"
+  },
+  "CDataTrackSubscriptionOptions": {
+    "hasTargetFps": "boolean",
+    "targetFps": "number",
+    "bufferCapacity": "number",
+    "maxPartialFrames": "number"
+  },
+  "CMediaStreamOptions": {
+    "capacity": "number"
+  },
+  "CTrackRecorderOptions": {
+    "outputPath": "string",
+    "queueCapacity": "number"
+  },
+  "CTrackRecorderStats": {
+    "state": "number",
+    "framesWritten": "bigint",
+    "bytesWritten": "bigint",
+    "framesDropped": "bigint"
+  },
+  "CFileSendOptions": {
+    "topic": "string",
+    "mimeType": "string",
+    "destinationIdentities": "string[]",
+    "chunkSize": "number",
+    "attributes": "CAttribute[]",
+    "compress": "boolean"
+  },
+  "CTextSendOptions": {
+    "topic": "string",
+    "destinationIdentities": "string[]",
+    "attributes": "CAttribute[]",
+    "replyToStreamId": "string",
+    "attachedStreamIds": "string[]",
+    "chunkSize": "number",
+    "compress": "boolean"
+  },
+  "CByteSendOptions": {
+    "topic": "string",
+    "mimeType": "string",
+    "name": "string",
+    "destinationIdentities": "string[]",
+    "attributes": "CAttribute[]",
+    "chunkSize": "number",
+    "compress": "boolean"
+  },
+  "CStreamTextOptions": {
+    "topic": "string",
+    "destinationIdentities": "string[]",
+    "attributes": "CAttribute[]",
+    "replyToStreamId": "string",
+    "attachedStreamIds": "string[]",
+    "streamId": "string",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "chunkSize": "number",
+    "update": "boolean",
+    "version": "number",
+    "compress": "boolean"
+  },
+  "CStreamBytesOptions": {
+    "topic": "string",
+    "mimeType": "string",
+    "name": "string",
+    "destinationIdentities": "string[]",
+    "attributes": "CAttribute[]",
+    "streamId": "string",
+    "hasTotalSize": "boolean",
+    "totalSize": "bigint",
+    "chunkSize": "number",
+    "compress": "boolean"
+  },
+  "CRpcPerformOptions": {
+    "destinationIdentity": "string",
+    "method": "string",
+    "payload": "string",
+    "responseTimeoutMs": "number"
+  },
+  "CParticipantTrackPermission": {
+    "participantSid": "string",
+    "participantIdentity": "string",
+    "allowAll": "boolean",
+    "allowedTrackSids": "string[]"
+  },
+  "CRemoteTrackSettings": {
+    "enabled": "boolean",
+    "hasVideoQuality": "boolean",
+    "videoQuality": "number",
+    "videoWidth": "number",
+    "videoHeight": "number",
+    "videoFps": "number",
+    "priority": "number"
+  }
+}

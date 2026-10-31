@@ -1,0 +1,12 @@
+{
+  "name": "@livekit-cpp/client",
+  "version": "0.1.0",
+  "description": "Node.js worker-based bindings for the LiveKit C++ client C ABI",
+  "license": "Apache-2.0",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "engines": { "node": ">=20" },
+  "files": ["lib", "native", "README.md", "TESTING.md", "LICENSE"],
+  "scripts": { "test": "node --test test/*.test.js", "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1" }
+}
